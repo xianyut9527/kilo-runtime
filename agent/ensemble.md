@@ -57,9 +57,8 @@ steps: 120
      mkdir -p .kilo/worktrees
      
      # 为每个 enabled executor 创建 worktree 和分支
-     git worktree add .kilo/worktrees/dp -b ensemble-dp
-     git worktree add .kilo/worktrees/minimax -b ensemble-minimax
-     git worktree add .kilo/worktrees/kimi -b ensemble-kimi
+      git worktree add .kilo/worktrees/dp -b ensemble-dp
+      git worktree add .kilo/worktrees/minimax -b ensemble-minimax
      ```
    - 验证 worktree 创建成功：
      ```bash
@@ -67,11 +66,10 @@ steps: 120
      ```
    - 确认每个 worktree 状态干净（无未提交修改）：
      ```bash
-     cd .kilo/worktrees/dp && git status
-     cd .kilo/worktrees/minimax && git status
-     cd .kilo/worktrees/kimi && git status
+      cd .kilo/worktrees/dp && git status
+      cd .kilo/worktrees/minimax && git status
      ```
-   - Task @executor-dp（worktree: dp）+ Task @executor-mm（worktree: minimax）+ Task @executor-kimi（worktree: kimi），TDD 模式并行编码
+   - Task @executor-dp（worktree: dp）+ Task @executor-mm（worktree: minimax），TDD 模式并行编码
    - 各 executor 基于各自侧重方向自由发挥，不预设分工
    - 各 executor 收到的任务包包含三部分：《需求锚定文档》+《范围锁定附录》+《任务特征摘要》
 
@@ -117,12 +115,11 @@ steps: 120
    - 清理所有 worktree：
      ```bash
      # 移除 worktree（保留分支供后续查看）
-     git worktree remove .kilo/worktrees/dp --force
-     git worktree remove .kilo/worktrees/minimax --force
-     git worktree remove .kilo/worktrees/kimi --force
+      git worktree remove .kilo/worktrees/dp --force
+      git worktree remove .kilo/worktrees/minimax --force
      
-     # 可选：删除分支（若不需要保留历史）
-     # git branch -D ensemble-dp ensemble-minimax ensemble-kimi
+      # 可选：删除分支（若不需要保留历史）
+      # git branch -D ensemble-dp ensemble-minimax
      
      # 确认清理完成
      git worktree list

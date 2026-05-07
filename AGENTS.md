@@ -63,7 +63,6 @@
 | ensemble      | 多模型并行编排 | all      | 需求解析 → 并行编码 → 多版本对比选取 → 快速验证 → 异常修复 → 交付 |
 | executor-dp   | 多模型执行 A   | subagent | 任务自适应编码：根据任务特征自我定位侧重方向，TDD 模式执行        |
 | executor-mm   | 多模型执行 B   | subagent | 任务自适应编码：根据任务特征自我定位侧重方向，TDD 模式执行        |
-| executor-kimi | 多模型执行 C   | subagent | 长思维链推理：复杂算法、架构深度分析、根因定位，TDD 模式执行      |
 | synthesizer   | 多模型合并     | subagent | 基于基准评分智能合并多版本代码                                    |
 | checker       | 多模型审查     | subagent | 代码质量量化评分 + PASS/FAIL                                      |
 | fixer         | 多模型修复     | subagent | 根据审查意见精准修复                                              |
@@ -88,7 +87,7 @@
 ```
 用户 → ensemble（多模型编排，模型: deepseek/deepseek-v4-flash）
          ├→ 步骤1: 需求解析 + 范围锁定（生成任务特征摘要）
-         ├→ 步骤2: 创建 worktree + 并行编码（executor-dp + executor-mm + executor-kimi，任务自适应）
+         ├→ 步骤2: 创建 worktree + 并行编码（executor-dp + executor-mm，任务自适应）
          ├→ 步骤3: 多版本快速对比与选取（测试通过率 > 聚焦度 > 对齐度 > 膨胀度）
          ├→ 步骤4: 快速验证（测试/构建/类型检查/lint + 范围检查 + 聚焦度扫描）
          ├→ 步骤5: 异常修复（最多 1 轮，基于验证失败信息）

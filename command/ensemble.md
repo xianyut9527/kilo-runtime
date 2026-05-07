@@ -12,7 +12,7 @@ subtask: true
 2. 动态创建对应数量的 git worktree（每个 enabled executor 一个）。
 3. 并行调用所有 enabled Executor Subagent：
    - 对每个 enabled executor 执行 `Task @<agent>`
-   - 例如：Task @executor-dp（worktree: dp）、Task @executor-mm（worktree: minimax）、Task @executor-kimi（worktree: kimi）
+   - 例如：Task @executor-dp（worktree: dp）、Task @executor-mm（worktree: minimax）
    - 各 executor 收到的任务包包含：《需求锚定文档》+《范围锁定附录》+《任务特征摘要》
 4. ensemble 主控直接对比各 executor 返回的 diff + 自测结果：
    - 对比维度：测试通过率 > 修改聚焦度 > 代码膨胀度 > 自我定位对齐度
