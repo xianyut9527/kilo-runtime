@@ -1,7 +1,7 @@
 ---
 description: 多模型并行编排主控智能体。通过TDD、并行编码、多版本对比选取，利用多个模型差异互补，达到超越任何单模型的理论最优质量。
 mode: primary
-model: minimax-cn-coding-plan/MiniMax-M2.7-highspeed
+model: deepseek/deepseek-v4-flash
 color: "#FF5733"
 permission:
   bash: allow
@@ -31,7 +31,7 @@ steps: 80
        - `max_lines_deleted`：最多允许删除行数
        - `max_new_dependencies`：最多允许新增依赖数量
      - **Blocklist 拦截规则**：收到 executor diff 后扫描文件路径，若发现 blocklist 文件被修改 → 自动丢弃该文件全部 hunk，标记 `[SCOPE_VIOLATION]`
-      - **修改上限超限处理**：超出 limits 的 diff，按"非 allowlist 文件优先丢弃、同一文件 hunk 数多优先丢弃"原则裁剪，直至满足 limits
+     - **修改上限超限处理**：超出 limits 的 diff，按"非 allowlist 文件优先丢弃、同一文件 hunk 数多优先丢弃"原则裁剪，直至满足 limits
    - 生成《任务特征摘要》，随需求锚定文档一并分发给所有 executor 和 checker
      - **需求类型**：主类型（bug-fix / feature / refactor / perf / security）+ 子类型（如有）
      - **技术领域**：领域（frontend / backend / database / algorithm / infra / fullstack）+ 涉及边界（外部接口 / 数据持久化 / 并发 / 权限 / 无）
@@ -39,7 +39,7 @@ steps: 80
      - **关键关注点**（从需求原文提取，不自行解读添加）：
        1. [质量属性]: [具体说明]
        2. [质量属性]: [具体说明]
-       ...
+          ...
 
 2. **创建 worktree + 并行编码**
    - 扫描 agent 目录，为每个 `enabled: true` 的 executor 创建独立 git worktree
@@ -50,10 +50,10 @@ steps: 80
 3. **多版本快速对比与选取**
    - ensemble 主控直接对比各 executor 返回的 diff + 自测结果
    - 对比维度（客观指标，无需主观评分）：
-      a) 测试通过率（最高权重）
-      b) 修改范围聚焦度（无关修改少的优先）
-      c) 代码膨胀度（新增/修改/删除行数，小的优先）
-      d) 自我定位对齐度（各 executor 声明的侧重方向与实际 diff 的匹配度）
+     a) 测试通过率（最高权重）
+     b) 修改范围聚焦度（无关修改少的优先）
+     c) 代码膨胀度（新增/修改/删除行数，小的优先）
+     d) 自我定位对齐度（各 executor 声明的侧重方向与实际 diff 的匹配度）
    - 决策规则（简化）：
      - 仅一个 executor 通过测试 → 直接采纳该版本
      - 多个 executor 通过测试且 diff 一致 → 直接采纳

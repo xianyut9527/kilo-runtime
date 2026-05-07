@@ -59,9 +59,9 @@
 | architect | 单模型规划 | subagent | 需求分析、架构设计、任务拆解 |
 | engineer | 单模型实现 | subagent | 读取→编码→测试→修复 |
 | reviewer | 单模型审查 | subagent | 独立质量门禁、动态验证 |
-| ensemble | 多模型并行编排 | primary | TDD 共识 → 并行编码 → 交叉审查 → 智能合并 |
-| executor-dp | 多模型执行 A | subagent | 以逻辑推理、算法实现为侧重点的 TDD 编码 |
-| executor-mm | 多模型执行 B | subagent | 以需求理解、边界安全为侧重点的 TDD 编码 |
+| ensemble | 多模型并行编排 | primary | 需求解析 → 并行编码 → 多版本对比选取 → 快速验证 → 异常修复 → 交付 |
+| executor-dp | 多模型执行 A | subagent | 任务自适应编码：根据任务特征自我定位侧重方向，TDD 模式执行 |
+| executor-mm | 多模型执行 B | subagent | 任务自适应编码：根据任务特征自我定位侧重方向，TDD 模式执行 |
 | synthesizer | 多模型合并 | subagent | 基于基准评分智能合并多版本代码 |
 | checker | 多模型审查 | subagent | 代码质量量化评分 + PASS/FAIL |
 | fixer | 多模型修复 | subagent | 根据审查意见精准修复 |
@@ -84,12 +84,13 @@
 适用：关键模块、高质量要求任务。由 `ensemble` 编排，利用多模型差异提升质量上限：
 
 ```
-用户 → ensemble（多模型编排）
-         ├→ executor-dp + executor-mm（并行 TDD 编码）
-         ├→ 交叉审查 → 各自修复
-         ├→ synthesizer（智能合并）→ 回退评估
-         ├→ checker + ensemble（联合审查）
-         └→ fixer（修复闭环，最多 3 轮）
+用户 → ensemble（多模型编排，模型: deepseek/deepseek-v4-flash）
+         ├→ 步骤1: 需求解析 + 范围锁定（生成任务特征摘要）
+         ├→ 步骤2: 创建 worktree + 并行编码（executor-dp + executor-mm，任务自适应）
+         ├→ 步骤3: 多版本快速对比与选取（测试通过率 > 聚焦度 > 对齐度 > 膨胀度）
+         ├→ 步骤4: 快速验证（测试/构建/类型检查/lint + 范围检查 + 聚焦度扫描）
+         ├→ 步骤5: 异常修复（最多 1 轮，基于验证失败信息）
+         └→ 步骤6: 交付
 ```
 
 ### 选择原则
@@ -131,7 +132,7 @@ Task @智能体:
 
 ## 循环限制
 
-- 修复 → 复评循环最大 3 轮
+- 修复 → 复评循环最大 1 轮（ensemble 路径）
 - 超过 3 轮向用户汇报阻塞原因
 
 ## 输出规范
