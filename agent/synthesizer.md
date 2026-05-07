@@ -1,7 +1,7 @@
 ---
 description: 合并智能体。辅助 ensemble 主控处理多版本冲突融合场景，基于客观指标对比做轻量合并。
 mode: subagent
-model: deepseek/deepseek-v4-flashd
+model: deepseek/deepseek-v4-flash
 hidden: true
 color: "#3357FF"
 permission:

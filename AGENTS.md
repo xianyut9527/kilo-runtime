@@ -62,6 +62,7 @@
 | ensemble | 多模型并行编排 | primary | 需求解析 → 并行编码 → 多版本对比选取 → 快速验证 → 异常修复 → 交付 |
 | executor-dp | 多模型执行 A | subagent | 任务自适应编码：根据任务特征自我定位侧重方向，TDD 模式执行 |
 | executor-mm | 多模型执行 B | subagent | 任务自适应编码：根据任务特征自我定位侧重方向，TDD 模式执行 |
+| executor-kimi | 多模型执行 C | subagent | 长思维链推理：复杂算法、架构深度分析、根因定位，TDD 模式执行 |
 | synthesizer | 多模型合并 | subagent | 基于基准评分智能合并多版本代码 |
 | checker | 多模型审查 | subagent | 代码质量量化评分 + PASS/FAIL |
 | fixer | 多模型修复 | subagent | 根据审查意见精准修复 |
@@ -86,7 +87,7 @@
 ```
 用户 → ensemble（多模型编排，模型: deepseek/deepseek-v4-flash）
          ├→ 步骤1: 需求解析 + 范围锁定（生成任务特征摘要）
-         ├→ 步骤2: 创建 worktree + 并行编码（executor-dp + executor-mm，任务自适应）
+         ├→ 步骤2: 创建 worktree + 并行编码（executor-dp + executor-mm + executor-kimi，任务自适应）
          ├→ 步骤3: 多版本快速对比与选取（测试通过率 > 聚焦度 > 对齐度 > 膨胀度）
          ├→ 步骤4: 快速验证（测试/构建/类型检查/lint + 范围检查 + 聚焦度扫描）
          ├→ 步骤5: 异常修复（最多 1 轮，基于验证失败信息）
@@ -97,6 +98,7 @@
 
 - 日常快速开发 → `@coderAgent` 或直接用默认
 - 核心模块/资金安全/算法关键 → `/ensemble <需求>`
+- 单模型路径连续 3 轮未能解决 → 自动升级 `/ensemble`
 
 ## 委派格式
 
@@ -121,6 +123,7 @@ Task @智能体:
 | 涉及架构变动 | architect 重新设计 → engineer 执行 | ensemble 自动包含架构规划 |
 | 涉及资金/安全/核心逻辑 | reviewer 审查 → engineer 修复 [≤3轮] | 联合审查内置，自动闭环 |
 | engineer 3轮修复失败 | architect 出方案 → engineer 执行 | 回退到最佳单模型，上报阻塞 |
+| 单模型路径累计 ≥3 轮未解决 | coderAgent 自动升级 @ensemble | 多模型并行突破瓶颈 |
 
 ## 质量门禁
 
@@ -134,6 +137,21 @@ Task @智能体:
 
 - 修复 → 复评循环最大 1 轮（ensemble 路径）
 - 超过 3 轮向用户汇报阻塞原因
+
+### 自动升级机制
+
+当单模型路径（coderAgent → architect/engineer/reviewer）连续多轮未能解决问题时，coderAgent 自动切换为 `/ensemble` 多模型并行编排。
+
+**触发条件**：
+- 累计修复 ≥3 轮仍未解决
+- 连续 2 次 architect 方案无效
+- 用户明确要求高质量/关键模块
+- 涉及复杂并发/分布式/算法逻辑
+
+**升级后流程**：
+1. ensemble 基于已有上下文继续，不重复需求解析
+2. ensemble 交付后，coderAgent 重新执行交付验收
+3. 若 ensemble 仍失败 → 上报用户阻塞原因，不再自动循环
 
 ## 输出规范
 
