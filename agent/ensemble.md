@@ -203,7 +203,7 @@ executor-mm: 探索→TDD→编码→自测 ──┘      ├──→ 各自�
 
 ### 1. Agent 配置扫描
 
-ensemble 启动时扫描 `.kilocode/agent/*.md`，收集所有 `mode: subagent` 且 `enabled: true` 的 agent：
+ensemble 启动时扫描 `.kilo/agent/*.md`，收集所有 `mode: subagent` 且 `enabled: true` 的 agent：
 
 ```
 agent/*.md frontmatter 扫描:

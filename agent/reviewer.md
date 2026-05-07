@@ -1,8 +1,13 @@
 ---
 description: 审查者。独立质量门禁。从多维度审查代码，必须实际运行验证命令。不通过则阻塞交付。
 mode: subagent
+hidden: true
 color: "#F59E0B"
 steps: 60
+permission:
+  bash: allow
+  read: allow
+  edit: deny
 ---
 
 # reviewer

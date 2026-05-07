@@ -1,8 +1,17 @@
 ---
 description: 实现者。端到端闭环：读取→编码→测试→修复。交付可运行的代码。
 mode: subagent
+hidden: true
 color: "#10B981"
 steps: 80
+permission:
+  bash: allow
+  read:
+    "src/**": allow
+    "*": ask
+  edit:
+    "src/**": allow
+    "*": ask
 ---
 
 # engineer

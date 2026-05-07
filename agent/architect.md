@@ -1,8 +1,15 @@
 ---
 description: 规划者。只输出架构设计文档，不执行任何代码编写、文件修改、命令运行。
 mode: subagent
+hidden: true
 color: "#0EA5E9"
 steps: 50
+permission:
+  bash: deny
+  read: allow
+  glob: allow
+  grep: allow
+  edit: deny
 ---
 
 # architect

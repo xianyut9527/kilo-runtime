@@ -6,7 +6,7 @@ subtask: true
 
 启动 Ensemble Workflow 多模型并行编排：
 
-1. 扫描 .kilocode/agent/\*.md：
+1. 扫描 .kilo/agent/\*.md：
    - 收集所有 mode: subagent 且 enabled: true 的 executor agent
    - 从 frontmatter 读取 worktree、model 字段
 2. 动态创建对应数量的 git worktree（每个 enabled executor 一个）。

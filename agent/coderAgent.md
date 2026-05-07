@@ -3,6 +3,10 @@ description: 编排者。负责任务理解、智能体委派、进度跟踪、�
 mode: primary
 color: "#8B5CF6"
 steps: 100
+permission:
+  bash: deny
+  edit: deny
+  task: allow
 ---
 
 # coderAgent

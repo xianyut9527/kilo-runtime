@@ -7,8 +7,7 @@ color: "#FF33A1"
 permission:
   bash: allow
   read:
-    "src/**": allow
-    "*": ask
+    "**/*": allow
   edit: deny
 steps: 40
 ---
