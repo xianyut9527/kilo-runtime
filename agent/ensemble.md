@@ -5,9 +5,10 @@ model: minimax-cn-coding-plan/MiniMax-M2.7-highspeed
 color: "#FF5733"
 permission:
   bash: allow
+  read:
+    "**/*": allow
   edit:
-    "src/**": allow
-    "*": ask
+    "**/*": allow
 steps: 80
 ---
 
