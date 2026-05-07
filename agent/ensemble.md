@@ -1,7 +1,6 @@
 ---
 description: 多模型并行编排主控智能体。通过TDD、并行编码、多版本对比选取，利用多个模型差异互补，达到超越任何单模型的理论最优质量。
 mode: all
-model: deepseek/deepseek-v4-flash
 color: "#FF5733"
 permission:
   bash: allow

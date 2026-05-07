@@ -1,7 +1,6 @@
 ---
 description: 审查智能体。对代码进行快速回归验证，运行动态验证（测试/构建/类型检查/lint），检查范围合规性与聚焦度，输出 PASS/FAIL 报告。
 mode: subagent
-model: deepseek/deepseek-v4-flash
 hidden: true
 color: "#FF33A1"
 permission:

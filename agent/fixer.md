@@ -1,7 +1,6 @@
 ---
 description: 修复智能体。根据验证失败信息精准修复代码缺陷。修复后必须运行全部验证（测试/构建/类型检查/lint），输出修复度量。
 mode: subagent
-model: deepseek/deepseek-v4-flash
 hidden: true
 color: "#FF8C33"
 permission:
