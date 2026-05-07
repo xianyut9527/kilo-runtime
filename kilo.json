@@ -9,6 +9,16 @@
     "auto": true,
     "prune": true
   },
+  "permission": {
+    "bash": "allow",
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "task": "allow",
+    "edit": {
+      "*": "ask"
+    }
+  },
   "commit_message": {
     "prompt": "生成中文提交信息，格式：<type>(<scope>): <中文标题>\ntype：feat/fix/docs/style/refactor/test/chore\nscope：模块名（如 auth、pay）\n标题≤50字，无句号，仅输出结果。"
   }
