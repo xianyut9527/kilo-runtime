@@ -1,12 +1,15 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
   "model": "minimax-cn-coding-plan/MiniMax-M2.7-highspeed",
-  "small_model": "dp/deepseek-v4-flash",
+  "small_model": "deepseek/deepseek-v4-flash",
   "default_agent": "coderAgent",
   "instructions": ["./AGENTS.md"],
   "snapshot": true,
   "compaction": {
     "auto": true,
     "prune": true
+  },
+  "commit_message": {
+    "prompt": "生成中文提交信息，格式：<type>(<scope>): <中文标题>\ntype：feat/fix/docs/style/refactor/test/chore\nscope：模块名（如 auth、pay）\n标题≤50字，无句号，仅输出结果。"
   }
 }

@@ -6,7 +6,7 @@ subtask: true
 
 启动 Ensemble Workflow 多模型并行编排：
 
-1. 扫描 .kilocode/agent/*.md：
+1. 扫描 .kilocode/agent/\*.md：
    - 收集所有 mode: subagent 且 enabled: true 的 executor agent
    - 从 frontmatter 读取 worktree、model 字段
 2. 动态创建对应数量的 git worktree（每个 enabled executor 一个）。
@@ -17,6 +17,6 @@ subtask: true
 5. Task @synthesizer 合并多版本代码。
 6. Task @checker 审查合并结果。
 7. 若 FAIL，Task @fixer 修复 → 重新 Checker（最多 3 轮）。
-8. PASS 后 apply 到主分支，**不自动 commit**，由用户手动提交，清理所有 worktree。
+8. PASS 后 apply 到当前本地分支，**不自动 commit**，由用户手动提交，清理所有 worktree。
 
 需求原文：$ARGUMENTS
