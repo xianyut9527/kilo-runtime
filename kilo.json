@@ -1,0 +1,12 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "model": "minimax-cn-coding-plan/MiniMax-M2.7-highspeed",
+  "small_model": "dp/deepseek-v4-flash",
+  "default_agent": "coderAgent",
+  "instructions": ["./AGENTS.md"],
+  "snapshot": true,
+  "compaction": {
+    "auto": true,
+    "prune": true
+  }
+}
