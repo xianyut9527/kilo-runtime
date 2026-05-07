@@ -1,6 +1,6 @@
 ---
 description: 多模型并行编排主控智能体。通过TDD、并行编码、多版本对比选取，利用多个模型差异互补，达到超越任何单模型的理论最优质量。
-mode: primary
+mode: all
 model: deepseek/deepseek-v4-flash
 color: "#FF5733"
 permission:
@@ -41,14 +41,14 @@ steps: 120
      - **需求类型**：主类型（bug-fix / feature / refactor / perf / security）+ 子类型（如有）
      - **技术领域**：领域（frontend / backend / database / algorithm / infra / fullstack）+ 涉及边界（外部接口 / 数据持久化 / 并发 / 权限 / 无）
      - **风险等级**：等级（low / medium / high）+ 判定依据（一句话说明）
-      - **关键关注点**（从需求原文提取，不自行解读添加）：
-        1. [质量属性]: [具体说明]
-        2. [质量属性]: [具体说明]
-           ...
-      - **历史尝试**（仅当从 coderAgent 升级时填充）：
-        1. [方案简述] → [失败原因]
-        2. [方案简述] → [失败原因]
-           ...
+     - **关键关注点**（从需求原文提取，不自行解读添加）：
+       1. [质量属性]: [具体说明]
+       2. [质量属性]: [具体说明]
+          ...
+     - **历史尝试**（仅当从 coderAgent 升级时填充）：
+       1. [方案简述] → [失败原因]
+       2. [方案简述] → [失败原因]
+          ...
 
 2. **创建 worktree + 并行编码**
    - 扫描 agent 目录，为每个 `enabled: true` 的 executor 创建独立 git worktree

@@ -47,25 +47,26 @@
 ### 动态项目上下文
 
 若项目信息占位符未填充，Agent 应主动通过以下方式探测当前项目上下文：
+
 1. 读取项目根目录 `package.json` 推断技术栈与验证命令
 2. 扫描常见配置文件（`vue.config.js`, `vite.config.ts`, `webpack.config.js`, `tsconfig.json`, `eslint.config.*`, `pyproject.toml`, `Cargo.toml`, `pom.xml` 等）确定构建与检查命令
 3. 将探测到的验证命令用于编码后的自测与审查
 
 ## 全量智能体清单
 
-| 智能体 | 类型 | 模式 | 职责 |
-|--------|------|------|------|
-| coderAgent | 单模型编排 | primary | 任务理解、委派、跟踪、交付 |
-| architect | 单模型规划 | subagent | 需求分析、架构设计、任务拆解 |
-| engineer | 单模型实现 | subagent | 读取→编码→测试→修复 |
-| reviewer | 单模型审查 | subagent | 独立质量门禁、动态验证 |
-| ensemble | 多模型并行编排 | primary | 需求解析 → 并行编码 → 多版本对比选取 → 快速验证 → 异常修复 → 交付 |
-| executor-dp | 多模型执行 A | subagent | 任务自适应编码：根据任务特征自我定位侧重方向，TDD 模式执行 |
-| executor-mm | 多模型执行 B | subagent | 任务自适应编码：根据任务特征自我定位侧重方向，TDD 模式执行 |
-| executor-kimi | 多模型执行 C | subagent | 长思维链推理：复杂算法、架构深度分析、根因定位，TDD 模式执行 |
-| synthesizer | 多模型合并 | subagent | 基于基准评分智能合并多版本代码 |
-| checker | 多模型审查 | subagent | 代码质量量化评分 + PASS/FAIL |
-| fixer | 多模型修复 | subagent | 根据审查意见精准修复 |
+| 智能体        | 类型           | 模式     | 职责                                                              |
+| ------------- | -------------- | -------- | ----------------------------------------------------------------- |
+| coderAgent    | 单模型编排     | all      | 任务理解、委派、跟踪、交付                                        |
+| architect     | 单模型规划     | subagent | 需求分析、架构设计、任务拆解                                      |
+| engineer      | 单模型实现     | subagent | 读取→编码→测试→修复                                               |
+| reviewer      | 单模型审查     | subagent | 独立质量门禁、动态验证                                            |
+| ensemble      | 多模型并行编排 | all      | 需求解析 → 并行编码 → 多版本对比选取 → 快速验证 → 异常修复 → 交付 |
+| executor-dp   | 多模型执行 A   | subagent | 任务自适应编码：根据任务特征自我定位侧重方向，TDD 模式执行        |
+| executor-mm   | 多模型执行 B   | subagent | 任务自适应编码：根据任务特征自我定位侧重方向，TDD 模式执行        |
+| executor-kimi | 多模型执行 C   | subagent | 长思维链推理：复杂算法、架构深度分析、根因定位，TDD 模式执行      |
+| synthesizer   | 多模型合并     | subagent | 基于基准评分智能合并多版本代码                                    |
+| checker       | 多模型审查     | subagent | 代码质量量化评分 + PASS/FAIL                                      |
+| fixer         | 多模型修复     | subagent | 根据审查意见精准修复                                              |
 
 ## 工作流选择
 
@@ -118,12 +119,12 @@ Task @智能体:
 
 ## 升级路径
 
-| 触发条件 | 单模型路径 | 多模型路径 |
-| -------- | ---------- | ---------- |
-| 涉及架构变动 | architect 重新设计 → engineer 执行 | ensemble 自动包含架构规划 |
-| 涉及资金/安全/核心逻辑 | reviewer 审查 → engineer 修复 [≤3轮] | 联合审查内置，自动闭环 |
-| engineer 3轮修复失败 | architect 出方案 → engineer 执行 | 回退到最佳单模型，上报阻塞 |
-| 单模型路径累计 ≥3 轮未解决 | coderAgent 自动升级 @ensemble | 多模型并行突破瓶颈 |
+| 触发条件                   | 单模型路径                           | 多模型路径                 |
+| -------------------------- | ------------------------------------ | -------------------------- |
+| 涉及架构变动               | architect 重新设计 → engineer 执行   | ensemble 自动包含架构规划  |
+| 涉及资金/安全/核心逻辑     | reviewer 审查 → engineer 修复 [≤3轮] | 联合审查内置，自动闭环     |
+| engineer 3轮修复失败       | architect 出方案 → engineer 执行     | 回退到最佳单模型，上报阻塞 |
+| 单模型路径累计 ≥3 轮未解决 | coderAgent 自动升级 @ensemble        | 多模型并行突破瓶颈         |
 
 ## 质量门禁
 
@@ -143,12 +144,14 @@ Task @智能体:
 当单模型路径（coderAgent → architect/engineer/reviewer）连续多轮未能解决问题时，coderAgent 自动切换为 `/ensemble` 多模型并行编排。
 
 **触发条件**：
+
 - 累计修复 ≥3 轮仍未解决
 - 连续 2 次 architect 方案无效
 - 用户明确要求高质量/关键模块
 - 涉及复杂并发/分布式/算法逻辑
 
 **升级后流程**：
+
 1. ensemble 基于已有上下文继续，不重复需求解析
 2. ensemble 交付后，coderAgent 重新执行交付验收
 3. 若 ensemble 仍失败 → 上报用户阻塞原因，不再自动循环
