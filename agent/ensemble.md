@@ -50,8 +50,28 @@ steps: 120
           ...
 
 2. **创建 worktree + 并行编码**
-   - 扫描 agent 目录，为每个 `enabled: true` 的 executor 创建独立 git worktree
-   - Task @executor-dp + Task @executor-mm + Task @executor-kimi（TDD 模式，共用测试用例规范）
+   - 扫描 agent 目录，收集所有 `enabled: true` 的 executor（读取 frontmatter 的 `worktree` 和 `model` 字段）
+   - 执行 bash 命令创建独立 worktree：
+     ```bash
+     # 创建目录（若不存在）
+     mkdir -p .kilo/worktrees
+     
+     # 为每个 enabled executor 创建 worktree 和分支
+     git worktree add .kilo/worktrees/dp -b ensemble-dp
+     git worktree add .kilo/worktrees/minimax -b ensemble-minimax
+     git worktree add .kilo/worktrees/kimi -b ensemble-kimi
+     ```
+   - 验证 worktree 创建成功：
+     ```bash
+     git worktree list
+     ```
+   - 确认每个 worktree 状态干净（无未提交修改）：
+     ```bash
+     cd .kilo/worktrees/dp && git status
+     cd .kilo/worktrees/minimax && git status
+     cd .kilo/worktrees/kimi && git status
+     ```
+   - Task @executor-dp（worktree: dp）+ Task @executor-mm（worktree: minimax）+ Task @executor-kimi（worktree: kimi），TDD 模式并行编码
    - 各 executor 基于各自侧重方向自由发挥，不预设分工
    - 各 executor 收到的任务包包含三部分：《需求锚定文档》+《范围锁定附录》+《任务特征摘要》
 
@@ -85,9 +105,29 @@ steps: 120
    - 仍不通过 → 上报阻塞原因，不无限循环
 
 6. **交付**
-   - apply 到当前本地分支
+   - 将各 executor 的最佳 diff apply 到当前本地分支：
+     ```bash
+     # 切回主分支
+     git checkout main
+     
+     # apply 选定的 diff（由步骤3确定）
+     # 例如：git apply /tmp/executor-dp.diff（实际路径由步骤3输出）
+     ```
    - 不自动 commit
-   - 清理所有 worktree
+   - 清理所有 worktree：
+     ```bash
+     # 移除 worktree（保留分支供后续查看）
+     git worktree remove .kilo/worktrees/dp --force
+     git worktree remove .kilo/worktrees/minimax --force
+     git worktree remove .kilo/worktrees/kimi --force
+     
+     # 可选：删除分支（若不需要保留历史）
+     # git branch -D ensemble-dp ensemble-minimax ensemble-kimi
+     
+     # 确认清理完成
+     git worktree list
+     ```
+   - 验证当前分支状态干净
 
 ## 约束
 
