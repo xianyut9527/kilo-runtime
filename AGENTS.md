@@ -100,7 +100,9 @@
 - 核心模块/资金安全/算法关键 → `/ensemble <需求>`
 - 单模型路径连续 3 轮未能解决 → 自动升级 `/ensemble`
 
-## 委派格式
+## 委派格式（简化格式，适用于直接调用子智能体）
+
+当用户或上层逻辑直接驱动某个子智能体（如 architect / engineer / reviewer）时，可使用以下简化文本格式：
 
 ```
 Task @智能体:
@@ -109,6 +111,46 @@ Task @智能体:
 - 约束: [技术栈/安全要求]
 - 验收标准: [可验证标准]
 ```
+
+## 结构化委派格式（编排层 Agent 强制使用）
+
+当 coderAgent 或 ensemble 作为编排主控向子智能体（architect / engineer / reviewer / executor / fixer / synthesizer 等）委派任务时，**必须**使用以下 TaskPackage YAML 结构，禁止自由文本转发：
+
+```yaml
+task_package:
+  version: "1.0"
+  request_id: "<uuid>"
+  target_agent: "architect | engineer | reviewer | executor-dp | executor-mm | fixer | synthesizer"
+
+  mission:
+    description: "[任务描述，一句话]"
+    requirement: "[用户原始需求，不删减]"
+
+  context:
+    code_state:
+      changed_files: ["文件路径1", "文件路径2"]
+      key_logic: "[当前实现的核心思路摘要]"
+    failure_info:
+      command: "[失败的验证命令]"
+      error_snippet: "[关键错误日志摘要，不超过 20 行]"
+    historical_attempts:
+      - scheme: "[方案简述]"
+        result: "[失败原因/验证结果]"
+    constraints:
+      - "[项目技术栈/禁止事项/特殊要求]"
+
+  deliverables:
+    - "变更摘要（含变更文件与说明）"
+    - "自测结果（测试/构建/类型检查/lint）"
+    - "关键设计决策（如有）"
+```
+
+**子智能体理解方式**：子智能体接收 TaskPackage 后，可将其转换为简化格式理解，但编排层必须始终按 YAML 结构生成和传递。
+
+**上下文传递原则不变**：
+- **高信号**：只传递目标、关键文件、验收标准、失败片段
+- **不转发**：禁止转发完整对话历史、长日志、无关信息
+- **格式摘要**：`目标: [x] | 关键文件: [y] | 约束: [z] | 失败: [w]`
 
 ## 上下文传递
 
