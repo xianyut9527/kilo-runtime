@@ -350,7 +350,7 @@ INIT ──→ PARSE ──→ ROUTE
 
 ## 任务包协议（TaskPackage）
 
-所有委派给 engineer / executor / fixer / synthesizer 时，必须使用以下 YAML 结构：
+所有委派给 coderAgent / engineer / executor / fixer / synthesizer 时，必须使用以下 YAML 结构：
 
 ```yaml
 task_package:
@@ -394,7 +394,9 @@ task_package:
 **说明**：
 - `execution_mode`：执行模式。`standalone` 为独立执行；`ensemble_member` 为作为 ensemble 并行池成员执行
 - `ensemble_context`：ensemble 上下文。`enabled: true` 表示该任务由 ensemble 派发，`parent_request_id` 为 ensemble 主请求 ID
-- **当委派给 `coderAgent` 时，必须设置 `execution_mode = ensemble_member`**
+- **委派给 `coderAgent` 时**：
+  - 走单模型路径（`EXECUTE_SINGLE`）→ `execution_mode = "standalone"`
+  - 走多模型路径（`EXECUTE_MULTI`）→ `execution_mode = "ensemble_member"`
 
 **上下文传递原则**：
 - **高信号**：只传递目标、关键文件、验收标准、失败片段
