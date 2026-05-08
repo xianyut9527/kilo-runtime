@@ -1,9 +1,13 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
-  "model": "deepseek/deepseek-v4-flash",
-  "small_model": "minimax-cn-coding-plan/MiniMax-M2.7-highspeed",
+  "model": "hsyq/glm-5.1",
+  "small_model": "hsyq/doubao-seed-2.0-mini",
   "default_agent": "coderAgent",
-  "instructions": ["./AGENTS.md", "./.kilo/learned/rules.md"],
+  "instructions": [
+    "./.kilo/instructions/core.md",
+    "./.kilo/instructions/workflow.md",
+    "./.kilo/learned/rules.md"
+  ],
   "snapshot": true,
   "compaction": {
     "auto": true,
@@ -21,6 +25,23 @@
   },
   "commit_message": {
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
+  },
+  "mcp": {
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "enabled": true,
+      "timeout": 8000
+    },
+    "github": {
+      "type": "remote",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "enabled": false,
+      "headers": {
+        "Authorization": "Bearer {env:GITHUB_PAT}"
+      },
+      "timeout": 12000
+    }
   },
   "provider": {
     "hsyq": {
