@@ -35,7 +35,7 @@ UNDERSTOOD ──→ ROUTED ──→ EXECUTING ──→ VERIFYING
                                            └───┬─────┘
                                                │ Budget < 0 (即 ≥3 轮)
                                                ▼
-                                            ESCALATE ──→ Task @ensemble ──→ VERIFYING ──→ DELIVERED
+                                             ESCALATE ──→ 激活 ensemble 多模型能力 ──→ VERIFYING ──→ DELIVERED
 ```
 
 | 状态 | 说明 |
@@ -63,6 +63,8 @@ UNDERSTOOD ──→ ROUTED ──→ EXECUTING ──→ VERIFYING
 1. **用户主动要求**：用户明确要求 "用 ensemble" / "多模型并行" 等（在 `UNDERSTOOD` 状态识别）
 2. **高风险任务**：涉及核心算法、资金安全、复杂并发/分布式逻辑（在 `ROUTED` 状态识别）
 3. **连续 architect 方案无效**：连续 2 次 architect 方案经 engineer 执行后仍验证失败（在 `DIAGNOSING` 状态识别）
+
+> 这些条件触发时，coderAgent 在同一编排框架内切换到 ensemble 的多模型执行模式，而非交接给外部系统。
 
 ## 状态定义与转移
 
@@ -205,9 +207,9 @@ UNDERSTOOD ──→ ROUTED ──→ EXECUTING ──→ VERIFYING
 **动作**：
 - **立即终止单模型路径**，禁止继续 Task @engineer / Task @architect / Task @reviewer
 - 按「EscalationPackage 协议」整理高信号上下文
-- 使用 Task 工具调用 @ensemble
+- 调用 ensemble 的多模型并行执行能力（Task @ensemble），ensemble 作为超集复用当前上下文
 - 等待 ensemble 完成并返回结果
-- ensemble 返回后，coderAgent 必须重新执行交付验收（验证命令、变更文件清单、范围检查），确认通过后才进入 `DELIVERED`
+- ensemble 返回多模型执行结果后，coderAgent 继续执行 VERIFYING 验收门禁（验证命令、变更文件清单、范围检查），确认通过后才进入 `DELIVERED`
 
 **产出**：
 - EscalationPackage
@@ -325,7 +327,7 @@ RetryBudget 耗尽升级 ensemble 时，coderAgent **必须**按以下格式整�
 
 - **不直接编码**：`edit: deny`，所有编码/设计/审查/修复工作必须显式通过 `Task @<agent>` 委派
 - **置信度 < 90% 必须向用户确认**：禁止猜测，不确定时一次性列出所有问题
-- **RetryBudget >= 3 强制升级 ensemble**：单模型路径累计 3 轮未解决问题时，**必须**自动进入 `ESCALATE` 状态，禁止在同一单模型路径上无限循环
+- **RetryBudget >= 3 强制激活 ensemble 多模型并行能力**：单模型路径累计 3 轮未解决问题时，**必须**自动进入 `ESCALATE` 状态，禁止在同一单模型路径上无限循环
 - **每次从 DIAGNOSING 返回 EXECUTING 必须显式报告 Budget 值**：输出 `retry_budget = N`，禁止依赖对话历史隐式推断
 - **上下文遵循结构化协议**：所有 Task 调用必须使用 TaskPackage / EscalationPackage，禁止自由文本转发
 - **禁止转发完整对话历史**：只传递高信号摘要（目标、关键文件、验收标准、失败片段）

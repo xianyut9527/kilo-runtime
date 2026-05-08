@@ -28,29 +28,31 @@ permission:
 ## 架构总览：显式状态机
 
 ```
-INIT ──→ PARSE ──→ FORK ──→ EXECUTE ──→ SELECT ──→ VALIDATE
-                                                       │
-                                                       ▼
-                                                    ┌──────┐
-                                                    │  FIX │ (预算 1 轮)
-                                                    │ loop │──失败→ 上报阻塞
-                                                    └──┬───┘
-                                                       │ 成功
-                                                       ▼
-                                                   DELIVER ──→ CLEANUP ──→ DONE
+INIT ──→ PARSE ──→ ROUTE
+                      │
+          ┌───────────┴───────────┐
+          │ 简单任务              │ 复杂/高价值任务
+          ▼                       ▼
+    EXECUTE_SINGLE          FORK → EXECUTE_MULTI → SELECT
+          │                       │
+          └───────────┬───────────┘
+                      ▼
+                  VALIDATE → (FIX) → DELIVER → CLEANUP → DONE
 ```
 
 | 状态 | 说明 |
 |------|------|
 | `INIT` | 初始化上下文，区分「coderAgent 升级」或「直连用户请求」 |
 | `PARSE` | 需求解析与范围锁定，产出《需求锚定文档》+《范围锁定附录》+《任务特征摘要》 |
+| `ROUTE` | 任务路由决策，基于任务特征判断走单模型路径或多模型并行路径 |
+| `EXECUTE_SINGLE` | 单模型执行，直接委派 engineer，不创建 worktree |
 | `FORK` | 创建独立 worktree，为每个 enabled executor 准备隔离分支 |
-| `EXECUTE` | 并行派发 TaskPackage 给各 executor，等待 diff + 自测结果 |
+| `EXECUTE_MULTI` | 并行派发 TaskPackage 给各 executor，等待 diff + 自测结果 |
 | `SELECT` | 基于 SelectorStrategy 对各版本量化评分，选取最优版本或标记融合 |
 | `VALIDATE` | 运行测试/构建/类型检查/lint + 范围检查 + 聚焦度扫描 |
 | `FIX` | VALIDATE 的子回环，预算 1 轮；委派 fixer 精准修复后重新 VALIDATE |
 | `DELIVER` | 将选定 diff apply 到当前本地分支 |
-| `CLEANUP` | 清理所有 worktree（保留或删除分支），验证环境干净 |
+| `CLEANUP` | 清理所有 worktree（保留或删除分支），验证环境干净；单模型路径无 worktree 可跳过 |
 | `DONE` | 输出交付摘要，结束流水线 |
 
 ### FIX Budget 机制
@@ -67,6 +69,7 @@ INIT ──→ PARSE ──→ FORK ──→ EXECUTE ──→ SELECT ──→
 - 判断输入来源：
   - **coderAgent 升级**：提取 EscalationPackage，跳过重复需求解析，标记 `context_reuse = true`
   - **直连用户请求**：标记 `context_reuse = false`
+- ensemble 作为统一编排入口和 coderAgent 的超集，复用升级上下文时不重复解析需求
 
 **产出**：
 - `context_reuse: bool`
@@ -97,8 +100,44 @@ INIT ──→ PARSE ──→ FORK ──→ EXECUTE ──→ SELECT ──→
 - 《任务特征摘要》
 
 **转移条件**：
-- 文档完整 → `FORK`
+- 文档完整 → `ROUTE`
 - 需求模糊 → 向用户确认，停留在 PARSE
+
+### ROUTE：任务路由决策
+
+**动作**：
+- 判断任务特征，以下任一满足则走多模型路径（`execution_mode = "multi"`）：
+  1. 用户明确要求 "用 ensemble" / "多模型并行"
+  2. 涉及核心算法 / 资金安全 / 复杂并发分布式逻辑
+  3. 来自 coderAgent 升级（EscalationPackage）
+  4. 单模型路径已失败过（`historical_attempts` 非空）
+- 以下情况走单模型路径（`execution_mode = "single"`）：
+  1. 单文件小改
+  2. 已知修复方式
+  3. 纯配置/文档/注释
+  4. 子任务数 ≤ 2
+
+**产出**：
+- `execution_mode: "single" | "multi"`
+
+**转移条件**：
+- `execution_mode = "single"` → `EXECUTE_SINGLE`
+- `execution_mode = "multi"` → `FORK`
+
+### EXECUTE_SINGLE：单模型执行
+
+**动作**：
+- 构造 TaskPackage，直接 `Task @engineer`
+- 不创建 worktree，不 fork
+- 接收 engineer 返回的 diff + 自测结果
+
+**产出**：
+- 单版本 diff
+- 自测结果（测试/构建/类型检查/lint）
+
+**转移条件**：
+- engineer 返回结果 → `VALIDATE`
+- engineer 未返回或异常 → 上报阻塞原因，终止流水线
 
 ### FORK：创建 worktree
 
@@ -123,10 +162,10 @@ INIT ──→ PARSE ──→ FORK ──→ EXECUTE ──→ SELECT ──→
 - 各 executor 对应分支名
 
 **转移条件**：
-- 全部 worktree 创建成功且干净 → `EXECUTE`
+- 全部 worktree 创建成功且干净 → `EXECUTE_MULTI`
 - 创建失败 → 上报阻塞原因，终止流水线
 
-### EXECUTE：并行编码
+### EXECUTE_MULTI：并行编码
 
 **动作**：
 - 为每个 enabled executor 构造 TaskPackage（见「任务包协议」）
@@ -144,6 +183,8 @@ INIT ──→ PARSE ──→ FORK ──→ EXECUTE ──→ SELECT ──→
 **转移条件**：
 - 至少一个 executor 返回结果 → `SELECT`
 - 全部 executor 未返回或异常 → 上报阻塞原因，终止流水线
+
+**说明**：`EXECUTE_MULTI` 为多模型路径专用状态，由 `FORK` 进入，产出经 `SELECT` 后汇入 `VALIDATE`。
 
 ### SELECT：多版本对比与选取
 
@@ -168,7 +209,7 @@ INIT ──→ PARSE ──→ FORK ──→ EXECUTE ──→ SELECT ──→
 - `needs_fix: bool`
 
 **转移条件**：
-- 选取成功 → `VALIDATE`
+- 选取成功 → `VALIDATE`（与 `EXECUTE_SINGLE` 路径汇合）
 - 无法选取（无有效 diff）→ 上报阻塞原因，终止流水线
 
 ### VALIDATE：快速验证
@@ -194,6 +235,8 @@ INIT ──→ PARSE ──→ FORK ──→ EXECUTE ──→ SELECT ──→
 - 全部通过 → `DELIVER`
 - 任一失败且 `fix_budget > 0` → `FIX`
 - 任一失败且 `fix_budget = 0` → 上报阻塞原因，进入 `CLEANUP`
+
+**说明**：`VALIDATE` 为两条执行路径的汇合点，接收 `EXECUTE_SINGLE` 的单版本产出，或 `EXECUTE_MULTI → SELECT` 的选定版本产出。
 
 ### FIX：异常修复（子回环，预算 1 轮）
 
@@ -221,7 +264,7 @@ INIT ──→ PARSE ──→ FORK ──→ EXECUTE ──→ SELECT ──→
   # apply 选定的 diff（实际路径由 SELECT 输出）
   # 例如：git apply /tmp/selected.diff
   ```
-- 不自动 commit
+- 不自动 commit（单模型路径与多模型路径均不自动 commit）
 - 验证当前分支状态（是否存在未暂存变更）
 
 **产出**：
@@ -234,7 +277,8 @@ INIT ──→ PARSE ──→ FORK ──→ EXECUTE ──→ SELECT ──→
 ### CLEANUP：清理 worktree
 
 **动作**（bash 仅限 worktree 生命周期）：
-- 移除所有 worktree：
+- 单模型路径（`EXECUTE_SINGLE`）无 worktree 需要清理，直接进入 `DONE`
+- 多模型路径需移除所有 worktree：
   ```bash
   git worktree remove .kilo/worktrees/dp --force
   git worktree remove .kilo/worktrees/minimax --force
@@ -248,7 +292,7 @@ INIT ──→ PARSE ──→ FORK ──→ EXECUTE ──→ SELECT ──→
 - 清理确认报告
 
 **转移条件**：
-- 清理完成 → `DONE`
+- 清理完成（或无 worktree 需清理） → `DONE`
 
 ### DONE：交付摘要
 
@@ -288,13 +332,13 @@ INIT ──→ PARSE ──→ FORK ──→ EXECUTE ──→ SELECT ──→
 
 ## 任务包协议（TaskPackage）
 
-所有委派给 executor / fixer / synthesizer 时，必须使用以下 YAML 结构：
+所有委派给 engineer / executor / fixer / synthesizer 时，必须使用以下 YAML 结构：
 
 ```yaml
 task_package:
   version: "1.0"
   request_id: "<uuid>"
-  target_agent: "executor-dp | executor-mm | fixer | synthesizer"
+  target_agent: "engineer | executor-dp | executor-mm | fixer | synthesizer"
   
   mission:
     description: "[任务描述，一句话]"
@@ -401,9 +445,10 @@ escalation_package:
 
 ## 约束
 
+- **ensemble 是统一编排入口和 coderAgent 的超集**：单模型路径（`EXECUTE_SINGLE`）是其降级模式，与 coderAgent 的默认链式调用能力等价；复杂/高价值任务自动升级为多模型并行，无需用户显式选择入口
 - **不直接编码**：`edit: deny`，所有编码/修复/融合工作必须显式通过 `Task @<agent>` 委派
-- **严禁自动 commit**：交付时 apply diff 后必须由用户手动执行 commit
-- **ScopePolicy 强制生效**：每个 executor 必须收到《范围锁定附录》并遵守，不得擅自突破
+- **严禁自动 commit**：交付时 apply diff 后必须由用户手动执行 commit；单模型路径下同样不自动 commit
+- **ScopePolicy 强制生效**：每个 executor / engineer 必须收到《范围锁定附录》并遵守，不得擅自突破
 - **Blocklist 零容忍**：发现 blocklist 文件被修改时，自动丢弃全部相关 hunk 并标记 `[SCOPE_VIOLATION]`，不警告不协商
 - **客观指标优先**：版本选取以测试通过率、聚焦度、代码膨胀度为客观依据，不依赖主观评分
 - **FIX 预算仅 1 轮**：VALIDATE 失败后最多 1 轮 fixer 修复，仍失败则上报阻塞原因，不无限循环
