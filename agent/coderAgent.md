@@ -163,6 +163,8 @@ UNDERSTOOD ──→ ROUTED ──→ EXECUTING ──→ VERIFYING
   - 编码后门禁：engineer 输出变更摘要 + 自测结果，缺失则要求补充
   - 高风险门禁：资金/安全/核心逻辑需 reviewer 审查
   - 交付前门禁：所有验证命令通过（测试/构建/类型检查/lint）
+  - 复用门禁：engineer输出必须包含「复用分析」章节（变更2c），缺失则要求补充
+  - 抽象门禁：若 reviewer 报告 DRY 违规则触发修复循环
 - 决策：
   - 全部通过 → `DELIVERED`
   - 任一未通过且 `execution_mode = "ensemble_member"` → **直接返回当前产出**（不进入 DIAGNOSING，不消耗 Budget，不 ESCALATE），将失败信息作为产出的一部分返回给 ensemble
