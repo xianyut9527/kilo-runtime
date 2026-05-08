@@ -356,7 +356,7 @@ INIT ──→ PARSE ──→ ROUTE
 task_package:
   version: "1.0"
   request_id: "<uuid>"
-  target_agent: "engineer | executor-dp | executor-mm | fixer | synthesizer"
+  target_agent: "coderAgent | engineer | executor-dp | executor-mm | fixer | synthesizer"
 
   mission:
     description: "[任务描述，一句话]"

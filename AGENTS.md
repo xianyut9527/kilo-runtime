@@ -137,7 +137,11 @@ Task @智能体:
 task_package:
   version: "1.0"
   request_id: "<uuid>"
-  target_agent: "architect | engineer | reviewer | executor-dp | executor-mm | fixer | synthesizer"
+  target_agent: "coderAgent | architect | engineer | reviewer | executor-dp | executor-mm | fixer | synthesizer"
+  execution_mode: "standalone | ensemble_member"
+  ensemble_context:
+    enabled: true | false
+    parent_request_id: "<uuid>"
 
   mission:
     description: "[任务描述，一句话]"
