@@ -97,7 +97,7 @@
          └→ reviewer（审查者）— 质量门禁
 ```
 
-### 路径 B：多模型并行（/ensemble）
+### 路径 B：多模型并行（ensemble）
 
 适用：关键模块、高质量要求任务。由 `ensemble` 编排，利用多模型差异提升质量上限：
 
@@ -114,8 +114,8 @@
 ### 选择原则
 
 - 日常快速开发 → `@coderAgent` 或直接用默认
-- 核心模块/资金安全/算法关键 → `/ensemble <需求>`
-- 单模型路径连续 3 轮未能解决 → 自动升级 `/ensemble`
+- 核心模块/资金安全/算法关键 → `@ensemble <需求>`
+- 单模型路径连续 3 轮未能解决 → 自动升级 `@ensemble`
 
 ## 委派格式
 
@@ -157,7 +157,7 @@ Task @智能体:
 
 ### 自动升级机制
 
-当单模型路径（coderAgent → architect/engineer/reviewer）连续多轮未能解决问题时，coderAgent 自动切换为 `/ensemble` 多模型并行编排。
+当单模型路径（coderAgent → architect/engineer/reviewer）连续多轮未能解决问题时，coderAgent 自动切换为 `@ensemble` 多模型并行编排。
 
 **触发条件**：
 

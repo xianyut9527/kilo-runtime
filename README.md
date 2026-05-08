@@ -33,8 +33,6 @@ kilo_config/
 │   ├── fixer.md
 │   ├── executor-dp.md
 │   └── executor-mm.md
-├── command/
-│   └── ensemble.md
 ├── install.ps1
 ├── install.sh
 └── README.md
