@@ -1,7 +1,7 @@
 ---
 description: 执行智能体 C。偏完整性与对抗性检查，强调边界条件、兼容性、失败路径和隐藏遗漏。
 mode: subagent
-model: hsyq/kimi-k2.6
+model: deepseek/deepseek-v4
 hidden: true
 color: "#A855F7"
 worktree: kimi

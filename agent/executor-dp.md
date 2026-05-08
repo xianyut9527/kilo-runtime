@@ -1,7 +1,7 @@
 ---
 description: 执行智能体 A。偏稳健与系统性，强调正确性、回归控制和范围纪律。
 mode: subagent
-model: hsyq/glm-5.1
+model: deepseek/deepseek-v4-flash
 hidden: true
 color: "#6B9EFF"
 worktree: dp

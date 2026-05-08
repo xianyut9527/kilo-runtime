@@ -1,7 +1,7 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
-  "model": "hsyq/glm-5.1",
-  "small_model": "hsyq/doubao-seed-2.0-mini",
+  "model": "deepseek/deepseek-v4-flash",
+  "small_model": "minimax-cn-coding-plan/MiniMax-M2.7-highspeed",
   "default_agent": "coderAgent",
   "instructions": [
     "./.kilo/instructions/core.md",
