@@ -8,7 +8,7 @@ permission:
     "**/*": allow
   edit: deny
   task: allow
-steps: 120
+steps: 50
 ---
 
 # ensemble

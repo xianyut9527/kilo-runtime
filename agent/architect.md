@@ -3,7 +3,7 @@ description: 规划者。只输出架构设计文档，不执行任何代码编�
 mode: subagent
 hidden: true
 color: "#0EA5E9"
-steps: 50
+steps: 20
 permission:
   bash: deny
   read: allow

@@ -3,7 +3,7 @@ description: 主审查者。负责统一质量门禁，按需并行调用专审 
 mode: subagent
 hidden: true
 color: "#F59E0B"
-steps: 50
+steps: 25
 permission:
   bash: allow
   read: allow

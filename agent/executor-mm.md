@@ -12,7 +12,7 @@ permission:
     "**/*": allow
   edit:
     "**/*": allow
-steps: 50
+steps: 25
 ---
 
 # executor-mm

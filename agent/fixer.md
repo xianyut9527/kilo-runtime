@@ -9,7 +9,7 @@ permission:
     "**/*": allow
   edit:
     "**/*": allow
-steps: 60
+steps: 25
 ---
 
 # fixer

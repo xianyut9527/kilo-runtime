@@ -8,7 +8,7 @@ permission:
   read:
     "**/*": allow
   edit: deny
-steps: 40
+steps: 20
 ---
 
 # checker

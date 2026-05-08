@@ -3,7 +3,7 @@ description: 实现者。端到端闭环：读取→编码→测试→修复。�
 mode: subagent
 hidden: true
 color: "#10B981"
-steps: 80
+steps: 25
 permission:
   bash: allow
   read:
