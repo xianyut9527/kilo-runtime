@@ -81,6 +81,20 @@ permission:
     └── 失败 → 循环（最多3轮）
               │
               └── 3轮后仍失败 → 上报 coderAgent
+              │
+              └── 修复成功 ≥2 次同类型问题? → 输出 [LEARNED_RULE] 块，交由 coderAgent 写入
+```
+
+### 规则提炼输出
+
+当同一类型问题在本次会话中被修复 ≥2 次时，在变更摘要末尾输出以下格式的规则提炼块：
+
+```
+## [LEARNED_RULE]
+- 标题: [10字以内]
+- 触发条件: [场景描述]
+- 约束: [一句话约束]
+- 标签: [DRY / perf / security / api-design / error-handling / naming / scope / testing]
 ```
 
 ### 上报内容

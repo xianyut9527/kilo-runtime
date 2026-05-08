@@ -3,7 +3,7 @@
   "model": "deepseek/deepseek-v4-flash",
   "small_model": "minimax-cn-coding-plan/MiniMax-M2.7-highspeed",
   "default_agent": "coderAgent",
-  "instructions": ["./AGENTS.md"],
+  "instructions": ["./AGENTS.md", "./.kilo/learned/rules.md"],
   "snapshot": true,
   "compaction": {
     "auto": true,
