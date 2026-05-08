@@ -20,7 +20,7 @@ kilo_config/
 │   ├── executor-dp.md     # 执行智能体 A（DeepSeek）
 │   └── executor-mm.md     # 执行智能体 B（MiniMax）
 ├── command/               # 自定义命令（全局可用）
-│   └── ensemble.md        # /ensemble 多模型并行执行
+│   （空目录，ensemble 通过 agent 直接调用，无需 command 入口）
 ├── install.ps1            # Windows 安装脚本
 ├── install.sh             # macOS/Linux 安装脚本
 └── README.md

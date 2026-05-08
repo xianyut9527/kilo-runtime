@@ -73,9 +73,10 @@
 
 - **ensemble 是 coderAgent 的超集**：ensemble 包含 coderAgent 的全部编排能力（需求解析、路由、验收、交付），并扩展了多模型并行执行引擎。
 - **coderAgent 是 ensemble 的轻量快捷入口**：适合日常快速任务，默认走单模型路径（architect → engineer → reviewer），遇到复杂情况自动升级 ensemble 的多模型能力。
-- **ensemble 作为独立入口时**：内置 ROUTE 状态自动判断单模型 vs 多模型，简单任务直接 `Task @engineer`，复杂任务才 fork worktree 并行执行。
+- **ensemble 作为独立入口时**：内置 ROUTE 状态自动判断单模型 vs 多模型，简单任务唤起 coderAgent（standalone）独立执行，复杂任务才 fork worktree 并行执行。
 - **coderAgent 既可独立运行（日常快速任务），也可被 ensemble 编入并行执行池（作为标准基线参与多版本对比）**
 - **ensemble 的并行执行池 = coderAgent（标准单兵基线）+ 各 executor（专项执行器），ensemble 统一对比选取**
+- **双向互唤起**：coderAgent（军）独立作战遇困难 → ESCALATE 唤起 ensemble（军团）支援；ensemble（军团）发现任务简单 → EXECUTE_SINGLE 唤起 coderAgent（军）独立执行。两种唤起均在同一编排框架内完成
 
 ### 路径 A：单模型智能体链（默认）
 
@@ -92,7 +93,7 @@ coderAgent 是 ensemble 的轻量快捷入口，当 Budget 耗尽或用户明确
 
 coderAgent 的 ESCALATE 不是"交接给另一个系统"，而是"在同一编排框架内激活多模型执行模式"。
 
-### 路径 B：多模型并行（/ensemble）
+### 路径 B：多模型并行（@ensemble）
 
 适用：关键模块、高质量要求任务。由 `ensemble` 编排，利用多模型差异提升质量上限。
 
@@ -100,20 +101,20 @@ ensemble 可以直接被用户调用，内部自动判断任务复杂度，简�
 
 ```
 用户 → ensemble（编排器）
-         ├→ [单模型降级路径] Task @coderAgent（标准单兵基线）/ @engineer / @architect / @reviewer
+         ├→ [单模型降级路径] Task @coderAgent（standalone，军独立执行）/ @engineer / @architect / @reviewer
          └→ [多模型并行路径]
               ├→ 步骤1: 需求解析 + 范围锁定（生成任务特征摘要）
               ├→ 步骤2: 创建 worktree + 并行编码（executor-dp + executor-mm，任务自适应）
               ├→ 步骤3: 多版本快速对比与选取（测试通过率 > 聚焦度 > 对齐度 > 膨胀度）
               ├→ 步骤4: 快速验证（测试/构建/类型检查/lint + 范围检查 + 聚焦度扫描）
-              ├→ 步骤5: 异常修复（最多 1 轮，基于验证失败信息）
+              ├→ 步骤5: 异常修复（最多 2 轮，基于验证失败信息）
               └→ 步骤6: 交付
 ```
 
 ### 选择原则
 
 - 日常快速开发 → `@coderAgent`（轻量入口，自动判断升级）
-- 核心模块/资金安全/算法关键 → `/ensemble <需求>`（ensemble 入口，内置自动路由）
+- 核心模块/资金安全/算法关键 → `@ensemble`（agent 直接调用，内置自动路由）
 - 单模型路径连续 3 轮未能解决 → coderAgent 自动激活 ensemble 多模型能力
 
 ## 委派格式（简化格式，适用于直接调用子智能体）
@@ -186,6 +187,8 @@ task_package:
 > ensemble 作为超集，单模型路径是其内置降级能力。
 >
 > coderAgent 作为 ensemble 的并行池成员时，以 ensemble_member 模式运行，一次执行，成败直接返回，不进入单模型的 DIAGNOSING 循环。
+>
+> 双向互唤起：coderAgent 与 ensemble 不是单向升级关系，而是互相唤起。简单任务由 ensemble 唤起 coderAgent 执行，困难任务由 coderAgent 唤起 ensemble 支援。
 
 ## 质量门禁
 
@@ -197,12 +200,12 @@ task_package:
 
 ## 循环限制
 
-- 修复 → 复评循环最大 1 轮（ensemble 路径）
+- 修复 → 复评循环最大 2 轮（ensemble 路径）
 - 超过 3 轮向用户汇报阻塞原因
 
 ### 自动升级机制
 
-当单模型路径（coderAgent → architect/engineer/reviewer）连续多轮未能解决问题时，coderAgent 自动切换为 `/ensemble` 多模型并行编排。
+当单模型路径（coderAgent → architect/engineer/reviewer）连续多轮未能解决问题时，coderAgent 自动切换为 `@ensemble` 多模型并行编排（agent 直接调用，无需 command 入口）。
 
 **触发条件**：
 
