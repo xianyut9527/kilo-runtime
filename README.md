@@ -31,7 +31,8 @@ kilo_config/
 │   ├── checker.md
 │   ├── fixer.md
 │   ├── executor-dp.md
-│   └── executor-mm.md
+│   ├── executor-mm.md
+│   └── executor-cx.md
 ├── install.ps1
 ├── install.sh
 └── README.md
@@ -43,6 +44,7 @@ kilo_config/
 - **输出质量**：主模型切到更强的推理模型，子智能体职责更聚焦，减少互相打架的提示词。
 - **减少冗余**：把“所有 agent 共享的规则”上收进运行时指令，把“每个 agent 独有的职责”留在各自 prompt 中。
 - **扩展性**：预留 MCP 扩展入口，后续接入更多文档、GitHub、Sentry、Figma 等能力时，不需要重构主配置。
+- **复杂任务质量更高**：`ensemble` 现在采用三执行器并行候选、`checker + reviewer` 双门禁、必要时 `synthesizer / fixer` 兜底，适合复杂或反复修不稳的问题。
 
 ## 安装
 
