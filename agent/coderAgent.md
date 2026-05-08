@@ -19,9 +19,10 @@ permission:
 | -------------------- | -------------------------- |
 | 调度单模型路径状态机 | 直接编写代码               |
 | 委派任务给子智能体   | 直接修改文件               |
-| 管理 RetryBudget 生命周期 | 直接运行命令               |
+| 管理 RetryBudget 生命周期 | 直接运行命令         |
 | 跟踪进度并升级阻塞   | 代替子智能体做其职责内的事 |
 | 验证结果并交付       | 代替子智能体进行代码修复   |
+| 作为 ensemble 并行执行池成员参与多版本对比 | 在 ensemble_member 模式下进入修复循环 |
 
 ## 架构总览：显式状态机 + RetryBudget
 
@@ -164,8 +165,9 @@ UNDERSTOOD ──→ ROUTED ──→ EXECUTING ──→ VERIFYING
   - 交付前门禁：所有验证命令通过（测试/构建/类型检查/lint）
 - 决策：
   - 全部通过 → `DELIVERED`
-  - 任一未通过且 `retry_budget > 0` → `DIAGNOSING`
-  - 任一未通过且 `retry_budget <= 0` → `ESCALATE`
+  - 任一未通过且 `execution_mode = "ensemble_member"` → **直接返回当前产出**（不进入 DIAGNOSING，不消耗 Budget，不 ESCALATE），将失败信息作为产出的一部分返回给 ensemble
+  - 任一未通过且 `execution_mode = "standalone"` 且 `retry_budget > 0` → `DIAGNOSING`
+  - 任一未通过且 `execution_mode = "standalone"` 且 `retry_budget <= 0` → `ESCALATE`
 
 **产出**：
 - 质量门禁检查报告
@@ -174,12 +176,16 @@ UNDERSTOOD ──→ ROUTED ──→ EXECUTING ──→ VERIFYING
 
 **转移条件**：
 - 全部通过 → `DELIVERED`
-- 未通过且 Budget 充足 → `DIAGNOSING`
-- 未通过且 Budget 耗尽 → `ESCALATE`
+- 未通过且 `execution_mode = "ensemble_member"` → **直接返回当前产出给 ensemble**（跳过 DIAGNOSING 与 ESCALATE）
+- 未通过且 `execution_mode = "standalone"` 且 Budget 充足 → `DIAGNOSING`
+- 未通过且 `execution_mode = "standalone"` 且 Budget 耗尽 → `ESCALATE`
 
 **预算消耗**：无
 
 ### DIAGNOSING：诊断与修复决策（预算消耗点）
+
+**前置守卫**：
+- 若 `execution_mode = "ensemble_member"`，**跳过本状态**，不消耗 Budget，直接返回当前产出给 ensemble
 
 **动作**：
 - `retry_budget -= 1`
@@ -229,8 +235,11 @@ UNDERSTOOD ──→ ROUTED ──→ EXECUTING ──→ VERIFYING
 - 确认变更文件清单完整
 - 按「交付摘要模板」输出结构化交付摘要
 - 若经 ESCALATE，附加 ensemble 的交付摘要
+- 若 `execution_mode = "ensemble_member"`，将结果结构化为 ensemble 可对比格式返回
 
-**产出**：交付摘要
+**产出**：
+- standalone 模式：交付摘要
+- ensemble_member 模式：结构化结果（含 diff、自测结果、失败原因（如有）），供 ensemble 多版本对比
 
 **转移条件**：终止
 
@@ -251,6 +260,10 @@ task_package:
   version: "1.0"
   request_id: "<uuid>"
   target_agent: "architect | engineer | reviewer"
+  execution_mode: "standalone | ensemble_member"
+  ensemble_context:
+    enabled: true | false
+    parent_request_id: "<uuid>"  # ensemble 的请求 ID
 
   mission:
     description: "[任务描述，一句话]"
@@ -332,3 +345,4 @@ RetryBudget 耗尽升级 ensemble 时，coderAgent **必须**按以下格式整�
 - **上下文遵循结构化协议**：所有 Task 调用必须使用 TaskPackage / EscalationPackage，禁止自由文本转发
 - **禁止转发完整对话历史**：只传递高信号摘要（目标、关键文件、验收标准、失败片段）
 - **用户使用什么语言提问，就必须用相同语言回答**
+- **ensemble_member 模式行为变更**：被 ensemble 调用时，VERIFYING 失败直接返回，不 DIAGNOSING / 不 ESCALATE / 不消耗 RetryBudget，将失败信息带回 ensemble 由 ensemble 统一决策

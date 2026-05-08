@@ -25,6 +25,8 @@ permission:
 | 多版本对比与选取     | 代替子智能体进行代码修复   |
 | 验证门禁与交付       | 直接运行非 worktree 相关命令 |
 
+**并行执行池**：ensemble 是统一编排入口，并行执行池包含 `coderAgent`（标准单兵基线）+ 各 `executor`（专项执行器）。`coderAgent` 作为并行池成员时，以 `ensemble_member` 模式运行，一次执行，成败都直接返回。
+
 ## 架构总览：显式状态机
 
 ```
@@ -142,8 +144,11 @@ INIT ──→ PARSE ──→ ROUTE
 ### FORK：创建 worktree
 
 **动作**（bash 仅限 worktree 生命周期）：
-1. 扫描 agent 目录，收集所有 `enabled: true` 的 executor（读取 frontmatter 的 `worktree` 和 `model` 字段）
-2. 创建目录和独立 worktree：
+1. 扫描并行执行池成员：
+   - `coderAgent`：标准单兵基线，不创建独立 worktree（它自身是完整编排者，内部会调用 architect/engineer/reviewer）
+   - `executor-dp`：专项执行器 A（读取 frontmatter 的 `worktree` 和 `model` 字段）
+   - `executor-mm`：专项执行器 B（读取 frontmatter 的 `worktree` 和 `model` 字段）
+2. 为需要 worktree 的 executor 创建隔离分支：
    ```bash
    mkdir -p .kilo/worktrees
    git worktree add .kilo/worktrees/dp -b ensemble-dp
@@ -158,7 +163,7 @@ INIT ──→ PARSE ──→ ROUTE
 4. 确认每个 worktree 状态干净（无未提交修改）
 
 **产出**：
-- worktree 路径列表
+- worktree 路径列表（coderAgent 无 worktree）
 - 各 executor 对应分支名
 
 **转移条件**：
@@ -168,21 +173,23 @@ INIT ──→ PARSE ──→ ROUTE
 ### EXECUTE_MULTI：并行编码
 
 **动作**：
-- 为每个 enabled executor 构造 TaskPackage（见「任务包协议」）
+- 为每个并行执行池成员构造 TaskPackage（见「任务包协议」）
 - 并行派发：
+  - `Task @coderAgent`（标准单兵基线，携带 `execution_mode: "ensemble_member"` + `ensemble_context.enabled: true`，不创建 worktree）
   - `Task @executor-dp`（worktree: dp）
   - `Task @executor-mm`（worktree: minimax）
-- 各 executor 基于自身侧重方向自由发挥，不预设分工
+- 各执行器基于自身侧重方向自由发挥，不预设分工
 - 每个 TaskPackage 包含：《需求锚定文档》+《范围锁定附录》+《任务特征摘要》
+- `coderAgent` 被调用时携带 `execution_mode: "ensemble_member"` 和 `ensemble_context.enabled: true`，内部完整编排后返回最终 diff
 
 **产出**：
-- 各 executor 返回的 diff 文件路径
-- 各 executor 自测结果（测试/构建/类型检查/lint）
-- 各 executor 声明的侧重方向与实际 diff 说明
+- 各执行器返回的 diff 文件路径
+- 各执行器自测结果（测试/构建/类型检查/lint）
+- 各执行器声明的侧重方向与实际 diff 说明
 
 **转移条件**：
-- 至少一个 executor 返回结果 → `SELECT`
-- 全部 executor 未返回或异常 → 上报阻塞原因，终止流水线
+- 至少一个执行器返回结果 → `SELECT`
+- 全部执行器未返回或异常 → 上报阻塞原因，终止流水线
 
 **说明**：`EXECUTE_MULTI` 为多模型路径专用状态，由 `FORK` 进入，产出经 `SELECT` 后汇入 `VALIDATE`。
 
@@ -196,15 +203,16 @@ INIT ──→ PARSE ──→ ROUTE
    - `alignment_score`: 0.1
 2. 计算各版本综合得分
 3. 按规则决策：
-   - 仅一个 executor 通过测试 → 直接采纳该版本
-   - 多个 executor 通过测试且 diff 一致 → 直接采纳
-   - 多个 executor 通过测试但 diff 冲突：
+   - `coderAgent` 返回的版本作为「标准单兵基线」，executor 返回的版本作为「专项方案」
+   - 仅一个执行器通过测试 → 直接采纳该版本
+   - 多个执行器通过测试且 diff 一致 → 直接采纳
+   - 多个执行器通过测试但 diff 冲突：
      - 若冲突文件数 ≤ 2 且语义互补 → `Task @synthesizer` 融合
-     - 否则 → 按 WeightedScorer 取最高分版本
+     - 否则 → 按 WeightedScorer 统一对比选取最高分版本
    - 全部未通过测试 → 选取综合得分最高版本，标记 `needs_fix = true`
 
 **产出**：
-- `selected_version`: executor-dp | executor-mm | synthesized
+- `selected_version`: coderAgent | executor-dp | executor-mm | synthesized
 - `selection_rationale`: 一句话决策理由
 - `needs_fix: bool`
 
@@ -339,11 +347,11 @@ task_package:
   version: "1.0"
   request_id: "<uuid>"
   target_agent: "engineer | executor-dp | executor-mm | fixer | synthesizer"
-  
+
   mission:
     description: "[任务描述，一句话]"
     requirement: "[用户原始需求，不删减]"
-    
+
   context:
     code_state:
       changed_files: ["文件路径1", "文件路径2"]
@@ -356,17 +364,27 @@ task_package:
         result: "[失败原因/验证结果]"
     constraints:
       - "[项目技术栈/禁止事项/特殊要求]"
-      
+
   artifacts:
     requirement_anchor: "[《需求锚定文档》摘要或路径]"
     scope_policy: "[《范围锁定附录》摘要或路径]"
     task_profile: "[《任务特征摘要》摘要或路径]"
-    
+
+  execution_mode: "standalone" | "ensemble_member"
+  ensemble_context:
+    enabled: true | false
+    parent_request_id: "<uuid>"
+
   deliverables:
     - "diff 文件路径"
     - "自测结果（测试/构建/类型检查/lint）"
     - "变更说明"
 ```
+
+**说明**：
+- `execution_mode`：执行模式。`standalone` 为独立执行；`ensemble_member` 为作为 ensemble 并行池成员执行
+- `ensemble_context`：ensemble 上下文。`enabled: true` 表示该任务由 ensemble 派发，`parent_request_id` 为 ensemble 主请求 ID
+- **当委派给 `coderAgent` 时，必须设置 `execution_mode = ensemble_member`**
 
 **上下文传递原则**：
 - **高信号**：只传递目标、关键文件、验收标准、失败片段
@@ -417,8 +435,9 @@ escalation_package:
 ## 交付摘要
 
 ### 版本选取
-- 采纳版本: [executor-dp / executor-mm / synthesized]
+- 采纳版本: [coderAgent / executor-dp / executor-mm / synthesized]
 - 选取依据: [一句话说明决策理由，如"dp 测试全部通过且范围更聚焦"]
+- coderAgent: [通过测试 / 未通过 / 未完成] | 聚焦度: [描述] | 膨胀度: [+n/-n 行]
 - executor-dp: [通过测试 / 未通过 / 未完成] | 聚焦度: [描述] | 膨胀度: [+n/-n 行]
 - executor-mm: [通过测试 / 未通过 / 未完成] | 聚焦度: [描述] | 膨胀度: [+n/-n 行]
 
@@ -453,4 +472,5 @@ escalation_package:
 - **客观指标优先**：版本选取以测试通过率、聚焦度、代码膨胀度为客观依据，不依赖主观评分
 - **FIX 预算仅 1 轮**：VALIDATE 失败后最多 1 轮 fixer 修复，仍失败则上报阻塞原因，不无限循环
 - **bash 仅限 worktree 生命周期**：`bash: allow` 仅用于 worktree 的创建、清理、验证，禁止用于其他目的
+- **coderAgent 并行池成员约束**：`coderAgent` 作为并行池成员时，以 `ensemble_member` 模式运行，一次执行，成败都直接返回，不进入单模型的 DIAGNOSING 循环
 - **上下文传递遵循结构化协议**：所有 Task 调用必须使用 TaskPackage / EscalationPackage，禁止自由文本转发

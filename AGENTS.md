@@ -56,7 +56,7 @@
 
 | 智能体        | 类型           | 模式     | 职责                                                              |
 | ------------- | -------------- | -------- | ----------------------------------------------------------------- |
-| coderAgent    | 单模型编排     | all      | 任务理解、委派、跟踪、交付                                        |
+| coderAgent    | 单模型编排     | all      | 任务理解、委派、跟踪、交付；可作为 ensemble 并行执行池的标准单兵基线 |
 | architect     | 单模型规划     | subagent | 需求分析、架构设计、任务拆解                                      |
 | engineer      | 单模型实现     | subagent | 读取→编码→测试→修复                                               |
 | reviewer      | 单模型审查     | subagent | 独立质量门禁、动态验证                                            |
@@ -74,6 +74,8 @@
 - **ensemble 是 coderAgent 的超集**：ensemble 包含 coderAgent 的全部编排能力（需求解析、路由、验收、交付），并扩展了多模型并行执行引擎。
 - **coderAgent 是 ensemble 的轻量快捷入口**：适合日常快速任务，默认走单模型路径（architect → engineer → reviewer），遇到复杂情况自动升级 ensemble 的多模型能力。
 - **ensemble 作为独立入口时**：内置 ROUTE 状态自动判断单模型 vs 多模型，简单任务直接 `Task @engineer`，复杂任务才 fork worktree 并行执行。
+- **coderAgent 既可独立运行（日常快速任务），也可被 ensemble 编入并行执行池（作为标准基线参与多版本对比）**
+- **ensemble 的并行执行池 = coderAgent（标准单兵基线）+ 各 executor（专项执行器），ensemble 统一对比选取**
 
 ### 路径 A：单模型智能体链（默认）
 
@@ -98,7 +100,7 @@ ensemble 可以直接被用户调用，内部自动判断任务复杂度，简�
 
 ```
 用户 → ensemble（编排器）
-         ├→ [单模型降级路径] Task @engineer / @architect / @reviewer
+         ├→ [单模型降级路径] Task @coderAgent（标准单兵基线）/ @engineer / @architect / @reviewer
          └→ [多模型并行路径]
               ├→ 步骤1: 需求解析 + 范围锁定（生成任务特征摘要）
               ├→ 步骤2: 创建 worktree + 并行编码（executor-dp + executor-mm，任务自适应）
@@ -182,6 +184,8 @@ task_package:
 | 单模型路径累计 ≥3 轮未解决 | coderAgent 自动升级 @ensemble        | 多模型并行突破瓶颈         |
 
 > ensemble 作为超集，单模型路径是其内置降级能力。
+>
+> coderAgent 作为 ensemble 的并行池成员时，以 ensemble_member 模式运行，一次执行，成败直接返回，不进入单模型的 DIAGNOSING 循环。
 
 ## 质量门禁
 

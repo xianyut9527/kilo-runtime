@@ -16,4 +16,4 @@ subtask: true
 - 简单任务（单文件小改、已知修复、子任务 ≤2）→ 自动走单模型路径，直接 `Task @engineer`，高效等价于 coderAgent
 - 复杂/高价值任务（核心算法、资金安全、用户明确要求多模型）→ 自动启动多模型并行，fork worktree，多版本对比选取
 
-**职责边界**：本命令激活 ensemble 高级编排模式，不定义具体流程。所有执行逻辑由 `agent/ensemble.md` 统一状态机调度。
+**职责边界**：本命令激活 ensemble 高级编排模式，不定义具体流程。所有执行逻辑由 `agent/ensemble.md` 统一状态机调度。ensemble 是唯一的顶层编排入口，coderAgent 作为其可编入成员，既可独立响应日常任务，也可在 ensemble 的并行池中作为标准基线参与多版本对比。
