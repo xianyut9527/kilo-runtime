@@ -3,7 +3,7 @@ description: 架构专审。专注分层、依赖方向、接口契约、模块�
 mode: subagent
 hidden: true
 color: "#2563EB"
-steps: 40
+steps: 20
 permission:
   bash: deny
   read: allow

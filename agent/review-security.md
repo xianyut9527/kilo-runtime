@@ -3,7 +3,7 @@ description: 安全专审。专注输入边界、权限控制、敏感信息、�
 mode: subagent
 hidden: true
 color: "#DC2626"
-steps: 40
+steps: 20
 permission:
   bash: deny
   read: allow

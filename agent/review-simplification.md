@@ -3,7 +3,7 @@ description: 简化专审。专注重复实现、复杂度膨胀、过度抽象�
 mode: subagent
 hidden: true
 color: "#7C3AED"
-steps: 40
+steps: 20
 permission:
   bash: deny
   read: allow
