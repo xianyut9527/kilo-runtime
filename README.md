@@ -26,6 +26,9 @@ kilo_config/
 │   ├── architect.md
 │   ├── engineer.md
 │   ├── reviewer.md
+│   ├── review-security.md
+│   ├── review-architecture.md
+│   ├── review-simplification.md
 │   ├── ensemble.md
 │   ├── synthesizer.md
 │   ├── checker.md
@@ -44,7 +47,9 @@ kilo_config/
 - **输出质量**：主模型切到更强的推理模型，子智能体职责更聚焦，减少互相打架的提示词。
 - **减少冗余**：把“所有 agent 共享的规则”上收进运行时指令，把“每个 agent 独有的职责”留在各自 prompt 中。
 - **扩展性**：预留 MCP 扩展入口，后续接入更多文档、GitHub、Sentry、Figma 等能力时，不需要重构主配置。
-- **复杂任务质量更高**：`ensemble` 现在采用三执行器并行候选、`checker + reviewer` 双门禁、必要时 `synthesizer / fixer` 兜底，适合复杂或反复修不稳的问题。
+- **复杂任务质量更高**：`ensemble` 现在采用三执行器并行候选、`checker + reviewer lead` 双门禁、按需专审与必要时 `synthesizer / fixer` 兜底，适合复杂或反复修不稳的问题。
+- **审查更聚焦**：`reviewer` 已升级为主审查者，可按风险动态调度安全、架构、简化专审，减少单一 reviewer 的盲区。
+- **修复闭环更实用**：`fixer` 默认 1 轮修复，满足收敛条件时允许第 2 轮，兼顾质量上限与停止边界。
 
 ## 安装
 
