@@ -1,9 +1,9 @@
 ---
-description: 执行智能体 A。偏稳健与系统性，强调正确性、回归控制和范围纪律。
+description: 执行智能体 A。正向实现，偏稳健正确性，强调回归控制、边界处理和最小风险实现。
 mode: subagent
-model: deepseek/deepseek-v4-flash
+model: hsyq/kimi-k2.6
 hidden: true
-color: "#6B9EFF"
+color: "#22D3EE"
 worktree: dp
 enabled: true
 permission:

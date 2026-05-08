@@ -1,7 +1,7 @@
 ---
-description: 执行智能体 B。偏简洁与高复用，强调更小 diff、更少样板和更清晰实现。
+description: 执行智能体 B。简洁构建，偏更小 diff、更高复用、更清晰实现。
 mode: subagent
-model: minimax-cn-coding-plan/MiniMax-M2.7-highspeed
+model: deepseek/deepseek-v4-flash
 hidden: true
 color: "#00D9A6"
 worktree: minimax
