@@ -188,6 +188,8 @@ task_package:
 >
 > 双向互唤起：coderAgent 与 ensemble 不是单向升级关系，而是互相唤起。简单任务由 ensemble 唤起 coderAgent 执行，困难任务由 coderAgent 唤起 ensemble 支援。
 
+> TaskPackage 完整协议定义见本章「结构化委派格式」。EscalationPackage 协议定义见 `agent/ensemble.md` 的「EscalationPackage」章节。
+
 ## 质量门禁
 
 - 编码前：涉及架构变更/复杂逻辑/高风险/范围不确定的任务需 architect 先设计
@@ -201,22 +203,7 @@ task_package:
 - 修复 → 复评循环最大 2 轮（ensemble 路径）
 - 超过 3 轮向用户汇报阻塞原因
 
-### 自动升级机制
-
-当单模型路径（coderAgent → architect/engineer/reviewer）连续多轮未能解决问题时，coderAgent 自动切换为 `@ensemble` 多模型并行编排（agent 直接调用，无需 command 入口）。
-
-**触发条件**：
-
-- 累计修复 ≥3 轮仍未解决
-- 连续 2 次 architect 方案无效
-- 用户明确要求高质量/关键模块
-- 涉及复杂并发/分布式/算法逻辑
-
-**升级后流程**：
-
-1. ensemble 基于已有上下文继续，不重复需求解析
-2. ensemble 交付后，coderAgent 重新执行交付验收
-3. 若 ensemble 仍失败 → 上报用户阻塞原因，不再自动循环
+> coderAgent 内置 RetryBudget 机制与自动升级逻辑，详见 `agent/coderAgent.md`。
 
 ## 输出规范
 

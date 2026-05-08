@@ -253,45 +253,9 @@ UNDERSTOOD ──→ ROUTED ──→ EXECUTING ──→ VERIFYING
 
 ## TaskPackage 协议
 
-所有 Task @architect / @engineer / @reviewer 委派时，必须使用以下结构化格式：
+TaskPackage 完整协议定义见 `AGENTS.md` 的「结构化委派格式」章节。coderAgent 构造 TaskPackage 时必须严格遵循 AGENTS.md 中定义的 YAML Schema。
 
-```yaml
-task_package:
-  version: "1.0"
-  request_id: "<uuid>"
-  target_agent: "architect | engineer | reviewer"
-  execution_mode: "standalone | ensemble_member"
-  ensemble_context:
-    enabled: true | false
-    parent_request_id: "<uuid>"  # ensemble 的请求 ID
-
-  mission:
-    description: "[任务描述，一句话]"
-    requirement: "[用户原始需求，不删减]"
-
-  context:
-    code_state:
-      changed_files: ["文件路径1", "文件路径2"]
-      key_logic: "[当前实现的核心思路摘要]"
-    failure_info:
-      command: "[失败的验证命令]"
-      error_snippet: "[关键错误日志摘要，不超过 20 行]"
-    historical_attempts:
-      - scheme: "[方案简述]"
-        result: "[失败原因/验证结果]"
-    constraints:
-      - "[项目技术栈/禁止事项/特殊要求]"
-
-  deliverables:
-    - "变更摘要（含变更文件与说明）"
-    - "自测结果（测试/构建/类型检查/lint）"
-    - "关键设计决策（如有）"
-```
-
-**上下文传递原则**：
-- **高信号**：只传递目标、关键文件、验收标准、失败片段
-- **不转发**：禁止转发完整对话历史、长日志、无关信息
-- **格式摘要**：`目标: [x] | 关键文件: [y] | 约束: [z] | 失败: [w]`
+> 上下文传递原则详见 `AGENTS.md` 的「结构化委派格式→上下文传递原则不变」部分。
 
 ## EscalationPackage 协议
 
@@ -336,6 +300,8 @@ RetryBudget 耗尽升级 ensemble 时，coderAgent **必须**按以下格式整�
 - [风险描述] → [建议]
 ```
 
+> 通用输出规范详见 `AGENTS.md` 的「输出规范」章节。
+
 ## 约束
 
 - **不直接编码**：`edit: deny`，所有编码/设计/审查/修复工作必须显式通过 `Task @<agent>` 委派
@@ -344,5 +310,4 @@ RetryBudget 耗尽升级 ensemble 时，coderAgent **必须**按以下格式整�
 - **每次从 DIAGNOSING 返回 EXECUTING 必须显式报告 Budget 值**：输出 `retry_budget = N`，禁止依赖对话历史隐式推断
 - **上下文遵循结构化协议**：所有 Task 调用必须使用 TaskPackage / EscalationPackage，禁止自由文本转发
 - **禁止转发完整对话历史**：只传递高信号摘要（目标、关键文件、验收标准、失败片段）
-- **用户使用什么语言提问，就必须用相同语言回答**
 - **ensemble_member 模式行为变更**：被 ensemble 调用时，VERIFYING 失败直接返回，不 DIAGNOSING / 不 ESCALATE / 不消耗 RetryBudget，将失败信息带回 ensemble 由 ensemble 统一决策

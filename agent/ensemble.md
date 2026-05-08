@@ -350,58 +350,16 @@ INIT ──→ PARSE ──→ ROUTE
 
 ## 任务包协议（TaskPackage）
 
-所有委派给 coderAgent / engineer / executor / fixer / synthesizer 时，必须使用以下 YAML 结构：
+TaskPackage 完整协议定义见 `AGENTS.md` 的「结构化委派格式」章节。以下为 ensemble 特有的补充字段：
 
-```yaml
-task_package:
-  version: "1.0"
-  request_id: "<uuid>"
-  target_agent: "coderAgent | engineer | executor-dp | executor-mm | fixer | synthesizer"
-
-  mission:
-    description: "[任务描述，一句话]"
-    requirement: "[用户原始需求，不删减]"
-
-  context:
-    code_state:
-      changed_files: ["文件路径1", "文件路径2"]
-      key_logic: "[当前实现的核心思路摘要]"
-    failure_info:
-      command: "[失败的验证命令]"
-      error_snippet: "[关键错误日志摘要，不超过 20 行]"
-    historical_attempts:
-      - scheme: "[方案简述]"
-        result: "[失败原因/验证结果]"
-    constraints:
-      - "[项目技术栈/禁止事项/特殊要求]"
-
-  artifacts:
-    requirement_anchor: "[《需求锚定文档》摘要或路径]"
-    scope_policy: "[《范围锁定附录》摘要或路径]"
-    task_profile: "[《任务特征摘要》摘要或路径]"
-
-  execution_mode: "standalone" | "ensemble_member"
-  ensemble_context:
-    enabled: true | false
-    parent_request_id: "<uuid>"
-
-  deliverables:
-    - "diff 文件路径"
-    - "自测结果（测试/构建/类型检查/lint）"
-    - "变更说明"
-```
-
-**说明**：
 - `execution_mode`：执行模式。`standalone` 为独立执行；`ensemble_member` 为作为 ensemble 并行池成员执行
 - `ensemble_context`：ensemble 上下文。`enabled: true` 表示该任务由 ensemble 派发，`parent_request_id` 为 ensemble 主请求 ID
+- `artifacts`：ensemble 产出的结构化文档（需求锚定文档、范围锁定附录、任务特征摘要）
 - **委派给 `coderAgent` 时**：
   - 走单模型路径（`EXECUTE_SINGLE`）→ `execution_mode = "standalone"`
   - 走多模型路径（`EXECUTE_MULTI`）→ `execution_mode = "ensemble_member"`
 
-**上下文传递原则**：
-- **高信号**：只传递目标、关键文件、验收标准、失败片段
-- **不转发**：禁止转发完整对话历史、长日志、无关信息
-- **格式摘要**：`目标: [x] | 关键文件: [y] | 约束: [z] | 失败: [w]`
+> 上下文传递原则详见 `AGENTS.md` 的「结构化委派格式→上下文传递原则不变」部分。
 
 ## EscalationPackage
 
@@ -473,6 +431,8 @@ escalation_package:
 ### 未解决问题（如有）
 - [问题描述] → [当前状态]
 ```
+
+> 通用输出规范详见 `AGENTS.md` 的「输出规范」章节。
 
 ## 约束
 
