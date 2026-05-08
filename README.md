@@ -4,11 +4,12 @@ Kilo 全局配置维护仓库。通过全局配置 + 工作区继承，让所有
 
 ## 当前设计
 
-- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`./.kilo/instructions/workflow.md` 和 `./.kilo/learned/rules.md`，避免把长篇设计文档整份塞进每个 session。
+- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md` 和 `./.kilo/instructions/workflow.md`，避免把长篇设计文档整份塞进每个 session。
 - **长文档转为参考资料**：`AGENTS.md` 保留为设计标准和人工维护参考，不再承担高频运行时注入职责。
 - **模型分层更清晰**：主模型改为 `hsyq/glm-5.1`，侧重高质量推理与中文指令跟随；轻量模型改为 `hsyq/doubao-seed-2.0-mini`，承担更便宜、更快的轻任务。
 - **扩展入口内置**：默认启用 `context7` 远程 MCP 作为最新文档检索入口；预置 `github` MCP 配置，默认关闭，填入 `GITHUB_PAT` 后可启用。
 - **子智能体 prompt 瘦身**：保留各 agent 的职责差异，移除大量重复的全局规则，减少 token 开销和指令冲突。
+- **持续改进基于验证闭环**：质量提升依赖测试、构建、类型检查、review 审查与多模型升级，不依赖自动改写规则文件。
 
 ## 目录结构
 
@@ -20,8 +21,6 @@ kilo_config/
 │   ├── instructions/
 │   │   ├── core.md               # 运行时核心规则
 │   │   └── workflow.md           # 运行时工作流规则
-│   └── learned/
-│       └── rules.md              # 自适应学习规则库
 ├── agent/                        # 智能体定义（全局可用）
 │   ├── coderAgent.md
 │   ├── architect.md
