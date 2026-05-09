@@ -125,16 +125,16 @@ description: 项目代码规范和最佳实践
 
 ```jsonc
 {
-  "model": "hsyq/glm-5.1",
-  "small_model": "hsyq/doubao-seed-2.0-mini",
+  "model": "deepseek/deepseek-v4-pro",
+  "small_model": "minimax-cn-coding-plan/MiniMax-M2.7-highspeed",
 }
 ```
 
 当前建议：
 
 ```
-高复杂度 / 规划 / 审查 / 多轮推理 → `hsyq/glm-5.1`
-轻量探索 / 简单改动 / 低成本任务   → `hsyq/doubao-seed-2.0-mini`
+高复杂度 / 规划 / 审查 / 多轮推理 → `deepseek/deepseek-v4-pro`
+轻量探索 / 简单改动 / 低成本任务   → `minimax-cn-coding-plan/MiniMax-M2.7-highspeed`
 ```
 
 **与当前配置的关系**：当前仓库先采用“高精度默认 + 轻量补位”的稳定策略。若后续 Kilo 官方提供成熟、可验证的自动路由能力，再评估是否替换。
@@ -419,7 +419,7 @@ jobs:
       - name: Run Kilo
         uses: Kilo-Org/kilocode/github@latest
         with:
-          model: hsyq/glm-5.1
+          model: deepseek/deepseek-v4-pro
           kilo_api_key: ${{ secrets.KILO_API_KEY }}
 ```
 
@@ -486,8 +486,8 @@ kilo run --auto "Generate API documentation from OpenAPI specs"
   "$schema": "https://app.kilo.ai/config.json",
 
   // === 模型路由 ===
-  "model": "hsyq/glm-5.1",
-  "small_model": "hsyq/doubao-seed-2.0-mini",
+  "model": "deepseek/deepseek-v4-pro",
+  "small_model": "minimax-cn-coding-plan/MiniMax-M2.7-highspeed",
   "default_agent": "coderAgent",
 
   // === 代码智能 ===

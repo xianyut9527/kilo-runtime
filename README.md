@@ -6,7 +6,7 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 
 - **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md` 和 `./.kilo/instructions/workflow.md`，避免把长篇设计文档整份塞进每个 session。
 - **长文档转为参考资料**：`AGENTS.md` 保留为设计标准和人工维护参考，不再承担高频运行时注入职责。
-- **高精度默认路由**：主模型使用 `hsyq/glm-5.1`，优先保证复杂任务的理解和推理质量；轻量模型使用 `hsyq/doubao-seed-2.0-mini`，承担更快、更便宜的轻任务。
+- **高精度默认路由**：主模型使用 `deepseek/deepseek-v4-pro`，优先保证复杂任务的理解和推理质量；轻量模型使用 `minimax-cn-coding-plan/MiniMax-M2.7-highspeed`，承担更快的轻任务和低成本探索。
 - **扩展入口内置**：默认启用 `context7` 远程 MCP 作为最新文档检索入口；预置 `github` MCP 配置，默认关闭，填入 `GITHUB_PAT` 后可启用。
 - **子智能体 prompt 瘦身**：保留各 agent 的职责差异，移除大量重复的全局规则，减少 token 开销和指令冲突。
 - **项目知识模板化**：新增 `templates/` 目录，用来为未来项目复制 `AGENTS.md`、skills 与 commands，避免继续把项目知识堆回全局层。
