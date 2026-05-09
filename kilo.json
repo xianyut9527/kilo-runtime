@@ -71,5 +71,14 @@
     "openTelemetry": false,
     "batch_tool": true,
     "continue_loop_on_deny": false
+  },
+  "indexing": {
+    "enabled": true,
+    "provider": "openai-compatible",
+    "model": "qwen3-vl-embedding",
+    "openai-compatible": {
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "apiKey": "xxx"
+    }
   }
 }
