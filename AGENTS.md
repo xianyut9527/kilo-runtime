@@ -94,14 +94,16 @@
 - 发现需求歧义、关键信息缺失或置信度不足时，先一次性澄清，不基于猜测执行。
 - 不做自我沉淀式“自动学习写规则”；只有经用户确认或项目维护者确认的规则，才进入长期文档。
 
-## 模板与落地
+## 项目级接入
 
-- 本仓库提供 `templates/` 目录，供真实项目复制使用。
-- 推荐优先从最接近的模板开始：
-  - `templates/backend-service/`
-  - `templates/frontend-web/`
-  - `templates/fullstack-system/`
-- 每个项目至少应补齐：
+- 本仓库不存放具体项目模板，避免把技术栈、目录结构或项目形态预设写回全局配置。
+- 真实项目应在项目根目录自行维护：
   - 项目级 `AGENTS.md`
-  - 3 到 5 个项目级 skills
-  - 2 到 4 个项目级 commands
+  - 项目级 `.kilo/skills/`
+  - 项目级 `.kilo/commands/`
+  - 必要时项目级 `kilo.json`
+- 推荐先从最小 context pack 开始：
+  - 1 个项目级 `AGENTS.md`
+  - 3 到 5 个高价值 skills
+  - 2 到 4 个高频 commands
+- 如何结合项目级配置，请参考 [PROJECT_CONTEXT_PACK.md](file:///e:/AI/agent/kilo_config/PROJECT_CONTEXT_PACK.md)。

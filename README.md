@@ -1,6 +1,6 @@
 # kilo_config
 
-Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路由、运行时规则、全局命令和项目模板；真正决定上下文理解精度的知识，应该放在每个项目自己的 `AGENTS.md`、`.kilo/skills/`、`.kilo/commands/` 中。
+Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路由、运行时规则和全局命令；真正决定上下文理解精度的知识，应该放在每个项目自己的 `AGENTS.md`、`.kilo/skills/`、`.kilo/commands/` 中。
 
 ## 当前设计
 
@@ -9,7 +9,7 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 - **高精度默认路由**：主模型使用 `deepseek/deepseek-v4-pro`，优先保证复杂任务的理解和推理质量；轻量模型使用 `minimax-cn-coding-plan/MiniMax-M2.7-highspeed`，承担更快的轻任务和低成本探索。
 - **扩展入口内置**：默认启用 `context7` 远程 MCP 作为最新文档检索入口；预置 `github` MCP 配置，默认关闭，填入 `GITHUB_PAT` 后可启用。
 - **子智能体 prompt 瘦身**：保留各 agent 的职责差异，移除大量重复的全局规则，减少 token 开销和指令冲突。
-- **项目知识模板化**：新增 `templates/` 目录，用来为未来项目复制 `AGENTS.md`、skills 与 commands，避免继续把项目知识堆回全局层。
+- **项目知识项目化**：项目知识不放在本仓库，而是下沉到真实项目根目录中的 `AGENTS.md`、`.kilo/skills/`、`.kilo/commands/`。
 - **持续改进基于验证闭环**：质量提升依赖测试、构建、类型检查、review 审查与多模型升级，不依赖自动改写规则文件。
 
 ## 目录结构
@@ -42,11 +42,7 @@ kilo_config/
 │   ├── executor-dp.md
 │   ├── executor-mm.md
 │   └── executor-cx.md
-├── templates/                    # 项目级智能包模板
-│   ├── README.md
-│   ├── backend-service/
-│   ├── frontend-web/
-│   └── fullstack-system/
+├── PROJECT_CONTEXT_PACK.md       # 项目级 context pack 接入指南
 ├── install.ps1
 ├── install.sh
 └── README.md
@@ -61,7 +57,7 @@ kilo_config/
 - **复杂任务质量更高**：`ensemble` 默认采用双执行器并行候选，在高风险、失败历史或深度检查场景下再加入第 3 个执行器；随后通过 `checker + reviewer lead` 双门禁、按需专审与必要时 `synthesizer / fixer` 兜底。
 - **审查更聚焦**：`reviewer` 已升级为主审查者，可按风险动态调度安全、架构、简化专审，减少单一 reviewer 的盲区。
 - **修复闭环更实用**：`fixer` 默认 1 轮修复，满足收敛条件时允许第 2 轮，兼顾质量上限与停止边界。
-- **上下文更可持续**：全局层不再承担项目知识记忆，未来大型系统可以直接从模板生成项目级 context pack。
+- **上下文更可持续**：全局层不再承担项目知识记忆，未来大型系统应在项目根目录建立自己的 context pack。
 
 ## 安装
 
@@ -95,12 +91,12 @@ chmod +x install.sh
 2. 运行对应平台安装脚本同步到全局目录。
 3. 重启 Kilo，让新配置生效。
 
-### 给真实项目创建“项目智能包”
+### 给真实项目接入项目级 context pack
 
-1. 从 `templates/` 选择最接近的模板目录。
-2. 将模板中的 `AGENTS.md`、`.kilo/skills/`、`.kilo/commands/` 复制到目标项目根目录。
-3. 按项目实际技术栈、边界、命令、接口和测试方式填写占位符。
-4. 让项目级知识覆盖全局默认行为，不要再把项目知识写回本仓库。
+1. 在项目根目录创建项目级 `AGENTS.md`、`.kilo/skills/`、`.kilo/commands/`。
+2. 只写该项目独有的架构、边界、契约、验证命令和高频工作流。
+3. 让项目级知识覆盖全局默认行为，不要再把项目知识写回本仓库。
+4. 具体写法参考 [PROJECT_CONTEXT_PACK.md](file:///e:/AI/agent/kilo_config/PROJECT_CONTEXT_PACK.md)。
 
 ## 全局命令
 
