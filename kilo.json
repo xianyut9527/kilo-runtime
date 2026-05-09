@@ -63,5 +63,13 @@
         }
       }
     }
+  },
+  "experimental": {
+    "codebase_search": true,
+    "semantic_indexing": true,
+    "agent_manager_tool": false,
+    "openTelemetry": false,
+    "batch_tool": true,
+    "continue_loop_on_deny": false
   }
 }
