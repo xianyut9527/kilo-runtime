@@ -39,9 +39,9 @@ kilo_config/
 │   ├── synthesizer.md
 │   ├── checker.md
 │   ├── fixer.md
-│   ├── executor-dp.md
-│   ├── executor-mm.md
-│   └── executor-cx.md
+│   ├── executor-A.md
+│   ├── executor-B.md
+│   └── executor-C.md
 ├── PROJECT_CONTEXT_PACK.md       # 项目级 context pack 接入指南
 ├── install.ps1
 ├── install.sh

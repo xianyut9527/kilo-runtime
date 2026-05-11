@@ -39,9 +39,9 @@
 | review-architecture   | 架构专审       | subagent | 分层、依赖方向、接口契约、跨模块影响                           |
 | review-simplification | 简化专审       | subagent | 重复实现、复杂度膨胀、过度抽象、范围外修改                     |
 | ensemble              | 多模型并行编排 | all      | 需求解析 → 并行编码 → 候选评估 → 双门禁 → 定向修复 → 交付      |
-| executor-dp           | 多模型执行 A   | subagent | 偏稳健正确性与回归控制                                         |
-| executor-mm           | 多模型执行 B   | subagent | 偏更小 diff、更高复用、更清晰实现                              |
-| executor-cx           | 多模型执行 C   | subagent | 偏完整性与对抗性检查，补足边界条件、兼容性、失败路径与隐藏遗漏 |
+| executor-A           | 多模型执行 A   | subagent | 偏稳健正确性与回归控制                                         |
+| executor-B           | 多模型执行 B   | subagent | 偏更小 diff、更高复用、更清晰实现                              |
+| executor-C           | 多模型执行 C   | subagent | 偏完整性与对抗性检查，补足边界条件、兼容性、失败路径与隐藏遗漏 |
 | synthesizer           | 多模型合并     | subagent | 在候选差异较大时进行必要融合                                   |
 | checker               | 客观验证门禁   | subagent | 运行测试、构建、类型检查、Lint，并检查范围与需求映射           |
 | fixer                 | 多模型修复     | subagent | 根据高置信失败项做定向修复                                     |
@@ -60,12 +60,16 @@
 
 用户 → `ensemble`
 ├→ 步骤 1: 需求解析与范围锁定
-├→ 步骤 2: 默认并行 `executor-dp + executor-mm`
-├→ 步骤 3: 满足条件时加入 `executor-cx`
-├→ 步骤 4: 候选评估与必要融合
-├→ 步骤 5: `checker + reviewer` 双门禁
-├→ 步骤 6: `fixer` 默认 1 轮，条件满足最多 2 轮
-└→ 步骤 7: 交付
+├→ 步骤 1.5: 任务包强制模板
+├→ 步骤 2: 默认并行 `executor-A + executor-B`
+├→ 步骤 3: 满足条件时加入 `executor-C`
+├→ 步骤 4: 设计预对齐（方案摘要）
+├→ 步骤 5: 并行实现
+├→ 步骤 6: 候选评估与必要融合
+├→ 步骤 7: `checker + reviewer` 双门禁
+├→ 步骤 7.5: 元认知检查点
+├→ 步骤 8: `fixer` 默认 1 轮，条件满足最多 2 轮
+└→ 步骤 9: 交付
 
 ## 上下文策略
 
