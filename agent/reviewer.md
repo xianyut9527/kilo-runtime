@@ -6,7 +6,7 @@ color: "#F59E0B"
 model: deepseek/deepseek-v4-pro
 glob: allow
 grep: allow
-steps: 25
+steps: 35
 permission:
   bash: allow
   read: allow
@@ -58,6 +58,7 @@ permission:
 - 汇总结论必须标注是否调用了专审以及各专审结论
 - 若无问题，明确写出"未发现阻塞性问题"
 - 对 bug 或排查类任务，结论中必须说明：问题类型、是否按正确层排查、是否真正命中根因
+- **步骤预算**：若专审调用过多导致 steps 紧张，优先调用与本次变更风险最相关的 1-2 个专审，其余风险在结论中文字说明即可。
 
 ## 输出模板
 

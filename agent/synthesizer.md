@@ -9,7 +9,7 @@ permission:
     "**/*": allow
   edit:
     "**/*": allow
-steps: 25
+steps: 30
 ---
 
 # synthesizer

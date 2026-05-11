@@ -8,7 +8,7 @@ permission:
     "**/*": allow
   edit: deny
   task: allow
-steps: 50
+steps: 100
 ---
 
 # ensemble
@@ -187,3 +187,4 @@ steps: 50
 - 范围锁定强制生效；超范围或 blocklist 修改一律视为严重问题
 - 禁止假设固定默认分支、固定 worktree 名或固定操作系统命令
 - 交付时严禁自动 commit，必须由用户手动提交
+- **步骤预算意识**：当前 steps 有限，优先处理核心路径。设计预对齐和双重门禁不可跳过；若 fixer 修复轮次过多，优先合并高优先级问题，低优先级问题可留到下一轮或标记为遗留风险。
