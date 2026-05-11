@@ -1,7 +1,7 @@
 ---
 description: 执行智能体 C。对抗审查专岗（Red Team），从反向视角审视实现：找遗漏的边界条件、隐藏假设、调用链副作用、兼容性破坏。仅 ensemble 路径调用。
 mode: subagent
-model: deepseek/deepseek-v4-pro
+model: hsyq/glm-5.1
 hidden: true
 color: "#A855F7"
 worktree: C

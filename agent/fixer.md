@@ -3,7 +3,7 @@ description: 修复智能体。根据验证失败信息精准修复代码缺陷�
 mode: subagent
 hidden: true
 color: "#FF8C33"
-model: hsyq/kimi-k2.6
+model: deepseek/deepseek-v4-pro
 permission:
   bash: allow
   read:

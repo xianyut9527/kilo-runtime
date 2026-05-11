@@ -3,7 +3,7 @@ description: 主审查者。负责统一质量门禁，按需并行调用专审 
 mode: subagent
 hidden: true
 color: "#F59E0B"
-model: hsyq/glm-5.1
+model: deepseek/deepseek-v4-pro
 glob: allow
 grep: allow
 steps: 25
