@@ -5,7 +5,8 @@
   "default_agent": "coderAgent",
   "instructions": [
     "./.kilo/instructions/core.md",
-    "./.kilo/instructions/workflow.md"
+    "./.kilo/instructions/workflow.md",
+    "./.kilo/instructions/reflection.md"
   ],
   "snapshot": true,
   "compaction": {
