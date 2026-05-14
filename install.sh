@@ -20,6 +20,7 @@ EXCLUDE_ITEMS=(
     "pnpm-lock.yaml"
     "bun.lock"
     "yarn.lock"
+    ".kilo/learned"
 )
 
 echo "========================================"
