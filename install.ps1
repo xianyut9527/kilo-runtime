@@ -4,7 +4,7 @@
 $Source = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Target = "$env:USERPROFILE\.config\kilo"
 
-$Exclude = @(".git", ".gitignore", ".git/", "install.ps1", "install.sh", "README.md", "LICENSE", "node_modules", "package.json", "package-lock.json", ".kilo/learned")
+$Exclude = @(".git", ".gitignore", ".git/", "install.ps1", "install.sh", "README.md", "LICENSE", "node_modules", "package.json", "package-lock.json")
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Kilo Global Config Installer" -ForegroundColor Cyan
