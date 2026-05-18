@@ -1,6 +1,6 @@
 # kilo_config
 
-Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路由、运行时规则和全局命令；真正决定上下文理解精度的知识，应该放在每个项目自己的 `AGENTS.md`、`.kilo/skills/`、`.kilo/commands/` 中。
+Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路由和运行时规则；真正决定上下文理解精度的知识，应该放在每个项目自己的 `AGENTS.md`、`.kilo/skills/`、`.kilo/commands/` 中。
 
 ## 当前设计
 
@@ -18,11 +18,6 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 kilo_config/
 ├── kilo.json                     # 全局配置入口
 ├── AGENTS.md                     # 全局骨架设计与长期参考文档
-├── commands/                     # 全局 slash commands
-│   ├── architect.md
-│   ├── review.md
-│   ├── test.md
-│   └── trace.md
 ├── .kilo/
 │   ├── instructions/
 │   │   ├── core.md               # 运行时核心规则
@@ -87,7 +82,7 @@ chmod +x install.sh
 
 ### 维护全局骨架
 
-1. 修改 `kilo.json`、`.kilo/instructions/*`、`agent/*.md` 或 `commands/*.md`。
+1. 修改 `kilo.json`、`.kilo/instructions/*` 或 `agent/*.md`。
 2. 运行对应平台安装脚本同步到全局目录。
 3. 重启 Kilo，让新配置生效。
 
@@ -97,13 +92,6 @@ chmod +x install.sh
 2. 只写该项目独有的架构、边界、契约、验证命令和高频工作流。
 3. 让项目级知识覆盖全局默认行为，不要再把项目知识写回本仓库。
 4. 具体写法参考 [PROJECT_CONTEXT_PACK.md](file:///e:/AI/agent/kilo_config/PROJECT_CONTEXT_PACK.md)。
-
-## 全局命令
-
-- `/architect`：调用 `architect`，先做需求拆解、边界识别和方案收敛。
-- `/review`：调用 `reviewer`，执行主审查并按需调度专审。
-- `/test`：调用 `engineer`，自动探测项目测试/构建/类型检查命令并执行验证。
-- `/trace`：调用 `coderAgent`，梳理需求到代码、配置、接口或调用链的映射关系。
 
 ## MCP 扩展
 
