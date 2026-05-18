@@ -1,6 +1,6 @@
 # kilo_config
 
-Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路由和运行时规则；真正决定上下文理解精度的知识，应该放在每个项目自己的 `AGENTS.md`、`.kilo/skills/`、`.kilo/commands/` 中。
+Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路由和运行时规则；真正决定上下文理解精度的知识，应该放在每个项目自己的 `AGENTS.md` 和 `.kilo/skills/` 中。
 
 ## 当前设计
 
@@ -9,7 +9,7 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 - **高精度默认路由**：主模型使用 `deepseek/deepseek-v4-pro`，优先保证复杂任务的理解和推理质量；轻量模型使用 `minimax-cn-coding-plan/MiniMax-M2.7-highspeed`，承担更快的轻任务和低成本探索。
 - **扩展入口内置**：默认启用 `context7` 远程 MCP 作为最新文档检索入口；预置 `github` MCP 配置，默认关闭，填入 `GITHUB_PAT` 后可启用。
 - **子智能体 prompt 瘦身**：保留各 agent 的职责差异，移除大量重复的全局规则，减少 token 开销和指令冲突。
-- **项目知识项目化**：项目知识不放在本仓库，而是下沉到真实项目根目录中的 `AGENTS.md`、`.kilo/skills/`、`.kilo/commands/`。
+- **项目知识项目化**：项目知识不放在本仓库，而是下沉到真实项目根目录中的 `AGENTS.md` 和 `.kilo/skills/`。
 - **持续改进基于验证闭环**：质量提升依赖测试、构建、类型检查、review 审查与多模型升级，不依赖自动改写规则文件。
 
 ## 目录结构
@@ -26,10 +26,7 @@ kilo_config/
 │   ├── coderAgent.md
 │   ├── architect.md
 │   ├── engineer.md
-│   ├── reviewer.md
-│   ├── review-security.md
-│   ├── review-architecture.md
-│   ├── review-simplification.md
+│   ├── reviewer.md                # 包含主审查 + security/architecture/simplification 专审
 │   ├── ensemble.md
 │   ├── synthesizer.md
 │   ├── checker.md
@@ -37,7 +34,7 @@ kilo_config/
 │   ├── executor-A.md
 │   ├── executor-B.md
 │   └── executor-C.md
-├── PROJECT_CONTEXT_PACK.md       # 项目级 context pack 接入指南
+
 ├── install.ps1
 ├── install.sh
 └── README.md
@@ -88,10 +85,10 @@ chmod +x install.sh
 
 ### 给真实项目接入项目级 context pack
 
-1. 在项目根目录创建项目级 `AGENTS.md`、`.kilo/skills/`、`.kilo/commands/`。
+1. 在项目根目录创建项目级 `AGENTS.md` 和 `.kilo/skills/`。
 2. 只写该项目独有的架构、边界、契约、验证命令和高频工作流。
 3. 让项目级知识覆盖全局默认行为，不要再把项目知识写回本仓库。
-4. 具体写法参考 [PROJECT_CONTEXT_PACK.md](file:///e:/AI/agent/kilo_config/PROJECT_CONTEXT_PACK.md)。
+4. 具体写法参考本仓库中的 `AGENTS.md`，其已包含项目级 context pack 接入指南。
 
 ## MCP 扩展
 
@@ -146,7 +143,7 @@ chmod +x install.sh
 }
 ```
 
-项目配置优先级高于全局配置，遵循深合并规则。高精度理解通常来自项目级 `AGENTS.md`、skills 和 commands，而不是单纯覆盖模型。
+项目配置优先级高于全局配置，遵循深合并规则。高精度理解通常来自项目级 `AGENTS.md` 和 skills，而不是单纯覆盖模型。
 
 ## 注意事项
 
