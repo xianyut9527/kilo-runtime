@@ -18,15 +18,20 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 kilo_config/
 ├── kilo.json                     # 全局配置入口
 ├── AGENTS.md                     # 全局骨架设计与长期参考文档
+├── CONFIG_CHANGE_CHECKLIST.md    # 配置变更一致性检查清单
 ├── .kilo/
 │   ├── instructions/
 │   │   ├── core.md               # 运行时核心规则
-│   │   └── workflow.md           # 运行时工作流规则
+│   │   ├── workflow.md           # 运行时工作流规则
+│   │   └── reflection.md         # 反思与错误恢复规则
 ├── agent/                        # 智能体定义（全局可用）
 │   ├── coderAgent.md
 │   ├── architect.md
 │   ├── engineer.md
-│   ├── reviewer.md                # 包含主审查 + security/architecture/simplification 专审
+│   ├── reviewer.md               # 主审查者，按需路由专审
+│   ├── review-security.md        # 安全专审
+│   ├── review-architecture.md    # 架构专审
+│   ├── review-simplification.md  # 简化专审
 │   ├── ensemble.md
 │   ├── synthesizer.md
 │   ├── checker.md
@@ -34,7 +39,6 @@ kilo_config/
 │   ├── executor-A.md
 │   ├── executor-B.md
 │   └── executor-C.md
-
 ├── install.ps1
 ├── install.sh
 └── README.md
