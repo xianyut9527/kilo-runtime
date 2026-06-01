@@ -3,13 +3,7 @@ description: 客观验证智能体。负责运行测试、构建、类型检查�
 mode: subagent
 hidden: true
 color: "#FF33A1"
-model: deepseek/deepseek-v4-pro
-permission:
-  bash: allow
-  read:
-    "**/*": allow
-  edit: deny
-steps: 20
+steps: 35
 ---
 
 # checker

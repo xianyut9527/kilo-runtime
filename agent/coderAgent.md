@@ -2,7 +2,7 @@
 description: 编排者。负责任务理解、智能体委派、进度跟踪、交付确认。不直接编码。
 mode: all
 color: "#8B5CF6"
-steps: 50
+steps: 80
 permission:
   bash: deny
   edit: deny
@@ -31,13 +31,25 @@ permission:
 
 ## 质量门禁
 
-- engineer 交付后必须调用 `checker`。
-- checker 失败时按 workflow 调用 `fixer`；超过修复策略上限后升级 reviewer/ensemble。
-- checker 通过后，coderAgent 亲自做需求覆盖终审：
-  - 每条验收标准都有实际代码路径和验证证据。
-  - 触发需求扩散时，覆盖矩阵无遗漏。
-  - 存在 `[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[UNCOVERABLE_REQUIREMENT]` 时不得直接交付，必须回退或让用户决策。
-- 交付前读取最终 diff，清理调试代码、无关变更、明显未完成代码。
+### 强制流程（必须严格执行，不得跳过或压缩）
+
+1. engineer 交付后 → **必须调用 `checker`**，不允许跳过。
+2. checker 返回 FAIL → **必须调用 `fixer`**，不允许直接交付或自行修补。
+3. fixer 交付后 → **必须再次调用 `checker`**，不允许假设修复成功直接交付。
+4. 第 2 轮 checker 仍 FAIL → **必须调用 `fixer`** 进行第 2 轮修复。
+5. 第 3 轮 checker 仍 FAIL → 停止修复循环，**必须升级到 `reviewer`**，不允许继续调 fixer。
+6. reviewer 不通过 → 按 workflow 升级 `ensemble`；ensemble 仍失败 → Circuit Breaker，上报用户。
+7. checker 返回 PASS → 进入需求覆盖终审（下一步）。
+
+### 需求覆盖终审（checker PASS 后必须执行）
+
+- 每条验收标准都有实际代码路径和验证证据。
+- 触发需求扩散时，覆盖矩阵无遗漏。
+- 存在 `[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[UNCOVERABLE_REQUIREMENT]` 时不得直接交付，必须回退或让用户决策。
+
+### 交付前
+
+- 读取最终 diff，清理调试代码、无关变更、明显未完成代码。
 
 ## 交付
 
