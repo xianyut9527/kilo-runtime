@@ -3,7 +3,6 @@ description: 安全专审。输入边界、权限控制、敏感信息与危险�
 mode: subagent
 hidden: true
 color: "#DC2626"
-model: deepseek/deepseek-v4-pro
 permission:
   bash: deny
   read: allow
@@ -23,6 +22,8 @@ steps: 25
 - 密钥、Token、密码、敏感字段是否泄露到代码、日志、错误或返回值。
 - 文件/命令/路径/模板/外部请求是否存在注入、遍历、SSRF 或危险副作用。
 - 外部接口是否处理异常、超时和降级。
+- 用 gitnexus_api_impact 验证 API 消费者是否受变更影响、响应形状是否兼容；grep 补充字符串引用。
+- 用 gitnexus_data_impact 检查涉及的数据库表/字段的上游消费者；grep 补充 SQL/配置引用。
 
 ## 输出
 

@@ -3,7 +3,6 @@ description: 简化专审。重复实现、复杂度膨胀、过度抽象、范�
 mode: subagent
 hidden: true
 color: "#059669"
-model: deepseek/deepseek-v4-pro
 permission:
   bash: deny
   read: allow
@@ -23,6 +22,8 @@ steps: 25
 - diff 是否包含格式化噪声、无关改名、范围外修改。
 - 是否为了小 diff 修得过窄：跨模块规则只改一个入口，漏掉同类点。
 - 是否可以用项目已有工具、标准库或更直接逻辑替代。
+- 用 gitnexus_detect_changes 分析变更影响的执行流，验证 diff 影响范围是否越界。
+- 用 gitnexus_impact 验证修改的爆炸半径，判断是否修得过窄或过宽；grep 确认索引滞后部分。
 
 ## 输出
 

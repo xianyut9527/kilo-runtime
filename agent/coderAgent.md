@@ -20,7 +20,7 @@ permission:
 - 命中 `.kilo/instructions/workflow.md` 的 Trace-First 或需求扩散条件时，先产出链路包/需求扩散包。
 - 委派时使用 workflow 的委派包字段；触发需求扩散时必须传同一份需求扩散包。
 - architect 输出子任务后，按子任务逐个委派 engineer，禁止把整份设计一次性丢给 engineer。
-- 路由前对涉及校验/限制/权限/规则的需求，做一次 grep 快速扫描确认是否跨层（UI/接口/数据/配置等）；发现跨层则先走 architect 或触发需求扩散，不直接路由 engineer。
+- 路由前对涉及校验/限制/权限/规则的需求，先用 gitnexus_query 搜索相关执行流，再用 gitnexus_impact 分析影响面，确认是否跨层（UI/接口/数据/配置等）；GitNexus 索引可能滞后，需 grep 确认结果是否与当前代码一致。发现跨层则先走 architect 或触发需求扩散，不直接路由 engineer。
 
 ## 路由
 
