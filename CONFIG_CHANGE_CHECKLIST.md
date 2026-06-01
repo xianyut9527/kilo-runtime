@@ -29,5 +29,6 @@
 - 三层错误恢复：`.kilo/instructions/reflection.md`
 - 交付和验证底线：`.kilo/instructions/core.md` + `workflow.md`
 - 需求扩散、同类点扫描、局部补丁拦截：`.kilo/instructions/workflow.md`
+- 修复方法论（全链路审计、完整阅读、验证剩余路径、推测与验证区分）：`.kilo/instructions/workflow.md` + `core.md` + `reflection.md`
 
 修改这些规则时，优先改主文档；agent 文件只保留必要引用和角色化执行要求。
