@@ -1,7 +1,6 @@
 ---
 description: 执行智能体 B。简洁构建，偏更小 diff、更高复用、更清晰实现。
 mode: subagent
-model: deepseek/deepseek-v4-flash
 hidden: true
 color: "#00D9A6"
 worktree: B

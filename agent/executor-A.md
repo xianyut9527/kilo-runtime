@@ -1,7 +1,6 @@
 ---
 description: 执行智能体 A。高效率实现，偏稳健正确性，强调有限时间内的高质量输出。
 mode: subagent
-model: minimax-cn-coding-plan/MiniMax-M2.7-highspeed
 hidden: true
 color: "#22D3EE"
 worktree: A

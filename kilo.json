@@ -13,6 +13,61 @@
     "auto": true,
     "prune": true
   },
+  "agent": {
+    "coderAgent": {
+      "model": "deepseek/deepseek-v4-pro",
+      "temperature": 0.3
+    },
+    "engineer": {
+      "model": "deepseek/deepseek-v4-pro",
+      "temperature": 0.2
+    },
+    "architect": {
+      "model": "hscp/kimi-k2.6",
+      "temperature": 0.2
+    },
+    "checker": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0.0
+    },
+    "fixer": {
+      "model": "deepseek/deepseek-v4-pro",
+      "temperature": 0.1
+    },
+    "reviewer": {
+      "model": "hscp/glm-5.1",
+      "temperature": 0.1
+    },
+    "review-security": {
+      "model": "hscp/glm-5.1",
+      "temperature": 0.1
+    },
+    "review-architecture": {
+      "model": "hscp/kimi-k2.6",
+      "temperature": 0.1
+    },
+    "review-simplification": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0.2
+    },
+    "executor-A": {
+      "model": "deepseek/deepseek-v4-pro",
+      "temperature": 0.2
+    },
+    "executor-B": {
+      "model": "hscp/kimi-k2.6",
+      "temperature": 0.3
+    },
+    "executor-C": {
+      "model": "hscp/glm-5.1",
+      "temperature": 0.0
+    },
+    "synthesizer": {
+      "model": "hscp/kimi-k2.6",
+      "temperature": 0.1
+    },
+    "coder": { "disable": true }
+  },
   "permission": {
     "bash": "allow",
     "read": "allow",
