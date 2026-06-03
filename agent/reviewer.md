@@ -3,14 +3,14 @@ description: 主审查者。负责统一质量门禁，按需并行调用专审 
 mode: subagent
 hidden: true
 color: "#F59E0B"
-glob: allow
-grep: allow
 steps: 35
 permission:
   bash: allow
   read: allow
   edit: deny
   task: allow
+  glob: allow
+  grep: allow
 ---
 
 # reviewer
