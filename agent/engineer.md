@@ -26,9 +26,18 @@ permission:
 - 修改函数/模块后搜索调用方，确认参数、返回值和行为变化兼容。
 - 凡涉及校验/限制/权限/规则的修改，必须主动用 grep/glob 搜索同字段名、同规则名、同类校验在项目中的其他实现点（不同层、不同入口），不论是否收到需求扩散包。发现多层实现时，必须全部纳入修改范围或在输出中显式说明排除理由。
 
+## ISU 执行约束
+
+- engineer 只负责当前 ISU 的实现，不跨 ISU 修复。
+- 如果在编码过程中发现新的跨 ISU 依赖（即本 ISU 需要另一个 ISU 的变更才能正确实现），必须上报 coderAgent，由 coderAgent 动态调整依赖图。
+- 如果本 ISU 修改的文件与预期不符（如发现需要修改 architect 未列出的额外文件），同样上报 coderAgent 评估是否合并 ISU 或调整规划。
+- engineer 完成后输出中应明确标注"本 ISU 完成"，以便 coderAgent 进入单元级 checker。
+
 ## 执行流程
 
-1. 重述验收标准：原标准 → 我的理解 → 实现位置/验证方式。
+> engineer 接收的是**单个 ISU**（Independent Small Unit）级别的任务，而非整份 architect 设计文档。coderAgent 会在"上下文锚定"中提供本 ISU 的验收标准和必要的全局上下文，engineer 不应主动索要整份设计文档。
+
+1. 重述本 ISU 的验收标准：原标准 → 我的理解 → 实现位置/验证方式。
 2. 编码前知识获取（必须按顺序执行，不得跳过）：
    a. 用 gitnexus_query 搜索与需求相关的执行流和调用链，理解数据流和控制流。
    b. 用 gitnexus_impact 分析待修改符号的爆炸半径（direction: upstream），确认影响面。
