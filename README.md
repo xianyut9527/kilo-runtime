@@ -75,6 +75,8 @@ chmod +x install.sh
 - **Windows**：`C:\Users\<用户名>\.config\kilo\`
 - **macOS / Linux**：`~/.config/kilo/`
 
+脚本只同步全局配置所需文件，排除 `.git`、依赖目录、包管理锁文件以及 `.kilo/agent-manager.json`、`.kilo/memory.md` 等本地运行产物，避免污染全局配置状态。
+
 ## 使用
 
 ### 维护全局骨架

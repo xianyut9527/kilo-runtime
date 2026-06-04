@@ -168,8 +168,8 @@ T2 任务**未形成需求扩散包前不得编码**。需求扩散包必须包�
 **强制约束**：coderAgent 升级至 ensemble 后，**禁止**退回到单模型修复路径。即使 ensemble 某一轮产出看起来"接近正确"，也必须走完 checker + reviewer 双门禁，双门禁 FAIL 则继续 ensemble 下一轮，直到通过或触发 Circuit Breaker。
 
 2. 复用已有 ISU 列表和失败证据（不重新规划）。
-3. executor-A/B/C 并行产出候选实现。
-4. synthesizer 评估候选差异：差异较大时合并，差异小则择优。
+3. executor-A/B 并行产出候选实现；高风险、失败历史或复杂边界时，同时调用 executor-C 做对抗审查，不让 C 直接编码。
+4. synthesizer 评估候选差异和 executor-C 的阻塞发现：差异较大时合并，差异小则择优。
 5. checker + reviewer 双门禁。
 6. 通过 → 交付；不通过 → 返回 ensemble 重试。
 7. 连续 3 次仍失败 → **Circuit Breaker**：停止自动重试，输出问题定位、已尝试方案、失败原因、下一步选项，上报用户。

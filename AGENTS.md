@@ -42,7 +42,7 @@
 | ensemble | 多模型并行编排 | all | 需求解析 → 并行编码 → 候选评估 → 双门禁 → 定向修复 → 交付 |
 | executor-A | 多模型执行 A | subagent | 偏稳健正确性与回归控制 |
 | executor-B | 多模型执行 B | subagent | 偏更小 diff、更高复用、更清晰实现 |
-| executor-C | 多模型执行 C | subagent | 偏完整性与对抗性检查，补足边界条件、兼容性、失败路径与隐藏遗漏 |
+| executor-C | 多模型对抗审查 C | subagent | 只审查不编码，补足边界条件、兼容性、失败路径与隐藏遗漏 |
 | synthesizer | 多模型合并 | subagent | 在候选差异较大时进行必要融合 |
 | checker | 客观验证门禁 | subagent | 运行测试、构建、类型检查、Lint，并检查范围与需求映射 |
 | fixer | 单模型修复 | subagent | 根据高置信失败项做定向修复 |
