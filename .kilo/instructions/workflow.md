@@ -85,7 +85,7 @@ coderAgent → engineer（1 个 ISU）→ checker → fixer（最多调用 1 次
 ### T0 质量策略
 
 - 跳过 architect 和需求扩散。
-- checker 只做编译/语法检查，不做业务逻辑审查。
+- checker 只做编译/语法检查和编码回归扫描，不做业务逻辑审查。
 - fixer 最多调用 1 次；再次 checker 仍 FAIL 时，说明任务隐藏复杂度高于 T0，不得把未修复结果标记为完成。决策树：
   - 失败仍局限于同一文件、同一语法/实现点 → 升级 reviewer 获取修复建议。
   - 失败暴露出新增文件、调用方、同类点、规则或需求边界 → 重分级为 T1/T2，走 architect 拆分。
@@ -232,6 +232,7 @@ T2 任务**未形成需求扩散包前不得编码**。需求扩散包必须包�
 ### ISU 级门禁
 
 - **每个 ISU 完成后必须过 checker**（T0 视为只有一个 ISU）。
+- coderAgent 接收 checker 结果时，必须确认输出包含"编码回归扫描"证据；缺失时按 `[ENCODING_SCAN_MISSING]` 处理，不得接受 PASS。
 - checker 失败 → fixer 定向修复；fixer 调用次数**按 ISU 独立计数**：
   - T0：每 ISU fixer 最多调用 1 次。第 1 次 fixer 后 checker 仍 FAIL → 按 T0 决策树升级 reviewer 或重分级为 T1/T2，禁止把未修复结果标记为完成。
   - T1/T2：每 ISU fixer 最多调用 2 次。第 2 次 fixer 后 checker 仍 FAIL → **必须**升级 reviewer，**禁止**第 3 次 fixer。
@@ -247,7 +248,7 @@ T2 任务**未形成需求扩散包前不得编码**。需求扩散包必须包�
 
 ### 交付阻断规则
 
-- 仍存在 `[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[REGRESSION]` 或阻塞验证失败，不得交付。
+- 仍存在 `[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[REGRESSION]`、`[ENCODING_SCAN_MISSING]` 或阻塞验证失败，不得交付。
 - 任意变更文件出现新增乱码、中文不可读、疑似编码 churn 或无关整文件重写，不得交付；必须恢复 UTF-8 可读内容后重新验证。
 - 修复后必须排查同症状异根路径——"还有哪些路径能导致相同症状？"，确认无遗漏后才可交付。
 
@@ -270,7 +271,7 @@ fixer 同一 ISU 调用 2 次后 checker 仍 FAIL → **必须** reviewer（T1/T
    - 改了什么（文件+函数/模块级别）。
    - 为什么改（对应哪条需求或修复哪个问题）。
    - 影响范围（调用方、上下游、配置、数据）。
-   - 读取最终 diff，清理调试代码、无关变更、明显未完成代码，并确认中文/注释/文案未乱码。
+   - 读取最终 diff，清理调试代码、无关变更、明显未完成代码。
 
 3. **经验沉淀**
    - 踩坑记录：遇到了什么意外问题、根因是什么、怎么绕过的。

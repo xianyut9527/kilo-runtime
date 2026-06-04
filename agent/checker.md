@@ -48,7 +48,9 @@ T2 任务在全部 ISU 通过单元级门禁后由 coderAgent 调用，检查**�
 
 - 运行可用测试、构建、类型检查、Lint；无法运行标记 `[VERIFY_PENDING]`。
 - 比对预期文件和实际 diff，缺失标记 `[MISSING]`。
-- 检查变更文件的中文、注释、文案、Markdown、配置说明是否仍为可读 UTF-8；发现新增 `锟斤拷`、`�`、`缂栨`、`Ã`、`Â`、`æ`、`ç` 等疑似 mojibake，标记 `[ENCODING_REGRESSION]`。
+- 必须执行编码回归扫描，并在输出中给出扫描方法、扫描文件数和结论；未执行或无法证明已执行时标记 `[ENCODING_SCAN_MISSING]`。
+- 编码回归扫描范围：调用方提供的变更文件列表 + git 已暂存/未暂存变更文本文件；至少覆盖 `git diff --name-only --diff-filter=ACMRT` 与 `git diff --cached --name-only --diff-filter=ACMRT` 的并集。
+- 编码回归扫描内容：读取最终文件内容和 diff 新增行，检查中文、注释、文案、Markdown、配置说明是否仍为可读 UTF-8；发现新增 `锟斤拷`、`�`、`缂栨`、`Ã`、`Â`、`æ`、`ç` 等疑似 mojibake，标记 `[ENCODING_REGRESSION]`。
 - 逐条验收标准读取实际代码路径，确认实现、分支、错误路径和边界。
 - 触发需求扩散时，独立用 grep/glob 搜索同类入口、状态、校验、提交、回显路径；发现覆盖矩阵遗漏或局部补丁，标记 `[PARTIAL_IMPLEMENTATION]`。
 - 检查回归、范围越界、无关修改和需求映射。
@@ -60,7 +62,7 @@ T2 任务在全部 ISU 通过单元级门禁后由 coderAgent 调用，检查**�
 
 - 测试/构建/类型检查失败。
 - 必要验证无法运行且缺少等价替代证据，即 `[VERIFY_PENDING]` 未被解释为非阻塞。
-- `[MISSING]`、`[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[REGRESSION]`、`[ENCODING_REGRESSION]`。
+- `[MISSING]`、`[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[REGRESSION]`、`[ENCODING_SCAN_MISSING]`、`[ENCODING_REGRESSION]`。
 - 明显超范围、blocklist 修改、OUT_OF_SCOPE 修改。
 - 排查类任务无法证明根因闭合。
 
@@ -69,7 +71,6 @@ T2 任务在全部 ISU 通过单元级门禁后由 coderAgent 调用，检查**�
 - 所有验收标准均有实际代码路径和验证证据。
 - 必要的测试/构建/类型检查/Lint 已运行并通过；确实无法运行时，必须说明原因、替代验证证据和剩余风险，并由调用方决定是否继续。
 - 触发需求扩散时，覆盖矩阵无遗漏、无局部补丁、无 `[PARTIAL_IMPLEMENTATION]`。
-- 变更文件未引入乱码，原有中文仍可读，未发生无关编码 churn。
 - diff 与预期范围一致，无无关修改和明显回归。
 
 ## 单元级 vs 汇总检查差异
@@ -93,6 +94,7 @@ T2 任务在全部 ISU 通过单元级门禁后由 coderAgent 调用，检查**�
 
 ## 动态验证
 - 测试/构建/类型/Lint: [命令] → [结果/VERIFY_PENDING] | 证据:[片段]
+- 编码回归扫描: [命令/方法] → [扫描 N 个变更文本文件, PASS/FAIL/ENCODING_SCAN_MISSING] | 证据:[片段]
 
 ## 覆盖检查
 | 验收标准 | 实现位置 | 验证方式 | 状态 |
