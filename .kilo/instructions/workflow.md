@@ -19,6 +19,30 @@
 - 显式 review 或安全/资金/权限/核心逻辑 → `reviewer`
 - 多次失败、高风险、多可疑点、用户表达"还是不对/有遗漏/不干净" → 升级至 T3 → `ensemble`
 
+## 状态跟踪
+
+T1 及以上任务必须维护执行状态板；T0 仅在 checker FAIL 或升级时维护。状态板由 coderAgent 在每次调用子 agent 前后更新，作为并行调度、失败计数和升级判断的唯一运行时账本。
+
+```text
+【执行状态板】
+任务级别: [T0/T1/T2/T3]
+总 ISU 数: N
+当前批次: Batch-X [ISU-a, ISU-b]
+当前 ISU: ISU-X
+该 ISU 状态: [待执行/执行中/engineer完成/checkerPASS/checkerFAIL(M次)/fixer第N次完成/reviewer评审中/已完成/已升级T3]
+fixer 已调用次数: N
+已完成的 ISU: [ISU-a, ISU-b, ...]
+待执行的 ISU: [ISU-c, ISU-d, ...]
+阻塞/升级证据: [无 / 命令+关键失败片段 / reviewer结论]
+本轮决策: [调用engineer/调用checker/调用fixer(第N次)/调用reviewer/调用ensemble/等待Batch完成/重分级]
+```
+
+状态板规则：
+- checker FAIL 后必须先更新 `fixer 已调用次数` 和 `阻塞/升级证据`，再决定下一步。
+- 并行 Batch 中每个 ISU 独立计数，不共享 fixer 次数。
+- 任何从 T0/T1/T2 升级到更高级别的动作都必须保留失败证据和已完成变更摘要。
+- 状态板与实际子 agent 结果冲突时，以子 agent 的最新 PASS/FAIL/审查结论为准并立即修正状态板。
+
 ## 极速通道（T0 级）
 
 以下任务判定为「极速通道」，coderAgent 直走 engineer，不触发需求扩散、不路由 architect：
@@ -33,13 +57,15 @@
 
 ### T0 流程
 
-coderAgent → engineer（1 个 ISU）→ checker → fixer（最多调用 1 次）→ 交付。
+coderAgent → engineer（1 个 ISU）→ checker → fixer（最多调用 1 次）→ checker → 交付/升级。
 
 ### T0 质量策略
 
 - 跳过 architect 和需求扩散。
 - checker 只做编译/语法检查，不做业务逻辑审查。
-- fixer 最多调用 1 次，失败则直接交付并标注 `[QUICK_PATH_UNFIXED]`。
+- fixer 最多调用 1 次；再次 checker 仍 FAIL 时，说明任务隐藏复杂度高于 T0，不得把未修复结果标记为完成。决策树：
+  - 失败仍局限于同一文件、同一语法/实现点 → 升级 reviewer 获取修复建议。
+  - 失败暴露出新增文件、调用方、同类点、规则或需求边界 → 重分级为 T1/T2，走 architect 拆分。
 - 交付格式精简：闭环确认 + 变更回顾合并为一段，经验沉淀省略。
 
 ## 中等任务（T1 级）
@@ -183,9 +209,9 @@ T2 任务**未形成需求扩散包前不得编码**。需求扩散包必须包�
 
 - **每个 ISU 完成后必须过 checker**（T0 视为只有一个 ISU）。
 - checker 失败 → fixer 定向修复；fixer 调用次数**按 ISU 独立计数**：
-  - T0：每 ISU fixer 最多调用 1 次。第 1 次 fixer 后 checker 仍 FAIL → 直接交付并标注 `[QUICK_PATH_UNFIXED]`。
+  - T0：每 ISU fixer 最多调用 1 次。第 1 次 fixer 后 checker 仍 FAIL → 按 T0 决策树升级 reviewer 或重分级为 T1/T2，禁止把未修复结果标记为完成。
   - T1/T2：每 ISU fixer 最多调用 2 次。第 2 次 fixer 后 checker 仍 FAIL → **必须**升级 reviewer，**禁止**第 3 次 fixer。
-  - reviewer 返回不通过 → **必须**升级 T3（ensemble），**禁止**在当前路径内继续修复。
+  - reviewer 返回不通过，或有条件通过但仍含阻塞项 → **必须**升级 T3（ensemble），**禁止**在当前路径内继续修复。
 - checker 通过后，coderAgent 必须做需求覆盖终审；触发需求扩散时还要核对覆盖矩阵。
 
 ### 聚合检查（T2 专属）

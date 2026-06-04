@@ -38,13 +38,12 @@ permission:
 > engineer 接收的是**单个 ISU**（Independent Small Unit）级别的任务，而非整份 architect 设计文档。coderAgent 会在"上下文锚定"中提供本 ISU 的验收标准和必要的全局上下文，engineer 不应主动索要整份设计文档。
 
 1. 重述本 ISU 的验收标准：原标准 → 我的理解 → 实现位置/验证方式。
-2. 编码前知识获取（必须按顺序执行，不得跳过）：
-   a. 用 gitnexus_query 搜索与需求相关的执行流和调用链，理解数据流和控制流。
-   b. 用 gitnexus_impact 分析待修改符号的爆炸半径（direction: upstream），确认影响面。
-   c. 涉及数据库时，用 gitnexus_data_impact 分析表/字段的影响范围。
-   d. 涉及 API 时，用 gitnexus_api_impact 分析路由的消费者和响应形状。
-   e. 注意：GitNexus 索引可能滞后，以上结果必须用 grep/glob 确认是否与当前代码一致，并补充 GitNexus 未覆盖的字符串引用（URL、配置 key、SQL 片段）和新增代码。
-   f. 汇总输出同类点覆盖矩阵：同类点 → 文件/函数 → 发现来源（GitNexus/grep/两者一致）→ 处理方式 → 验证方式 → 结论。
+2. 编码前知识获取按任务级别选择：
+   - **T0 轻量路径**：用 grep/glob 和局部读取确认目标文件、相邻调用和验证命令；仅当涉及校验/限制/权限/规则/状态/API/数据，或 grep 发现跨文件影响时，才升级使用 GitNexus。
+   - **T1/T2 标准路径**：先用 gitnexus_query 搜索相关执行流和调用链，再用 gitnexus_impact 分析待修改符号的爆炸半径（direction: upstream），最后用 grep/glob 复核索引是否与当前代码一致。
+   - 涉及数据库时，用 gitnexus_data_impact 分析表/字段的影响范围；涉及 API 时，用 gitnexus_api_impact 分析路由的消费者和响应形状。
+   - GitNexus 索引可能滞后，必须用 grep/glob 补充字符串引用（URL、配置 key、SQL 片段）和新增代码。
+   - T1/T2 或触发需求扩散时，汇总输出同类点覆盖矩阵：同类点 → 文件/函数 → 发现来源（GitNexus/grep/两者一致）→ 处理方式 → 验证方式 → 结论。
 3. 增量修改代码。
 4. 利用充足的步骤预算进行多轮自测自修：改代码 → 跑测试 → 修复 → 再跑，直到测试全部通过或确定阻塞原因。目标是让 checker 一次通过，减少回流到 fixer 的开销。
 5. 运行可用测试、构建、类型检查、Lint；失败按 reflection 三层框架修复。

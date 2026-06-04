@@ -58,9 +58,17 @@ T2 任务在全部 ISU 通过单元级门禁后由 coderAgent 调用，检查**�
 ## FAIL 条件
 
 - 测试/构建/类型检查失败。
+- 必要验证无法运行且缺少等价替代证据，即 `[VERIFY_PENDING]` 未被解释为非阻塞。
 - `[MISSING]`、`[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[REGRESSION]`。
 - 明显超范围、blocklist 修改、OUT_OF_SCOPE 修改。
 - 排查类任务无法证明根因闭合。
+
+## PASS 条件
+
+- 所有验收标准均有实际代码路径和验证证据。
+- 必要的测试/构建/类型检查/Lint 已运行并通过；确实无法运行时，必须说明原因、替代验证证据和剩余风险，并由调用方决定是否继续。
+- 触发需求扩散时，覆盖矩阵无遗漏、无局部补丁、无 `[PARTIAL_IMPLEMENTATION]`。
+- diff 与预期范围一致，无无关修改和明显回归。
 
 ## 单元级 vs 汇总检查差异
 
