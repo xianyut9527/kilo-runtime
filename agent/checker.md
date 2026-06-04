@@ -10,7 +10,7 @@ permission:
   task: allow
   glob: allow
   grep: allow
-steps: 35
+steps: 40
 ---
 
 # checker

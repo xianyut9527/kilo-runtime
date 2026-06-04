@@ -11,7 +11,7 @@ permission:
     "**/*": allow
   edit:
     "**/*": allow
-steps: 40
+steps: 50
 ---
 
 # executor-A
