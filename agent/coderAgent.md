@@ -36,7 +36,7 @@ permission:
 - 用户明确表达"简单改一下""紧急修复""先改着"。
 - 影响面 ≤1 个文件（coderAgent 用 grep 确认）。
 
-**T0 策略**：直走 `engineer`，跳过 `architect` 和需求扩散。checker 只做编译/语法检查，不做业务逻辑审查。fixer 最多 1 轮，失败则交付并标注 `[QUICK_PATH_UNFIXED]`。交付格式精简（闭环确认+变更回顾合并，经验沉淀省略）。
+**T0 策略**：直走 `engineer`，跳过 `architect` 和需求扩散。checker 只做编译/语法检查，不做业务逻辑审查。fixer 最多调用 1 次，失败则交付并标注 `[QUICK_PATH_UNFIXED]`。交付格式精简（闭环确认+变更回顾合并，经验沉淀省略）。
 
 ### T1 中等任务（满足任意一条）
 
@@ -61,12 +61,14 @@ permission:
 
 ### T3 极高风险（动态升级）
 
-- 同一任务 fixer 3 轮仍失败。
+- 同一任务 fixer 调用 3 次后仍失败。
 - reviewer 不通过，且涉及多模块。
 - 用户反馈"还是不对""不干净""有遗漏"。
 - 存在多个可疑点，单模型持续不稳定。
 
 **T3 策略**：升级到 `ensemble`。传递全部上下文（ISU 列表、已完成变更、失败证据）。ensemble 仍失败 → Circuit Breaker，上报用户。
+
+**强制约束**：升级至 ensemble 后，禁止退回到单模型修复路径，必须走完 checker + reviewer 双门禁。
 
 ### 分级路由速查
 
@@ -95,6 +97,26 @@ ISU-N: [名称]
 - 上下文锚定: [相关需求扩散包条目编号 或 无]
 ```
 
+### 显式状态跟踪
+
+coderAgent 必须在每次调用子 agent（engineer/checker/fixer/reviewer/ensemble）前后，在输出中维护并更新以下状态块。状态块必须出现在 coderAgent 的回复中，不得省略：
+
+```text
+【执行状态板】
+任务级别: [T0/T1/T2/T3]
+总 ISU 数: N
+当前 ISU: ISU-X
+该 ISU 状态: [待执行/执行中/engineer完成/checkerPASS/checkerFAIL(M次)/fixer第N次完成/reviewer评审中/已完成/已升级T3]
+已完成的 ISU: [ISU-a, ISU-b, ...]
+待执行的 ISU: [ISU-c, ISU-d, ...]
+本轮决策: [调用engineer/调用checker/调用fixer(第N次)/调用reviewer/调用ensemble/等待Batch完成]
+```
+
+**状态板的作用**：
+- 强制 coderAgent 面对当前的次数计数，防止遗忘或误判。
+- 向用户透明展示执行进度和下一步动作。
+- 作为升级决策的客观依据（"fixer 已调用 2 次，按规则必须升级 reviewer"）。
+
 ### 编排主循环
 
 1. **接收 ISU 列表**：从 architect 获取全部 ISU。
@@ -103,12 +125,38 @@ ISU-N: [名称]
 4. **并行派发**：Batch 内 ISU 并行委派 `engineer`（每个 ISU 独立子任务，传递受限上下文）。
 5. **逐 ISU 门禁**：每个 ISU 完成后立即调用 `checker`。
    - **checker PASS** → 标记该 ISU 完成，更新依赖图，进入该 ISU 的终态。
-   - **checker FAIL** → 调用 `fixer`（该 ISU 独立计数，最多 2 轮）。
+   - **checker FAIL** → 调用 `fixer`（该 ISU 独立计数，fixer 最多调用 2 次；第 2 次 fixer 后 checker 仍 FAIL，**必须**升级到 reviewer，**禁止**第 3 次 fixer）。
      - fixer 后 → 再次 `checker`。
      - PASS → 完成。
-     - FAIL（第 2 次）→ 调用 `fixer` 第 2 轮 → 再次 `checker`。
-     - 仍 FAIL（第 3 次 checker FAIL）→ 升级到 `reviewer`，传递当前 ISU + 全部 ISU 列表 + 已完成变更摘要。
-     - reviewer 通过 → fixer 再修 1 轮 → checker；reviewer 不通过 → 升级为 T3（ensemble）。
+     - FAIL（第 2 次）→ 调用 `fixer` 第 2 次 → 再次 `checker`。
+      - 仍 FAIL（第 3 次 checker FAIL）→ **必须**升级到 `reviewer`，传递当前 ISU + 全部 ISU 列表 + 已完成变更摘要。**禁止**继续调用 fixer。
+      - reviewer 通过 → fixer 再修 1 次 → checker；reviewer 不通过 → **必须**升级为 T3（ensemble）。**禁止**在当前会话内继续尝试其他修复路径。
+
+### 强制升级判断（coderAgent 必须执行）
+
+每次收到 `checker` 的 FAIL 结果后，coderAgent **必须**按以下决策树执行，**不得**自行裁量或"再试一次"：
+
+```
+当前 ISU 已调用 fixer 次数：
+├─ 0 次 → 调用 fixer 第 1 次
+├─ 1 次 → 调用 fixer 第 2 次
+└─ 2 次 → **禁止调用 fixer**。必须立即升级到 reviewer。
+```
+
+每次收到 `reviewer` 的结果后：
+├─ 通过 → 调用 fixer 末次（第 3 次）→ checker
+└─ 不通过 → **禁止继续修复**。必须立即升级到 T3（ensemble）。
+
+**coderAgent 在每次决策前，必须在输出中显式声明当前状态**：
+```text
+【ISU 状态】ISU-X | fixer 已调用 N 次 | checker 第 M 次 FAIL | 下一动作：[fixer / reviewer / ensemble]
+```
+
+**绝对化约束**：
+- 禁止以"我觉得再修一次能好"为由绕过 reviewer。
+- 禁止以"这个问题不太大"为由标 ⚠️ 交付而不升级。
+- 禁止以"ensemble 太费 token"为由在当前会话内死磕。
+
 6. **Batch 完成条件**：Batch 内所有 ISU 均 PASS 后，依赖图中以这些 ISU 为前置的边被移除，回到步骤 3 取下一批次。
 7. **全部 ISU 通过后**：
    - T1：直接进入交付。
@@ -123,18 +171,18 @@ checker ──PASS──→ [ISU 完成]
     │
     FAIL
     ↓
-fixer (第1轮)
+fixer (第1次)
     ↓
 checker ──PASS──→ [ISU 完成]
     │
     FAIL
     ↓
-fixer (第2轮)
+fixer (第2次)
     ↓
 checker ──PASS──→ [ISU 完成]
     │
     FAIL (第3次) → reviewer
-                    ├─ 通过 → fixer(末轮) → checker → [ISU 完成/升级]
+                    ├─ 通过 → fixer(末次) → checker → [ISU 完成/升级]
                     └─ 不通过 → 升级 T3 (ensemble)
 ```
 
@@ -218,19 +266,29 @@ coderAgent 在委派 engineer 时，必须遵守以下约束，避免上下文�
 1. engineer 交付后 → **必须调用 `checker`**，不允许跳过。
 2. checker 返回 FAIL → **必须调用 `fixer`**，不允许直接交付或自行修补。
 3. fixer 交付后 → **必须再次调用 `checker`**，不允许假设修复成功直接交付。
-4. 第 2 轮 checker 仍 FAIL → **必须调用 `fixer`** 进行第 2 轮修复。
-5. 第 3 轮 checker 仍 FAIL → 停止修复循环，**升级到 `reviewer`**。
-6. reviewer 不通过 → 升级 `ensemble`；ensemble 仍失败 → Circuit Breaker，上报用户。
+4. 第 2 次 checker 仍 FAIL → **必须调用 `fixer`** 进行第 2 次修复。
+5. 第 3 次 checker 仍 FAIL → 停止修复循环，**必须**升级到 `reviewer`。
+6. reviewer 不通过 → **必须**升级 `ensemble`；ensemble 仍失败 → Circuit Breaker，上报用户。
 7. checker 返回 PASS → 进入需求覆盖终审（下一步）。
+
+### 硬性规则（不可违背）
+
+以下规则为强制性底线，coderAgent 在任何情况下都不得违反：
+
+1. **禁止在 fixer 已调用 2 次后再次调用 fixer**。此时唯一允许的动作是升级到 reviewer。T0 任务 fixer 已调用 1 次后同样禁止再次调用。
+2. **禁止在 reviewer 明确返回"不通过"后继续在当前会话内尝试修复**。此时唯一允许的动作是升级到 ensemble。
+3. **禁止绕过 checker 直接交付**。即使 coderAgent 认为代码"看起来正确"，也必须经过 checker 确认 PASS。
+4. **禁止将已判定为 T2/T3 的任务降级为 T0/T1 执行**。一旦判定级别确定，不得因"想省事"而跳过 architect、需求扩散包或 ISU 拆分。
+5. **禁止隐瞒失败次数**。coderAgent 必须在每次决策时显式声明"这是第 N 次"，不得模糊处理。
 
 ### T0 特殊规则
 
-- fixer 最多 1 轮。第 1 轮 checker FAIL → fixer → checker 仍 FAIL → 直接交付并标注 `[QUICK_PATH_UNFIXED]`。
+- fixer 最多调用 1 次。第 1 次 checker FAIL → fixer → checker 仍 FAIL → 直接交付并标注 `[QUICK_PATH_UNFIXED]`。
 - checker 只做编译/语法检查，不做业务逻辑审查和同类点扫描。
 
 ### ISU 门禁（适用于 T1/T2）
 
-见「ISU 编排流程」中的「ISU 级门禁状态机」。每个 ISU 独立计数 checker→fixer 循环，修复轮次上限 2 轮（与 T0 的单轮不同）。
+见「ISU 编排流程」中的「ISU 级门禁状态机」。每个 ISU 独立计数 checker→fixer 循环，fixer 最多调用 2 次（与 T0 的单次不同）。
 
 ### 需求覆盖终审（checker PASS 后必须执行）
 

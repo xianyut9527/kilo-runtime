@@ -33,13 +33,13 @@
 
 ### T0 流程
 
-coderAgent → engineer（1 个 ISU）→ checker → fixer（最多 1 轮）→ 交付。
+coderAgent → engineer（1 个 ISU）→ checker → fixer（最多调用 1 次）→ 交付。
 
 ### T0 质量策略
 
 - 跳过 architect 和需求扩散。
 - checker 只做编译/语法检查，不做业务逻辑审查。
-- fixer 最多 1 轮，失败则直接交付并标注 `[QUICK_PATH_UNFIXED]`。
+- fixer 最多调用 1 次，失败则直接交付并标注 `[QUICK_PATH_UNFIXED]`。
 - 交付格式精简：闭环确认 + 变更回顾合并为一段，经验沉淀省略。
 
 ## 中等任务（T1 级）
@@ -59,14 +59,14 @@ coderAgent → engineer（1 个 ISU）→ checker → fixer（最多 1 轮）→
 1. coderAgent 路由到 architect。
 2. architect 产出 **ISU 列表**（Independent Small Unit），可按需附带需求扩散包（非强制）。
 3. 按 ISU 依赖图串行或并行执行 `engineer`。
-4. 每个 ISU 完成后独立走 `checker → fixer` 循环（**每 ISU 最多 2 轮**）。
+4. 每个 ISU 完成后独立走 `checker → fixer` 循环（fixer **最多调用 2 次**，第 2 次后 checker 仍 FAIL → **必须**升级 reviewer）。
 5. 全部 ISU 通过后 → 交付。
 
 ### T1 质量策略
 
 - ISU 级别的 checker 可降级为"相关测试 + 编译"（全部 ISU 聚合后再跑完整测试套件），避免重复开销过大。
 - 不强制需求扩散包，但 architect 发现同类风险时可择情附带。
-- fixer 每 ISU 最多 2 轮，第 3 轮升级 reviewer。
+- fixer 每 ISU 最多调用 2 次，第 2 次后 checker 仍 FAIL → **必须**升级 reviewer，**禁止**第 3 次 fixer。
 
 ## 复杂任务（T2 级）
 
@@ -113,8 +113,8 @@ T2 任务**未形成需求扩散包前不得编码**。需求扩散包必须包�
 1. coderAgent 路由到 architect。
 2. architect 产出：**需求扩散包（强制）** + **ISU 列表** + **依赖图** + **覆盖矩阵**。
 3. 按依赖图串行或并行执行 `engineer`。
-4. 每个 ISU 完成后独立走 `checker → fixer`（**每 ISU 最多 2 轮**，第 3 轮升级 reviewer）。
-5. reviewer 在单元级第 3 轮失败时介入，coderAgent 必须传递：当前 ISU + 全部 ISU 列表 + 已完成 ISU 变更摘要。
+4. 每个 ISU 完成后独立走 `checker → fixer`（fixer **最多调用 2 次**，第 2 次 fixer 后 checker 仍 FAIL → **必须**升级 reviewer，**禁止**第 3 次 fixer）。
+5. reviewer 在单元级第 3 次 checker FAIL 时介入，coderAgent 必须传递：当前 ISU + 全部 ISU 列表 + 已完成 ISU 变更摘要。
 6. 全部 ISU 通过后 → **最终 checker（跨 ISU 一致性检查）**。
 7. coderAgent 做需求覆盖终审，核对覆盖矩阵 → 交付。
 
@@ -130,7 +130,7 @@ T2 任务**未形成需求扩散包前不得编码**。需求扩散包必须包�
 
 以下条件**满足任意一条**，任务自动升级至 T3：
 
-- 同一任务（或同一 ISU）fixer 3 轮仍失败。
+- 同一任务（或同一 ISU）fixer 调用 3 次后仍失败。
 - reviewer 不通过且涉及多模块。
 - 用户明确说"还是不对/有遗漏/不干净"。
 - 存在多个可疑点，单模型持续不稳定。
@@ -138,6 +138,9 @@ T2 任务**未形成需求扩散包前不得编码**。需求扩散包必须包�
 ### T3 流程
 
 1. coderAgent 升级至 `ensemble`。
+
+**强制约束**：coderAgent 升级至 ensemble 后，**禁止**退回到单模型修复路径。即使 ensemble 某一轮产出看起来"接近正确"，也必须走完 checker + reviewer 双门禁，双门禁 FAIL 则继续 ensemble 下一轮，直到通过或触发 Circuit Breaker。
+
 2. 复用已有 ISU 列表和失败证据（不重新规划）。
 3. executor-A/B/C 并行产出候选实现。
 4. synthesizer 评估候选差异：差异较大时合并，差异小则择优。
@@ -179,10 +182,10 @@ T2 任务**未形成需求扩散包前不得编码**。需求扩散包必须包�
 ### ISU 级门禁
 
 - **每个 ISU 完成后必须过 checker**（T0 视为只有一个 ISU）。
-- checker 失败 → fixer 定向修复；fixer 轮次**按 ISU 独立计数**：
-  - T0：每 ISU 最多 1 轮。
-  - T1/T2：每 ISU 最多 2 轮。
-  - 同一 ISU 第 3 轮仍失败 → 升级 reviewer（T1/T2）或升级 T3（T0/T1/T2 全局判定）。
+- checker 失败 → fixer 定向修复；fixer 调用次数**按 ISU 独立计数**：
+  - T0：每 ISU fixer 最多调用 1 次。第 1 次 fixer 后 checker 仍 FAIL → 直接交付并标注 `[QUICK_PATH_UNFIXED]`。
+  - T1/T2：每 ISU fixer 最多调用 2 次。第 2 次 fixer 后 checker 仍 FAIL → **必须**升级 reviewer，**禁止**第 3 次 fixer。
+  - reviewer 返回不通过 → **必须**升级 T3（ensemble），**禁止**在当前路径内继续修复。
 - checker 通过后，coderAgent 必须做需求覆盖终审；触发需求扩散时还要核对覆盖矩阵。
 
 ### 聚合检查（T2 专属）
@@ -199,7 +202,7 @@ T2 任务**未形成需求扩散包前不得编码**。需求扩散包必须包�
 
 ### 升级链
 
-fixer 同一 ISU 3 轮仍失败 → reviewer（T1/T2）；reviewer 不通过或涉多模块 → T3（ensemble）；ensemble 3 轮仍失败 → Circuit Breaker。
+fixer 同一 ISU 调用 2 次后 checker 仍 FAIL → **必须** reviewer（T1/T2）；reviewer 不通过或涉多模块 → **必须** T3（ensemble）；ensemble 连续 3 次仍失败 → **必须** Circuit Breaker，上报用户。
 
 ## 交付
 

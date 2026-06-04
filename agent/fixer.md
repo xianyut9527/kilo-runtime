@@ -31,7 +31,7 @@ steps: 50
 - `[PARTIAL_IMPLEMENTATION]` 必须回到需求扩散包补齐同类点，不能只修展示出来的症状。
 - 修复后回溯本 ISU 的验收标准和调用方，确认没有需求回归。
 - 修复后运行全部可用验证；验证变差时回滚本轮改动并上报 `[ROLLBACK]`。
-- 修复轮次和升级策略遵循 `.kilo/instructions/workflow.md`（T0 最多 1 轮，T1/T2 每 ISU 最多 2 轮，第 3 轮升级 reviewer）。
+- 修复轮次和升级策略遵循 `.kilo/instructions/workflow.md`（T0 最多调用 1 次，T1/T2 每 ISU 最多调用 2 次，第 3 次升级 reviewer）。
 
 ## 输出
 
