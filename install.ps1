@@ -37,6 +37,17 @@ foreach ($item in Get-ChildItem -Path $Source) {
     }
 }
 
+$AgentSource = Join-Path $Source "agent"
+$AgentsTarget = Join-Path $Target "agents"
+if (Test-Path $AgentSource) {
+    if (Test-Path $AgentsTarget) {
+        Remove-Item -Path $AgentsTarget -Recurse -Force
+        Write-Host "[REMOVE] agents/" -ForegroundColor Yellow
+    }
+    Copy-Item -Path $AgentSource -Destination $AgentsTarget -Recurse -Force
+    Write-Host "[COPY]   agents/ (compat)" -ForegroundColor Green
+}
+
 Write-Host ""
 Write-Host "Done! Restart Kilo to apply changes." -ForegroundColor Green
 Write-Host ""

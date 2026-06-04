@@ -32,7 +32,7 @@
 
 | 智能体 | 类型 | 模式 | 职责 |
 |--------|------|------|------|
-| coderAgent | 单模型编排 | all | 日常入口；理解需求、选择路径、委派、跟踪与交付 |
+| coderAgent | 单模型编排 | all | 日常入口；任务分级、单元化编排、委派、跟踪与交付 |
 | architect | 单模型规划 | subagent | 复杂需求分析、架构拆解、边界识别、任务规划 |
 | engineer | 单模型实现 | subagent | 读取、实现、验证、修复 |
 | reviewer | 主审查者 | subagent | 主审查、按需调度专审、汇总 findings |
@@ -52,7 +52,7 @@
 ### 路径 A：单模型默认链路
 适用：需求清晰、中等复杂度、改动范围可控的任务。
 
-用户 → `coderAgent` → `architect` / `engineer` / `reviewer`
+用户 → `coderAgent` → 简单任务直达 `engineer`；中等及以上任务先拆为任务 DAG，再按小单元调度 `architect` / `engineer` / `checker` / `fixer` / `reviewer`
 
 ### 路径 B：多模型并行链路
 适用：复杂、高风险、跨模块、边界多、单模型多轮仍不稳定的任务。

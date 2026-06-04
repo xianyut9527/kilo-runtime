@@ -6,8 +6,8 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 
 - **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。
 - **长文档转为参考资料**：`AGENTS.md` 保留为设计标准和人工维护参考，不再承担高频运行时注入职责。
-- **高精度默认路由**：主模型使用 `deepseek/deepseek-v4-pro`，优先保证复杂任务的理解和推理质量；轻量模型使用 `minimax-cn-coding-plan/MiniMax-M2.7-highspeed`，承担更快的轻任务和低成本探索。
-- **扩展入口内置**：默认启用 `context7` 远程 MCP 作为最新文档检索入口；预置 `github` MCP 配置，默认关闭，填入 `GITHUB_PAT` 后可启用。
+- **高精度默认路由**：模型选择只在 `kilo.json` 中维护；运行规则按角色和任务复杂度路由，不硬编码具体模型名。
+- **扩展入口内置**：默认启用 `context7` 远程 MCP 作为最新文档检索入口；启用 `gitnexus` 辅助调用链/影响面分析；启用 `playwright` 辅助浏览器端验证。
 - **子智能体 prompt 瘦身**：保留各 agent 的职责差异，移除大量重复的全局规则，减少 token 开销和指令冲突。
 - **项目知识项目化**：项目知识不放在本仓库，而是下沉到真实项目根目录中的 `AGENTS.md` 和 `.kilo/skills/`。
 - **持续改进基于验证闭环**：质量提升依赖测试、构建、类型检查、review 审查与多模型升级，不依赖自动改写规则文件。
@@ -48,6 +48,7 @@ kilo_config/
 
 - **规则更集中**：共享流程放在 `.kilo/instructions/`，agent 只保留职责差异。
 - **执行更聚焦**：默认单模型闭环，复杂或失败场景再升级多模型并行。
+- **单元化闭环**：中等及以上任务先拆为任务 DAG；小单元独立执行 engineer/checker/fixer/checker 循环，无冲突单元可并行，最后再做整体 checker/reviewer 门禁。
 - **遗漏更可控**：跨模块、互斥、唯一性等需求先做需求扩散和同类点扫描。
 - **维护更轻**：模型、MCP、权限由 `kilo.json` 管；项目知识放回真实项目。
 
@@ -74,6 +75,7 @@ chmod +x install.sh
 
 - **Windows**：`C:\Users\<用户名>\.config\kilo\`
 - **macOS / Linux**：`~/.config/kilo/`
+- 安装时会把本仓库维护源 `agent/` 额外同步为 `agents/`，兼容 Kilo 当前官方 agent markdown 路径。
 
 ## 使用
 
@@ -108,20 +110,35 @@ chmod +x install.sh
 }
 ```
 
-### GitHub MCP
+### GitNexus
 
-默认关闭。设置环境变量 `GITHUB_PAT` 后可打开，用于 issue、PR、仓库上下文等社区协作场景：
+默认启用，用于调用链、影响面、API 消费者和数据影响分析。它能降低跨层遗漏风险，但索引可能滞后，仍需用 grep/glob 复核当前代码：
 
 ```json
 {
   "mcp": {
-    "github": {
-      "type": "remote",
-      "url": "https://api.githubcopilot.com/mcp/",
-      "enabled": false,
-      "headers": {
-        "Authorization": "Bearer {env:GITHUB_PAT}"
-      }
+    "gitnexus": {
+      "type": "local",
+      "command": ["npx", "gitnexus", "mcp"],
+      "enabled": true,
+      "timeout": 30000
+    }
+  }
+}
+```
+
+### Playwright
+
+默认启用，用于 Web 项目的页面验证、截图和交互检查：
+
+```json
+{
+  "mcp": {
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "@playwright/mcp"],
+      "enabled": true,
+      "timeout": 120000
     }
   }
 }
@@ -133,7 +150,7 @@ chmod +x install.sh
 
 ```json
 {
-  "model": "anthropic/claude-sonnet-4-20250514",
+  "model": "provider/model-name",
   "permission": {
     "edit": {
       "*.md": "allow",
@@ -149,5 +166,5 @@ chmod +x install.sh
 
 - 本仓库 **不** 包含 API Key、Token 等敏感信息；敏感配置请通过环境变量管理。
 - MCP 服务器会增加上下文和工具面，不要同时启用太多高噪声服务器。
-- `context7` 适合最新文档检索；`github` 适合仓库协作与社区上下文，不建议在无 PAT 时强开。
+- `context7` 适合最新文档检索；`gitnexus` 适合调用链和影响面分析；`playwright` 适合浏览器端验证。MCP 服务器会增加上下文和工具面，不要同时启用太多高噪声服务器。
 - 大型系统优先建设项目级 context pack；全局配置只做骨架和兜底，不承担具体项目知识。

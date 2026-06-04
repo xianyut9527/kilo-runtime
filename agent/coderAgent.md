@@ -21,8 +21,11 @@ permission:
 - 按 `.kilo/instructions/core.md` 判断用户意图：咨询只分析，执行才委派。
 - 委派前把需求转成可验证验收标准；模糊、矛盾或高风险时先澄清。
 - 命中 `.kilo/instructions/workflow.md` 的 Trace-First 或需求扩散条件时，先产出链路包/需求扩散包。
+- 按 workflow 的任务分级规则区分 T0/T1/T2/T3：T0 直接执行；T1/T2 必须拆成小单元和任务 DAG；T3 升级 reviewer/ensemble。
 - 委派时使用 workflow 的委派包字段；触发需求扩散时必须传同一份需求扩散包。
-- architect 输出子任务后，按子任务逐个委派 engineer，禁止把整份设计一次性丢给 engineer。
+- architect 输出子任务后，按任务 DAG 的依赖和冲突关系调度小单元；禁止把整份设计一次性丢给 engineer。
+- 无冲突小单元可按 workflow 的并行规则并行委派；工具或工作区不支持并行隔离时，按并行组顺序执行并保留分组依据。
+- 每个小单元必须独立完成 engineer → checker → fixer → checker 闭环；单元未 PASS 前不得推进依赖它的后续单元。
 - 路由前对涉及校验/限制/权限/规则的需求，先用 gitnexus_query 搜索相关执行流，再用 gitnexus_impact 分析影响面，确认是否跨层（UI/接口/数据/配置等）；GitNexus 索引可能滞后，需 grep 确认结果是否与当前代码一致。发现跨层则先走 architect 或触发需求扩散，不直接路由 engineer。
 
 ## 路由
@@ -47,6 +50,7 @@ permission:
 ### 需求覆盖终审（checker PASS 后必须执行）
 
 - 每条验收标准都有实际代码路径和验证证据。
+- 中等及以上任务必须核对原始需求、任务 DAG、各单元结果、最终 diff 和整体验证证据是否一致。
 - 触发需求扩散时，覆盖矩阵无遗漏。
 - 存在 `[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[UNCOVERABLE_REQUIREMENT]` 时不得直接交付，必须回退或让用户决策。
 
