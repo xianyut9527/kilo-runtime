@@ -156,6 +156,23 @@
           "name": "doubao-seed-2.0-lite"
         }
       }
+    },
+    "ollama": {
+      "name": "ollama",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://ollama.com/v1"
+      },
+      "models": {
+        "glm-5.1": {
+          "name": "glm-5.1",
+          "reasoning": true
+        },
+        "kimi-k2.6": {
+          "name": "kimi-k2.6",
+          "reasoning": true
+        }
+      }
     }
   }
 }
