@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "https://app.kilo.ai/config.json",
   "model": "deepseek/deepseek-v4-pro",
   "small_model": "deepseek/deepseek-v4-flash",
@@ -30,9 +30,13 @@
       "model": "deepseek/deepseek-v4-flash",
       "temperature": 0.0
     },
+    "pre-checker": {
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0.0
+    },
     "fixer": {
-      "model": "deepseek/deepseek-v4-pro",
-      "temperature": 0.1
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0.0
     },
     "reviewer": {
       "model": "hscp/glm-5.1",

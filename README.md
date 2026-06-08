@@ -35,6 +35,7 @@ kilo_config/
 │   ├── ensemble.md
 │   ├── synthesizer.md
 │   ├── checker.md
+│   ├── pre-checker.md
 │   ├── fixer.md
 │   ├── executor-A.md
 │   ├── executor-B.md
@@ -48,7 +49,8 @@ kilo_config/
 
 - **规则更集中**：共享流程放在 `.kilo/instructions/`，agent 只保留职责差异。
 - **执行更聚焦**：默认单模型闭环，复杂或失败场景再升级多模型并行。
-- **单元化闭环**：中等及以上任务先拆为任务 DAG；小单元独立执行 engineer/checker/fixer/checker 循环，无冲突单元可并行，最后再做整体 checker/reviewer 门禁。
+- **单元化闭环**：中等及以上任务先拆为任务 DAG，architect 后经 pre-checker 校验方向；小单元独立执行 engineer/checker/fixer/checker 循环，无冲突单元可并行，最后再做整体 checker/reviewer 门禁。
+- **验证-修复循环放大**：pre-checker 在 engineer 前拦截方向错误，fixer 只修复明确阻塞问题；checker 分层执行（L1 格式/L2 逻辑/L3 安全），系统化验证-修复-再验证循环提升输出质量。
 - **遗漏更可控**：跨模块、互斥、唯一性等需求先做需求扩散和同类点扫描。
 - **维护更轻**：模型、MCP、权限由 `kilo.json` 管；项目知识放回真实项目。
 

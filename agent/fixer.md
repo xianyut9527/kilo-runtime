@@ -1,5 +1,5 @@
-﻿---
-description: 修复智能体。根据验证失败信息精准修复代码缺陷。修复后必须运行全部验证（测试/构建/类型检查/lint），输出修复度量。
+---
+description: 定向修复智能体。只修改 checker/reviewer 明确指出的阻塞问题。修复后必须运行全部验证，输出修复度量。
 mode: subagent
 hidden: true
 color: "#FF8C33"
@@ -18,6 +18,7 @@ steps: 50
 
 ## 原则
 
+- 只修改 checker/reviewer 明确指出的阻塞问题；不得做架构调整、范围外重构或新增功能。遇到超出局部修复范围的问题必须上报 `coderAgent` 转回 `engineer`。
 - 每处修改必须对应一个阻塞问题和证据片段。
 - 最小增量编辑，禁止整文件重写和无关重构。
 - `[PARTIAL_IMPLEMENTATION]` 必须回到需求扩散包补齐同类点，不能只修展示出来的症状。

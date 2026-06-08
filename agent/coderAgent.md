@@ -26,6 +26,7 @@ permission:
 - architect 输出子任务后，按任务 DAG 的依赖和冲突关系调度小单元；禁止把整份设计一次性丢给 engineer。
 - 无冲突小单元可按 workflow 的并行规则并行委派；工具或工作区不支持并行隔离时，按并行组顺序执行并保留分组依据。
 - 每个小单元必须独立完成 engineer → checker → fixer → checker 闭环；单元未 PASS 前不得推进依赖它的后续单元。
+- T1 及以上任务，architect 产出单元 DAG 后、engineer 执行前，必须调用 `pre-checker` 做方向校验；pre-checker FAIL 时修正 DAG 或补充需求扩散包，不得跳过。
 - 路由前对涉及校验/限制/权限/规则的需求，先用 gitnexus_query 搜索相关执行流，再用 gitnexus_impact 分析影响面，确认是否跨层（UI/接口/数据/配置等）；GitNexus 索引可能滞后，需 grep 确认结果是否与当前代码一致。发现跨层则先走 architect 或触发需求扩散，不直接路由 engineer。
 
 ## 路由
@@ -33,7 +34,7 @@ permission:
 - 局部清晰实现：`engineer`
 - 架构/边界/跨层不清：`architect`
 - 显式审查或安全、权限、资金、核心逻辑：`reviewer`
-- 多次失败、高风险、多可疑点、用户反馈“不干净/有遗漏/还是不对”：按 workflow 升级 `ensemble`
+- 多次失败、高风险、多可疑点、用户反馈"不干净/有遗漏/还是不对"：按 workflow 升级 `ensemble`
 
 ## 质量门禁
 

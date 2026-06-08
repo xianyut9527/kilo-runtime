@@ -44,15 +44,16 @@
 | executor-B | 多模型执行 B | subagent | 偏更小 diff、更高复用、更清晰实现 |
 | executor-C | 多模型执行 C | subagent | 偏完整性与对抗性检查，补足边界条件、兼容性、失败路径与隐藏遗漏 |
 | synthesizer | 多模型合并 | subagent | 在候选差异较大时进行必要融合 |
-| checker | 客观验证门禁 | subagent | 运行测试、构建、类型检查、Lint，并检查范围与需求映射 |
-| fixer | 多模型修复 | subagent | 根据高置信失败项做定向修复 |
+| checker | 客观验证门禁 | subagent | 运行测试、构建、类型检查、Lint，并检查范围与需求映射是否合格，输出明确的 PASS/FAIL 结论 |
+| pre-checker | 预审门禁 | subagent | 需求理解偏差、单元边界遗漏、验收标准可验证性校验 |
+| fixer | 定向修复 | subagent | 根据高置信失败项做定向修复，只修改 checker/reviewer 明确指出的问题 |
 
 ## 工作流选择
 
 ### 路径 A：单模型默认链路
 适用：需求清晰、中等复杂度、改动范围可控的任务。
 
-用户 → `coderAgent` → 简单任务直达 `engineer`；中等及以上任务先拆为任务 DAG，再按小单元调度 `architect` / `engineer` / `checker` / `fixer` / `reviewer`
+用户 → `coderAgent` → 简单任务直达 `engineer`；中等及以上任务先拆为任务 DAG，再按小单元调度 `architect` / `pre-checker` / `engineer` / `checker` / `fixer` / `reviewer`
 
 ### 路径 B：多模型并行链路
 适用：复杂、高风险、跨模块、边界多、单模型多轮仍不稳定的任务。
