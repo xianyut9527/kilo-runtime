@@ -1,4 +1,4 @@
-# Core Runtime Rules
+﻿# Core Runtime Rules
 
 ## 意图与边界
 - 始终使用用户提问语言回复。
@@ -39,16 +39,14 @@
 - 验证失败不得交付，必须修复、降级验证说明，或上报阻塞。
 - 不暴露密钥、Token、密码或敏感配置；涉及安全、资金、权限或核心逻辑的变更必须独立审查。
 
-
 ## 文件操作规范
 
 ### 禁止用 Shell 写文件
 - **严禁**使用 `bash` 工具的命令参数进行文件写入操作
 - 禁止的写法：
-  - `echo "内容" > 文件` 
-  - `echo "内容" | Out-File 文件` 
-  - `Set-Content 文件 "内容"`（当用于新建/覆盖时）
-  - 任何通过重定向符号(>, >>)或管道(|)向文件写入内容的操作
+  - 输出重定向（`>`、`>>`）写文件
+  - 管道（`|`）写文件
+  - `Set-Content` 新建/覆盖文件
 
 ### 正确的文件操作方式
 | 操作 | 正确工具 | 说明 |
@@ -66,41 +64,3 @@
 - 测试/构建命令（npm test, pytest, make 等）
 - 进程管理（查看状态，非修改性操作）
 - **只读**的系统信息查询
-
-### 必需使用 Shell 处理内容时的编码要求
-如果确实需要通过 shell 处理文本输出（如日志分析、命令结果解析）：
-
-1. **读取时显式指定编码**：
-   `powershell
-   # PowerShell: 指定 UTF-8 读取
-   Get-Content -Path "文件路径" -Encoding UTF8
-   
-   # Bash: 确保 LANG 环境变量
-   export LANG=en_US.UTF-8
-   cat 文件路径
-   ` 
-
-2. **输出时强制 UTF-8**：
-   `powershell
-   # PowerShell
-   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-   
-   # 或管道转码
-   命令 | Out-String
-   ` 
-
-3. **禁止**在 shell 命令中使用非 ASCII 字符作为文件路径或参数，如有中文路径先存入变量：
-   `powershell
-   # 不推荐
-   cat "中文路径/文件.txt"
-   
-   # 推荐
-   ` = "中文路径/文件.txt"` 
-   Get-Content ` -Encoding UTF8
-   ` 
-
-4. **Windows PowerShell 特殊处理**：
-   - 默认输出编码可能为 GBK，需要在命令前设置：
-     `powershell
-     [System.Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-     ` 
