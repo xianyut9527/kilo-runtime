@@ -8,6 +8,8 @@ permission:
   read: allow
   edit: deny
   task: allow
+  glob: allow
+  grep: allow
 steps: 25
 ---
 
@@ -22,8 +24,8 @@ steps: 25
 - 密钥、Token、密码、敏感字段是否泄露到代码、日志、错误或返回值。
 - 文件/命令/路径/模板/外部请求是否存在注入、遍历、SSRF 或危险副作用。
 - 外部接口是否处理异常、超时和降级。
-- 用 gitnexus_api_impact 验证 API 消费者是否受变更影响、响应形状是否兼容；grep 补充字符串引用。
-- 用 gitnexus_data_impact 检查涉及的数据库表/字段的上游消费者；grep 补充 SQL/配置引用。
+- 按 `.kilo/instructions/workflow.md` 的外部索引与 MCP 使用闸门选择证据来源；涉及 API 变更时优先用 gitnexus_api_impact 验证消费者和响应形状，并用当前代码搜索补充字符串引用。
+- 涉及数据库表/字段时，优先用 gitnexus_data_impact 检查上游消费者，并用当前代码搜索补充 SQL/配置引用。
 
 ## 输出
 

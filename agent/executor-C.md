@@ -6,10 +6,12 @@ color: "#A855F7"
 worktree: C
 enabled: true
 permission:
-  bash: allow
+  bash: deny
   read:
     "**/*": allow
   edit: deny
+  glob: allow
+  grep: allow
 steps: 25
 ---
 

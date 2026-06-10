@@ -5,7 +5,7 @@ hidden: true
 color: "#F59E0B"
 steps: 35
 permission:
-  bash: allow
+  bash: deny
   read: allow
   edit: deny
   task: allow

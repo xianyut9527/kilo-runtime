@@ -8,6 +8,8 @@ permission:
   read: allow
   edit: deny
   task: allow
+  glob: allow
+  grep: allow
 steps: 25
 ---
 
@@ -21,8 +23,8 @@ steps: 25
 - 接口输入/输出/异常/兼容性是否与调用方一致。
 - 跨模块变更是否同步影响消费者。
 - 触发需求扩散时，业务不变量是否落在共享规则/单一事实来源，而非散落在局部 UI 分支。
-- 用 gitnexus_impact 验证分层是否被破坏、跨模块调用是否越界；grep 确认索引滞后部分。
-- 用 gitnexus_detect_changes 分析变更影响的执行流，验证影响范围是否与声称一致。
+- 按 `.kilo/instructions/workflow.md` 的外部索引与 MCP 使用闸门选择证据来源；复杂跨模块影响优先用 gitnexus_impact 验证分层和调用边界，并用当前代码搜索确认索引滞后部分。
+- 需要核对影响范围时，优先用 gitnexus_detect_changes 分析变更影响的执行流，并用当前代码阅读验证是否与声称一致。
 - 新抽象是否必要，是否重复已有能力。
 
 ## 输出

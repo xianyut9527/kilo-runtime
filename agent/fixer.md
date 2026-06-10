@@ -1,4 +1,4 @@
----
+﻿---
 description: 定向修复智能体。只修改 checker/reviewer 明确指出的阻塞问题。修复后必须运行全部验证，输出修复度量。
 mode: subagent
 hidden: true
@@ -42,9 +42,3 @@ steps: 50
 - 影响范围:
 ```
 
-
-## 编码约定
-
-- 所有文件操作必须使用 Write/Edit/Read 工具，禁止通过 bash 工具写入文件
-- 修复涉及中文内容时，确保输出为 UTF-8 编码
-- 修复后的文件必须能被后续 Read 工具正确读取（验证无乱码）

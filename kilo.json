@@ -1,4 +1,4 @@
-﻿{
+{
   "$schema": "https://app.kilo.ai/config.json",
   "model": "deepseek/deepseek-v4-pro",
   "small_model": "deepseek/deepseek-v4-flash",

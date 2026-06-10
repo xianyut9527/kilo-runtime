@@ -32,9 +32,9 @@ steps: 40
 - 逐条验收标准读取实际代码路径，确认实现、分支、错误路径和边界。
 - 触发需求扩散时，独立用 grep/glob 搜索同类入口、状态、校验、提交、回显路径；发现覆盖矩阵遗漏或局部补丁，标记 `[PARTIAL_IMPLEMENTATION]`。
 - 检查回归、范围越界、无关修改和需求映射。
-- 用 gitnexus_detect_changes 分析变更影响的执行流，比对验收标准的覆盖范围；注意索引可能滞后，需 grep 确认。
-- 涉及 API 变更时，用 gitnexus_api_impact 检查消费者和响应形状是否兼容；grep 补充字符串引用。
-- 涉及数据变更时，用 gitnexus_data_impact 检查上游消费者是否受影响；grep 补充 SQL/配置引用。
+- 按 `.kilo/instructions/workflow.md` 的外部索引与 MCP 使用闸门选择证据来源；复杂影响面优先用 gitnexus_detect_changes 分析变更影响的执行流，并用当前代码搜索复核。
+- 涉及 API 变更时，优先用 gitnexus_api_impact 检查消费者和响应形状是否兼容；用当前代码搜索补充字符串引用。
+- 涉及数据变更时，优先用 gitnexus_data_impact 检查上游消费者是否受影响；用当前代码搜索补充 SQL/配置引用。
 
 ## FAIL 条件
 

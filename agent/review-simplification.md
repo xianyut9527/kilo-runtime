@@ -8,6 +8,8 @@ permission:
   read: allow
   edit: deny
   task: allow
+  glob: allow
+  grep: allow
 steps: 25
 ---
 
@@ -22,8 +24,8 @@ steps: 25
 - diff 是否包含格式化噪声、无关改名、范围外修改。
 - 是否为了小 diff 修得过窄：跨模块规则只改一个入口，漏掉同类点。
 - 是否可以用项目已有工具、标准库或更直接逻辑替代。
-- 用 gitnexus_detect_changes 分析变更影响的执行流，验证 diff 影响范围是否越界。
-- 用 gitnexus_impact 验证修改的爆炸半径，判断是否修得过窄或过宽；grep 确认索引滞后部分。
+- 按 `.kilo/instructions/workflow.md` 的外部索引与 MCP 使用闸门选择证据来源；复杂影响面优先用 gitnexus_detect_changes 分析 diff 影响范围是否越界。
+- 需要判断修得过窄或过宽时，优先用 gitnexus_impact 验证爆炸半径，并用当前代码搜索确认索引滞后部分。
 
 ## 输出
 
