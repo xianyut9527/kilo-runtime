@@ -43,13 +43,31 @@ steps: 40
 - 涉及 API 变更时，优先用 gitnexus_api_impact 检查消费者和响应形状是否兼容；用当前代码搜索补充字符串引用。
 - 涉及数据变更时，优先用 gitnexus_data_impact 检查上游消费者是否受影响；用当前代码搜索补充 SQL/配置引用。
 
+- **通用注入检测**（当变更涉及用户输入处理时自动触发——包括表单字段、API 参数、URL 查询、文件上传、Header 读取的增删改）：
+  - 搜索 SQL 拼接模式（`"SELECT` 或 `'SELECT` 后跟 `+`、`${`、`fmt.Sprintf`、`.format(`、`concat(` 等拼接用户输入的写法），存在则标记 `[SECURITY_GAP_SQL_INJECTION]`。
+  - 搜索 XSS 危险模式（`innerHTML`、`dangerouslySetInnerHTML`、`v-html`、`document.write(`、`eval(` 赋值或传参用户可控内容），存在则标记 `[SECURITY_GAP_XSS]`。
+  - 搜索命令注入模式（`exec(`, `execSync(`, `spawn(`, `system(`, `popen(`, `subprocess.call(` 拼接或插值用户输入），存在则标记 `[SECURITY_GAP_COMMAND_INJECTION]`。
+  - 搜索路径遍历模式（文件路径操作中拼接 `../`、`..`、未校验的用户输入作为路径片段），存在则标记 `[SECURITY_GAP_PATH_TRAVERSAL]`。
+  - 上述任一标记触发即 **FAIL**；checker 输出中必须包含所有 `[SECURITY_GAP_*]` 标记及对应文件位置。
+
+
+- **安全敏感模块专项检查**（当变更涉及用户/认证/支付/资金模块文件时触发）：
+  - 搜索明文密码对比模式（`== password`, `=== password`, `.equals(password)`, `compare(password`, `password ===`, `password ==` 等无哈希保护的直接比较），存在则标记 `[SECURITY_GAP_PLAINTEXT_PASSWORD]`。
+  - 搜索弱哈希模式（`md5(`, `sha1(`, `sha256(` 在密码相关上下文中），存在则标记 `[SECURITY_GAP_WEAK_HASH]`。
+  - 确认密码存储使用安全哈希（搜索 `bcrypt`, `argon2`, `pbkdf2`, `hash_password`, `password_hash`），缺失则标记 `[SECURITY_GAP_NO_HASH]`。
+  - 确认认证/支付路由有限流中间件（搜索 `rate_limit`, `throttle`, `lockout`, `rateLimiter`, `tooManyAttempts`），缺失则标记 `[SECURITY_GAP_NO_RATE_LIMIT]`。
+  - 上述任一标记触发即 **FAIL**；checker 输出中必须包含所有 `[SECURITY_GAP_*]` 标记及对应文件位置。
+
+
 ## FAIL 条件
 
 - 测试/构建/类型检查失败。
 - `[MISSING]`、`[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[REGRESSION]`。
+- `[SECURITY_GAP_SQL_INJECTION]`、`[SECURITY_GAP_XSS]`、`[SECURITY_GAP_COMMAND_INJECTION]`、`[SECURITY_GAP_PATH_TRAVERSAL]`、`[SECURITY_GAP_PLAINTEXT_PASSWORD]`、`[SECURITY_GAP_WEAK_HASH]`、`[SECURITY_GAP_NO_HASH]`、`[SECURITY_GAP_NO_RATE_LIMIT]`。
+- `[PATH_DEVIATION]`。
 - 明显超范围、blocklist 修改、OUT_OF_SCOPE 修改。
 - 排查类任务无法证明根因闭合。
-- `[UNVERIFIED]` — 验收标准只有文字描述，没有实际的代码路径或验证命令输出。
+  - 注：`[UNVERIFIED]` 指验收标准只有文字描述，没有实际的代码路径或验证命令输出。
 
 ## 输出
 

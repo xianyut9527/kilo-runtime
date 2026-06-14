@@ -36,6 +36,7 @@ Step 3: 需求清晰度检查
   └─ 清晰 → 继续 Step 4
 
 Step 4: 复杂度量化判定（参照下方判定矩阵）
+  ├─ 命中安全敏感关键词 → 最低 T2（见「安全敏感模块识别」）
   ├─ 单文件/单点修改，有明确验收标准，影响面可控 → T1
   ├─ 跨模块/跨层/规则扩散/状态数据风险/兼容性 → T2
   └─ 安全/资金/权限/核心逻辑/多次失败/用户反馈不干净 → T3
@@ -45,6 +46,30 @@ Step 5: 触发条件检查
   ├─ 需求扩散命中 → 先产出扩散包，再按等级执行
   └─ 无触发 → 按等级标准执行
 ```
+
+### 安全敏感模块识别
+
+以下模块涉及安全敏感领域，**不论复杂度如何，最低定级 T2**，且必须触发需求扩散和调用 `review-security`。命中后不得降级为 T0/T1。
+
+#### 安全敏感关键词
+
+| 类别 | 关键词 |
+|------|--------|
+| 用户身份 | user, users, account, accounts, profile, profiles, register, registration, signup, sign-up, 用户, 账户, 账号, 注册 |
+| 认证凭证 | auth, authentication, login, log-in, signin, sign-in, password, passwd, credential, credentials, token, jwt, session, sessions, 密码, 认证, 登录, 令牌 |
+| 支付交易 | payment, payments, pay, checkout, transaction, transactions, billing, bill, invoice, invoices, order, orders, 支付, 交易, 订单, 账单 |
+| 资金资产 | wallet, wallets, balance, balances, fund, funds, transfer, transfers, withdraw, withdrawal, deposit, 钱包, 余额, 资金, 转账, 提现 |
+
+#### 判定规则
+
+1. 任务描述、涉及文件路径、模块名称或函数名称命中上述关键词 → **最低 T2**，已为 T2/T3 的保持原等级。
+2. **必须触发需求扩散**：不以"只改一行 UI"为由跳过安全审查；需求扩散包必须包含密码安全与防暴力破解覆盖项。
+3. **必须调用 `review-security`**：coderAgent 在路由时自动将 `review-security` 加入审查链。
+4. **T0/T1 极速通道不可用**：命中安全敏感关键词的任务禁止进入 T0 极速通道。
+5. **降级禁止**：安全敏感模块任务不允许中途降级为 T1 以下。
+
+> **注**：输入注入防护（SQL 注入、XSS、命令注入、路径遍历、模板注入）属于**通用安全基线**，不受以上模块关键词限制。任何涉及用户输入（表单字段、API 参数、URL 查询、文件上传）的变更，均须通过 `engineer` 通用安全约束和 `checker` 通用注入检测，检测到注入漏洞标记即 FAIL。
+
 
 ### 等级动态调整规则
 
