@@ -51,6 +51,12 @@ steps: 40
   - 上述任一标记触发即 **FAIL**；checker 输出中必须包含所有 `[SECURITY_GAP_*]` 标记及对应文件位置。
 
 
+- **资源安全检测**（当变更涉及查询/列表/文件/批量操作时触发）：
+  - 搜索无 LIMIT 的查询语句（`SELECT ... FROM` 或 ORM `find(`/`findAll(`/`.all(` 等无 `limit` 参数），存在则标记 `[PERF_GAP_NO_LIMIT]`。
+  - 搜索文件上传缺少大小校验（上传中间件/配置中无 `maxFileSize`/`limits.fileSize`/`maxSize`/`sizeLimit`），存在则标记 `[PERF_GAP_NO_UPLOAD_LIMIT]`。
+  - 搜索批量操作无上限（`deleteMany({})`/`updateMany({})` 空条件、批量循环 `for`/`while`/`forEach` 无上限控制），存在则标记 `[PERF_GAP_NO_BATCH_LIMIT]`。
+  - 上述任一标记触发即 **FAIL**；checker 输出中必须包含所有 `[PERF_GAP_*]` 标记及对应文件位置。
+
 - **安全敏感模块专项检查**（当变更涉及用户/认证/支付/资金模块文件时触发）：
   - 搜索明文密码对比模式（`== password`, `=== password`, `.equals(password)`, `compare(password`, `password ===`, `password ==` 等无哈希保护的直接比较），存在则标记 `[SECURITY_GAP_PLAINTEXT_PASSWORD]`。
   - 搜索弱哈希模式（`md5(`, `sha1(`, `sha256(` 在密码相关上下文中），存在则标记 `[SECURITY_GAP_WEAK_HASH]`。
@@ -64,6 +70,7 @@ steps: 40
 - 测试/构建/类型检查失败。
 - `[MISSING]`、`[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[REGRESSION]`。
 - `[SECURITY_GAP_SQL_INJECTION]`、`[SECURITY_GAP_XSS]`、`[SECURITY_GAP_COMMAND_INJECTION]`、`[SECURITY_GAP_PATH_TRAVERSAL]`、`[SECURITY_GAP_PLAINTEXT_PASSWORD]`、`[SECURITY_GAP_WEAK_HASH]`、`[SECURITY_GAP_NO_HASH]`、`[SECURITY_GAP_NO_RATE_LIMIT]`。
+- `[PERF_GAP_NO_LIMIT]`、`[PERF_GAP_NO_UPLOAD_LIMIT]`、`[PERF_GAP_NO_BATCH_LIMIT]`。
 - `[PATH_DEVIATION]`。
 - 明显超范围、blocklist 修改、OUT_OF_SCOPE 修改。
 - 排查类任务无法证明根因闭合。
