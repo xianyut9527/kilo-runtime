@@ -16,11 +16,11 @@
   "agent": {
     "coderAgent": {
       "model": "deepseek/deepseek-v4-pro",
-      "temperature": 0.3
+      "temperature": 0.1
     },
     "engineer": {
       "model": "deepseek/deepseek-v4-pro",
-      "temperature": 0.2
+      "temperature": 0.0
     },
     "architect": {
       "model": "hscp/kimi-k2.6",
@@ -52,15 +52,15 @@
     },
     "review-simplification": {
       "model": "deepseek/deepseek-v4-flash",
-      "temperature": 0.2
+      "temperature": 0.0
     },
     "executor-A": {
       "model": "deepseek/deepseek-v4-pro",
-      "temperature": 0.2
+      "temperature": 0.0
     },
     "executor-B": {
       "model": "hscp/kimi-k2.6",
-      "temperature": 0.3
+      "temperature": 0.1
     },
     "executor-C": {
       "model": "hscp/glm-5.1",
