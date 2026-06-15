@@ -15,12 +15,12 @@
   },
   "agent": {
     "coderAgent": {
-      "model": "deepseek/deepseek-v4-pro",
-      "temperature": 0.1
+      "model": "deepseek/deepseek-v4-flash",
+      "temperature": 0
     },
     "engineer": {
       "model": "deepseek/deepseek-v4-pro",
-      "temperature": 0.0
+      "temperature": 0
     },
     "architect": {
       "model": "hscp/kimi-k2.6",
@@ -28,15 +28,15 @@
     },
     "checker": {
       "model": "deepseek/deepseek-v4-flash",
-      "temperature": 0.0
+      "temperature": 0
     },
     "pre-checker": {
       "model": "deepseek/deepseek-v4-flash",
-      "temperature": 0.0
+      "temperature": 0
     },
     "fixer": {
       "model": "deepseek/deepseek-v4-flash",
-      "temperature": 0.0
+      "temperature": 0
     },
     "reviewer": {
       "model": "hscp/glm-5.1",
@@ -52,11 +52,11 @@
     },
     "review-simplification": {
       "model": "deepseek/deepseek-v4-flash",
-      "temperature": 0.0
+      "temperature": 0
     },
     "executor-A": {
       "model": "deepseek/deepseek-v4-pro",
-      "temperature": 0.0
+      "temperature": 0
     },
     "executor-B": {
       "model": "hscp/kimi-k2.6",
@@ -64,7 +64,7 @@
     },
     "executor-C": {
       "model": "hscp/glm-5.1",
-      "temperature": 0.0
+      "temperature": 0
     },
     "synthesizer": {
       "model": "hscp/kimi-k2.6",
@@ -74,7 +74,9 @@
       "model": "hscp/kimi-k2.6",
       "temperature": 0.1
     },
-    "coder": { "disable": true }
+    "coder": {
+      "disable": true
+    }
   },
   "commit_message": {
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
@@ -88,13 +90,20 @@
     },
     "gitnexus": {
       "type": "local",
-      "command": ["npx", "gitnexus", "mcp"],
+      "command": [
+        "npx",
+        "gitnexus",
+        "mcp"
+      ],
       "enabled": true,
       "timeout": 30000
     },
     "playwright": {
       "type": "local",
-      "command": ["npx", "@playwright/mcp"],
+      "command": [
+        "npx",
+        "@playwright/mcp"
+      ],
       "enabled": true,
       "timeout": 120000
     }

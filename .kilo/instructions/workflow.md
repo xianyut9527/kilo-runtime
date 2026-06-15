@@ -128,7 +128,7 @@ coderAgent 定级时必须对照以下矩阵，至少命中 2 个以上特征才
 | **接口变更** | 无 | 内部接口 | 对外接口/契约 | 核心接口/协议 |
 | **数据风险** | 无 | 低（只读/局部写） | 中（需扩散分析） | 高（权限/资金/敏感数据） |
 | **测试要求** | 编译通过 | 单元测试/Lint | 集成测试+影响面验证 | 全量回归+安全审查 |
-| **审批门禁** | 无 | checker | checker + reviewer | reviewer + ensemble |
+| **审批门禁** | 无 | checker + reviewer | checker + reviewer | reviewer + ensemble |
 | **需求扩散** | 不需要 | 视情况 | 必须 | 必须 |
 | **Trace-First** | 不需要 | 视情况 | 必须 | 必须 |
 
@@ -282,10 +282,10 @@ GitNexus、Context7、Playwright 等 MCP 工具用于补充证据，不是每个
 
 - `fixer` 权限约束：只修改 checker/reviewer 明确指出的阻塞问题，不得做架构调整、范围外重构或新增功能；遇到超出局部修复范围的问题必须上报 `coderAgent` 转回 `engineer`。
 - `engineer` 完成后必须过 `checker`。
-- `checker` 失败 → `fixer` 定向修复；默认 1 轮，第 2 轮仅在问题明显减少且局部可修时允许。
+- `checker` 失败 → `fixer` 定向修复；fixer 最多 2 轮。第 3 轮 checker 仍 FAIL 必须升级 `reviewer`，不允许继续调 fixer。
 - `checker` 通过后，主控必须做需求覆盖终审；触发需求扩散时还要核对覆盖矩阵。
 - 仍存在 `[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[REGRESSION]` 或阻塞验证失败，不得交付。
-- fixer 3 轮仍失败 → `reviewer`；审查后仍失败或风险高 → `ensemble`；ensemble 仍失败 → Circuit Breaker。
+- fixer 最多 2 轮后 checker 仍 FAIL → 升级 `reviewer`；审查后仍失败或风险高 → `ensemble`；ensemble 仍失败 → Circuit Breaker。
 - 修复后必须排查同症状异根路径——"还有哪些路径能导致相同症状？"，确认无遗漏后才可交付。
 
 ## 交付

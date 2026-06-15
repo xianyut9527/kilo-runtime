@@ -79,7 +79,7 @@ permission:
 5. 第 3 轮 checker 仍 FAIL → 停止修复循环，**必须升级到 `reviewer`**，不允许继续调 fixer。
 6. reviewer 不通过 → 按 workflow 升级 `ensemble`；ensemble 仍失败 → Circuit Breaker，上报用户。
 7. checker 返回 PASS → 进入需求覆盖终审（下一步）。
-8. T2/T3 总体验收必须经过 `reviewer`；未过 reviewer 不得交付。T0/T1 不要求。
+8. T1/T2/T3 总体验收必须经过 `reviewer`；未过 reviewer 不得交付。T0 不要求。
 
 ### 需求覆盖终审（checker PASS 后必须执行）
 
