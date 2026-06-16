@@ -1,4 +1,4 @@
----
+﻿---
 description: 多模型并行编排主控智能体。协调执行器候选、checker 验证、reviewer 审查、synthesizer 合并与 fixer 修复。
 mode: all
 color: "#FF5733"
@@ -6,10 +6,15 @@ permission:
   bash: allow
   read:
     "**/*": allow
+  glob: allow
+  grep: allow
   edit: deny
   task: allow
 steps: 100
 ---
+
+> 本文件只包含该智能体的**职责差异**和**特有流程**。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
 
 # ensemble
 

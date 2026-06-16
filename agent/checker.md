@@ -1,4 +1,4 @@
----
+﻿---
 description: 客观验证智能体。负责运行测试、构建、类型检查、Lint，并确认范围、聚焦度与需求映射是否合格，输出明确的 PASS/FAIL 结论。
 mode: subagent
 hidden: true
@@ -12,6 +12,9 @@ permission:
   grep: allow
 steps: 60
 ---
+
+> 本文件只包含该智能体的**职责差异**和**特有流程**。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
 
 # checker
 
@@ -27,11 +30,9 @@ steps: 60
 - 强制流程日志（用于流程合规核查）
 
 ### 审查原则
+- 遵循 `.kilo/instructions/workflow.md` 的验证原则（不信任声明、要求证据、怀疑一切）。
 
-1. **不信任声明** — engineer 的"已测试/已验证/已覆盖"声明视为无效，不作为任何结论的依据。必须看到实际的命令输出、代码路径和测试结果。
-2. **要求证据** — 对每个验收标准，必须读到具体的代码路径和验证命令输出。仅有文字描述没有代码引用的验收标记为 `[UNVERIFIED]`。
-3. **怀疑一切** — 对每个实现问"这条路真的走了吗？边界真的处理了吗？这个异常真的不会发生吗？"
-4. **检查执行路径一致性** — 对比本次的实际流程和定级结论声明的执行路径是否一致。发现跳步/换路标记为 `[PATH_DEVIATION]`。
+1. **检查执行路径一致性** — 对比本次的实际流程和定级结论声明的执行路径是否一致。发现跳步/换路标记为 `[PATH_DEVIATION]`。
 
 ## 必查
 
@@ -53,7 +54,6 @@ steps: 60
   - 搜索路径遍历模式（文件路径操作中拼接 `../`、`..`、未校验的用户输入作为路径片段），存在则标记 `[SECURITY_GAP_PATH_TRAVERSAL]`。
   - 上述任一标记触发即 **FAIL**；checker 输出中必须包含所有 `[SECURITY_GAP_*]` 标记及对应文件位置。
 
-
 - **资源安全检测**（当变更涉及查询/列表/文件/批量操作时触发）：
   - 搜索无 LIMIT 的查询语句（`SELECT ... FROM` 或 ORM `find(`/`findAll(`/`.all(` 等无 `limit` 参数），存在则标记 `[PERF_GAP_NO_LIMIT]`。
   - 搜索文件上传缺少大小校验（上传中间件/配置中无 `maxFileSize`/`limits.fileSize`/`maxSize`/`sizeLimit`），存在则标记 `[PERF_GAP_NO_UPLOAD_LIMIT]`。
@@ -66,7 +66,6 @@ steps: 60
   - 确认密码存储使用安全哈希（搜索 `bcrypt`, `argon2`, `pbkdf2`, `hash_password`, `password_hash`），缺失则标记 `[SECURITY_GAP_NO_HASH]`。
   - 确认认证/支付路由有限流中间件（搜索 `rate_limit`, `throttle`, `lockout`, `rateLimiter`, `tooManyAttempts`），缺失则标记 `[SECURITY_GAP_NO_RATE_LIMIT]`。
   - 上述任一标记触发即 **FAIL**；checker 输出中必须包含所有 `[SECURITY_GAP_*]` 标记及对应文件位置。
-
 
 ## FAIL 条件
 

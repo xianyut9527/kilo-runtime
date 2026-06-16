@@ -1,12 +1,13 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
-  "model": "deepseek/deepseek-v4-pro",
-  "small_model": "deepseek/deepseek-v4-flash",
+  "model": "dp/deepseek-v4-pro",
+  "small_model": "dp/deepseek-v4-flash",
   "default_agent": "coderAgent",
   "instructions": [
     "./.kilo/instructions/core.md",
     "./.kilo/instructions/workflow.md",
-    "./.kilo/instructions/reflection.md"
+    "./.kilo/instructions/reflection.md",
+    "./.kilo/memory.md"
   ],
   "snapshot": true,
   "compaction": {
@@ -15,11 +16,11 @@
   },
   "agent": {
     "coderAgent": {
-      "model": "deepseek/deepseek-v4-pro",
+      "model": "dp/deepseek-v4-pro",
       "temperature": 0
     },
     "engineer": {
-      "model": "deepseek/deepseek-v4-pro",
+      "model": "dp/deepseek-v4-pro",
       "temperature": 0
     },
     "architect": {
@@ -27,15 +28,15 @@
       "temperature": 0.2
     },
     "checker": {
-      "model": "deepseek/deepseek-v4-flash",
+      "model": "dp/deepseek-v4-flash",
       "temperature": 0
     },
     "pre-checker": {
-      "model": "deepseek/deepseek-v4-flash",
+      "model": "dp/deepseek-v4-flash",
       "temperature": 0
     },
     "fixer": {
-      "model": "deepseek/deepseek-v4-flash",
+      "model": "dp/deepseek-v4-flash",
       "temperature": 0
     },
     "reviewer": {
@@ -51,11 +52,11 @@
       "temperature": 0.1
     },
     "review-simplification": {
-      "model": "deepseek/deepseek-v4-flash",
+      "model": "dp/deepseek-v4-flash",
       "temperature": 0
     },
     "executor-A": {
-      "model": "deepseek/deepseek-v4-pro",
+      "model": "dp/deepseek-v4-pro",
       "temperature": 0
     },
     "executor-B": {
@@ -73,9 +74,6 @@
     "ensemble": {
       "model": "hscp/kimi-k2.6",
       "temperature": 0.1
-    },
-    "coder": {
-      "disable": true
     }
   },
   "commit_message": {
@@ -90,20 +88,13 @@
     },
     "gitnexus": {
       "type": "local",
-      "command": [
-        "npx",
-        "gitnexus",
-        "mcp"
-      ],
+      "command": ["npx", "gitnexus", "mcp"],
       "enabled": true,
       "timeout": 30000
     },
     "playwright": {
       "type": "local",
-      "command": [
-        "npx",
-        "@playwright/mcp"
-      ],
+      "command": ["npx", "@playwright/mcp"],
       "enabled": true,
       "timeout": 120000
     }
@@ -183,6 +174,23 @@
         },
         "kimi-k2.6": {
           "name": "kimi-k2.6",
+          "reasoning": true
+        }
+      }
+    },
+    "dp": {
+      "name": "dp",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://api.deepseek.com"
+      },
+      "models": {
+        "deepseek-v4-flash": {
+          "name": "deepseek-v4-flash",
+          "reasoning": true
+        },
+        "deepseek-v4-pro": {
+          "name": "deepseek-v4-pro",
           "reasoning": true
         }
       }

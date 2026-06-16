@@ -20,6 +20,7 @@ kilo_config/
 ├── AGENTS.md                     # 全局骨架设计与长期参考文档
 ├── CONFIG_CHANGE_CHECKLIST.md    # 配置变更一致性检查清单
 ├── .kilo/
+│   ├── memory.md                 # 跨会话记忆与文件锁
 │   ├── instructions/
 │   │   ├── core.md               # 运行时核心规则
 │   │   ├── workflow.md           # 运行时工作流规则
@@ -96,55 +97,13 @@ chmod +x install.sh
 
 ## MCP 扩展
 
-### Context7
+本配置默认启用以下 MCP 服务器（详见 `kilo.json` 中的 `mcp` 节）：
 
-默认启用，用于拉取最新官方文档与库文档：
+- **Context7** (`context7`): 远程文档检索，用于拉取最新官方文档与库文档
+- **GitNexus** (`gitnexus`): 本地调用链与影响面分析
+- **Playwright** (`playwright`): 浏览器端验证、截图和交互检查
 
-```json
-{
-  "mcp": {
-    "context7": {
-      "type": "remote",
-      "url": "https://mcp.context7.com/mcp",
-      "enabled": true
-    }
-  }
-}
-```
-
-### GitNexus
-
-默认启用，用于调用链、影响面、API 消费者和数据影响分析。它能降低跨层遗漏风险，但索引可能滞后，仍需用 grep/glob 复核当前代码：
-
-```json
-{
-  "mcp": {
-    "gitnexus": {
-      "type": "local",
-      "command": ["npx", "gitnexus", "mcp"],
-      "enabled": true,
-      "timeout": 30000
-    }
-  }
-}
-```
-
-### Playwright
-
-默认启用，用于 Web 项目的页面验证、截图和交互检查：
-
-```json
-{
-  "mcp": {
-    "playwright": {
-      "type": "local",
-      "command": ["npx", "@playwright/mcp"],
-      "enabled": true,
-      "timeout": 120000
-    }
-  }
-}
-```
+> 注意：MCP 服务器会增加上下文和工具面，不要同时启用太多高噪声服务器。
 
 ## 项目级覆盖
 
@@ -168,5 +127,5 @@ chmod +x install.sh
 
 - 本仓库 **不** 包含 API Key、Token 等敏感信息；敏感配置请通过环境变量管理。
 - MCP 服务器会增加上下文和工具面，不要同时启用太多高噪声服务器。
-- `context7` 适合最新文档检索；`gitnexus` 适合调用链和影响面分析；`playwright` 适合浏览器端验证。MCP 服务器会增加上下文和工具面，不要同时启用太多高噪声服务器。
+- `context7` 适合最新文档检索；`gitnexus` 适合调用链和影响面分析；`playwright` 适合浏览器端验证。
 - 大型系统优先建设项目级 context pack；全局配置只做骨架和兜底，不承担具体项目知识。

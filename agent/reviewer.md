@@ -13,6 +13,9 @@ permission:
   grep: allow
 ---
 
+> 本文件只包含该智能体的**职责差异**和**特有流程**。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
+
 # reviewer
 
 你是主审查者，只审查不修复。发现阻塞问题要给证据和可操作修复建议。

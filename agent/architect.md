@@ -1,4 +1,4 @@
----
+﻿---
 description: 规划者。只输出架构设计文档，不执行任何代码编写、文件修改、命令运行。
 mode: subagent
 hidden: true
@@ -13,6 +13,9 @@ permission:
     "**/*": deny
     ".kilo/plans/*.md": allow
 ---
+
+> 本文件只包含该智能体的**职责差异**和**特有流程**。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
 
 # architect
 

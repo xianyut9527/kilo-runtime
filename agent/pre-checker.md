@@ -1,4 +1,4 @@
----
+﻿---
 description: 预审门禁。需求理解偏差、单元边界遗漏、验收标准可验证性。只输出 PASS/FAIL，不改代码。
 mode: subagent
 hidden: true
@@ -12,6 +12,9 @@ permission:
   grep: allow
 steps: 20
 ---
+
+> 本文件只包含该智能体的**职责差异**和**特有流程**。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
 
 # pre-checker
 

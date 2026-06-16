@@ -1,4 +1,4 @@
----
+﻿---
 description: 简化专审。重复实现、复杂度膨胀、过度抽象、范围外修改。
 mode: subagent
 hidden: true
@@ -12,6 +12,9 @@ permission:
   grep: allow
 steps: 25
 ---
+
+> 本文件只包含该智能体的**职责差异**和**特有流程**。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
 
 # review-simplification
 

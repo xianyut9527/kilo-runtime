@@ -1,4 +1,4 @@
----
+﻿---
 description: 执行智能体 C。对抗审查专岗（Red Team），从反向视角审视实现：找遗漏的边界条件、隐藏假设、调用链副作用、兼容性破坏。仅 ensemble 路径调用。
 mode: subagent
 hidden: true
@@ -14,6 +14,9 @@ permission:
   grep: allow
 steps: 25
 ---
+
+> 本文件只包含该智能体的**职责差异**和**特有流程**。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
 
 # executor-C
 
