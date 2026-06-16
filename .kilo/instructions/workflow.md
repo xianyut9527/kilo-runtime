@@ -283,7 +283,7 @@ GitNexus、Context7、Playwright 等 MCP 工具用于补充证据，不是每个
 - `checker` 失败 → `fixer` 定向修复；fixer 最多 2 轮。第 3 轮 checker 仍 FAIL 必须升级 `reviewer`，不允许继续调 fixer。
 - `checker` 通过后，主控必须做需求覆盖终审；触发需求扩散时还要核对覆盖矩阵。
 - 仍存在 `[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[REGRESSION]` 或阻塞验证失败，不得交付。
-- reviewer 审查后仍失败或风险高 → 升级 `ensemble`；ensemble 仍失败 → Circuit Breaker。
+- reviewer 审查后仍失败或风险高 → `fixer` 定向修复指出的问题 → 再次 `reviewer` 审查；第 2 轮 reviewer 仍不通过 → 升级 `ensemble`；ensemble 仍失败 → Circuit Breaker。
 - 修复后必须排查同症状异根路径——"还有哪些路径能导致相同症状？"，确认无遗漏后才可交付。
 
 ## 交付

@@ -138,7 +138,7 @@ permission:
 3. fixer 交付后 → **必须再次调用 `checker`**，不允许假设修复成功直接交付。
 4. 第 2 轮 checker 仍 FAIL → **必须调用 `fixer`** 进行第 2 轮修复。
 5. 第 3 轮 checker 仍 FAIL → 停止修复循环，**必须升级到 `reviewer`**，不允许继续调 fixer。
-6. reviewer 不通过 → 按 workflow 升级 `ensemble`；ensemble 仍失败 → Circuit Breaker，上报用户。
+6. reviewer 不通过 → 调用 `fixer` 定向修复 → 再次调用 `reviewer` 审查；第 2 轮 reviewer 仍不通过 → 按 workflow 升级 `ensemble`；ensemble 仍失败 → Circuit Breaker，上报用户。
 7. checker 返回 PASS → 进入需求覆盖终审（下一步）。
 8. T1/T2/T3 总体验收必须经过 `reviewer`；未过 reviewer 不得交付。T0 不要求。
 
