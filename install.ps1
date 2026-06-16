@@ -50,16 +50,8 @@ foreach ($item in Get-ChildItem -Path $Source) {
     }
 }
 
-$AgentSource = Join-Path $Source "agent"
-$AgentsTarget = Join-Path $Target "agents"
-if (Test-Path $AgentSource) {
-    if (Test-Path $AgentsTarget) {
-        Remove-Item -Path $AgentsTarget -Recurse -Force
-        Write-Host "[REMOVE] agents/" -ForegroundColor Yellow
-    }
-    Copy-Item -Path $AgentSource -Destination $AgentsTarget -Recurse -Force
-    Write-Host "[COPY]   agents/ (compat)" -ForegroundColor Green
-}
+# 注意：不再创建 agents/ 兼容副本，避免 agent 被注册两次导致路由不稳定
+# 详见 https://kilo.ai/docs/configure/agents
 
 Write-Host ""
 Write-Host "Done! Restart Kilo to apply changes." -ForegroundColor Green

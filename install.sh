@@ -84,14 +84,10 @@ else
     done
 fi
 
-# Kilo's current documentation uses an "agents/" directory for agent markdown.
-# This repo keeps "agent/" as the source-of-truth directory name, so install a
-# compatibility copy without duplicating maintenance in the repository.
-if [ -d "${SOURCE_DIR}/agent" ]; then
-    rm -rf "${TARGET_DIR}/agents"
-    cp -r "${SOURCE_DIR}/agent" "${TARGET_DIR}/agents"
-    echo "Copied compatibility directory: agents/"
-fi
+# Note: agents/ compat copy intentionally removed.
+# Having both agent/ and agents/ causes duplicate agent registration,
+# which makes agent routing unstable.
+# See https://kilo.ai/docs/configure/agents
 
 echo ""
 echo "========================================"

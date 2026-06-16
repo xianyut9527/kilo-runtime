@@ -18,63 +18,78 @@
   },
   "agent": {
     "coderAgent": {
+      "mode": "primary",
       "model": "dp/deepseek-v4-pro",
       "temperature": 0,
       "prompt": "你必须严格遵守 .kilo/instructions/workflow.md 的编排流程：\n1. 每次收到请求先执行「意图判定」并输出判定结论\n2. 执行类任务必须先完成「任务定级」并输出定级结论（T0/T1/T2/T3）\n3. 全生命周期维护「强制流程日志」，每步转换时必须更新\n4. 从不定制 checker，不自验自审，engineer 交付后必须调 checker\n5. 每次调用修改性工具前执行「工具调用前自检」（意图判定/任务定级/流程日志/检查点四项确认）\n6. 触发 Trace-First 或需求扩散条件时先产出链路包/扩散包\n\n详细规则和流程门禁在 .kilo/instructions/core.md、workflow.md、reflection.md 中。"
     },
     "engineer": {
+      "mode": "subagent",
       "model": "dp/deepseek-v4-pro",
       "temperature": 0
     },
     "architect": {
+      "mode": "subagent",
       "model": "hscp/kimi-k2.6",
       "temperature": 0.2
     },
     "checker": {
+      "mode": "subagent",
       "model": "dp/deepseek-v4-flash",
       "temperature": 0
     },
     "pre-checker": {
+      "mode": "subagent",
       "model": "dp/deepseek-v4-flash",
       "temperature": 0
     },
     "fixer": {
+      "mode": "subagent",
       "model": "dp/deepseek-v4-flash",
       "temperature": 0
     },
     "reviewer": {
+      "mode": "subagent",
       "model": "hscp/glm-5.1",
       "temperature": 0.1
     },
     "review-security": {
+      "mode": "subagent",
       "model": "hscp/glm-5.1",
       "temperature": 0.1
     },
     "review-architecture": {
+      "mode": "subagent",
       "model": "hscp/kimi-k2.6",
       "temperature": 0.1
     },
     "review-simplification": {
+      "mode": "subagent",
       "model": "dp/deepseek-v4-flash",
       "temperature": 0
     },
     "executor-A": {
+      "mode": "subagent",
       "model": "dp/deepseek-v4-pro",
       "temperature": 0
     },
     "executor-B": {
+      "mode": "subagent",
       "model": "hscp/kimi-k2.6",
       "temperature": 0.1
     },
     "executor-C": {
+      "mode": "subagent",
       "model": "hscp/glm-5.1",
       "temperature": 0
     },
     "synthesizer": {
+      "mode": "subagent",
       "model": "hscp/kimi-k2.6",
       "temperature": 0.1
     },
     "ensemble": {
+      "mode": "all",
       "model": "hscp/kimi-k2.6",
       "temperature": 0.1
     }
