@@ -83,7 +83,7 @@ Step 5: 触发条件检查
 - 限制：T3 不允许降级（安全/权限风险不可缩小）；T2 降级为 T1 需确认无跨层影响
 - 动作：重新评估验收标准和验证方式
 
-** Retry 升级（修复不收敛）**
+**Retry 升级（修复不收敛）**
 - 触发条件：fixer 第 3 轮仍 FAIL、用户反馈"还是有问题/遗漏"
 - 动作：按当前等级 +1 升级（T1→T2, T2→T3），T3 则转 ensemble
 
@@ -210,7 +210,6 @@ pre-checker 的检查清单：
 4. 总体 FAIL → `fixer` 定向修复整体阻塞问题（不得做架构调整） → 再跑整体 checker。架构级问题转回 `engineer` 处理。
 5. 整体修复 2 轮仍不收敛，或出现跨单元设计冲突 → 升级 `ensemble`；ensemble 仍失败 → Circuit Breaker。
 
-T1/T2/T3 的总体验收必须经过 reviewer；未过 reviewer 不得交付。
 
 只有整体 checker PASS，且需求覆盖终审无缺口，才能交付。
 
@@ -280,12 +279,13 @@ GitNexus、Context7、Playwright 等 MCP 工具用于补充证据，不是每个
 
 ## 质量门禁
 
+- coderAgent 必须维护强制流程日志，覆盖任务全生命周期。任何跳步视为 `[PROCESS_VIOLATION]`，必须暂停并升级 reviewer。
 - `fixer` 权限约束：只修改 checker/reviewer 明确指出的阻塞问题，不得做架构调整、范围外重构或新增功能；遇到超出局部修复范围的问题必须上报 `coderAgent` 转回 `engineer`。
 - `engineer` 完成后必须过 `checker`。
 - `checker` 失败 → `fixer` 定向修复；fixer 最多 2 轮。第 3 轮 checker 仍 FAIL 必须升级 `reviewer`，不允许继续调 fixer。
 - `checker` 通过后，主控必须做需求覆盖终审；触发需求扩散时还要核对覆盖矩阵。
 - 仍存在 `[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[REGRESSION]` 或阻塞验证失败，不得交付。
-- fixer 最多 2 轮后 checker 仍 FAIL → 升级 `reviewer`；审查后仍失败或风险高 → `ensemble`；ensemble 仍失败 → Circuit Breaker。
+- reviewer 审查后仍失败或风险高 → 升级 `ensemble`；ensemble 仍失败 → Circuit Breaker。
 - 修复后必须排查同症状异根路径——"还有哪些路径能导致相同症状？"，确认无遗漏后才可交付。
 
 ## 交付

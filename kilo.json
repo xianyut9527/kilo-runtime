@@ -15,7 +15,7 @@
   },
   "agent": {
     "coderAgent": {
-      "model": "deepseek/deepseek-v4-flash",
+      "model": "deepseek/deepseek-v4-pro",
       "temperature": 0
     },
     "engineer": {

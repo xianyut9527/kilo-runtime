@@ -10,7 +10,7 @@ permission:
   task: allow
   glob: allow
   grep: allow
-steps: 60
+steps: 40
 ---
 
 # checker
@@ -24,7 +24,6 @@ steps: 60
 - 验证命令
 - 需求扩散包（触发时必填）
 - 排查类任务的链路包和失败/修复证据（如有）
-- 强制流程日志（用于流程合规核查）
 
 ### 审查原则
 
