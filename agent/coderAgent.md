@@ -8,8 +8,6 @@ permission:
   read: allow
   glob: allow
   grep: allow
-  edit:
-    ".kilo/memory.md": allow
   task: allow
 ---
 
@@ -65,20 +63,6 @@ permission:
 - 每个小单元必须独立完成 engineer → checker → fixer → checker 闭环；单元未 PASS 前不得推进依赖它的后续单元。
 - T1 及以上任务，architect 产出单元 DAG 后、engineer 执行前，必须调用 `pre-checker` 做方向校验；pre-checker FAIL 时修正 DAG 或补充需求扩散包，不得跳过。
 - 路由前对涉及校验/限制/权限/规则的需求，按 `.kilo/instructions/workflow.md` 的外部索引与 MCP 使用闸门选择证据来源；T1 及以上优先用 GitNexus 分析执行流和影响面，并用当前代码搜索复核。发现跨层则先走 architect 或触发需求扩散，不直接路由 engineer。
-
-### 跨会话记忆同步（必须执行）
-
-1. **启动时读取**：每次会话启动时，coderAgent 必须先读取 `.kilo/memory.md` 中的「活跃会话」和「文件锁」表，了解当前正在进行的其他会话和文件占用情况。发现文件冲突（同一文件被不同会话持有锁）时输出 `[FILE_LOCK_CONFLICT]` 并暂停。
-2. **关键节点写入**：每个强制流程日志步骤完成时，同步更新 `.kilo/memory.md`：
-   - 定级完成后 → 更新「活跃会话」表（会话ID、任务摘要、等级、状态）
-   - pre-checker 完成后 → 更新「核心编排流日志」表（pre-checker 行）
-   - engineer 交付后 → 更新「核心编排流日志」表（engineer 行）
-   - checker 验证后 → 更新「核心编排流日志」表（checker 行）
-   - fixer 修复后 → 更新「核心编排流日志」表（fixer 行）
-   - reviewer 审查后 → 更新「核心编排流日志」表（reviewer 行）
-   - 交付完成后 → 更新「活跃会话」表状态为已交付；释放「文件锁」
-3. **写入方式**：通过编辑权限直接修改 `.kilo/memory.md`，仅写当前步骤状态变更，不覆盖其他会话的记录。
-4. **跨会话编排状态参考**：每次步骤转换前，快速读取 `memory.md` 的「核心编排流日志」获取跨会话编排状态。
 
 ## 工具调用前硬性门禁
 
@@ -149,16 +133,15 @@ coderAgent 在每次调用修改性工具前，必须在回复中显式输出以
 
 > **背景**：`kilo.json` 中 `compaction: { auto: true }` 启用了 LLM 上下文窗口压缩。当对话增长到一定长度后，早期内容（含强制流程日志）可能被压缩冲掉。这是多会话长对话场景下编排规则被"遗忘"的根本原因。
 >
-> **保护措施**：强制流程日志每次更新后，必须同步写入 .kilo/memory.md 的「核心编排流日志」表。这样即使上下文窗口被压缩，核心编排状态仍可从文件恢复。
+> **保护措施**：coderAgent 的 `prompt` 中已包含核心编排锚点规则，位于系统提示级，不受上下文压缩影响。强制流程日志由 coderAgent 在每次关键步骤转换时主动输出并维护。
 >
-> **恢复机制**：若在后续步骤中发现流程日志不完整（如无法确定当前单元是否已完成），coderAgent 必须读取 `.kilo/memory.md` 恢复编排状态，并输出 `[RECOVERED_FROM_MEMORY]` 标记已恢复的步骤。
+> **恢复机制**：若在后续步骤中发现流程日志不完整（如无法确定当前单元是否已完成），coderAgent 必须重新读取 `.kilo/instructions/workflow.md` 恢复编排规则，并输出 `[RECOVERED_FROM_INSTRUCTIONS]` 标记已恢复的步骤。
 
 ## 路由
 
 - 局部清晰实现：`engineer`
 - 架构/边界/跨层不清：`architect`
 - 显式审查或安全/权限/资金/核心逻辑，以及 T2/T3 总体验收：`reviewer`
-- **文件锁管理**：engineer 开始修改文件前，coderAgent 必须在 `.kilo/memory.md` 的「文件锁」表注册；engineer 交付后释放。发现文件锁冲突时暂停并上报用户。
 - 安全敏感模块（用户/认证/支付/资金，见 `.kilo/instructions/workflow.md`「安全敏感模块识别」）：无论初始定级结果，必须自动调用 `review-security`，若原等级低于 T2 则强制升级至 T2
 - 多次失败、高风险、多可疑点、用户反馈"不干净/有遗漏/还是不对"：按 workflow 升级 `ensemble`
 - **路径一致性约束**：同一会话中，同一类型任务必须复用已建立的执行路径，不允许同一种任务第一次走A路径、第二次走B路径。

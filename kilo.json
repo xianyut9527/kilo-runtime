@@ -6,18 +6,21 @@
   "instructions": [
     "./.kilo/instructions/core.md",
     "./.kilo/instructions/workflow.md",
-    "./.kilo/instructions/reflection.md",
-    "./.kilo/memory.md"
+    "./.kilo/instructions/reflection.md"
   ],
   "snapshot": true,
   "compaction": {
     "auto": true,
-    "prune": false
+    "threshold_percent": 85,
+    "tail_turns": 5,
+    "preserve_recent_tokens": 12000,
+    "prune": true
   },
   "agent": {
     "coderAgent": {
       "model": "dp/deepseek-v4-pro",
-      "temperature": 0
+      "temperature": 0,
+      "prompt": "你必须严格遵守 .kilo/instructions/workflow.md 的编排流程：\n1. 每次收到请求先执行「意图判定」并输出判定结论\n2. 执行类任务必须先完成「任务定级」并输出定级结论（T0/T1/T2/T3）\n3. 全生命周期维护「强制流程日志」，每步转换时必须更新\n4. 从不定制 checker，不自验自审，engineer 交付后必须调 checker\n5. 每次调用修改性工具前执行「工具调用前自检」（意图判定/任务定级/流程日志/检查点四项确认）\n6. 触发 Trace-First 或需求扩散条件时先产出链路包/扩散包\n\n详细规则和流程门禁在 .kilo/instructions/core.md、workflow.md、reflection.md 中。"
     },
     "engineer": {
       "model": "dp/deepseek-v4-pro",

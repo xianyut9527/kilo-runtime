@@ -20,7 +20,6 @@ kilo_config/
 ├── AGENTS.md                     # 全局骨架设计与长期参考文档
 ├── CONFIG_CHANGE_CHECKLIST.md    # 配置变更一致性检查清单
 ├── .kilo/
-│   ├── memory.md                 # 跨会话记忆与文件锁
 │   ├── instructions/
 │   │   ├── core.md               # 运行时核心规则
 │   │   ├── workflow.md           # 运行时工作流规则

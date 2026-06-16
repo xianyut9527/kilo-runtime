@@ -14,10 +14,23 @@ Write-Host "Source: $Source" -ForegroundColor Gray
 Write-Host "Target: $Target" -ForegroundColor Gray
 Write-Host ""
 
+# ============================================================
+# 全量更新策略：先清空目标目录所有内容，再从源目录全量同步
+# 这样确保每次安装不留历史残留垃圾
+# ============================================================
+if (Test-Path $Target) {
+    $ExistingItems = @(Get-ChildItem -Path $Target -Force -ErrorAction SilentlyContinue)
+    if ($ExistingItems.Count -gt 0) {
+        Write-Host "[CLEAN] Purging $($ExistingItems.Count) items from target..." -ForegroundColor Yellow
+        $ExistingItems | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 if (-not (Test-Path $Target)) {
     New-Item -ItemType Directory -Path $Target -Force | Out-Null
     Write-Host "[CREATE] $Target" -ForegroundColor Green
 }
+Write-Host ""
 
 foreach ($item in Get-ChildItem -Path $Source) {
     if ($Exclude -contains $item.Name) { continue }
