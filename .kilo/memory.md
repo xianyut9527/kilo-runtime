@@ -26,14 +26,14 @@
 
 | 步骤 | 状态 | 会话 | 更新时间 |
 |------|------|------|---------|
-| 意图判定 | ⏳ | - | - |
-| 任务定级 | ⏳ | - | - |
-| pre-checker | ⏳ | - | - |
-| engineer | ⏳ | - | - |
-| checker | ⏳ | - | - |
+| 意图判定 | ✅ | ses_130bda4e4ffeaYpTmnqYOXNlL7 | 2026-06-16T15:07:22+08:00 |
+| 任务定级 | ✅ | ses_130bda4e4ffeaYpTmnqYOXNlL7 | 2026-06-16T15:07:22+08:00 |
+| pre-checker | ✅ PASS | ses_130bda4e4ffeaYpTmnqYOXNlL7 | 2026-06-16T15:07:22+08:00 |
+| engineer | ✅ | ses_130bda4e4ffeaYpTmnqYOXNlL7 | 2026-06-16T15:07:22+08:00 |
+| checker | ✅ PASS | ses_130bda4e4ffeaYpTmnqYOXNlL7 | 2026-06-16T15:07:22+08:00 |
 | fixer | ⏳ | - | - |
-| reviewer | ⏳ | - | - |
-| 交付 | ⏳ | - | - |
+| reviewer | ✅ PASS | ses_130bda4e4ffeaYpTmnqYOXNlL7 | 2026-06-16T15:07:22+08:00 |
+| 交付 | ✅ | ses_130bda4e4ffeaYpTmnqYOXNlL7 | 2026-06-16T15:07:22+08:00 |
 
 ## 关键持久信息
 
