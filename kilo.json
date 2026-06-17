@@ -1,7 +1,7 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
-  "model": "dp/deepseek-v4-pro",
-  "small_model": "dp/deepseek-v4-flash",
+  "model": "hx/deepseek-v4-pro",
+  "small_model": "hx/deepseek-v4-flash",
   "default_agent": "coderAgent",
   "instructions": [
     "./.kilo/instructions/core.md",
@@ -19,78 +19,78 @@
   "agent": {
     "coderAgent": {
       "mode": "primary",
-      "model": "dp/deepseek-v4-pro",
+      "model": "hx/deepseek-v4-pro",
       "temperature": 0,
-      "prompt": "你必须严格遵守 .kilo/instructions/workflow.md 的编排流程：\n1. 每次收到请求先执行「意图判定」并输出判定结论\n2. 执行类任务必须先完成「任务定级」并输出定级结论（T0/T1/T2/T3）\n3. 全生命周期维护「强制流程日志」，每步转换时必须更新\n4. 从不定制 checker，不自验自审，engineer 交付后必须调 checker\n5. 每次调用修改性工具前执行「工具调用前自检」（意图判定/任务定级/流程日志/检查点四项确认）\n6. 触发 Trace-First 或需求扩散条件时先产出链路包/扩散包\n\n详细规则和流程门禁在 .kilo/instructions/core.md、workflow.md、reflection.md 中。"
+      "prompt": "使用coderAgent模式。"
     },
     "engineer": {
       "mode": "subagent",
-      "model": "dp/deepseek-v4-pro",
+      "model": "hx/deepseek-v4-pro",
       "temperature": 0
     },
     "architect": {
       "mode": "subagent",
-      "model": "hscp/kimi-k2.6",
+      "model": "hx/kimi-k2.6",
       "temperature": 0.2
     },
     "checker": {
       "mode": "subagent",
-      "model": "dp/deepseek-v4-flash",
+      "model": "hx/deepseek-v4-flash",
       "temperature": 0
     },
     "pre-checker": {
       "mode": "subagent",
-      "model": "dp/deepseek-v4-flash",
+      "model": "hx/deepseek-v4-flash",
       "temperature": 0
     },
     "fixer": {
       "mode": "subagent",
-      "model": "dp/deepseek-v4-flash",
+      "model": "hx/deepseek-v4-flash",
       "temperature": 0
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "hscp/glm-5.1",
+      "model": "hx/glm-5.1",
       "temperature": 0.1
     },
     "review-security": {
       "mode": "subagent",
-      "model": "hscp/glm-5.1",
+      "model": "hx/glm-5.1",
       "temperature": 0.1
     },
     "review-architecture": {
       "mode": "subagent",
-      "model": "hscp/kimi-k2.6",
+      "model": "hx/kimi-k2.6",
       "temperature": 0.1
     },
     "review-simplification": {
       "mode": "subagent",
-      "model": "dp/deepseek-v4-flash",
+      "model": "hx/deepseek-v4-flash",
       "temperature": 0
     },
     "executor-A": {
       "mode": "subagent",
-      "model": "dp/deepseek-v4-pro",
+      "model": "hx/deepseek-v4-pro",
       "temperature": 0
     },
     "executor-B": {
       "mode": "subagent",
-      "model": "hscp/kimi-k2.6",
+      "model": "hx/kimi-k2.6",
       "temperature": 0.1
     },
     "executor-C": {
       "mode": "subagent",
-      "model": "hscp/glm-5.1",
+      "model": "hx/glm-5.1",
       "temperature": 0
     },
     "synthesizer": {
       "mode": "subagent",
-      "model": "hscp/kimi-k2.6",
+      "model": "hx/kimi-k2.6",
       "temperature": 0.1
     },
     "ensemble": {
       "mode": "all",
-      "model": "hscp/kimi-k2.6",
+      "model": "hx/kimi-k2.6",
       "temperature": 0.1
     }
   },
@@ -118,80 +118,35 @@
     }
   },
   "provider": {
-    "hsyq": {
-      "name": "hsyq",
+    "hx": {
+      "name": "hx",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
-        "baseURL": "https://ark.cn-beijing.volces.com/api/plan/v3"
+        "baseURL": "https://xianyu1.natapp4.cc/v1"
       },
       "models": {
+        "deepseek-v4-flash": {
+          "name": "deepseek-v4-flash",
+          "reasoning": true
+        },
+        "deepseek-v4-pro": {
+          "name": "deepseek-v4-pro",
+          "reasoning": true
+        },
         "glm-5.1": {
           "name": "glm-5.1",
+          "reasoning": true
+        },
+        "glm-5.2": {
+          "name": "glm-5.2",
           "reasoning": true
         },
         "kimi-k2.6": {
           "name": "kimi-k2.6",
           "reasoning": true
         },
-        "doubao-seed-2.0-mini": {
-          "name": "doubao-seed-2.0-mini"
-        }
-      }
-    },
-    "aly": {
-      "name": "aly",
-      "npm": "@ai-sdk/openai-compatible",
-      "options": {
-        "baseURL": "https://coding.dashscope.aliyuncs.com/v1"
-      },
-      "models": {
-        "glm-5": {
-          "name": "glm-5",
-          "reasoning": true
-        },
-        "kimi-k2.5": {
-          "name": "kimi-k2.5",
-          "reasoning": true
-        }
-      }
-    },
-    "hscp": {
-      "name": "hscp",
-      "npm": "@ai-sdk/openai-compatible",
-      "options": {
-        "baseURL": "https://ark.cn-beijing.volces.com/api/coding/v3"
-      },
-      "models": {
-        "glm-5.1": {
-          "name": "glm-5.1",
-          "reasoning": true
-        },
-        "kimi-k2.6": {
-          "name": "kimi-k2.6",
-          "reasoning": true
-        },
-        "doubao-seed-2.0-code": {
-          "name": "doubao-seed-2.0-code",
-          "reasoning": true
-        },
-        "doubao-seed-2.0-lite": {
-          "name": "doubao-seed-2.0-lite"
-        }
-      }
-    },
-    "ollama": {
-      "name": "ollama",
-      "npm": "@ai-sdk/openai-compatible",
-      "options": {
-        "baseURL": "https://ollama.com/v1"
-      },
-      "models": {
-        "glm-5.1": {
-          "name": "glm-5.1",
-          "reasoning": true
-        },
-        "kimi-k2.6": {
-          "name": "kimi-k2.6",
+        "kimi-k2.7-code": {
+          "name": "kimi-k2.7-code",
           "reasoning": true
         }
       }
