@@ -148,6 +148,14 @@
         "kimi-k2.7-code": {
           "name": "kimi-k2.7-code",
           "reasoning": true
+        },
+        "qwen3.7-max": {
+          "name": "qwen3.7-max",
+          "reasoning": true
+        },
+        "qwen3.7-plus": {
+          "name": "qwen3.7-plus",
+          "reasoning": true
         }
       }
     },
