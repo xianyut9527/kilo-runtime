@@ -23,7 +23,14 @@ kilo_config/
 │   ├── instructions/
 │   │   ├── core.md               # 运行时核心规则
 │   │   ├── workflow.md           # 运行时工作流规则
-│   │   └── reflection.md         # 反思与错误恢复规则
+│   │   ├── reflection.md         # 反思与错误恢复规则
+│   │   └── skills-lifecycle.md   # Skills 生命周期管理规则
+│   └── skills/                   # 长期知识库（按项目实例化）
+│       ├── architecture/
+│       ├── patterns/
+│       ├── anti-patterns/
+│       ├── contracts/
+│       └── testing/
 ├── agent/                        # 智能体定义（全局可用）
 │   ├── coderAgent.md
 │   ├── architect.md
@@ -32,6 +39,7 @@ kilo_config/
 │   ├── review-security.md        # 安全专审
 │   ├── review-architecture.md    # 架构专审
 │   ├── review-simplification.md  # 简化专审
+│   ├── skills-writer.md          # 经验写入，维护长期知识库
 │   ├── ensemble.md
 │   ├── synthesizer.md
 │   ├── checker.md
@@ -77,7 +85,7 @@ chmod +x install.sh
 
 - **Windows**：`C:\Users\<用户名>\.config\kilo\`
 - **macOS / Linux**：`~/.config/kilo/`
-- 安装时会把本仓库维护源 `agent/` 额外同步为 `agents/`，兼容 Kilo 当前官方 agent markdown 路径。
+- 安装脚本将本仓库内容同步到全局配置目录，不再创建 `agents/` 兼容副本。
 
 ## 使用
 

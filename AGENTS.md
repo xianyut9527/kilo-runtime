@@ -39,6 +39,7 @@
 | review-security | 安全专审 | subagent | 输入边界、权限控制、敏感信息与危险副作用 |
 | review-architecture | 架构专审 | subagent | 分层、依赖方向、接口契约、跨模块影响 |
 | review-simplification | 简化专审 | subagent | 重复实现、复杂度膨胀、过度抽象、范围外修改 |
+| skills-writer | subagent | subagent | 将经 checker/reviewer 确认的经验写入 `.kilo/skills/` 长期知识库 |
 | ensemble | 多模型并行编排 | all | 需求解析 → 并行编码 → 候选评估 → 双门禁 → 定向修复 → 交付 |
 | executor-A | 多模型执行 A | subagent | 偏稳健正确性与回归控制 |
 | executor-B | 多模型执行 B | subagent | 偏更小 diff、更高复用、更清晰实现 |

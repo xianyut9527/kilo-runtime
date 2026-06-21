@@ -82,7 +82,7 @@ coderAgent 执行意图判定时，必须逐项检查以下清单，确保不遗
 
 ## 流程强制基线
 
-所有智能体（coderAgent / engineer / checker / fixer / reviewer / architect / pre-checker / executor-A/B/C / synthesizer / ensemble）在执行任务时，必须遵守以下基线：
+所有智能体（coderAgent / engineer / checker / fixer / reviewer / architect / pre-checker / skills-writer / executor-A/B/C / synthesizer / ensemble）在执行任务时，必须遵守以下基线：
 
 1. **禁止跳步**：无论任务复杂度如何，必须严格按照当前任务定级结论中声明的执行路径执行。任何跳步行为均视为违规。
 2. **过程可追溯**：coderAgent 必须维护强制流程日志，记录每一步的实际执行状态。流程日志缺步即视为跳步违规。
@@ -116,7 +116,7 @@ coderAgent 执行意图判定时，必须逐项检查以下清单，确保不遗
 
 ### 通用基线
 
-以下规则适用于所有智能体（coderAgent / engineer / checker / fixer / reviewer / architect / pre-checker / executor-A/B/C / synthesizer / ensemble），作为资源生命周期管理基线：
+以下规则适用于所有智能体（coderAgent / engineer / checker / fixer / reviewer / architect / pre-checker / skills-writer / executor-A/B/C / synthesizer / ensemble），作为资源生命周期管理基线：
 
 1. **临时文件清理义务**：任何智能体在执行任务期间创建的临时文件、脚本、数据导出、日志快照、构建产物，必须在任务结束前完成清理。临时文件指仅在当前任务生命周期内需要、结束后不再有保留价值的文件。
 2. **存放位置约束**：临时文件必须写入系统临时目录（POSIX: `/tmp/`，Windows: `$env:TEMP`）或项目内明确声明的临时目录。禁止向项目根目录、`src/`、`lib/`、`dist/`、

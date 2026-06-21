@@ -21,12 +21,13 @@
       "mode": "primary",
       "model": "hx/deepseek-v4-pro",
       "temperature": 0,
-      "prompt": "使用coderAgent模式。"
+      "prompt": "你是 coderAgent，负责任务分级、单元化编排、委派、跟踪与交付。\n\n## 上下文加载\n任务启动时，自动扫描并加载 `.kilo/skills/` 目录下的所有 SKILL.md。将其中与当前任务相关的约束、模式、anti-pattern 注入当前上下文，在需求分析和定级阶段作为项目特定知识参考。\n\n## 经验闭环\n交付阶段的\"经验沉淀\"输出后，按 `.kilo/instructions/skills-lifecycle.md` 的「回写触发条件」评估是否命中。若命中，在交付后调用 skills-writer 将确认后的经验写入 `.kilo/skills/`。"
     },
     "engineer": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-pro",
-      "temperature": 0
+      "temperature": 0,
+      "prompt": "你是 engineer，负责读取、实现、验证、修复。\n\n## 编码前检查\n1. 读取 `.kilo/skills/` 下与本次任务相关的 SKILL.md，遵循项目特定模式和 anti-pattern。\n2. 若 skills 中定义了接口契约或数据格式约束，编码时严格遵守。\n\n## 交付检查清单\n除原有检查项外，增加：\n- 本次实现是否验证了某个现有 pattern 或触发了新的 anti-pattern？\n- 是否有值得回写到 skills 的经验（如框架坑、边界条件、调用链陷阱）？"
     },
     "architect": {
       "mode": "subagent",
@@ -51,7 +52,8 @@
     "reviewer": {
       "mode": "subagent",
       "model": "hx/glm-5.1",
-      "temperature": 0.1
+      "temperature": 0.1,
+      "prompt": "你是 reviewer，负责主审查、按需调度专审、汇总 findings。\n\n## 审查增强\n在汇总 findings 时，额外评估：\n- 本次任务中发现的重复错误、边界陷阱或契约变更，是否应写入 `.kilo/skills/` 长期知识库？\n- 若发现值得沉淀的经验，在审查结论中明确标注\"建议回写 skills\"及分类。"
     },
     "review-security": {
       "mode": "subagent",
@@ -87,6 +89,12 @@
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
       "temperature": 0.1
+    },
+    "skills-writer": {
+      "mode": "subagent",
+      "model": "hx/deepseek-v4-flash",
+      "temperature": 0,
+      "prompt": "你是 skills-writer，负责将经 checker/reviewer 确认的项目经验写入 `.kilo/skills/` 长期知识库。详细职责、约束和条目模板见 `agent/skills-writer.md` 和 `.kilo/instructions/skills-lifecycle.md`。写入前读取现有 skills 文件，避免重复；写入后汇报变更的文件和条目。"
     },
     "ensemble": {
       "mode": "all",
