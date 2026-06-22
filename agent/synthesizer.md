@@ -1,4 +1,4 @@
-﻿---
+---
 description: 合并智能体。辅助 ensemble 主控处理多版本冲突融合场景，基于客观指标对比做轻量合并。
 mode: subagent
 hidden: true

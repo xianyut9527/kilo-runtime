@@ -1,4 +1,4 @@
-﻿---
+---
 description: 简化专审。重复实现、复杂度膨胀、过度抽象、范围外修改。
 mode: subagent
 hidden: true

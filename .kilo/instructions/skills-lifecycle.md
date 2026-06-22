@@ -52,7 +52,9 @@ coderAgent 确认文件内容
 
 **类型**: pattern / anti-pattern / contract / architecture / testing
 **添加时间**: YYYY-MM-DD
+**来源任务**: <task_id 或 commit 短哈希>
 **验证状态**: 已验证 / 待验证
+**最近更新**: YYYY-MM-DD
 
 **描述**: 
 一句话描述规则或陷阱。
@@ -69,6 +71,20 @@ coderAgent 确认文件内容
 **相关条目**:
 - [链接到同一项目其他 skill 条目]
 ```
+
+## 扩展机制
+
+新增 skills 分类时（如 `security/`、`performance/`、`migrations/`）需同步以下位置，确保单一事实来源：
+
+1. **目录创建**：在 `.kilo/skills/<新分类>/` 下创建 SKILL.md，遵循现有 5 个分类的模板结构
+2. **本文件分类表**：在「Skills 分类规范」表格中增加一行（分类、目录、存放内容、示例）
+3. **agent/skills-writer.md**：更新「职责」章节"分类决策"步骤中的分类枚举
+4. **kilo.json coderAgent.prompt**（如显式提及分类）：更新分类列表
+5. **新增条目模板（可选）**：若新分类需要特殊字段，在「条目模板」章节追加分类专属模板说明
+
+变更后必须读取上述全部位置确认一致。同步前禁止 skills-writer 写入新分类。
+
+废弃分类时：保留目录但在 SKILL.md 顶部加 `> [DEPRECATED] 本分类已废弃，迁移到 <新分类>` 标注，半年后由维护者删除。
 
 ## 约束
 

@@ -1,4 +1,4 @@
-﻿---
+---
 description: 预审门禁。需求理解偏差、单元边界遗漏、验收标准可验证性。只输出 PASS/FAIL，不改代码。
 mode: subagent
 hidden: true

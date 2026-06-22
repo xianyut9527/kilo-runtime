@@ -1,4 +1,4 @@
-﻿---
+---
 description: 执行智能体 B。简洁构建，偏更小 diff、更高复用、更清晰实现。
 mode: subagent
 hidden: true

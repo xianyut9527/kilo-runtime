@@ -1,4 +1,4 @@
-﻿---
+---
 description: 执行智能体 A。高效率实现，偏稳健正确性，强调有限时间内的高质量输出。
 mode: subagent
 hidden: true

@@ -1,4 +1,4 @@
-﻿---
+---
 description: 规划者。只输出架构设计文档，不执行任何代码编写、文件修改、命令运行。
 mode: subagent
 hidden: true

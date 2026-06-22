@@ -17,7 +17,7 @@
 
 | 修改内容 | 必查项 |
 |---------|--------|
-| 新增/删除/改名 agent | 同步 `AGENTS.md` 清单、`README.md` 目录树、`agent/` 文件 |
+| 新增/删除/改名 agent | 同步 `AGENTS.md` 清单、`README.md` 目录树、`agent/` 文件（必须含完整 YAML frontmatter：`description` / `mode` / `hidden` / `color` / `permission` / `steps`），参考现有 `agent/architect.md` 或 `agent/review-security.md` 的写法 |
 | 修改 `.kilo/instructions/*` | 检查 agent 是否只引用规则源，没有复制旧规则 |
 | 修改 `agent/*.md` | 确认只包含该 agent 的职责差异和关键门禁 |
 | 修改 `kilo.json` | 同步 `README.md` 中模型、MCP、instructions 说明 |
@@ -34,3 +34,5 @@
 - Skills 生命周期管理（触发条件、回写流程、分类规范）：`.kilo/instructions/skills-lifecycle.md`
 
 修改这些规则时，优先改主文档；agent 文件只保留必要引用和角色化执行要求。
+
+> 与 `AGENTS.md`「修改本仓库时的注意事项」章节交叉对照；两份清单内容必须保持一致。

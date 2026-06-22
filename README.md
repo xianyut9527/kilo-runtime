@@ -4,11 +4,11 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 
 ## 当前设计
 
-- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。
+- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 coderAgent 和 skills-writer 在需要时主动读取。
 - **长文档转为参考资料**：`AGENTS.md` 保留为设计标准和人工维护参考，不再承担高频运行时注入职责。
 - **高精度默认路由**：模型选择只在 `kilo.json` 中维护；运行规则按角色和任务复杂度路由，不硬编码具体模型名。
 - **扩展入口内置**：默认启用 `context7` 远程 MCP 作为最新文档检索入口；启用 `gitnexus` 辅助调用链/影响面分析；启用 `playwright` 辅助浏览器端验证。
-- **子智能体 prompt 瘦身**：保留各 agent 的职责差异，移除大量重复的全局规则，减少 token 开销和指令冲突。
+- **职责分层**：通用规则集中在 `.kilo/instructions/`；`agent/*.md` 作为人工维护参考与职责差异记录；`kilo.json` 中的 `agent.*.prompt` 提供运行时行为锚点（极简、稳定、不堆积通用规则）。三层各司其职，避免重复维护。
 - **项目知识项目化**：项目知识不放在本仓库，而是下沉到真实项目根目录中的 `AGENTS.md` 和 `.kilo/skills/`。
 - **持续改进基于验证闭环**：质量提升依赖测试、构建、类型检查、review 审查与多模型升级，不依赖自动改写规则文件。
 
@@ -136,3 +136,5 @@ chmod +x install.sh
 - MCP 服务器会增加上下文和工具面，不要同时启用太多高噪声服务器。
 - `context7` 适合最新文档检索；`gitnexus` 适合调用链和影响面分析；`playwright` 适合浏览器端验证。
 - 大型系统优先建设项目级 context pack；全局配置只做骨架和兜底，不承担具体项目知识。
+- 全局配置目录中的 `.kilo/skills/` 是模板/示例，安装脚本会同步到用户全局目录；实际项目经验应写入**项目根目录**的 `.kilo/skills/`，两者路径不同不会冲突。
+- `skills-writer` 写入路径强约束：仅写入当前项目工作区的 `.kilo/skills/`，禁止回写全局配置目录（`~/.config/kilo/.kilo/skills/`）。install 脚本会清空全局目录后重新同步，已配置的项目经验不会受影响（项目级 skills 在项目根目录，不在全局目录中）。

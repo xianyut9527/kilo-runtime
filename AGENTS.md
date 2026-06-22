@@ -1,6 +1,8 @@
 # AGENTS.md
 
 > 通用 AI 代理配置骨架与设计参考。运行时只注入 `./.kilo/instructions/` 中的轻量规则；本文件用于说明分层原则、智能体职责和项目级落地方式。
+>
+> 注：`skills-lifecycle.md` 作为按需引用的参考文档，不自动注入所有 agent 上下文，由 coderAgent 和 skills-writer 在需要时主动读取。
 
 ## 单一事实来源与修改指南
 
@@ -31,15 +33,15 @@
 ## 智能体清单
 
 | 智能体 | 类型 | 模式 | 职责 |
-|--------|------|------|------|
-| coderAgent | 单模型编排 | all | 日常入口；任务分级、单元化编排、委派、跟踪与交付 |
+|--------|------|-------|------|
+| coderAgent | 单模型编排 | primary | 日常入口；任务分级、单元化编排、委派、跟踪与交付 |
 | architect | 单模型规划 | subagent | 复杂需求分析、架构拆解、边界识别、任务规划 |
 | engineer | 单模型实现 | subagent | 读取、实现、验证、修复 |
 | reviewer | 主审查者 | subagent | 主审查、按需调度专审、汇总 findings |
 | review-security | 安全专审 | subagent | 输入边界、权限控制、敏感信息与危险副作用 |
 | review-architecture | 架构专审 | subagent | 分层、依赖方向、接口契约、跨模块影响 |
 | review-simplification | 简化专审 | subagent | 重复实现、复杂度膨胀、过度抽象、范围外修改 |
-| skills-writer | subagent | subagent | 将经 checker/reviewer 确认的经验写入 `.kilo/skills/` 长期知识库 |
+| skills-writer | 知识沉淀 | subagent | 将经 checker/reviewer 确认的经验写入 `.kilo/skills/` 长期知识库 |
 | ensemble | 多模型并行编排 | all | 需求解析 → 并行编码 → 候选评估 → 双门禁 → 定向修复 → 交付 |
 | executor-A | 多模型执行 A | subagent | 偏稳健正确性与回归控制 |
 | executor-B | 多模型执行 B | subagent | 偏更小 diff、更高复用、更清晰实现 |
@@ -72,7 +74,8 @@
 - 输出只保留高信号内容：改了什么、为什么改、影响范围、如何验证。
 - 验证结果优先给出命令、结论和关键失败片段。
 - 发现需求歧义、关键信息缺失或置信度不足时，先一次性澄清，不基于猜测执行。
-- 不做自我沉淀式"自动学习写规则"；只有经用户确认或项目维护者确认的规则，才进入长期文档。
+- 禁止自动编造规则：LLM 不得凭空生成规则写入长期文档。进入 `.kilo/skills/` 的内容必须经过闭环验证（触发条件匹配 + checker/reviewer 客观验证通过 + 标注验证证据来源），见 `.kilo/instructions/skills-lifecycle.md`。
+- 用户或项目维护者可直接确认规则写入，不依赖自动回写触发条件。
 
 ## 项目级接入
 
@@ -108,5 +111,5 @@ your-project/
 - **新增或删除 agent 时**，必须同步更新以下位置：
   - 本文件中的智能体清单表格
   - `README.md` 中的目录结构树
-  - `agent/` 目录下的对应文件
+  - `agent/` 目录下的对应文件（必须含完整 YAML frontmatter，详见 `CONFIG_CHANGE_CHECKLIST.md`）
 - **修改跨 agent 协同规则时**（如 fixer 轮次、升级阈值、三层框架、需求扩散），优先修改 `.kilo/instructions/` 中的单一规则源；agent 文件只保留必要引用。

@@ -1,4 +1,4 @@
-﻿---
+---
 description: 客观验证智能体。负责运行测试、构建、类型检查、Lint，并确认范围、聚焦度与需求映射是否合格，输出明确的 PASS/FAIL 结论。
 mode: subagent
 hidden: true

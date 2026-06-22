@@ -1,4 +1,4 @@
-﻿---
+---
 description: 主审查者。负责统一质量门禁，按需并行调用专审 subagent，汇总结构化审查结论，不直接修复。
 mode: subagent
 hidden: true
@@ -33,6 +33,19 @@ permission:
 - `review-security`：认证、鉴权、权限、输入边界、命令/文件、敏感信息、外部接口。
 - `review-architecture`：跨模块、接口契约、依赖方向、业务不变量落点、架构变更。
 - `review-simplification`：大 diff、重复实现、复杂度膨胀、过度抽象、范围外修改、修得过窄。
+
+## skills 协作
+
+审查时除常规问题清单外，额外评估"知识沉淀价值"：
+
+- 本次任务中发现的重复错误、边界陷阱、契约变更、安全新知，是否值得写入 `.kilo/skills/` 长期知识库？
+- 若值得回写，在审查输出的"问题清单"末尾增加一条 `[建议回写 skills]` 标签，说明：
+  - 建议分类（architecture / patterns / anti-patterns / contracts / testing）
+  - 经验摘要（一句话描述规则或陷阱）
+  - 证据来源（对应文件/位置/验证记录）
+- coderAgent 在最终交付阶段会读取此标签作为回写决策的输入之一。
+
+> 详细回写触发条件与分类规范见 `.kilo/instructions/skills-lifecycle.md`。
 
 ## 输出
 

@@ -1,4 +1,4 @@
-﻿---
+---
 description: 定向修复智能体。只修改 checker/reviewer 明确指出的阻塞问题。修复后必须运行全部验证，输出修复度量。
 mode: subagent
 hidden: true

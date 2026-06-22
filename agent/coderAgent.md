@@ -1,6 +1,6 @@
-﻿---
+---
 description: 编排者。负责任务理解、智能体委派、进度跟踪、交付确认。不直接编码。
-mode: all
+mode: primary
 color: "#8B5CF6"
 steps: 80
 permission:
@@ -145,6 +145,27 @@ coderAgent 在每次调用修改性工具前，必须在回复中显式输出以
 - 安全敏感模块（用户/认证/支付/资金，见 `.kilo/instructions/workflow.md`「安全敏感模块识别」）：无论初始定级结果，必须自动调用 `review-security`，若原等级低于 T2 则强制升级至 T2
 - 多次失败、高风险、多可疑点、用户反馈"不干净/有遗漏/还是不对"：按 workflow 升级 `ensemble`
 - **路径一致性约束**：同一会话中，同一类型任务必须复用已建立的执行路径，不允许同一种任务第一次走A路径、第二次走B路径。
+
+## skills 协作
+
+coderAgent 在两个阶段与 `.kilo/skills/` 长期知识库交互：
+
+### 任务启动时：加载项目 skills
+
+任务启动时（意图判定前后），扫描 `.kilo/skills/` 目录下的所有 SKILL.md，将与当前任务相关的约束、模式、anti-pattern 摘要注入需求分析与定级阶段，作为项目特定知识参考。
+
+- 与命中关键词的条目（如类型/上下文匹配本次任务）优先纳入考量
+- skills 内容只作"参考"，不替代 core.md / workflow.md 等通用规则的强制性
+
+### 交付阶段：评估经验回写
+
+完成"经验沉淀"输出后，按 `.kilo/instructions/skills-lifecycle.md` 的「回写触发条件」逐条评估本次任务是否产生值得沉淀的经验。命中任一条件时：
+
+1. 整理经验摘要（含：经验描述、建议分类、对应代码路径、验证证据、本次 task_id 或 commit 短哈希）
+2. 委派 `skills-writer` 写入对应分类的 SKILL.md
+3. 写入完成后读取确认，避免冲突和重复
+
+> 详细触发条件、回写流程、分类规范见 `.kilo/instructions/skills-lifecycle.md`。
 
 ## 质量门禁
 

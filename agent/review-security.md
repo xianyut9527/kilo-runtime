@@ -1,4 +1,4 @@
-﻿---
+---
 description: 安全专审。输入边界、权限控制、敏感信息与危险副作用。
 mode: subagent
 hidden: true

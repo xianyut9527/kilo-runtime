@@ -1,4 +1,4 @@
-﻿---
+---
 description: 架构专审。分层、依赖方向、接口契约、跨模块影响。
 mode: subagent
 hidden: true
