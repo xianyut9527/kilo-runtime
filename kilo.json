@@ -51,13 +51,13 @@
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "hx/glm-5.1",
+      "model": "hx/glm-5.2",
       "temperature": 0.1,
       "prompt": "你是 reviewer，负责主审查、按需调度专审、汇总 findings。\n\n## 审查增强\n在汇总 findings 时，额外评估：\n- 本次任务中发现的重复错误、边界陷阱或契约变更，是否应写入 `.kilo/skills/` 长期知识库？\n- 若发现值得沉淀的经验，在审查结论中明确标注\"建议回写 skills\"及分类。"
     },
     "review-security": {
       "mode": "subagent",
-      "model": "hx/glm-5.1",
+      "model": "hx/glm-5.2",
       "temperature": 0.1
     },
     "review-architecture": {
@@ -82,7 +82,7 @@
     },
     "executor-C": {
       "mode": "subagent",
-      "model": "hx/glm-5.1",
+      "model": "hx/glm-5.2",
       "temperature": 0
     },
     "synthesizer": {
@@ -141,8 +141,8 @@
           "name": "deepseek-v4-pro",
           "reasoning": true
         },
-        "glm-5.1": {
-          "name": "glm-5.1",
+        "glm-5.2": {
+          "name": "glm-5.2",
           "reasoning": true
         },
         "glm-5.2": {
