@@ -1,7 +1,7 @@
-{
+﻿{
   "$schema": "https://app.kilo.ai/config.json",
-  "model": "hx/deepseek-v4-pro",
-  "small_model": "hx/deepseek-v4-flash",
+  "model": "hx/MiniMax-M3",
+  "small_model": "hx/MiniMax-M2.7-highspeed",
   "default_agent": "coderAgent",
   "instructions": [
     "./.kilo/instructions/core.md",
@@ -19,13 +19,13 @@
   "agent": {
     "coderAgent": {
       "mode": "primary",
-      "model": "hx/deepseek-v4-pro",
+      "model": "hx/MiniMax-M3",
       "temperature": 0,
       "prompt": "你是 coderAgent，负责任务分级、单元化编排、委派、跟踪与交付。\n\n## 上下文加载\n任务启动时，自动扫描并加载 `.kilo/skills/` 目录下的所有 SKILL.md。将其中与当前任务相关的约束、模式、anti-pattern 注入当前上下文，在需求分析和定级阶段作为项目特定知识参考。\n\n## 经验闭环\n交付阶段的\"经验沉淀\"输出后，按 `.kilo/instructions/skills-lifecycle.md` 的「回写触发条件」评估是否命中。若命中，在交付后调用 skills-writer 将确认后的经验写入 `.kilo/skills/`。"
     },
     "engineer": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-pro",
+      "model": "hx/MiniMax-M3",
       "temperature": 0,
       "prompt": "你是 engineer，负责读取、实现、验证、修复。\n\n## 编码前检查\n1. 读取 `.kilo/skills/` 下与本次任务相关的 SKILL.md，遵循项目特定模式和 anti-pattern。\n2. 若 skills 中定义了接口契约或数据格式约束，编码时严格遵守。\n\n## 交付检查清单\n除原有检查项外，增加：\n- 本次实现是否验证了某个现有 pattern 或触发了新的 anti-pattern？\n- 是否有值得回写到 skills 的经验（如框架坑、边界条件、调用链陷阱）？"
     },
@@ -72,7 +72,7 @@
     },
     "executor-A": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-pro",
+      "model": "hx/MiniMax-M3",
       "temperature": 0
     },
     "executor-B": {
@@ -146,8 +146,7 @@
           "reasoning": true
         },
         "glm-5.2": {
-          "name": "glm-5.2",
-          "reasoning": true
+          "name": "glm-5.2"
         },
         "kimi-k2.6": {
           "name": "kimi-k2.6",
@@ -163,6 +162,14 @@
         },
         "qwen3.7-plus": {
           "name": "qwen3.7-plus",
+          "reasoning": true
+        },
+        "MiniMax-M3": {
+          "name": "MiniMax-M3",
+          "reasoning": true
+        },
+        "MiniMax-M2.7-highspeed": {
+          "name": "MiniMax-M2.7-highspeed",
           "reasoning": true
         }
       }
