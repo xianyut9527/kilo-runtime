@@ -1,3 +1,14 @@
+---
+name: architecture
+description: 本 SKILL 存放项目在模块划分、依赖方向、跨层限制、新逻辑落点方面的长期知识。由 skills-writer 根据验证后的经验写入，禁止手动编造未经验证的内容。
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: knowledge
+---
+
 # 架构与边界
 
 > 本文件存放本项目在模块划分、依赖方向、跨层限制、新逻辑落点方面的长期知识。

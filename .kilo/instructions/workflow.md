@@ -363,3 +363,198 @@ GitNexus、Context7、Playwright 等 MCP 工具用于补充证据，不是每个
 6. **交付前**：确认已完成「交付稳定性检查」清单，已检查临时文件清理。
 
 任何检查点未执行，必须标记 `[PROCESS_VIOLATION]` 并暂停当前流程，禁止继续调用任何修改性工具。不允许以"时间不够"、"任务简单"、"用户要求快速"等理由跳过。
+
+---
+
+## 流程日志规范
+
+coderAgent 在每次执行类任务中必须输出强制流程日志，覆盖任务全生命周期。
+
+### 输出格式
+
+```text
+## 强制流程日志
+| 步骤 | 状态 | 备注 |
+|------|------|------|
+| 意图判定 | ✅ 已完成 | 类型: 执行类 |
+| 任务定级 | ✅ 已完成 | 等级: T1 |
+| pre-checker | ✅ PASS | |
+| engineer 委派 | ✅ 已完成 | |
+| checker 验证 | ⏳ 待执行 | |
+| fixer 修复（如需） | ⏳ 未触发 | |
+| reviewer 审查 | ⏳ 待执行 | |
+| 交付稳定性检查 | ⏳ 待执行 | |
+```
+
+### 状态枚举
+
+仅允许使用以下 5 种状态：
+
+- ⏳ 待执行
+- ✅ 已完成
+- ❌ FAIL
+- 🔄 进行中
+- ⏸ 不适用
+
+### 必须输出的 7 个节点
+
+1. 意图判定
+2. 任务定级
+3. pre-checker
+4. engineer 委派
+5. checker 验证
+6. fixer 修复（如需）
+7. reviewer 审查
+
+### 违规恢复协议
+
+当上下文压缩导致流程日志缺步或行为漂移时，coderAgent **必须**：
+
+1. 重新读取 `.kilo/instructions/core.md` 和 `workflow.md` 恢复编排规则
+2. 在流程日志中显式输出 `[RECOVERED_FROM_INSTRUCTIONS]` 标记
+3. 立即输出当前进度快照（重新初始化的流程日志）
+4. 标记 `[PROCESS_VIOLATION]`（若存在跳步）并暂停等待用户决策
+
+### 跳步检测
+
+任何智能体发现流程日志缺少声明路径中的某一步，必须：
+
+1. 立即停止当前流程
+2. 输出 `[PROCESS_VIOLATION]` 标记并说明跳步的步骤和原因
+3. 不得继续执行任何修改性操作
+4. 升级到 reviewer 评估
+
+---
+
+## 程序化记忆触发条件
+
+`.kilo/memory/` 目录下的 MEMORY.md 和 USER.md 是项目级程序化记忆。
+
+### MEMORY.md 写入触发条件
+
+满足以下任一条件时，coderAgent / skills-writer 主动评估是否追加：
+
+1. **跨 2 次以上任务重复出现的架构约束**（如"本项目必须用 DTO 而非裸 dict"）
+2. **经 reviewer 确认为系统级而非项目级的经验**（如"所有 Python 项目统一用 uv 而非 pip"）
+3. **修复不收敛（fixer 多轮失败）时发现的根因模式**（如"Windows 路径长度 260 限制反复触发"）
+
+### USER.md 写入触发条件
+
+满足以下任一条件时，由用户主动追加：
+
+1. **用户明确要求的持久化偏好**（代码风格、命名约定）
+2. **用户指定的特殊验证命令或环境要求**
+3. **用户直接编辑写入**（agent 不得自动写入 USER.md）
+
+### 加载机制
+
+coderAgent 在任务启动时（意图判定完成后）执行：
+
+1. 检测 `.kilo/memory/` 目录存在性
+2. 若存在，将 `MEMORY.md` 和 `USER.md` 内容作为冻结快照注入当前会话上下文
+3. 优先级：MEMORY > USER > 项目级 AGENTS.md > 全局 instructions
+
+### 字符限制
+
+| 文件 | 字符限制 | 来源 |
+|------|----------|------|
+| MEMORY.md | ≤ 2200 字符 | 参照 Hermes Agent 设计 |
+| USER.md | ≤ 1375 字符 | 参照 Hermes Agent 设计 |
+
+### 超限处理
+
+MEMORY.md 超过 2200 字符时，skills-writer 触发压缩协议：
+
+- 将最旧的低频条目迁移到 `.kilo/memory/archive/YYYY-MM/` 子目录
+- 在原位置保留 1 行索引（如 `[已归档] 详见 archive/2026-06/foo.md`）
+- 总长度回到 ≤ 1800 字符后停止归档
+
+### 安全约束
+
+⚠️ **禁止写入以下内容**（review-security 会检查并拦截）：
+
+- API Key / Token / 密码 / 凭证
+- 内部域名 / IP / 内部 URL
+- 个人身份信息（PII）
+- 受 NDA / 保密协议保护的内容
+
+---
+
+## Anthropic 工作流模式映射
+
+参考 Anthropic "Building Effective Agents" 提出的 5 大工作流模式，显式映射到 kilo 的 agent 角色：
+
+| 模式 | 描述 | kilo 映射 | 触发条件 |
+|------|------|----------|----------|
+| **Prompt Chaining** | 任务分解为串行步骤，每步 LLM 调用处理上一步输出 | engineer/architect 单元 DAG 串行 | T0 之外的任务 |
+| **Routing** | 输入分类后路由到专门的下游任务 | coderAgent 任务定级路由 | 所有任务 |
+| **Parallelization** | 多个 LLM 调用并行处理后聚合输出 | ensemble + executor-A/B/C | T3 高风险任务 / 多次失败 |
+| **Orchestrator-Workers** | 中央 LLM 动态拆解、委派、合成 | architect 拆解 + engineer 实现闭环 | T1+ 任务 |
+| **Evaluator-Optimizer** | 一个 LLM 生成、另一个评估反馈循环 | reviewer + checker + fixer 门禁循环 | T1+ 任务 |
+
+### 模式选择决策树
+
+```
+Step 1: 任务是否需要串行步骤链？→ 是 → Prompt Chaining（engineer 单元 DAG）
+Step 2: 任务是否需要不同专门处理？→ 是 → Routing（coderAgent 任务定级）
+Step 3: 任务是否可并行处理？→ 是 → Parallelization（ensemble）
+Step 4: 任务是否需要动态拆解？→ 是 → Orchestrator-Workers（architect）
+Step 5: 任务是否需要迭代优化？→ 是 → Evaluator-Optimizer（reviewer 链）
+```
+
+### 5 模式之间的互斥与协同
+
+- 5 模式可**叠加**使用（如先 Routing 路由到子任务，再 Orchestrator-Workers 拆解）
+- 同一任务可同时命中多个模式（如 ensemble 是 Parallelization + Orchestrator-Workers）
+- **不得**误用模式（如把单文件 T0 任务升级到 ensemble 是过度工程化）
+
+### 模式升级条件
+
+| 当前模式 | 升级到 | 条件 |
+|----------|--------|------|
+| Prompt Chaining | Orchestrator-Workers | 步骤数 ≥ 3 且每步有独立验收标准 |
+| Orchestrator-Workers | Parallelization | 单元间无依赖且验证可并行 |
+| Evaluator-Optimizer | Parallelization | 多轮优化仍不收敛 |
+| 任何模式 | ensemble | fixer 3 轮仍失败 / 用户反馈不干净 |
+
+---
+
+## 交付 MEMORY 回写说明
+
+在「知识沉淀与 skills 回写」中追加以下 MEMORY.md 回写说明：
+
+### 回写触发条件
+
+coderAgent / skills-writer 在交付阶段必须评估：
+
+1. **是否命中跨会话价值**（如架构级决策、反复踩坑、根因修复）？
+2. **若是**，先评估写入 MEMORY.md（高优先级，跨任务约束）
+3. **再评估**是否写入 SKILL.md（项目特定知识）
+4. **不重复**：MEMORY 中已存在的条目不要重复写入 SKILL
+
+### 决策矩阵
+
+| 经验类型 | 写入目标 | 决策依据 |
+|----------|----------|----------|
+| 跨项目通用架构约束 | MEMORY.md | "这条经验在多个项目都有用吗？" 是 → MEMORY |
+| 项目特定实现技能 | SKILL.md | "这条经验只对本项目有用吗？" 是 → SKILL |
+| 临时调试上下文 | 不写 | 无复用价值 |
+| 易于重新发现的事实 | 不写 | 可由网络搜索替代 |
+
+### 写入权限
+
+- **MEMORY.md**：仅由 `coderAgent` / `skills-writer` 写入
+- **USER.md**：仅由用户直接编辑
+- **SKILL.md**：由 `skills-writer` 写入
+
+### reviewer 标注
+
+reviewer 在审查结论末尾若发现经验属于跨会话级别，应追加：
+
+```text
+[建议写入 MEMORY.md]
+分类：<架构约束 / 安全模式 / 根因修复>
+依据：<为什么这条值得跨会话保留>
+```
+
+skills-writer 收到此标注后评估是否追加到 MEMORY.md。

@@ -1,3 +1,14 @@
+---
+name: anti-patterns
+description: 本 SKILL 存放项目在反复出现的错误模式、踩坑记录、禁止事项方面的长期知识。由 skills-writer 根据验证后的经验写入。
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: knowledge
+---
+
 # 反模式
 
 > 本文件存放本项目在反复出现的错误模式、踩坑记录、禁止事项方面的长期知识。

@@ -1,3 +1,14 @@
+---
+name: contracts
+description: 本 SKILL 存放项目在 API/数据/事件的结构、兼容性要求、变更记录方面的长期知识。由 skills-writer 根据验证后的经验写入。
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: knowledge
+---
+
 # 接口契约
 
 > 本文件存放本项目在API/数据/事件的结构、兼容性要求、变更记录方面的长期知识。

@@ -1,3 +1,14 @@
+---
+name: testing
+description: 本 SKILL 存放项目在测试策略、回归约定、验证命令、高风险链路方面的长期知识。由 skills-writer 根据验证后的经验写入。
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: knowledge
+---
+
 # 测试与回归
 
 > 本文件存放本项目在测试策略、回归约定、验证命令、高风险链路方面的长期知识。

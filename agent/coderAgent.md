@@ -220,3 +220,13 @@ coderAgent 在两个阶段与 `.kilo/skills/` 长期知识库交互：
 - [ ] 验收标准全部覆盖，没有 UNVERIFIED 项
 - [ ] 强制流程日志完整覆盖任务全生命周期，无缺失步骤
 - [ ] 无残留临时文件、调试脚本或未清理的构建产物
+
+## MEMORY 集成
+
+任务启动时（意图判定完成后）自动检测 `.kilo/memory/`：
+
+- 若 `MEMORY.md` 存在，将其内容作为项目级冻结记忆注入当前需求分析阶段
+- 若 `USER.md` 存在，将其内容作为用户偏好注入
+- 加载的 memory 优先级：MEMORY > USER > 项目级 AGENTS.md > 全局 instructions
+
+经验沉淀时，先评估是否应写入 `MEMORY.md`（跨会话价值）而非 skills（项目特定）。

@@ -124,4 +124,19 @@ permission:
 - [ ] （如涉及安全敏感模块）密码已安全哈希（bcrypt/argon2/PBKDF2 + 盐值），认证/支付接口已有防暴破/限流
 - [ ] 查询带分页/LIMIT，文件上传有大小/类型限制，批量操作有上限
 - [ ] 已清理本次任务产生的所有临时文件和脚本，无项目目录残留
+
+## SKILL.md frontmatter 识别
+
+读取 SKILL.md 时优先解析 YAML frontmatter：
+
+- 若 `allowed-tools` 存在，限制当前任务可用工具集
+- 若 `compatibility` 存在，校验当前 kilo 版本兼容性
+- 不合规的 frontmatter 视为 `[SKILL_FRONTmatter_INVALID]`，需在交付前报告
+
+## MEMORY 检查
+
+交付检查清单追加：
+
+- 本次实现是否验证了某个现有 MEMORY 条目？
+- 是否有值得回写到 `MEMORY.md` 的根因级经验？
 ```

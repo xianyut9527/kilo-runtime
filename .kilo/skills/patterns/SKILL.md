@@ -1,3 +1,14 @@
+---
+name: patterns
+description: 本 SKILL 存放项目在可复用的实现范式、最佳实践、推荐写法方面的长期知识。由 skills-writer 根据验证后的经验写入。
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: knowledge
+---
+
 # 代码模式
 
 > 本文件存放本项目在可复用的实现范式、最佳实践、推荐写法方面的长期知识。

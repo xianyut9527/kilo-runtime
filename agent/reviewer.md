@@ -47,6 +47,27 @@ permission:
 
 > 详细回写触发条件与分类规范见 `.kilo/instructions/skills-lifecycle.md`。
 
+## 自检清单
+
+输出审查结论前，**必须**完成以下 4 项自检（缺失任何一项视为审查结论不完整）：
+
+1. **安全敏感模块检查**：本次任务是否命中 `user / auth / payment / wallet` 等安全敏感关键词？若是，是否已自动调度 `review-security`？
+2. **流程日志完整性**：coderAgent 的强制流程日志是否覆盖任务全生命周期？是否存在 `[PROCESS_VIOLATION]` 标记或跳步？
+3. **同类点覆盖矩阵**：若触发需求扩散，覆盖矩阵每条是否都有结论？是否存在 `[UNVERIFIED]` / `[PARTIAL_IMPLEMENTATION]`？
+4. **memory / skills 合规**：`.kilo/memory/MEMORY.md` 是否超 2200 字符？新增的 SKILL.md 是否含合规 YAML frontmatter？
+
+## MEMORY 评估职责
+
+在审查结论末尾，若发现经验属于跨会话级别（如架构陷阱、安全新模式、根因级别修复），追加标注：
+
+```text
+[建议写入 MEMORY.md]
+分类：<架构约束 / 安全模式 / 根因修复>
+依据：<为什么这条值得跨会话保留>
+```
+
+skills-writer 会根据此标注决定是否写入 MEMORY.md。
+
 ## 输出
 
 ```text

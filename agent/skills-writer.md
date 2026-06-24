@@ -48,3 +48,19 @@ steps: 20
 
 触发条件定义见 `.kilo/instructions/skills-lifecycle.md` 的「回写触发条件」。
 coderAgent 在交付阶段评估是否命中上述条件，命中时委派本 agent 执行写入。
+
+## memory 分类决策
+
+若经验属于以下场景，**优先写入 `MEMORY.md`** 而非 SKILL.md：
+
+- 跨 2 次以上任务重复出现的架构约束
+- 系统级安全模式（多个项目通用）
+- 修复不收敛的根因模式
+
+若经验属于项目特定实现技能，写入对应分类的 SKILL.md。
+
+## external_dirs 写入限制
+
+**仅写入**当前项目工作区的 `.kilo/skills/` 和 `.kilo/memory/`。
+
+**禁止**向 `external_dirs` 指向的外部目录写入。外部目录为只读引用。

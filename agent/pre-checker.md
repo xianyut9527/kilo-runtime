@@ -52,4 +52,10 @@ steps: 20
 
 ## 发现点
 - [编号] [问题] → [建议]
+
+## 检查清单第 6 项：memory / external_dirs 加载
+
+- coderAgent 是否正确加载了 `MEMORY.md` / `USER.md`（如文件存在）？
+- `kilo.json` 中的 `skills.external_dirs` 是否被合理引用？是否存在命名冲突风险？
+- 加载的 memory 是否含敏感信息（`[MEMORY_SENSITIVE_LEAK]` 标记）？
 ```
