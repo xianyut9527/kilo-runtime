@@ -83,7 +83,7 @@
 
 ### 最小结构
 
-```
+```text
 your-project/
 ├── AGENTS.md
 ├── kilo.json                  # 可选
@@ -92,7 +92,9 @@ your-project/
     │   ├── architecture/SKILL.md
     │   ├── contracts/SKILL.md
     │   └── testing/SKILL.md
-
+    └── memory/
+        ├── MEMORY.md          # agent 笔记（≤ 2200 字符）
+        └── USER.md            # 用户档案（≤ 1375 字符）
 ```
 
 ### 推荐的 3 个首批 skills
@@ -100,10 +102,13 @@ your-project/
 1. **架构与边界**：模块划分、依赖方向、跨层限制、新逻辑落点
 2. **接口与契约**：输入输出格式、兼容性要求、调用方影响面、事件结构
 3. **测试与回归**：必须跑的测试、必须补测试的改动、可局部执行的验证、高风险链路
+4. **程序化记忆（memory）**：项目级冻结记忆，借鉴 Hermes Agent 的 MEMORY.md / USER.md 双轨设计
 
 ### 判断标准
 
 离开某项目后仍成立的信息适合放全局，只对某个项目成立的信息应放项目级 context pack。
+
+项目级经验沉淀应优先判断：跨项目通用 → 写入 MEMORY.md；项目特定 → 写入 SKILL.md。
 
 ## 修改本仓库时的注意事项
 

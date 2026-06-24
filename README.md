@@ -31,6 +31,10 @@ kilo_config/
 │       ├── anti-patterns/
 │       ├── contracts/
 │       └── testing/
+│   └── memory/                   # 程序化记忆（参考 Hermes Agent）
+│       ├── MEMORY.md             # agent 笔记（≤ 2200 字符）
+│       ├── USER.md               # 用户档案（≤ 1375 字符）
+│       └── README.md             # memory 机制说明
 ├── agent/                        # 智能体定义（全局可用）
 │   ├── coderAgent.md
 │   ├── architect.md
@@ -95,6 +99,16 @@ chmod +x install.sh
 2. 运行对应平台安装脚本同步到全局目录。
 3. 重启 Kilo，让新配置生效。
 
+### 使用程序化记忆
+
+借鉴 Hermes Agent 的 MEMORY.md / USER.md 双轨设计，kilo 支持项目级程序化记忆：
+
+1. 在项目根目录创建 `.kilo/memory/MEMORY.md` 存放 agent 笔记（架构约束、安全模式、踩坑记录，≤ 2200 字符）
+2. 在项目根目录创建 `.kilo/memory/USER.md` 存放用户偏好和项目约定（≤ 1375 字符）
+3. coderAgent 在任务启动时自动检测并加载为冻结快照
+
+详见 `.kilo/memory/README.md`。
+
 ### 给真实项目接入项目级 context pack
 
 1. 在项目根目录创建项目级 `AGENTS.md` 和 `.kilo/skills/`。
@@ -111,6 +125,20 @@ chmod +x install.sh
 - **Playwright** (`playwright`): 浏览器端验证、截图和交互检查
 
 > 注意：MCP 服务器会增加上下文和工具面，不要同时启用太多高噪声服务器。
+
+## Skills 跨项目复用（可选）
+
+`kilo.json` 支持 `skills.external_dirs` 数组，启用后可扫描外部 skill 目录（如 `~/.agents/skills/`）。默认空数组，向后兼容。
+
+```json
+{
+  "skills": {
+    "external_dirs": ["~/.agents/skills"]
+  }
+}
+```
+
+外部 skill 目录为**只读**引用，项目级 `.kilo/skills/` 始终优先；命名冲突时按 `name` 字段去重。
 
 ## 项目级覆盖
 

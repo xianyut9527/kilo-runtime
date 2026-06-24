@@ -109,3 +109,19 @@ steps: 60
 ## 声明核实
 - engineer 自验声明: [有/无] → 结论: [不作为依据/已交叉验证]
 ```
+
+## skills frontmatter 合规检查
+
+当变更涉及 `.kilo/skills/` 时，验证 SKILL.md 是否含合规 YAML frontmatter（`name` 必填且与目录名一致 / `description` 必填 ≤1024 字符 / 标准 YAML 格式）。
+
+不通过标记 `[SKILL_FRONTmatter_INVALID]`。
+
+## memory 合规检查
+
+当变更涉及 `.kilo/memory/` 时：
+
+- `MEMORY.md` 字符数 ≤ 2200
+- `USER.md` 字符数 ≤ 1375
+- 不含敏感信息（API Key / Token / 密码 / 内部地址）
+
+不通过标记 `[MEMORY_OVER_LIMIT]` 或 `[MEMORY_SENSITIVE_LEAK]`。

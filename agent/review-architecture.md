@@ -39,4 +39,15 @@ steps: 25
 - [严重/警告] [文件:位置] [问题] → [建议] | 证据:[片段]
 ## 覆盖
 - 分层/契约/跨模块/业务不变量/复用: [已检查/未涉及]
+
+## external_dirs 依赖方向审查
+
+确认 `kilo.json` 的 `skills.external_dirs` 配置：
+
+- 引入的外部 skill 目录**不破坏分层原则**
+- 外部 skill 不与项目内 skill 形成循环依赖
+- 外部 skill 的 `name` 与项目内 skill 命名空间不冲突（项目内优先）
+- 外部 skill 的 frontmatter 合规
+
+不通过标记 `[EXTERNAL_DIRS_LAYER_VIOLATION]`。
 ```

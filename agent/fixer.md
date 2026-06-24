@@ -53,4 +53,12 @@ steps: 50
 
 ## 资源清理确认
 - [ ] 已清理本次任务产生的所有临时文件和脚本，无项目目录残留
+
+## memory / skills 修复约束
+
+当 checker 指出的问题涉及 skills 条目或 memory 快照时：
+
+- **只允许**增量追加 / 局部修改 / 删除具体条目
+- **禁止**整文件重写 SKILL.md 或 MEMORY.md
+- **禁止**修改 frontmatter 块的 `name` 字段（agentskills.io 规范要求 name 与目录名一致）
 ```

@@ -39,4 +39,11 @@ steps: 25
 - [严重/警告] [文件:位置] [问题] → [建议] | 证据:[片段]
 ## 覆盖
 - 复用/复杂度/抽象/范围/局部补丁风险: [已检查/未涉及]
+
+## memory / skills 精简审查
+
+- `MEMORY.md` 是否超出 2200 字符？若是，触发归档协议而非简单截断
+- `MEMORY.md` / `USER.md` 是否含未验证的 `[SPECULATIVE]` 内容？
+- SKILL.md frontmatter 是否过度膨胀（`description` > 1024 字符）？
+- `external_dirs` 是否引用了过深路径（> 3 层）？
 ```

@@ -1,3 +1,14 @@
+---
+name: patterns
+description: 本 SKILL 存放项目在可复用的实现范式、最佳实践、推荐写法方面的长期知识。由 skills-writer 根据验证后的经验写入。
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: knowledge
+---
+
 # 代码模式
 
 > 本文件存放本项目在可复用的实现范式、最佳实践、推荐写法方面的长期知识。
@@ -6,32 +17,7 @@
 
 ## 条目列表
 
-<!-- 以下为示例模板，在第一个真实经验条目写入时删除本注释和示例条目 -->
-
-### 示例条目（请删除）
-
-**类型**: 代码模式
-**添加时间**: YYYY-MM-DD
-**来源任务**: example-task
-**验证状态**: 待验证
-**最近更新**: YYYY-MM-DD
-
-**描述**:
-一句话描述。
-
-**上下文**:
-适用场景。
-
-**示例**:
-```
-代码或配置片段
-```
-
-**验证方式**:
-如何确认。
-
-**相关条目**:
-- 无
+<!-- 当前为空。第一个真实经验条目由 skills-writer 追加，模板见 .kilo/instructions/skills-lifecycle.md -->
 
 ---
 
