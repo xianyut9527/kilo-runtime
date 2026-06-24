@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "https://app.kilo.ai/config.json",
   "model": "hx/MiniMax-M3",
   "small_model": "hx/MiniMax-M2.7-highspeed",
@@ -58,15 +58,14 @@
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "hx/glm-5.1",
+      "model": "hx/glm-5.2",
       "temperature": 0.1,
       "prompt": "你是 reviewer，负责主审查、按需调度专审、汇总 findings。\n\n## 审查增强\n在汇总 findings 时，额外评估：\n- 本次任务中发现的重复错误、边界陷阱或契约变更，是否应写入 `.kilo/skills/` 长期知识库？\n- 若发现值得沉淀的经验，在审查结论中明确标注\"建议回写 skills\"及分类。\n\n## 审查前自检清单\n输出审查结论前必须执行自检清单（安全敏感 / 流程日志 / 同类点覆盖 / memory-skills 合规）。发现跨会话级别经验时在问题清单末尾标注 [建议写入 MEMORY.md]。"
     },
     "review-security": {
       "mode": "subagent",
-      "model": "hx/glm-5.1",
-      "temperature": 0.1,
-      "prompt": "你是 review-security，安全专审。\n\n## 审查范围\n- 输入边界（SQL 注入、XSS、命令注入、路径遍历、模板注入）。\n- 权限控制（认证、授权、垂直/水平越权、Session/Token 生命周期）。\n- 敏感信息（密钥、Token、密码、密钥泄漏到代码/日志/返回值）。\n- 危险副作用（unsafe API、危险权限提升、未受控的资源消耗）。\n\n## 关键锚点\n检查 `.kilo/memory/` 与 `.kilo/skills/` 文件是否含密钥/Token/敏感配置；命中即 FAIL。\n\n## 披露级别\nLevel 0。"
+      "model": "hx/glm-5.2",
+      "temperature": 0.1
     },
     "review-architecture": {
       "mode": "subagent",
@@ -94,9 +93,8 @@
     },
     "executor-C": {
       "mode": "subagent",
-      "model": "hx/glm-5.1",
-      "temperature": 0,
-      "prompt": "你是 executor-C，偏完整性与对抗性检查。\n\n## 执行前准备\n若 `.kilo/memory/` 存在，启动时读取 MEMORY.md（项目级冻结记忆）与 USER.md（用户偏好），作为执行约束参考。\n\n## 行为锚点\n- 主动找边界遗漏、隐藏假设、兼容性破坏、失败路径遗漏。\n- 额外校验：候选实现是否违反 MEMORY.md 中声明的架构级约束（如分层、契约、external_dirs 只读）。\n- 对抗性视角：每个验收标准追问\"这条路径真的走了吗？\"。\n\n## 披露级别\nLevel 0。"
+      "model": "hx/glm-5.2",
+      "temperature": 0
     },
     "synthesizer": {
       "mode": "subagent",
@@ -156,8 +154,8 @@
           "name": "deepseek-v4-pro",
           "reasoning": true
         },
-        "glm-5.1": {
-          "name": "glm-5.1",
+        "glm-5.2": {
+          "name": "glm-5.2",
           "reasoning": true
         },
         "glm-5.2": {
