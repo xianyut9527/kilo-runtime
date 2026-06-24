@@ -18,43 +18,17 @@ metadata:
 
 ## 系统级约束
 
-> 来源：2026-06-07 ~ 2026-06-24 共 74 个本地会话提炼
+> 触发条件：跨 2 次以上任务重复出现 / reviewer 确认为系统级 / 修复不收敛时
+> 入选条目：M-001（其余条目因不满足触发条件或与 SKILL 重复已清理）
 
-### M-001: kilo_config 全局配置文件
-- `kilo.json` 是 Kilo TUI 的运行时配置（不是普通 JSON）
-- 修改后必须 `node -e "JSON.parse(...)"` 严格解析（无 BOM 容忍）
-- Edit 工具偶尔会引入 UTF-8 BOM，必须检测剥离
-- 详见 skills/anti-patterns/SKILL.md#AP-001
-
-### M-002: Windows + PowerShell 5.1 编码永久化
-- 任何中文/特殊字符文件操作前必须确保 `[Console]::OutputEncoding = UTF-8`
-- install.ps1 已写入 `$PROFILE` 永久化
-- 子进程编码不一致会导致"silent corruption"（写入成功但读出乱码）
-- 详见 skills/anti-patterns/SKILL.md#AP-005
-
-### M-003: 软约束变硬门禁
-- 多次违反的规则必须从嵌套子条款提升到 `.kilo/instructions/core.md` 的"流程强制基线"平级位置
-- 显式标注"违反视为方法层错误"显著提升遵守率
-- 详见 skills/anti-patterns/SKILL.md#AP-002
-
-### M-004: 子智能体返回空结果必须升级
-- reviewer / architect / checker 连续 2 次空结果 → 标记 [SUBAGENT_RETURNED_EMPTY] + 升级 ensemble
-- 不可直接内联（破坏独立验证）
-- 详见 skills/anti-patterns/SKILL.md#AP-004
+### M-001: kilo_config 全局配置运行约束
+- `kilo.json` 修改后必须 `node -e "JSON.parse(...)"` 严格解析（无 BOM 容忍）
+- 详见 skills/anti-patterns/SKILL.md#AP-001 / #AP-005
 
 ## 已验证经验
 
-> 经验来源：2026-06-24 集成 Hermes 4 层加固任务（commit 630ba1d）
-
-### M-101: T2 任务的标准流程
-- 必须走 architect → pre-checker → engineer (G1 并行) → checker → fixer → 复验 → 串行（W1 / S1）→ reviewer
-- G1 并行 4-8 单元节省约 60% 时间
-- 5/5 SKILL.md 加 frontmatter 后，agentskills.io 工具可发现
-
-### M-102: kilo.json 兼容性约束
-- 12 顶层键必须保留（$schema / model / small_model / default_agent / instructions / snapshot / compaction / agent / commit_message / mcp / provider / provider）
-- 实际有 16 个 agent（含 executor-A/B/C、ensemble、synthesizer、review-security/architecture/simplification）
-- 顶层可新增 `skills` 字段（含 `external_dirs: []` 默认空数组）
+> 本节当前为空。T2 / T3 任务结束后，命中触发条件的经验由 reviewer 评估是否追加。
+> 单次发生的任务瑕疵、本次任务具体细节，不写入本节（归入 SKILL 的反思笔记或本任务 commit message）。
 
 ## 写入触发条件
 
@@ -63,6 +37,12 @@ metadata:
 1. 跨 2 次以上任务重复出现的架构约束或安全模式
 2. 经 reviewer 确认为系统级而非项目级的经验
 3. 修复不收敛（fixer 多轮失败）时发现的根因模式
+
+**不满足触发条件的内容（不应写入本文件）**：
+
+- 本任务单次发生的流程瑕疵 → 写入本任务 commit message 或 SKILL 的"反思笔记"区
+- 与已有 SKILL.md 条目重复的内容 → 引用 SKILL 条目而非重复写入
+- 任务级具体细节（如"16 个 agent"）→ 属于 commit/plan 文档，不属于跨会话记忆
 
 ## 归档协议
 
