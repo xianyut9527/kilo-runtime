@@ -1,4 +1,18 @@
-﻿[*]
+# Kilo 全局配置编辑器规范
+# 防止 Edit 工具在保存时引入 UTF-8 BOM（AP-001 已记录此问题）
+
+root = true
+
+[*]
 charset = utf-8
 end_of_line = lf
 insert_final_newline = true
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = true
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{json,yml,yaml}]
+indent_size = 2

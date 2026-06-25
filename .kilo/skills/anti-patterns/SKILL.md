@@ -225,6 +225,60 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 ---
 
+### AP-006: 关联功能遗漏（改了A漏了B的返工模式）
+
+**类型**: 反模式
+**添加时间**: 2026-06-25
+**来源任务**: kilo_config 配置优化（关联功能遗漏治理）
+**验证状态**: 已验证
+**最近更新**: 2026-06-25
+
+**描述**:
+修改功能 A 时只改了最直观的一处代码，未同步搜索和修改与 A 共享同一规则/常量/接口的关联功能 B/C/D，导致后续任务或用户反馈中发现行为不一致，被迫返工。
+
+**上下文**:
+- 反复出现的返工模式：改了前端校验规则，后端接口没同步；改了枚举定义，数据库迁移没做；改了配置项，文档没更新
+- 根因：engineer 只关注"我要改什么"，不关注"什么依赖我改的东西"
+- 已在 core.md 编码前检查点、engineer prompt、pre-checker 第5条、checker L2 增强核查中建立多层防线
+
+**示例（错的）**:
+```text
+需求：将订单状态 "pending" 改为 "awaiting_payment"
+engineer 修改：只改了 OrderService.createOrder() 中的赋值
+遗漏：
+- OrderQueryController.listOrders() 的 SQL WHERE 条件
+- OrderStatusEnum 的枚举定义
+- 前端订单列表页的显示映射
+- 数据迁移脚本（存量订单状态）
+```
+
+**示例（对的）**:
+```text
+需求：将订单状态 "pending" 改为 "awaiting_payment"
+engineer 执行：
+1. 搜索 "pending" 在项目中的全部引用（grep/IDE）
+2. 确认每个引用处是否需要同步调整
+3. 产出调用方搜索摘要：
+   - OrderService.createOrder() → 同步修改
+   - OrderQueryController.listOrders() → SQL WHERE 同步修改
+   - OrderStatusEnum → 枚举值同步修改
+   - 前端订单列表 → 显示映射同步修改
+   - 数据迁移脚本 → 新增 ALTER 语句
+4. 全部纳入本次 diff 后交付
+```
+
+**验证方式**:
+- engineer 交付检查清单中必须包含调用方搜索摘要
+- pre-checker 检查清单第5条 `[MISSING_LINKAGE]` 标记
+- checker L2 增强核查确认摘要存在
+- 发现一次返工 → 按 skills-lifecycle.md 触发 AP-006 回写
+
+**相关条目**:
+- patterns/SKILL.md#PAT-001（关联功能评估检查清单）
+- core.md#编码前强制检查点（第3条搜索确认）
+
+---
+
 ## 回写指引
 
 当本次任务产生值得沉淀的经验时：
