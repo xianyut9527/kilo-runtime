@@ -12,6 +12,25 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 - **项目知识项目化**：项目知识不放在本仓库，而是下沉到真实项目根目录中的 `AGENTS.md` 和 `.kilo/skills/`。
 - **持续改进基于验证闭环**：质量提升依赖测试、构建、类型检查、review 审查与多模型升级，不依赖自动改写规则文件。
 
+## 模型路由原则
+
+模型选择按 agent 职责的能力维度匹配，不硬编码具体模型名：
+
+| 能力维度 | 适用模型 | 适用 agent | 选择依据 |
+|---------|---------|-----------|---------|
+| 编排与主控（长上下文、稳定输出） | MiniMax-M3 | coderAgent, engineer, executor-A | 主控需长上下文窗口和稳定结构化输出；engineer 需稳健正确性 |
+| 规划与架构（推理深度、发散度） | kimi-k2.6 | architect, review-architecture, executor-B, synthesizer, ensemble | 架构规划需推理深度，temperature 0.1-0.2 保留发散；ensemble 编排需协调多候选 |
+| 审查与对抗（严谨判断、低发散） | glm-5.2 | reviewer, review-security, executor-C | 审查需严谨判断，对抗视角需找漏洞而非发散 |
+| 客观验证与轻量任务（快、准、低成本） | deepseek-v4-flash | checker, pre-checker, fixer, review-simplification, skills-writer | 验证/修复/写入需低温度、高一致性、低成本 |
+| 轻量辅助 | MiniMax-M2.7-highspeed | small_model | 简单子任务降级用 |
+
+**选择原则**：
+1. 编排/实现优先稳定性（MiniMax-M3，temperature 0）
+2. 规划/合并保留适度发散（kimi-k2.6，temperature 0.1-0.2）
+3. 审查/对抗低发散（glm-5.2，temperature 0-0.1）
+4. 验证/修复/写入低成本高一致（deepseek-v4-flash，temperature 0）
+5. 新增 agent 时按职责维度选模型，不按名字选
+
 ## 目录结构
 
 ```text

@@ -118,3 +118,4 @@ your-project/
   - `README.md` 中的目录结构树
   - `agent/` 目录下的对应文件（必须含完整 YAML frontmatter，详见 `CONFIG_CHANGE_CHECKLIST.md`）
 - **修改跨 agent 协同规则时**（如 fixer 轮次、升级阈值、三层框架、需求扩散），优先修改 `.kilo/instructions/` 中的单一规则源；agent 文件只保留必要引用。
+- **修改 `kilo.json` 中任何 agent 的 `prompt` 字段时**：必须同步检查 `agent/{name}.md` 是否含同类术语/规则，保持术语一致。pre-checker 校验同步性，遗漏标记 `[MISSING_LINKAGE]`。这是避免运行时行为锚点与长期文档脱节的结构性约束。

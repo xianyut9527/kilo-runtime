@@ -67,6 +67,11 @@ steps: 60
   - 确认认证/支付路由有限流中间件（搜索 `rate_limit`, `throttle`, `lockout`, `rateLimiter`, `tooManyAttempts`），缺失则标记 `[SECURITY_GAP_NO_RATE_LIMIT]`。
   - 上述任一标记触发即 **FAIL**；checker 输出中必须包含所有 `[SECURITY_GAP_*]` 标记及对应文件位置。
 
+## L2 增强核查项
+- engineer 交付检查清单是否包含调用方搜索和平行实现搜索结果摘要？若缺失，标记 `[MISSING_LINKAGE]`。
+- engineer 交付是否包含「验收映射表」？缺失则标记 [MISSING_ACCEPTANCE_MAP] 并 FAIL。
+- 反向核对：扫描 diff 中是否存在验收标准未声明的改动（范围外实现、顺手重构、多余逻辑）？命中标记 [SCOPE_CREEP] 并 FAIL。
+
 ## FAIL 条件
 
 - 测试/构建/类型检查失败。
@@ -90,7 +95,7 @@ steps: 60
 - 测试/构建/类型/Lint: [命令] → [结果/VERIFY_PENDING] | 证据:[片段]
 
 ## 覆盖检查
-| 验收标准 | 实现位置 | 验证方式 | 证据来源 | 状态 |
+| 验收标准 | 实现位置 | 验证方式 | 边界覆盖 | 状态 |
 |----------|----------|----------|----------|------|
 
 ## 执行路径核查

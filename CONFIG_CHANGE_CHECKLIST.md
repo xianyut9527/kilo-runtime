@@ -22,6 +22,7 @@
 | 修改 `.kilo/instructions/*` | 检查 agent 是否只引用规则源，没有复制旧规则 |
 | 修改 `agent/*.md` | 确认只包含该 agent 的职责差异和关键门禁 |
 | 修改 `kilo.json` | 同步 `README.md` 中模型、MCP、instructions 说明 |
+| 修改 `kilo.json` agent.*.prompt | 必须同步检查 `agent/{name}.md` 是否含同类术语/规则，保持术语一致；pre-checker 校验同步性，遗漏标记 `[MISSING_LINKAGE]` |
 | 修改安装脚本 | `install.sh` 与 `install.ps1` 保持路径和复制逻辑一致 |
 
 ### 程序化记忆相关
