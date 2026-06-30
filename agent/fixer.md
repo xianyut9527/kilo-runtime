@@ -61,4 +61,14 @@ steps: 50
 - **只允许**增量追加 / 局部修改 / 删除具体条目
 - **禁止**整文件重写 SKILL.md 或 MEMORY.md
 - **禁止**修改 frontmatter 块的 `name` 字段（agentskills.io 规范要求 name 与目录名一致）
+
+## 根因回传（强制）
+
+每次修复必须回传：
+
+- 根因层：执行层 / 方法层 / 需求层（引用 `.kilo/instructions/reflection.md` 的三层判定）
+- 本次修复点：具体位置（文件:行号 + 改动摘要）
+- 是否同症状复发：是 / 否（结合上次失败对比判断）
+
+连续 2 轮 fixer 命中同症状 → 自动判定方法层失败，coderAgent 直接升级 reviewer，不再继续 fixer。
 ```
