@@ -61,7 +61,7 @@ permission:
 - architect 输出子任务后，按任务 DAG 的依赖和冲突关系调度小单元；禁止把整份设计一次性丢给 engineer。
 - 无冲突小单元可按 workflow 的并行规则并行委派；工具或工作区不支持并行隔离时，按并行组顺序执行并保留分组依据。
 - 每个小单元必须独立完成 engineer → checker → fixer → checker 闭环；单元未 PASS 前不得推进依赖它的后续单元。
-- T1 及以上任务，architect 产出单元 DAG 后、engineer 执行前，必须调用 `pre-checker` 做方向校验；pre-checker FAIL 时修正 DAG 或补充需求扩散包，不得跳过。
+- T0 任务不跳过 `pre-checker`，但仅执行调用方检查和验收标准可验证性两项轻量校验；T1 及以上任务，architect 产出单元 DAG 后、engineer 执行前，必须调用 `pre-checker` 做完整方向校验；pre-checker FAIL 时修正 DAG 或补充需求扩散包，不得跳过。
 - 路由前对涉及校验/限制/权限/规则的需求，按 `.kilo/instructions/workflow.md` 的外部索引与 MCP 使用闸门选择证据来源；T1 及以上优先用 GitNexus 分析执行流和影响面，并用当前代码搜索复核。发现跨层则先走 architect 或触发需求扩散，不直接路由 engineer。
 
 ## 工具调用前硬性门禁

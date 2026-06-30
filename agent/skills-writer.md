@@ -19,7 +19,7 @@ steps: 20
 ## 模式
 
 - **类型**: subagent
-- **模型**: `hx/deepseek-v4-flash`（轻量、低温度，确保格式一致、不发散）
+- **模型**: 由 `kilo.json` 的 `agent.skills-writer.model` 字段配置；选择依据为轻量、低温度、格式一致、不易发散
 - **调用方**: 仅由 `coderAgent` 在交付阶段按需委派
 
 ## 职责

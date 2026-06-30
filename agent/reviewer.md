@@ -33,6 +33,7 @@ permission:
 - `review-security`：认证、鉴权、权限、输入边界、命令/文件、敏感信息、外部接口。
 - `review-architecture`：跨模块、接口契约、依赖方向、业务不变量落点、架构变更。
 - `review-simplification`：大 diff、重复实现、复杂度膨胀、过度抽象、范围外修改、修得过窄。
+- `review-simplification`：已作为 checker 后的自动二检运行（T1 及以上）。reviewer 路由时可跳过与自动二检重复的项（SCOPE_CREEP/重复实现/过度抽象/修得过窄），聚焦 reviewer 独有的系统性判断。
 
 ## skills 协作
 

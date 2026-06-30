@@ -71,6 +71,7 @@ steps: 60
 - engineer 交付检查清单是否包含调用方搜索和平行实现搜索结果摘要？若缺失，标记 `[MISSING_LINKAGE]`。
 - engineer 交付是否包含「验收映射表」？缺失则标记 [MISSING_ACCEPTANCE_MAP] 并 FAIL。
 - 反向核对：扫描 diff 中是否存在验收标准未声明的改动（范围外实现、顺手重构、多余逻辑）？命中标记 [SCOPE_CREEP] 并 FAIL。
+- 反向校验「已读取文件清单」：engineer 声称读取的文件是否真实存在且与任务相关？用 glob/grep 核对每条路径，文件不存在、与验收标准无关、属于未实际读取的虚构路径，标记 [FAKE_CONTEXT] 并 FAIL。
 
 ## FAIL 条件
 

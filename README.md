@@ -14,22 +14,25 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 
 ## 模型路由原则
 
-模型选择按 agent 职责的能力维度匹配，不硬编码具体模型名：
+模型选择按 agent 职责的能力维度匹配，**不硬编码具体模型名**。具体模型名和 provider 配置集中在 `kilo.json` 的 `agent.*.model` 和 `provider` 字段，作为模型配置的唯一事实来源。
 
-| 能力维度 | 适用模型 | 适用 agent | 选择依据 |
-|---------|---------|-----------|---------|
-| 编排与主控（长上下文、稳定输出） | MiniMax-M3 | coderAgent, engineer, executor-A | 主控需长上下文窗口和稳定结构化输出；engineer 需稳健正确性 |
-| 规划与架构（推理深度、发散度） | kimi-k2.6 | architect, review-architecture, executor-B, synthesizer, ensemble | 架构规划需推理深度，temperature 0.1-0.2 保留发散；ensemble 编排需协调多候选 |
-| 审查与对抗（严谨判断、低发散） | glm-5.2 | reviewer, review-security, executor-C | 审查需严谨判断，对抗视角需找漏洞而非发散 |
-| 客观验证与轻量任务（快、准、低成本） | deepseek-v4-flash | checker, pre-checker, fixer, review-simplification, skills-writer | 验证/修复/写入需低温度、高一致性、低成本 |
-| 轻量辅助 | MiniMax-M2.7-highspeed | small_model | 简单子任务降级用 |
+> **模型事实来源**：本表只描述能力维度和路由原则，不硬编码模型名。修改模型分配请直接改 `kilo.json`，README 表无需同步。
+
+| 能力维度 | 推荐模型族 | 适用 agent | 选择依据 |
+|---------|-----------|-----------|---------|
+| 编排与主控（长上下文、稳定输出） | 长上下文主控模型 | coderAgent, engineer, executor-A | 主控需长上下文窗口和稳定结构化输出；engineer 需稳健正确性 |
+| 规划与架构（推理深度、适度发散） | 推理深度模型 | architect, review-architecture, executor-B, synthesizer, ensemble, **review-simplification** | 架构规划需推理深度；ensemble 编排需协调多候选；简化审查需推理分析 |
+| 审查与对抗（严谨判断、低发散） | 严谨判断模型 | reviewer, review-security, executor-C, **fixer** | 审查/对抗需严谨判断；fixer 需精确根因判定 |
+| 客观验证与复杂判断（高推理、准确） | 高推理验证模型 | **checker, pre-checker** | 验证/预审需高推理能力，降低漏判 |
+| 轻量辅助 | 轻量快速模型 | small_model | 简单子任务降级用 |
 
 **选择原则**：
-1. 编排/实现优先稳定性（MiniMax-M3，temperature 0）
-2. 规划/合并保留适度发散（kimi-k2.6，temperature 0.1-0.2）
-3. 审查/对抗低发散（glm-5.2，temperature 0-0.1）
-4. 验证/修复/写入低成本高一致（deepseek-v4-flash，temperature 0）
-5. 新增 agent 时按职责维度选模型，不按名字选
+
+1. 编排/实现优先稳定性（长上下文主控模型族，temperature 0）。
+2. 规划/合并保留适度发散（推理深度模型族，temperature 0.1-0.2）。
+3. 审查/对抗低发散（严谨判断模型族，temperature 0-0.1）。
+4. 验证/预审用高推理验证模型族；修复/审查/对抗用严谨判断模型族；规划/合并/简化审查用推理深度模型族。不简单追求低成本。
+5. 新增 agent 时按职责维度选模型，不按名字选；模型分配的唯一维护入口是 `kilo.json`。
 
 ## 目录结构
 
@@ -176,6 +179,16 @@ chmod +x install.sh
 ```
 
 项目配置优先级高于全局配置，遵循深合并规则。高精度理解通常来自项目级 `AGENTS.md` 和 skills，而不是单纯覆盖模型。
+
+## 一次性成功率的终极杠杆
+
+本仓库只是全局骨架。真正决定单次任务输出质量的，是**每个真实项目自己的 `AGENTS.md` 和 `.kilo/skills/`**：
+
+1. 在项目根目录创建 `AGENTS.md`，写入该项目独有的架构边界、模块依赖方向、接口契约、高风险链路。
+2. 在项目根目录创建 `.kilo/skills/`，沉淀该项目的编码范式、反模式、测试回归命令、踩坑记录。
+3. 让项目级知识覆盖全局默认行为；不要把项目知识写回本仓库。
+
+项目级 context pack 越完整，engineer 的"上下文确认"和"验收映射表"就越准确，一次性成功率就越高。
 
 ## 注意事项
 

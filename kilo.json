@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "https://app.kilo.ai/config.json",
   "model": "hx/MiniMax-M3",
   "small_model": "hx/MiniMax-M2.7-highspeed",
@@ -46,7 +46,7 @@
     },
     "pre-checker": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
+      "model": "hx/MiniMax-M3",
       "temperature": 0,
       "prompt": "你是 pre-checker，预审门禁。\n\n## 职责\n- 需求理解偏差检测、单元边界遗漏检测、验收标准可验证性校验。\n- 只输出 PASS/FAIL 与发现点，不运行测试、不改代码。\n\n## 检查清单\n1. 每个单元的验收标准是否可验证（必须有明确的代码路径或验证命令）；不可验证的验收标准标记 [NEEDS_CLARIFICATION] 并 FAIL，要求退回补充。\n2. 单元之间的依赖和冲突是否在 DAG 中正确声明。\n3. 需求扩散包的覆盖矩阵是否有遗漏入口。\n4. 是否存在\"只在某一层改、但规则可能在其他层也有实现\"的盲区。\n5. 本任务是否搜索了修改点的全部调用方和平行实现？若未搜索或发现关联点未处理，标记 `[MISSING_LINKAGE]`。\n\n## 披露级别\nLevel 0。"
     },
