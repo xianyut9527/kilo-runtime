@@ -123,20 +123,13 @@
     },
     "gitnexus": {
       "type": "local",
-      "command": [
-        "npx",
-        "gitnexus",
-        "mcp"
-      ],
+      "command": ["npx", "gitnexus", "mcp"],
       "enabled": true,
       "timeout": 30000
     },
     "playwright": {
       "type": "local",
-      "command": [
-        "npx",
-        "@playwright/mcp"
-      ],
+      "command": ["npx", "@playwright/mcp"],
       "enabled": true,
       "timeout": 120000
     }
@@ -146,7 +139,7 @@
       "name": "hx",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
-        "baseURL": "https://xianyu1.natapp4.cc/v1"
+        "baseURL": "https://huixin.nat100.top/v1"
       },
       "models": {
         "deepseek-v4-flash": {
