@@ -1,6 +1,17 @@
 ---
 name: anti-patterns
 description: 本 SKILL 存放项目在反复出现的错误模式、踩坑记录、禁止事项方面的长期知识。由 skills-writer 根据验证后的经验写入。
+keywords:
+  - anti-patterns
+  - pitfalls
+  - mistakes
+  - forbidden
+  - dont-do
+  - recurring-error
+  - 反模式
+  - 踩坑
+  - 错误
+  - 禁止
 license: MIT
 compatibility:
   - kilo >= 1.0
@@ -276,6 +287,118 @@ engineer 执行：
 **相关条目**:
 - patterns/SKILL.md#PAT-001（关联功能评估检查清单）
 - core.md#编码前强制检查点（第3条搜索确认）
+
+---
+
+### AP-007: Agent 删除遗漏执行主体引用（规则断链）
+
+**类型**: 反模式
+**添加时间**: 2026-06-30
+**来源任务**: kilo_config 优化升级（reviewer 审查 workflow.md 与 reviewer.md 执行主体矛盾）
+**验证状态**: 已验证
+**最近更新**: 2026-06-30
+
+**描述**:
+删除某个 agent 后，只清理 `agent/*.md` 和 `kilo.json` 中的定义，但未 grep 搜索该 agent 在所有 `instructions/*.md` 和 `agent/*.md` 中的**执行主体引用**（如 `AGENTS.md` 表格、`workflow.md` 路由规则、其他 agent 文档中的委派引用），导致出现"规则断链"：workflow.md 中要求调用已删除的 agent，运行时无法执行。
+
+**上下文**:
+- agent 定义分三层：自身 `.md` 文件 → `kilo.json` 注册 → 其他文档的执行引用
+- 删除时只清理前两层，第三层必然残留
+- 残留引用表现为运行时无效调用、子 agent 返回空、流程中断
+- 必须全仓 grep 搜索三项：agent 名称（含中文别名）、agent 缩写、`agent/{name}.md` 文件名
+
+**示例（错的）**:
+```markdown
+# 只做了以下操作：
+1. 删除 agent/review-simplification.md
+2. 从 kilo.json 移除 review-simplification 定义
+# 遗漏了：
+# - workflow.md 中 "简化视角自检" 调用了 review-simplification
+# - reviewer.md 中委派 review-simplification 的引用
+# 结果：运行时 workflow.md → reviewer → review-simplification 链断裂
+```
+
+**示例（对的）**:
+```markdown
+删除 agent 时必须执行完整清理清单：
+1. 删除 agent/{name}.md
+2. 从 kilo.json 移除定义
+3. 全仓 grep 搜索 {name}（含中文别名、缩写、文件路径），更新所有引用：
+   - AGENTS.md 表格
+   - workflow.md 路由/升级规则
+   - instructions/*.md 和 agent/*.md 中的委派/调用
+   - 若属于 reviewer 子视角，同步清理 reviewer.md 的调度逻辑
+4. 运行 grep 确认无残留引用后提交
+```
+
+**验证方式**:
+- 删除 agent 后执行：`grep -r "review-simplification" .kilo/ --include="*.md"` 应返回 0 结果（不含被删除文件本身）
+- 搜索 agent 的中文别名、缩写确保全覆盖
+- 检查 `AGENTS.md` 表格行是否已移除
+- 检查 `workflow.md` 中涉及该 agent 的路由/升级条件是否已更新
+
+**相关条目**:
+- architecture/SKILL.md#分层与依赖方向（agent 定义分层概念）
+- contracts/SKILL.md（agent 接口契约变更治理）
+- AP-006 关联功能遗漏（同源：改了A漏了B的返工模式）
+
+---
+
+### AP-008: Agent Frontmatter 权限与职责不一致（越权风险）
+
+**类型**: 反模式
+**添加时间**: 2026-06-30
+**来源任务**: kilo_config 优化升级（reviewer 审查 experience-ranker frontmatter 权限越界）
+**验证状态**: 已验证
+**最近更新**: 2026-06-30
+
+**描述**:
+agent 文件的 YAML frontmatter 中 `permission.edit` 允许的路径范围，与其正文中声明的"写入职责"契约不一致。正文声明"不直接编辑，委派 skills-writer"，但 frontmatter 却授予了对应文件的 edit 权限，造成权限敞口：agent 虽按契约不会主动写，但框架按其 frontmatter 配置认为它有权写入，存在越权风险。
+
+**上下文**:
+- `permission.edit` 是运行时行为门禁，决定框架是否允许该 agent 修改指定路径
+- 正文中的"写入职责"是设计契约，决定该 agent 应该（或不应该）做什么
+- 两者矛盾时：框架信任 frontmatter（行为门禁），agent 按契约自我约束（软约束）
+- 误授权限在复杂任务或 prompt 溢出时可能被绕过
+
+**示例（错的）**:
+```yaml
+# agent/experience-ranker.md frontmatter
+permission:
+  edit:
+    - .kilo/memory/MEMORY.md         # 有权限
+    - .kilo/skills/**/*.md            # 有权限
+---
+# 正文职责：
+# > experience-ranker 不直接编辑 SKILL.md/MEMORY.md 正文，
+# > 委派 skills-writer 执行写入
+# 矛盾：frontmatter 授予了正文声明不做的权限
+```
+
+**示例（对的）**:
+```yaml
+# agent/experience-ranker.md frontmatter
+permission:
+  edit:
+    - .kilo/experience/log/*.jsonl    # 只允许追加 feedback log
+    # 不授予 SKILL.md / MEMORY.md 编辑权限
+    # 写入正文必须通过委派 skills-writer
+---
+# 正文职责：
+# > experience-ranker 评估经验后将结果委派 skills-writer 写入
+# > 自身只追加 feedback log
+# 一致：frontmatter 权限 = 正文声明的实际写入范围
+```
+
+**验证方式**:
+- 对每个 agent 文件，对比 frontmatter `permission.edit` 与正文中所有"写入"相关声明（"写入"、"编辑"、"追加"、"修改"、"创建"等关键词）
+- 正文声明不做的事，frontmatter 不得授权
+- 发现不一致时：优先缩 frontmatter 权限到正文声明的实际写入范围
+- reviewer 安全视角自检必须包含此项核对
+
+**相关条目**:
+- architecture/SKILL.md#分层与依赖方向（agent 权限分层概念）
+- AP-002 软约束 vs 硬门禁（规则存在 ≠ 规则被遵守，同源权限与契约不一致陷阱）
 
 ---
 

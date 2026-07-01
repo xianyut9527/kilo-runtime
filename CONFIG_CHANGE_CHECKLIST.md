@@ -18,7 +18,7 @@
 
 | 修改内容 | 必查项 |
 |---------|--------|
-| 新增/删除/改名 agent | 同步 `AGENTS.md` 清单、`README.md` 目录树、`agent/` 文件（必须含完整 YAML frontmatter：`description` / `mode` / `hidden` / `color` / `permission` / `steps`），参考现有 `agent/architect.md` 或 `agent/review-security.md` 的写法 |
+| 新增/删除/改名 agent | 同步 `AGENTS.md` 清单、`README.md` 目录树、`agent/` 文件（必须含完整 YAML frontmatter：`description` / `mode` / `hidden` / `color` / `permission` / `steps`），参考现有 `agent/engineer.md` 或 `agent/feedback-collector.md` 或 `agent/experience-ranker.md` 的写法 |
 | 修改 `.kilo/instructions/*` | 检查 agent 是否只引用规则源，没有复制旧规则 |
 | 修改 `agent/*.md` | 确认只包含该 agent 的职责差异和关键门禁 |
 | 修改 `kilo.json` | 同步 `README.md` 中模型、MCP、instructions 说明 |

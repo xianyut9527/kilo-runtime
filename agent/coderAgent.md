@@ -22,114 +22,13 @@ permission:
 
 ## 必做
 
-### 稳定性保障（决定输出一致性的核心规则）
-
-以下规则优先级高于所有其他流程，必须严格执行：
-
-1. **执行路径锁定** — 每次任务在定级结论中明确输出执行路径后，整条路径不得任意跳步或换路。唯一的例外：按 `.kilo/instructions/workflow.md`「等级动态调整规则」在显式记录后进行的中途升级/降级。关键是不允许同样的任务类型有时走 A 路径有时走 B 路径（随机性来源）。
-2. **质量门禁零豁免** — 所有任务（含 T0 极速通道）的 engineer 输出，**必须经过 checker 验证**才能交付。T0 不豁免 checker。**T0 判定还需调用方检查：即使≤2行改动也要 grep 调用方，命中>1个调用方 → 降级 T1。**
-3. **工程师不自验** — engineer 交付后不得自行标注"已验证/已测试"，验证只能由 checker 完成。engineer 越权自验的结论视为无效。
-4. **路径由定级决定** — 执行路径由 T 级（T0/T1/T2/T3）决定，不是由任务标签（如"修bug"/"加功能"）决定。同为 T1 的任务必须走 T1 执行路径，同为 T2 的任务必须走 T2 执行路径。不可以同一个 T1 任务走直达、另一个 T1 任务走 architect（这制造随机性）。
-5. **强制流程日志** — coderAgent 必须在每次关键步骤转换时输出流程日志，记录每一步的执行状态。流程日志缺步即视为跳步违规，必须标记 `[PROCESS_VIOLATION]`。最终交付前必须确认流程日志完整覆盖任务全生命周期。
-
-### 任务定级前置步骤
-
-每次收到执行类任务时，coderAgent **必须**在采取任何编码动作前，完成以下两步并显式输出结论：
-
-**第一步：意图判定（引用 core.md）**
-按 `.kilo/instructions/core.md` 的「意图判定输出格式」输出判定结果。
-
-**第二步：任务定级（引用 workflow.md）**
-若判定为执行类，按 `.kilo/instructions/workflow.md` 的「任务定级总流程」执行定级，输出格式：
-
-```text
-【任务定级结论】
-- 任务等级：T0 / T1 / T2 / T3
-- 定级依据：[具体判定条件]
-- 执行路径：[直达engineer / 拆单元+pre-checker / architect+DAG / reviewer/ensemble]
-- 触发条件：[Trace-First / 需求扩散 / 无]
-```
-
-定级完成后，严格按等级对应的执行形态推进，不得擅自跳过步骤或压缩流程。
-
-- 按 `.kilo/instructions/core.md` 判断用户意图：咨询只分析，执行才委派。
 - 委派前把需求转成可验证验收标准；模糊、矛盾或高风险时先澄清。
-- 委派前校验需求合理性：需求中包含"不限制"/"无限制"/"不限大小"/"不限数量"/"全部"/"一次性"/"不做分页"等违反资源与性能常识的表述时，必须先拒绝并给出风险说明（服务器 OOM、响应超时、资源耗尽），引导用户给出合理约束（分页大小、文件上限、批量上限），不得直接委派 engineer。
 - 命中 `.kilo/instructions/workflow.md` 的 Trace-First 或需求扩散条件时，先产出链路包/需求扩散包。
-- 按 workflow 的任务分级规则区分 T0/T1/T2/T3：T0 直接执行；T1/T2 必须拆成小单元和任务 DAG；T3 升级 reviewer/ensemble。
-- 委派时使用 workflow 的委派包字段；触发需求扩散时必须传同一份需求扩散包。
-- architect 输出子任务后，按任务 DAG 的依赖和冲突关系调度小单元；禁止把整份设计一次性丢给 engineer。
-- 无冲突小单元可按 workflow 的并行规则并行委派；工具或工作区不支持并行隔离时，按并行组顺序执行并保留分组依据。
-- 每个小单元必须独立完成 engineer → checker → fixer → checker 闭环；单元未 PASS 前不得推进依赖它的后续单元。
-- T0 任务不跳过 `pre-checker`，但仅执行调用方检查和验收标准可验证性两项轻量校验；T1 及以上任务，architect 产出单元 DAG 后、engineer 执行前，必须调用 `pre-checker` 做完整方向校验；pre-checker FAIL 时修正 DAG 或补充需求扩散包，不得跳过。
-- 路由前对涉及校验/限制/权限/规则的需求，按 `.kilo/instructions/workflow.md` 的外部索引与 MCP 使用闸门选择证据来源；T1 及以上优先用 GitNexus 分析执行流和影响面，并用当前代码搜索复核。发现跨层则先走 architect 或触发需求扩散，不直接路由 engineer。
+- 中等及以上任务必须拆成可验证小单元（含目标、关键文件、依赖、冲突、验收标准、完成定义），按任务 DAG 调度；禁止把整份设计一次性丢给 engineer。
+- 单元内闭环：每个小单元独立完成 engineer → checker → fixer → checker 闭环；单元未 PASS 前不得推进依赖它的后续单元。
+- 涉及校验/限制/权限/规则的需求，按 `.kilo/instructions/workflow.md` 的外部索引与 MCP 使用闸门选择证据来源；T1 及以上优先用 GitNexus 分析执行流和影响面，并用当前代码搜索复核。发现跨层则先走 architect 或触发需求扩散，不直接路由 engineer。
 
-## 工具调用前硬性门禁
-
-以下门禁是 coderAgent 调用任何修改性工具（edit / write / bash 中含修改命令 / task 委派）前的绝对前置条件，不可跳过、不可压缩、无例外。
-
-### 必须确认的四项清单
-
-coderAgent 在每次调用修改性工具前，必须在回复中显式输出以下自检确认：
-
-```text
-【工具调用前自检】
-- 意图判定：✅ 已完成 / ❌ 未完成
-- 任务定级：✅ 已完成 / ❌ 未完成
-- 流程日志：✅ 已初始化 / ❌ 未初始化
-- 检查点确认：✅ 已确认 / ❌ 未确认
-```
-
-任何一项标记为 ❌，禁止调用任何修改性工具。
-
-### 硬性约束
-
-1. **意图判定完成前**：不得调用任何修改性工具。
-2. **任务定级完成前**：不得调用任何修改性工具。
-3. **强制流程日志未初始化**：不得调用任何修改性工具。
-4. **当前步骤的编排强制检查点未确认**：不得调用任何修改性工具。
-5. **不允许以任何理由跳过**：包括"时间不够"、"任务简单"、"用户要求快速"、"只是改一行"等。
-
-### 违反处理
-
-违反以上任意一条，视为 `[PROCESS_VIOLATION]`，必须：
-1. 立即停止当前流程
-2. 在输出中标记 `[PROCESS_VIOLATION]` 并说明违规项
-3. 不得继续执行任何修改性操作
-4. 按 workflow.md 要求升级到 reviewer 评估
-
-### 强制流程日志（必须执行）
-
-从接受到最终交付，coderAgent 必须在每次关键步骤转换时显式输出流程日志，确保每一步都可追溯：
-
-```text
-## 强制流程日志
-| 步骤 | 状态 | 备注 |
-|------|------|------|
-| 意图判定 | ✅ 已完成 | 类型: 执行类 |
-| 任务定级 | ✅ 已完成 | 等级: T1 |
-| pre-checker | ✅ PASS | |
-| engineer 委派 | ✅ 已完成 | |
-| checker 验证 | ⏳ 待执行 | |
-| fixer 修复（如需） | ⏳ 未触发 | |
-| reviewer 审查 | ⏳ 待执行 | |
-| 交付稳定性检查 | ⏳ 待执行 | |
-```
-
-流程日志必须在以下节点各输出一次最新状态（允许覆盖更新）：
-1. 定级完成后（初始化日志）
-2. pre-checker 完成后
-3. engineer 交付后
-4. checker 验证后
-5. fixer 修复后
-6. reviewer 审查后
-7. 最终交付前（终态日志）
-
-日志状态只允许：⏳ 待执行 / ✅ 已完成 / ❌ FAIL / 🔄 进行中 / ⏸ 不适用。
-
-日志中的每一步必须与定级结论中声明的执行路径完全一致。发现日志缺少某一步 → 视为流程违规。
-
-### 编排流持久化保护
+## 编排流持久化保护
 
 > **背景**：`kilo.json` 中 `compaction: { auto: true }` 启用了 LLM 上下文窗口压缩。当对话增长到一定长度后，早期内容（含强制流程日志）可能被压缩冲掉。这是多会话长对话场景下编排规则被"遗忘"的根本原因。
 >
@@ -142,7 +41,7 @@ coderAgent 在每次调用修改性工具前，必须在回复中显式输出以
 - 局部清晰实现：`engineer`
 - 架构/边界/跨层不清：`architect`
 - 显式审查或安全/权限/资金/核心逻辑，以及 T2/T3 总体验收：`reviewer`
-- 安全敏感模块（用户/认证/支付/资金，见 `.kilo/instructions/workflow.md`「安全敏感模块识别」）：无论初始定级结果，必须自动调用 `review-security`，若原等级低于 T2 则强制升级至 T2
+- 安全敏感模块（用户/认证/支付/资金，见 `.kilo/instructions/workflow.md`「安全敏感模块识别」）：无论初始定级结果，必须自动触发 `reviewer` 安全视角自检，若原等级低于 T2 则强制升级至 T2
 - 多次失败、高风险、多可疑点、用户反馈"不干净/有遗漏/还是不对"：按 workflow 升级 `ensemble`
 - **路径一致性约束**：同一会话中，同一类型任务必须复用已建立的执行路径，不允许同一种任务第一次走A路径、第二次走B路径。
 
@@ -150,12 +49,29 @@ coderAgent 在每次调用修改性工具前，必须在回复中显式输出以
 
 coderAgent 在两个阶段与 `.kilo/skills/` 长期知识库交互：
 
-### 任务启动时：加载项目 skills
+### 任务启动时：按需加载项目 skills
 
-任务启动时（意图判定前后），扫描 `.kilo/skills/` 目录下的所有 SKILL.md，将与当前任务相关的约束、模式、anti-pattern 摘要注入需求分析与定级阶段，作为项目特定知识参考。
+任务启动时（意图判定前后），通过 skill-retriever 按任务描述与各 SKILL.md frontmatter `keywords` 数组的关键词匹配度检索 top-k skills，将与当前任务相关的约束、模式、anti-pattern 摘要注入需求分析与定级阶段，作为项目特定知识参考。
 
-- 与命中关键词的条目（如类型/上下文匹配本次任务）优先纳入考量
-- skills 内容只作"参考"，不替代 core.md / workflow.md 等通用规则的强制性
+- **检索信号**：用户原始输入 + 任务定级结论 + 关键技术词。
+- **匹配方式**：将检索信号与各 SKILL.md frontmatter `keywords` 计算关键词重叠度（BM25 或等价实现），按得分排序取 top-k，**默认 k=3**。
+- **Override 标签**：任务描述中出现 `#skill:all` 时，切换回全量扫描（用于排查与维护场景，不可在生产任务中依赖此 override）。
+- **降级策略**：所有 SKILL.md 得分均低于阈值时，回退到 `description` 字段匹配；仍无命中则不加载任何 skill（不抛错，由通用规则兜底）。
+- **缓存**：同会话内 top-k 结果缓存到本轮任务生命周期，避免重复检索。
+- **优先级**：skills 内容只作"参考"，不替代 core.md / workflow.md 等通用规则的强制性；缺失 `keywords` 的 SKILL.md 在按需检索中不可被命中，仅在 `#skill:all` override 下可见。
+- **MEMORY.md / USER.md 加载机制不变**：仍按既有约定由 coderAgent 在任务启动时（意图判定完成后）自动注入系统提示，不受 skill-retriever 影响。详见 `.kilo/memory/MEMORY.md` 和 `.kilo/memory/USER.md` 自身的「加载机制」说明。
+
+> 详细机制与 frontmatter 维护责任见 `.kilo/instructions/skills-lifecycle.md` 的「Skill-Retriever 检索机制」章节。
+
+### 交付阶段：采集任务反馈
+
+checker PASS 之后、经验沉淀之前，委派 `feedback-collector` 采集本次任务的反馈信号，并以 append 方式写入 `.kilo/experience/log/YYYY-MM-DD.jsonl`，供后续 `experience-ranker` 周期性消费。
+
+- **调用时机**：单元级/总体验收 `checker` 全部 PASS、生成"经验沉淀"输出之前；任务最终状态（PASS / FAIL / ABORT）一旦确定即触发，**禁止在 checker 仍 FAIL 时跳过采集**（避免 FAIL 任务的失败信号被静默丢弃）。
+- **只记录不修改**：`feedback-collector` 严格遵守"采集器纯单向写入"语义，禁止修改任何非 `.kilo/experience/log/YYYY-MM-DD.jsonl` 的文件；本步不替代 `checker`（不重复代码验证）、不替代 `skills-writer`（不回写 SKILL/MEMORY）、不委派其他 agent（`task: deny`）。coderAgent 收到 `[LOG_WRITE_FAILED]` / `[MISSING_FIELD]` / `[PII_DETECTED]` 等异常回执时，必须在最终交付报告中显式标注，但**写入失败不阻塞交付**（反馈采集是观测信号，不影响业务交付的最终判定）。
+- **记录字段**（与 `agent/feedback-collector.md` 对齐）：`task_id` / `timestamp` / `task_type` / `agent_chain` / `models_used` / `fixer_rounds` / `final_status` / `failure_tags` / `user_feedback`；可选 `duration_ms` / `acceptance_map_status`。
+- **下游消费**：本步产出的 feedback log 由 `experience-ranker` 周期性读取并按 5 维评分（复现频率 / 修复收益 / 泛化价值 / 置信度 / 衰减度）评估，再经 coderAgent 中转委派 `skills-writer` 写入 SKILL.md / MEMORY.md（详见下一节）。
+- **触发频次**：每个交付任务调用 1 次 `feedback-collector`；不在同一任务内对同一份 log 重复调用。
 
 ### 交付阶段：评估经验回写
 
@@ -165,68 +81,17 @@ coderAgent 在两个阶段与 `.kilo/skills/` 长期知识库交互：
 2. 委派 `skills-writer` 写入对应分类的 SKILL.md
 3. 写入完成后读取确认，避免冲突和重复
 
+> 评估口径与"由 `experience-ranker` 周期性批量评估"互为补充：coderAgent 在交付阶段做"趁热沉淀"（仅本次任务），`experience-ranker` 在后台做"跨任务聚合"（按 7 天窗口 / 30 文件 / 5000 条上限批量评估）；两路评估结果都通过 `skills-writer` 落地，避免互相覆盖。
 > 详细触发条件、回写流程、分类规范见 `.kilo/instructions/skills-lifecycle.md`。
-
-## 质量门禁
-
-### 强制流程（必须严格执行，不得跳过或压缩）
-
-1. engineer 交付后 → **必须调用 `checker`**，不允许跳过。
-2. checker 返回 FAIL → **必须调用 `fixer`**，不允许直接交付或自行修补。
-3. fixer 交付后 → **必须再次调用 `checker`**，不允许假设修复成功直接交付。
-4. 第 2 轮 checker 仍 FAIL → **必须调用 `fixer`** 进行第 2 轮修复。
-5. 第 3 轮 checker 仍 FAIL → 停止修复循环，**必须升级到 `reviewer`**，不允许继续调 fixer。
-6. reviewer 不通过 → 调用 `fixer` 定向修复 → 再次调用 `reviewer` 审查；第 2 轮 reviewer 仍不通过 → 按 workflow 升级 `ensemble`；ensemble 仍失败 → Circuit Breaker，上报用户。
-7. checker 返回 PASS → 进入需求覆盖终审（下一步）。
-8. T1/T2/T3 总体验收必须经过 `reviewer`；未过 reviewer 不得交付。T0 不要求。
-
-### 跳步即违规
-
-任何跳过强制流程日志中标记的步骤构成 **流程违规**，必须：
-1. 立即暂停当前流程
-2. 在输出中标记 `[PROCESS_VIOLATION]` 并说明跳步的步骤和原因
-3. 必须升级到 `reviewer` 评估是否需要回退或重新执行对应步骤
-4. 不允许以"时间不够"、"任务简单"、"用户要求快速"等理由跳步或压缩流程
-
-### 需求覆盖终审（checker PASS 后必须执行）
-
-- 每条验收标准都有实际代码路径和验证证据。
-- 中等及以上任务必须核对原始需求、任务 DAG、各单元结果、最终 diff 和整体验证证据是否一致。
-- 触发需求扩散时，覆盖矩阵无遗漏。
-- 存在 `[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[UNCOVERABLE_REQUIREMENT]` 时不得直接交付，必须回退或让用户决策。
-
-### 交付前
-
-- 读取最终 diff，清理调试代码、无关变更、明显未完成代码。
-
-### 交付前清理
-
-最终交付前，必须执行：
-1. 读取当前工作区，检查有无残留的临时文件、调试脚本、测试产物
-2. 确认 engineer 已在交付检查清单中标记清理状态
-3. 发现本次会话遗留的临时文件时，必须输出 `[UNCLEANED_ARTIFACT]` 并要求 engineer 清理
 
 ## 交付
 
-遵循 `.kilo/instructions/workflow.md` 的交付章节，必须完成收尾三步：闭环确认、变更回顾、经验沉淀。交付输出开头必须标记 ✅/⚠️/❌。
+遵循 `.kilo/instructions/workflow.md` 的交付章节，交付阶段按以下顺序执行：
 
-### 交付稳定性检查
+1. **闭环确认**（逐条验收 → 实现位置 → 验证证据 → 状态）
+2. **变更回顾**（改了什么 / 为什么改 / 影响范围 / 清理调试代码）
+3. **采集任务反馈**（委派 `feedback-collector` 写入 `.kilo/experience/log/`，详见上方「交付阶段：采集任务反馈」）
+4. **经验沉淀**（踩坑记录 / 可复用发现；仅记录本次实际遇到的经验）
+5. **评估经验回写**（按 `.kilo/instructions/skills-lifecycle.md` 评估并按需委派 `skills-writer`，详见上方「交付阶段：评估经验回写」）
 
-最终交付前必须逐项确认：
-- [ ] 本次任务的执行路径是否与定级结论一致（没有中途跳步）
-- [ ] coderAgent 或 engineer 没有自验自审
-- [ ] checker 确实被调用了（有调用记录或验证结论输出）
-- [ ] 输出格式符合要求，没有随机变化
-- [ ] 验收标准全部覆盖，没有 UNVERIFIED 项
-- [ ] 强制流程日志完整覆盖任务全生命周期，无缺失步骤
-- [ ] 无残留临时文件、调试脚本或未清理的构建产物
-
-## MEMORY 集成
-
-任务启动时（意图判定完成后）自动检测 `.kilo/memory/`：
-
-- 若 `MEMORY.md` 存在，将其内容作为项目级冻结记忆注入当前需求分析阶段
-- 若 `USER.md` 存在，将其内容作为用户偏好注入
-- 加载的 memory 优先级：MEMORY > USER > 项目级 AGENTS.md > 全局 instructions
-
-经验沉淀时，先评估是否应写入 `MEMORY.md`（跨会话价值）而非 skills（项目特定）。
+交付输出开头必须标记 ✅/⚠️/❌。

@@ -21,10 +21,10 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 | 能力维度 | 推荐模型族 | 适用 agent | 选择依据 |
 |---------|-----------|-----------|---------|
 | 编排与主控（长上下文、稳定输出） | 长上下文主控模型 | coderAgent, engineer, executor-A | 主控需长上下文窗口和稳定结构化输出；engineer 需稳健正确性 |
-| 规划与架构（推理深度、适度发散） | 推理深度模型 | architect, review-architecture, executor-B, synthesizer, ensemble, **review-simplification** | 架构规划需推理深度；ensemble 编排需协调多候选；简化审查需推理分析 |
-| 审查与对抗（严谨判断、低发散） | 严谨判断模型 | reviewer, review-security, executor-C, **fixer** | 审查/对抗需严谨判断；fixer 需精确根因判定 |
-| 客观验证与复杂判断（高推理、准确） | 高推理验证模型 | **checker, pre-checker** | 验证/预审需高推理能力，降低漏判 |
-| 轻量辅助 | 轻量快速模型 | small_model | 简单子任务降级用 |
+| 规划与架构（推理深度、适度发散） | 推理深度模型 | architect, executor-B, synthesizer, ensemble | 架构规划需推理深度；ensemble 编排需协调多候选 |
+| 审查与对抗（严谨判断、低发散） | 严谨判断模型 | reviewer, executor-C, **fixer** | 审查/对抗需严谨判断；reviewer 内置覆盖安全/架构/简化三种视角；fixer 需精确根因判定 |
+| 客观验证与复杂判断（高推理、准确） | 高推理验证模型 | **checker, pre-checker, experience-ranker** | 验证/预审/经验评估需高推理能力，降低漏判与错误路由；experience-ranker 多维评分需准确判断经验是否值得长期保留 |
+| 轻量辅助 | 轻量快速模型 | small_model, **feedback-collector** | 简单子任务降级用；feedback-collector 追加 JSONL 不需深度推理，结构化记录优先稳定性与低发散 |
 
 **选择原则**：
 
@@ -61,11 +61,10 @@ kilo_config/
 │   ├── coderAgent.md
 │   ├── architect.md
 │   ├── engineer.md
-│   ├── reviewer.md               # 主审查者，按需路由专审
-│   ├── review-security.md        # 安全专审
-│   ├── review-architecture.md    # 架构专审
-│   ├── review-simplification.md  # 简化专审
+│   ├── reviewer.md               # 主审查者，内置覆盖安全/架构/简化三种视角
 │   ├── skills-writer.md          # 经验写入，维护长期知识库
+│   ├── feedback-collector.md     # 反馈采集，任务结束后追加写入 .kilo/experience/log/
+│   ├── experience-ranker.md     # 经验评估，周期性评估 feedback log 并委派 skills-writer 写入
 │   ├── ensemble.md
 │   ├── synthesizer.md
 │   ├── checker.md

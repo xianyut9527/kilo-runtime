@@ -72,15 +72,61 @@ coderAgent 确认文件内容
 - [链接到同一项目其他 skill 条目]
 ```
 
+> **注意**：SKILL.md 顶层（frontmatter）还必须维护 `keywords` 数组，供 skill-retriever 做相关性检索；详细格式与维护责任见「Skill-Retriever 检索机制」章节。条目正文模板不重复 frontmatter 字段。
+
+## Skill-Retriever 检索机制
+
+coderAgent 在任务启动时不再全量扫描 `external_dirs` 下的 SKILL.md，而是通过 skill-retriever 按需检索 top-k：
+
+- **检索信号**：任务描述（用户原始输入 + 任务定级结论 + 关键技术词）。
+- **匹配方式**：将任务描述与各 SKILL.md frontmatter 的 `keywords` 数组计算关键词重叠度（BM25 或等价实现），按得分排序取 top-k（默认 k=3）。
+- **Override 标签**：任务描述中出现 `#skill:all` 时，切换回全量扫描（用于排查与维护场景，不可在生产任务中依赖此 override）。
+- **命中阈值**：所有 SKILL.md 得分均低于阈值时，回退到 description 字段匹配；仍无命中则不加载任何 skill。
+- **缓存**：同会话内 top-k 结果缓存到本轮任务生命周期，避免重复检索。
+
+### SKILL.md frontmatter 扩展：keywords 字段
+
+每个 SKILL.md 必须在 frontmatter 顶层维护 `keywords` 数组，供 skill-retriever 做相关性检索：
+
+- **作用**：作为 skill-retriever 的索引锚点；缺失 `keywords` 的 SKILL.md 在按需检索中不可被命中，仅在 `#skill:all` override 下可见。
+- **格式**：YAML 字符串数组，元素为小写中文/英文术语词（不含空格、标点、抽象概念）。
+- **数量要求**：每个 SKILL.md 至少 3 个，最多不超过 20 个。
+- **词条来源**：
+  1. 该分类的核心领域词（必含），例如 `architecture` 分类必含 `模块划分`、`依赖方向`、`分层`、`跨层`。
+  2. 该分类常见反模式/陷阱关键词（推荐），例如 `architecture` 分类应含 `循环依赖`、`向上调用`。
+  3. 任务描述中与该分类高度相关的触发词（可选），便于 BM25 命中。
+- **维护责任**：skills-writer 在新增/修改 SKILL.md 时同步更新 `keywords`；reviewer 简化视角自检时检查 `keywords` 是否随条目变化保持一致。
+- **去重约束**：跨 SKILL.md 的 `keywords` 允许重叠（相关性是分布式的）；单文件内禁止重复。
+- **失效处理**：关键词命中后实际加载的 SKILL.md 仍需符合正常的回写流程与验证闭环，未经验证的条目不得因关键词匹配而绕过 checker。
+
+frontmatter 示例：
+
+```yaml
+---
+name: architecture
+description: 项目级架构与边界知识库
+keywords:
+  - 模块划分
+  - 依赖方向
+  - 分层
+  - 跨层
+  - 循环依赖
+  - 向上调用
+  - use case
+  - repository
+---
+```
+
 ## 扩展机制
 
 新增 skills 分类时（如 `security/`、`performance/`、`migrations/`）需同步以下位置，确保单一事实来源：
 
-1. **目录创建**：在 `.kilo/skills/<新分类>/` 下创建 SKILL.md，遵循现有 5 个分类的模板结构
+1. **目录创建**：在 `.kilo/skills/<新分类>/` 下创建 SKILL.md，遵循现有 5 个分类的模板结构，**并在 frontmatter 维护 `keywords` 数组**
 2. **本文件分类表**：在「Skills 分类规范」表格中增加一行（分类、目录、存放内容、示例）
 3. **agent/skills-writer.md**：更新「职责」章节"分类决策"步骤中的分类枚举
 4. **kilo.json coderAgent.prompt**（如显式提及分类）：更新分类列表
 5. **新增条目模板（可选）**：若新分类需要特殊字段，在「条目模板」章节追加分类专属模板说明
+6. **skill-index.json 同步**：在 `.kilo/experience/skill-index.json` 的 `skills` 数组中注册新分类（含 `name` + `keywords`），供 skill-retriever 启动期冷启动
 
 变更后必须读取上述全部位置确认一致。同步前禁止 skills-writer 写入新分类。
 

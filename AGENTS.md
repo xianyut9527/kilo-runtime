@@ -37,11 +37,10 @@
 | coderAgent | 单模型编排 | primary | 日常入口；任务分级、单元化编排、委派、跟踪与交付 |
 | architect | 单模型规划 | subagent | 复杂需求分析、架构拆解、边界识别、任务规划 |
 | engineer | 单模型实现 | subagent | 读取、实现、验证、修复 |
-| reviewer | 主审查者 | subagent | 主审查、按需调度专审、汇总 findings |
-| review-security | 安全专审 | subagent | 输入边界、权限控制、敏感信息与危险副作用 |
-| review-architecture | 架构专审 | subagent | 分层、依赖方向、接口契约、跨模块影响 |
-| review-simplification | 简化专审 | subagent | 重复实现、复杂度膨胀、过度抽象、范围外修改 |
+| reviewer | 主审查者 | subagent | 主审查；内置覆盖安全/架构/简化三种视角；汇总 findings |
 | skills-writer | 知识沉淀 | subagent | 将经 checker/reviewer 确认的经验写入 `.kilo/skills/` 长期知识库 |
+| feedback-collector | 反馈采集 | subagent | 任务结束后将反馈信号（task_id、task_type、agent_chain、models_used、fixer_rounds、final_status、failure_tags、user_feedback 等）追加写入 `.kilo/experience/log/YYYY-MM-DD.jsonl`，只记录不修改文件 |
+| experience-ranker | 经验评估 | subagent | 周期性读取 `.kilo/experience/log/` 的 feedback log，按复现频率/修复收益/泛化价值/置信度/衰减度多维评估，决定经验写入 MEMORY.md / SKILL.md / 丢弃，并委派 skills-writer 执行写入 |
 | ensemble | 多模型并行编排 | all | 需求解析 → 并行编码 → 候选评估 → 双门禁 → 定向修复 → 交付 |
 | executor-A | 多模型执行 A | subagent | 偏稳健正确性与回归控制 |
 | executor-B | 多模型执行 B | subagent | 偏更小 diff、更高复用、更清晰实现 |

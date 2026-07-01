@@ -39,6 +39,12 @@
 - 委派包「验收标准」字段升级为硬约束：每条必须可验证；不可验证标 `[NEEDS_CLARIFICATION]` 退回
 - review-simplification 新增残留标记清理检查（`[SPECULATIVE]` / `[UNVERIFIED]` / `[PARTIAL_IMPLEMENTATION]`）
 
+### Removed - 2026-06-30: 移除 3 个 review-* 专审 agent
+- 删除 `review-security.md` / `review-architecture.md` / `review-simplification.md` 三个专审 agent
+- 原专审职责（安全边界 / 架构分层 / 简化审查）并入 `reviewer.md`，由 reviewer 内置覆盖三种视角
+- 同步清理：`AGENTS.md` 智能体清单、`README.md` 模型路由表与目录树、`CONFIG_CHANGE_CHECKLIST.md` agent 引用示例
+- 升级提醒：删除 agent 后必须重跑对应平台安装脚本（`./install.ps1` 或 `./install.sh`），将变更同步到全局配置目录 `~/.config/kilo/`，否则本地仍会残留已删除的专审 agent 出现在 agent 列表中
+
 ---
 
 ## Earlier

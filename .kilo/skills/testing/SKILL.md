@@ -1,6 +1,17 @@
 ---
 name: testing
 description: 本 SKILL 存放项目在测试策略、回归约定、验证命令、高风险链路方面的长期知识。由 skills-writer 根据验证后的经验写入。
+keywords:
+  - testing
+  - regression
+  - test-strategy
+  - validation
+  - high-risk
+  - test-commands
+  - 测试
+  - 回归
+  - 验证
+  - 高风险链路
 license: MIT
 compatibility:
   - kilo >= 1.0

@@ -1,6 +1,19 @@
 ---
 name: contracts
 description: 本 SKILL 存放项目在 API/数据/事件的结构、兼容性要求、变更记录方面的长期知识。由 skills-writer 根据验证后的经验写入。
+keywords:
+  - contracts
+  - api
+  - data-structure
+  - event
+  - compatibility
+  - schema
+  - interface
+  - 契约
+  - 接口
+  - 数据结构
+  - 兼容性
+  - 事件
 license: MIT
 compatibility:
   - kilo >= 1.0

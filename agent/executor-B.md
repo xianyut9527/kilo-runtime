@@ -31,18 +31,11 @@ steps: 50
 
 ## 安全与资源约束
 
-- 遵循 `.kilo/instructions/core.md` 的通用安全约束（输入校验与净化、SQL注入防护、XSS防护、命令注入防护、路径遍历防护）。
-- 遵循 `.kilo/instructions/core.md` 的资源与性能约束（分页强制、上传限制、批量上限、查询防护、超时与降级）。
 - 涉及用户/认证/支付/资金模块时，遵循 `.kilo/instructions/workflow.md`「安全敏感模块识别」和防护要求（密码安全哈希、防暴力破解、幂等性保护）。
 
 ## 资源生命周期管理
 
-### 临时文件与脚本清理
-
-1. 遵循 `.kilo/instructions/core.md` 的资源生命周期管理基线。
-2. 编码过程中创建的临时脚本、调试文件、测试产物必须在交付前清理。
-3. 禁止在项目 `src/`、`lib/`、根目录等非临时目录写入无主文件。临时文件必须使用系统临时目录（POSIX: `/tmp/`，Windows: `$env:TEMP`）。
-4. 交付前必须确认无项目目录残留；未清理的标记 `[UNCLEANED_ARTIFACT]` 并记录路径。
+清理临时文件、测试产物、调试脚本，使用系统临时目录（POSIX: `/tmp/`，Windows: `$env:TEMP`），交付前确认无项目目录残留；未清理的标记 `[UNCLEANED_ARTIFACT]` 并记录路径。
 
 ## 输出
 

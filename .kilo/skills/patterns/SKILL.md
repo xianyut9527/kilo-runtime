@@ -1,6 +1,17 @@
 ---
 name: patterns
 description: 本 SKILL 存放项目在可复用的实现范式、最佳实践、推荐写法方面的长期知识。由 skills-writer 根据验证后的经验写入。
+keywords:
+  - patterns
+  - best-practice
+  - implementation-pattern
+  - reusable
+  - coding-style
+  - guideline
+  - 模式
+  - 最佳实践
+  - 实现范式
+  - 可复用
 license: MIT
 compatibility:
   - kilo >= 1.0
