@@ -156,11 +156,29 @@
         },
         "kimi-k2.6": {
           "name": "kimi-k2.6",
-          "reasoning": true
+          "reasoning": true,
+          "attachment": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
         },
         "kimi-k2.7-code": {
           "name": "kimi-k2.7-code",
-          "reasoning": true
+          "reasoning": true,
+          "attachment": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
         },
         "qwen3.7-max": {
           "name": "qwen3.7-max",
@@ -172,11 +190,29 @@
         },
         "MiniMax-M3": {
           "name": "MiniMax-M3",
-          "reasoning": true
+          "reasoning": true,
+          "attachment": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
         },
         "MiniMax-M2.7-highspeed": {
           "name": "MiniMax-M2.7-highspeed",
-          "reasoning": true
+          "reasoning": true,
+          "attachment": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
         }
       }
     },
