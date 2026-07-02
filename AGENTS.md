@@ -1,16 +1,34 @@
 # AGENTS.md
 
-> 通用 AI 代理配置骨架与设计参考。运行时只注入 `./.kilo/instructions/` 中的轻量规则；本文件用于说明分层原则、智能体职责和项目级落地方式。
->
-> 运行时通用规则索引（`.kilo/instructions/*.md`，每条规则只在单一文件中完整维护，其他文件通过引用链接指向主文档，避免重复）：
->
-> - `core.md` — 意图判定、通用安全约束、流程强制基线、编码前强制检查点
-> - `workflow-core.md` — 任务定级、单元 DAG、门禁、交付与程序化记忆触发（自动注入）
-> - `workflow-reference.md` — 工作流参考内容（按需读取）：small_model 触发规则、Trace-First、外部索引与 MCP 闸门、需求扩散与同类点扫描、委派包、知识沉淀、Anthropic 5 大模式映射、程序化记忆触发条件
-> - `reflection.md` — 反思三层判定 / 根因 / Circuit Breaker
-> - `security-checklist.md` — checker L3 调用的可扩展安全/性能检测清单（INJ / PERF / AUTH）
-> - `output-schema.md` — 下游 agent 交付输出的最小公共字段与 `[MARKER]` 标记语言规范
-> - `skills-lifecycle.md` — 按需引用（不自动注入所有 agent 上下文），由 `coderAgent` / `skills-writer` 主动读取
+> 通用 AI 代理配置骨架与设计参考。Kilo 通过 `findUp` 自动发现本文件，无需在 `kilo.json` 的 `instructions` 中声明路径。
+
+## 强制编排锚点（每个项目启动时自动加载）
+
+Kilo 通过 `findUp` 自动发现 `AGENTS.md` 作为唯一全局注入点。本节是所有智能体**不可妥协**的硬约束；详细规则见下方「详细参考」中列出的 `.kilo/instructions/*.md`。
+
+- **执行类任务三段开场白**：先输出「意图判定」+「任务定级」+「强制流程日志」（≥7 节点），再调用任何修改性工具。
+- **定级前置**：T0 / T1 / T2 / T3 按 `workflow-core.md` 决策树判定；命中安全敏感关键词（user / auth / payment / wallet / transfer 等）→ 最低 T2。
+- **单元闭环**：T1+ 拆为可验证小单元（DAG），每单元独立 engineer → checker → fixer → checker；最多 2 轮 fixer，连续 2 轮同症状自动升级 reviewer。
+- **验收必附映射表 + 已读取文件清单**：缺则 `[MISSING_ACCEPTANCE_MAP]` / `[FAKE_CONTEXT]` FAIL。
+- **SCOPE_CREEP**：checker L2 反向核对 diff，命中即 FAIL。
+- **自验无效**：智能体不得用自身验证替代 checker 客观验证。
+- **memory / skills 合规**：任务启动加载 `MEMORY.md`（≤2200）+ `USER.md`（≤1375）；经验回写必须经闭环验证，禁止 LLM 自动编造规则写入长期文档。
+- **流程违规即停**：发现跳步立即标 `[PROCESS_VIOLATION]` 并暂停。
+- **临时文件**：写入 `$env:TEMP` / `/tmp/`，禁止污染项目目录。
+
+---
+
+## 详细参考（仅作索引，不在自动加载列表）
+
+`.kilo/instructions/*.md` 在本仓库中保留作为详细文档，由 coderAgent / skills-writer **按需读取**（不依赖 `kilo.json` 的 `instructions` 字段自动注入）：
+
+- `core.md` — 意图判定、通用安全约束、流程强制基线、编码前强制检查点
+- `workflow-core.md` — 任务定级、单元 DAG、门禁、交付与程序化记忆触发
+- `workflow-reference.md` — 按需读取：small_model 触发规则、Trace-First、MCP 闸门、需求扩散、Anthropic 5 大模式、程序化记忆触发条件
+- `reflection.md` — 反思三层判定 / 根因 / Circuit Breaker
+- `security-checklist.md` — checker L3 安全/性能检测清单（INJ / PERF / AUTH）
+- `output-schema.md` — 下游 agent 交付输出的最小公共字段与 `[MARKER]` 标记语言规范
+- `skills-lifecycle.md` — Skills 生命周期管理（按需引用）
 
 ## 单一事实来源与修改指南
 

@@ -3,11 +3,6 @@
   "model": "hx/MiniMax-M3",
   "small_model": "hx/MiniMax-M2.7-highspeed",
   "default_agent": "coderAgent",
-  "instructions": [
-    "./.kilo/instructions/core.md",
-    "./.kilo/instructions/workflow-core.md",
-    "./.kilo/instructions/reflection.md"
-  ],
   "snapshot": true,
   "compaction": {
     "auto": true,
