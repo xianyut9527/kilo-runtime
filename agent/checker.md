@@ -47,25 +47,13 @@ steps: 60
 
 - **流程合规核查**：核对 coderAgent 的强制流程日志是否完整覆盖任务生命周期。发现跳步或流程日志缺失，标记 `[PROCESS_VIOLATION]`。
 
-- **通用注入检测**（当变更涉及用户输入处理时自动触发——包括表单字段、API 参数、URL 查询、文件上传、Header 读取的增删改）：
-  - 搜索 SQL 拼接模式（`"SELECT` 或 `'SELECT` 后跟 `+`、`${`、`fmt.Sprintf`、`.format(`、`concat(` 等拼接用户输入的写法），存在则标记 `[SECURITY_GAP_SQL_INJECTION]`。
-  - 搜索 XSS 危险模式（`innerHTML`、`dangerouslySetInnerHTML`、`v-html`、`document.write(`、`eval(` 赋值或传参用户可控内容），存在则标记 `[SECURITY_GAP_XSS]`。
-  - 搜索命令注入模式（`exec(`, `execSync(`, `spawn(`, `system(`, `popen(`, `subprocess.call(` 拼接或插值用户输入），存在则标记 `[SECURITY_GAP_COMMAND_INJECTION]`。
-  - 搜索路径遍历模式（文件路径操作中拼接 `../`、`..`、未校验的用户输入作为路径片段），存在则标记 `[SECURITY_GAP_PATH_TRAVERSAL]`。
-  - 上述任一标记触发即 **FAIL**；checker 输出中必须包含所有 `[SECURITY_GAP_*]` 标记及对应文件位置。
+- **安全/性能检测**：按 L3 阶段执行通用注入检测、资源安全检测、安全敏感模块专项检查；检测模式、触发条件、输出标记详见 `.kilo/instructions/security-checklist.md`。
 
-- **资源安全检测**（当变更涉及查询/列表/文件/批量操作时触发）：
-  - 搜索无 LIMIT 的查询语句（`SELECT ... FROM` 或 ORM `find(`/`findAll(`/`.all(` 等无 `limit` 参数），存在则标记 `[PERF_GAP_NO_LIMIT]`。
-  - 搜索文件上传缺少大小校验（上传中间件/配置中无 `maxFileSize`/`limits.fileSize`/`maxSize`/`sizeLimit`），存在则标记 `[PERF_GAP_NO_UPLOAD_LIMIT]`。
-  - 搜索批量操作无上限（`deleteMany({})`/`updateMany({})` 空条件、批量循环 `for`/`while`/`forEach` 无上限控制），存在则标记 `[PERF_GAP_NO_BATCH_LIMIT]`。
-  - 上述任一标记触发即 **FAIL**；checker 输出中必须包含所有 `[PERF_GAP_*]` 标记及对应文件位置。
+## 分层验证
 
-- **安全敏感模块专项检查**（当变更涉及用户/认证/支付/资金模块文件时触发）：
-  - 搜索明文密码对比模式（`== password`, `=== password`, `.equals(password)`, `compare(password`, `password ===`, `password ==` 等无哈希保护的直接比较），存在则标记 `[SECURITY_GAP_PLAINTEXT_PASSWORD]`。
-  - 搜索弱哈希模式（`md5(`, `sha1(`, `sha256(` 在密码相关上下文中），存在则标记 `[SECURITY_GAP_WEAK_HASH]`。
-  - 确认密码存储使用安全哈希（搜索 `bcrypt`, `argon2`, `pbkdf2`, `hash_password`, `password_hash`），缺失则标记 `[SECURITY_GAP_NO_HASH]`。
-  - 确认认证/支付路由有限流中间件（搜索 `rate_limit`, `throttle`, `lockout`, `rateLimiter`, `tooManyAttempts`），缺失则标记 `[SECURITY_GAP_NO_RATE_LIMIT]`。
-  - 上述任一标记触发即 **FAIL**；checker 输出中必须包含所有 `[SECURITY_GAP_*]` 标记及对应文件位置。
+- **L1（语法/编译/格式）**：运行测试、构建、类型检查、Lint，校验基本正确性。
+- **L2（逻辑/边界）**：逐条验收标准读取实际代码路径，确认实现、分支、错误路径和边界；含 L2 增强核查项（见下）。
+- **L3（覆盖/安全）**：需求扩散覆盖矩阵核对、API/数据兼容性、影响面回溯（仅 T2/T3 触发），以及安全/性能检测（详见 `.kilo/instructions/security-checklist.md`）。
 
 ## L2 增强核查项
 - engineer 交付检查清单是否包含调用方搜索和平行实现搜索结果摘要？若缺失，标记 `[MISSING_LINKAGE]`。
@@ -74,12 +62,10 @@ steps: 60
 - 反向校验「已读取文件清单」：engineer 声称读取的文件是否真实存在且与任务相关？用 glob/grep 核对每条路径，文件不存在、与验收标准无关、属于未实际读取的虚构路径，标记 [FAKE_CONTEXT] 并 FAIL。
 
 ## FAIL 条件
-
 - 测试/构建/类型检查失败。
 - `[MISSING]`、`[UNVERIFIED]`、`[PARTIAL_IMPLEMENTATION]`、`[REGRESSION]`。
 - engineer 交付缺失「验收映射表」→ 标记 [MISSING_ACCEPTANCE_MAP] 并 FAIL。
-- `[SECURITY_GAP_SQL_INJECTION]`、`[SECURITY_GAP_XSS]`、`[SECURITY_GAP_COMMAND_INJECTION]`、`[SECURITY_GAP_PATH_TRAVERSAL]`、`[SECURITY_GAP_PLAINTEXT_PASSWORD]`、`[SECURITY_GAP_WEAK_HASH]`、`[SECURITY_GAP_NO_HASH]`、`[SECURITY_GAP_NO_RATE_LIMIT]`。
-- `[PERF_GAP_NO_LIMIT]`、`[PERF_GAP_NO_UPLOAD_LIMIT]`、`[PERF_GAP_NO_BATCH_LIMIT]`。
+- 命中 `.kilo/instructions/security-checklist.md` 中任一检测项（`[SECURITY_GAP_*]` / `[PERF_GAP_*]`）即 FAIL。
 - `[PATH_DEVIATION]`。
 - `[PROCESS_VIOLATION]`。
 - 明显超范围、blocklist 修改、OUT_OF_SCOPE 修改。
@@ -87,41 +73,13 @@ steps: 60
   - 注：`[UNVERIFIED]` 指验收标准只有文字描述，没有实际的代码路径或验证命令输出。
 
 ## 输出
-
-```text
-## 验证结论
-[PASS / FAIL]
-
-## 动态验证
-- 测试/构建/类型/Lint: [命令] → [结果/VERIFY_PENDING] | 证据:[片段]
-
-## 覆盖检查
-| 验收标准 | 实现位置 | 验证方式 | 边界覆盖 | 状态 |
-|----------|----------|----------|----------|------|
-
-## 执行路径核查
-- 定级路径: [原文]
-- 实际路径: [追踪记录]
-- 结论: [一致/PATH_DEVIATION]
-
-## 同类点检查
-| 同类点 | 扫描证据 | 发现来源 | 覆盖状态 | 结论 |
-
-## 范围与映射
-- 缺失/越界/无关修改/OUT_OF_SCOPE: [列表或无]
-
-## 阻塞问题
-- [类别] [文件:位置] [问题] → [修复建议] | 证据:[片段]
-
-## 声明核实
-- engineer 自验声明: [有/无] → 结论: [不作为依据/已交叉验证]
-```
+输出格式与 marker 规范详见 `.kilo/instructions/output-schema.md`（§3.2 checker 最小骨架、§4 marker 规范）。
 
 ## skills frontmatter 合规检查
 
 当变更涉及 `.kilo/skills/` 时，验证 SKILL.md 是否含合规 YAML frontmatter（`name` 必填且与目录名一致 / `description` 必填 ≤1024 字符 / 标准 YAML 格式）。
 
-不通过标记 `[SKILL_FRONTmatter_INVALID]`。
+不通过标记 `[SKILL_FRONTMATTER_INVALID]`。
 
 ## memory 合规检查
 

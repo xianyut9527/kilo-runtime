@@ -30,11 +30,11 @@ permission:
 
 ## 编排流持久化保护
 
-> **背景**：`kilo.json` 中 `compaction: { auto: true }` 启用了 LLM 上下文窗口压缩。当对话增长到一定长度后，早期内容（含强制流程日志）可能被压缩冲掉。这是多会话长对话场景下编排规则被"遗忘"的根本原因。
+> **背景**：`kilo.json` 当前 `compaction: { auto: false }`，**不启用** LLM 上下文窗口压缩。对话增长到一定长度后不会触发自动压缩，因此早期内容（含强制流程日志）在常规运行中不会被压缩冲掉。
 >
 > **保护措施**：coderAgent 的 `prompt` 中已包含核心编排锚点规则，位于系统提示级，不受上下文压缩影响。强制流程日志由 coderAgent 在每次关键步骤转换时主动输出并维护。
 >
-> **恢复机制**：若在后续步骤中发现流程日志不完整（如无法确定当前单元是否已完成），coderAgent 必须重新读取 `.kilo/instructions/workflow.md` 恢复编排规则，并输出 `[RECOVERED_FROM_INSTRUCTIONS]` 标记已恢复的步骤。
+> **未来开启保护（参考）**：若未来将 `auto` 改为 `true` 启用压缩，早期内容可能被冲掉，此时 coderAgent 必须重新读取 `.kilo/instructions/workflow.md` 恢复编排规则，并输出 `[RECOVERED_FROM_INSTRUCTIONS]` 标记已恢复的步骤。当前 `auto: false` 下无需此恢复机制，但 prompt 锚点仍按"压缩后可能丢失"的最坏情况设计。
 
 ## 路由
 

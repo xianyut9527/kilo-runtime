@@ -153,6 +153,6 @@ ranker **不直接调用** skills-writer；必须经由 coderAgent 中转，确�
 ## 失败处理
 
 - **log 文件损坏 / JSON 解析失败**：跳过该文件并记录损坏条目，不阻塞整体评估；损坏率 > 10% 时报告 `[LOG_CORRUPTION_HIGH]`。
-- **现有 SKILL.md 不存在或 frontmatter 缺失 keywords**：报告 `[SKILL_FRONTmatter_INVALID]`，提示 skills-writer 先修复 frontmatter。
+- **现有 SKILL.md 不存在或 frontmatter 缺失 keywords**：报告 `[SKILL_FRONTMATTER_INVALID]`，提示 skills-writer 先修复 frontmatter。
 - **候选经验与现有条目冲突**：不自行决定合并/覆盖；输出冲突清单交由 coderAgent 决策。
 - **评估超时**（> 5 分钟）：保存已评估部分并报告 `[EVAL_INCOMPLETE]`，下次从断点续评。

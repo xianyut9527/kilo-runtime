@@ -45,6 +45,18 @@
 - 同步清理：`AGENTS.md` 智能体清单、`README.md` 模型路由表与目录树、`CONFIG_CHANGE_CHECKLIST.md` agent 引用示例
 - 升级提醒：删除 agent 后必须重跑对应平台安装脚本（`./install.ps1` 或 `./install.sh`），将变更同步到全局配置目录 `~/.config/kilo/`，否则本地仍会残留已删除的专审 agent 出现在 agent 列表中
 
+### Changed - 2026-07-02: 配置精简 / 可扩展性 / 索引同步重构
+- 新增 `.kilo/instructions/security-checklist.md`：将 `agent/checker.md` 中硬编码的安全 / 性能检测模式结构化为可扩展清单（含检测项 ID、分类与判定规则）
+- 新增 `.kilo/instructions/output-schema.md`：统一 checker / reviewer / engineer / fixer 的最小公共输出字段与 `[MARKER]` 标记语言规范
+- 精简 `agent/checker.md`：删除硬编码检测模式与输出模板，改为调用框架并引用 `security-checklist.md` / `output-schema.md`
+- 明确 `[SCOPE_CREEP]` 归属：由 checker L2 反向核对负责，reviewer 自动二检不重复检测（同步 `agent/reviewer.md` / `workflow.md` / `agent/feedback-collector.md` / `output-schema.md`）
+- 压缩 `kilo.json` 全部 15 个 agent prompt：总字符从 5721 降至 3357（-41.3%），保留关键锚点
+- 修正 `agent/coderAgent.md` 中 `compaction.auto` 描述：与 `kilo.json` 实际 `auto: false` 配置一致
+- `workflow.md` 新增 `small_model` 触发规则：明确适用场景（T0 极速通道 / 纯记录型 / 轻量预审 / 结构化总结）与不适用场景（主控 / 实现 / 审查 / 修复 / 复杂规划 / 知识沉淀）
+- 扩展 `scripts/validate-config.mjs`：从 4 项检查扩展到 8 项，新增 frontmatter 合规性 / prompt 引用路径存在性 / README 目录树一致性 / AGENTS 与 CHECKLIST 索引一致性
+- 更新 `README.md`：目录树与 `small_model` 路由说明同步
+- 更新 `AGENTS.md`：智能体清单索引与 `CONFIG_CHANGE_CHECKLIST.md` 检查项同步
+
 ---
 
 ## Earlier

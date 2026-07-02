@@ -2,10 +2,14 @@
 // validate-config.mjs
 // kilo_config 配置自检脚本（Node ESM，跨平台）
 // 校验项：
-//   [1/4] kilo.json JSON 合法性
-//   [2/4] agent 名单一致性
-//   [3/4] instructions 引用存在性
-//   [4/4] skills 分类一致性
+//   [1/8] kilo.json JSON 合法性
+//   [2/8] agent 名单一致性
+//   [3/8] instructions 引用存在性
+//   [4/8] skills 分类一致性
+//   [5/8] agent 文件 frontmatter 合规性
+//   [6/8] kilo.json prompt 中引用的文档路径存在性
+//   [7/8] README.md 目录树一致性
+//   [8/8] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -56,7 +60,7 @@ function check1KiloJson() {
 function check2Agents(config) {
   const name = 'agent 名单一致性';
   if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/4]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/8]）' };
   }
   const declared = new Set(Object.keys(config.agent));
   const agentDir = path.resolve(ROOT, 'agent');
@@ -90,7 +94,7 @@ function check2Agents(config) {
 function check3Instructions(config) {
   const name = 'instructions 引用存在性';
   if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/4]）' };
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/8]）' };
   }
   const list = config.instructions;
   if (!Array.isArray(list)) {
@@ -166,6 +170,445 @@ function check4Skills() {
   return { name, pass: false, detail: parts.join('; ') };
 }
 
+// ---------- Check 5: agent 文件 frontmatter 合规性 ----------
+// 极简 YAML frontmatter 解析器（仅支持本项目使用的子集）：
+//   - 顶层 `key: value` 与嵌套 `key:` + 缩进子项
+//   - 标量：字符串（可被 `"`/`'` 包裹）、整数、布尔（true/false）、null
+//   - 键名可为裸标识符，也可被 `"`/`'` 包裹（用于 glob 模式作 key）
+function parseScalar(val) {
+  if (val === '' || val === '~' || val === 'null') return null;
+  if (val === 'true') return true;
+  if (val === 'false') return false;
+  if (/^-?\d+$/.test(val)) return parseInt(val, 10);
+  if (
+    (val.startsWith('"') && val.endsWith('"')) ||
+    (val.startsWith("'") && val.endsWith("'"))
+  ) {
+    return val.slice(1, -1);
+  }
+  return val;
+}
+
+function parseFrontmatter(text) {
+  const lines = text.split(/\r?\n/);
+  if (lines.length === 0 || lines[0].trim() !== '---') return null;
+  let endIdx = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === '---') {
+      endIdx = i;
+      break;
+    }
+  }
+  if (endIdx === -1) return null;
+
+  const root = {};
+  // 栈：每层 { indent, container }，顶层 indent=-1
+  const stack = [{ indent: -1, container: root }];
+
+  for (let i = 1; i < endIdx; i++) {
+    const raw = lines[i];
+    if (raw.trim() === '' || raw.trim().startsWith('#')) continue;
+    const indent = raw.match(/^ */)[0].length;
+    const content = raw.trim();
+
+    // 弹出缩进 ≥ 当前的所有父层，找到真正的父容器
+    while (stack.length > 1 && stack[stack.length - 1].indent >= indent) {
+      stack.pop();
+    }
+    const parent = stack[stack.length - 1].container;
+
+    // 优先匹配带引号的 key（glob 模式），再匹配裸 key
+    let m =
+      content.match(/^["']([^"']+)["']\s*:\s*(.*)$/) ||
+      content.match(/^([A-Za-z0-9_\-]+)\s*:\s*(.*)$/);
+    if (!m) continue;
+    const key = m[1];
+    const val = m[2].trim();
+    if (val === '') {
+      const child = {};
+      parent[key] = child;
+      stack.push({ indent, container: child });
+    } else {
+      parent[key] = parseScalar(val);
+    }
+  }
+  return root;
+}
+
+function isValidPermissionValue(val, agentName, fieldPath, errors) {
+  if (val === null || val === undefined) {
+    errors.push(`${agentName}: permission.${fieldPath} 不能为 null/undefined`);
+    return false;
+  }
+  if (typeof val === 'string') {
+    if (val !== 'allow' && val !== 'deny') {
+      errors.push(`${agentName}: permission.${fieldPath} 字符串值必须为 "allow" 或 "deny"，实际为 "${val}"`);
+      return false;
+    }
+    return true;
+  }
+  if (Array.isArray(val)) {
+    return true;
+  }
+  if (typeof val === 'object') {
+    for (const [subKey, subVal] of Object.entries(val)) {
+      isValidPermissionValue(subVal, agentName, `${fieldPath}.${subKey}`, errors);
+    }
+    return true;
+  }
+  errors.push(`${agentName}: permission.${fieldPath} 值类型不合法（期望 string/object/array）`);
+  return false;
+}
+
+function check5AgentFrontmatter() {
+  const name = 'agent 文件 frontmatter 合规性';
+  const agentDir = path.resolve(ROOT, 'agent');
+  let entries;
+  try {
+    entries = fs.readdirSync(agentDir, { withFileTypes: true });
+  } catch (e) {
+    return { name, pass: false, detail: `读取 agent/ 失败: ${e.message}` };
+  }
+  const mdFiles = entries
+    .filter((d) => d.isFile() && d.name.toLowerCase().endsWith('.md'))
+    .map((d) => d.name)
+    .sort();
+
+  const errors = [];
+  let checked = 0;
+  for (const fname of mdFiles) {
+    const filePath = path.join(agentDir, fname);
+    let text;
+    try {
+      text = fs.readFileSync(filePath, 'utf8');
+    } catch (e) {
+      errors.push(`${fname}: 读取失败 ${e.message}`);
+      continue;
+    }
+    const fm = parseFrontmatter(text);
+    if (!fm) {
+      errors.push(`${fname}: 缺少或不合法的 YAML frontmatter（需以 --- 包裹）`);
+      continue;
+    }
+    checked++;
+    const missing = [];
+    if (typeof fm.description !== 'string' || fm.description.length === 0) {
+      missing.push('description(非空字符串)');
+    }
+    if (typeof fm.mode !== 'string' || fm.mode.length === 0) {
+      missing.push('mode(非空字符串)');
+    }
+    if (
+      typeof fm.steps !== 'number' ||
+      !Number.isInteger(fm.steps) ||
+      fm.steps <= 0
+    ) {
+      missing.push('steps(正整数)');
+    }
+    if (
+      !fm.permission ||
+      typeof fm.permission !== 'object' ||
+      Array.isArray(fm.permission)
+    ) {
+      missing.push('permission(必须为对象)');
+    } else {
+      const permFields = ['bash', 'edit', 'read', 'task', 'glob', 'grep'];
+      const presentFields = permFields.filter((k) => k in fm.permission);
+      if (presentFields.length === 0) {
+        missing.push('permission(必须包含 bash/edit/read/task/glob/grep 至少一项)');
+      } else {
+        for (const f of presentFields) {
+          isValidPermissionValue(fm.permission[f], fname, f, errors);
+        }
+      }
+    }
+    if (missing.length) {
+      errors.push(`${fname}: 缺失 [${missing.join(', ')}]`);
+    }
+  }
+
+  if (errors.length === 0) {
+    return { name, pass: true, detail: `共 ${checked} 个 agent 文件 frontmatter 合规` };
+  }
+  return { name, pass: false, detail: errors.join('; ') };
+}
+
+// ---------- Check 6: kilo.json prompt 中引用的文档路径存在性 ----------
+// 递归展开 `{a,b,c}` 大括号列表（支持嵌套）。
+function expandBraces(s) {
+  if (!s.includes('{')) return [s];
+  const m = s.match(/\{([^{}]+)\}/);
+  if (!m) return [s];
+  const prefix = s.slice(0, m.index);
+  const suffix = s.slice(m.index + m[0].length);
+  const alts = m[1].split(',').map((x) => x.trim());
+  const out = [];
+  for (const alt of alts) {
+    for (const expanded of expandBraces(prefix + alt + suffix)) {
+      out.push(expanded);
+    }
+  }
+  return out;
+}
+
+function check6PromptPaths(config) {
+  const name = 'kilo.json prompt 引用文档存在性';
+  if (!config || typeof config !== 'object') {
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/8]）' };
+  }
+  if (!config.agent || typeof config.agent !== 'object') {
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/8]）' };
+  }
+
+  // 匹配 `agent/<...>.md` 与 `.kilo/instructions/<...>.md`。
+  // <...> 部分允许字母/数字/_-/./,{}（用于 `{a,b,c}` 展开），以 `.md` 结尾。
+  // 不依赖外层定界符（`/`、反引号、中英括号、引号、代码块标记都会被自然排除）。
+  const pathRegex = /(?:agent\/|\.kilo\/instructions\/)([A-Za-z0-9_\-.\/{},]+\.md)\}?/g;
+
+  const missing = [];
+  const seen = new Set();
+  let totalChecked = 0;
+
+  for (const [agentName, agentConfig] of Object.entries(config.agent)) {
+    if (!agentConfig || typeof agentConfig !== 'object') continue;
+    const rawPrompt = agentConfig.prompt;
+    if (typeof rawPrompt !== 'string') continue;
+
+    // 模板变量 `{name}` 约定为"当前 agent 自己的文件名"，先做替换
+    const prompt = rawPrompt.replace(/\{name\}/g, agentName);
+
+    let m;
+    pathRegex.lastIndex = 0;
+    while ((m = pathRegex.exec(prompt)) !== null) {
+      const fullMatch = m[0];
+      const expanded = expandBraces(fullMatch);
+      for (const p of expanded) {
+        // 仍含花括号 → 未能展开的占位符，视为非具体路径，跳过
+        if (p.includes('{') || p.includes('}')) continue;
+        const key = `${agentName}|${p}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        totalChecked++;
+        const abs = path.resolve(ROOT, p);
+        if (!fs.existsSync(abs)) {
+          missing.push(`${agentName}: ${p}`);
+        }
+      }
+    }
+  }
+
+  if (missing.length === 0) {
+    return {
+      name,
+      pass: true,
+      detail: `共 ${totalChecked} 条 prompt 引用全部存在`,
+    };
+  }
+  return { name, pass: false, detail: `缺失: [${missing.join(', ')}]` };
+}
+
+// ---------- Check 7: README.md 目录树一致性 ----------
+// 解析 README.md 中含 `.kilo/instructions/` 的目录树代码块，
+// 提取 `instructions/` 子树下列出的全部 `.md` 文件，与文件系统比对。
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function parseInstructionsTreeFiles(blockText) {
+  const lines = blockText.split(/\r?\n/);
+
+  // 1) 定位 `instructions/` 目录行，记录其前缀（用于判断子树边界）
+  let instrIndent = -1;
+  let instrLineIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^([\s│]*)[├└]──\s*instructions\/\s*$/);
+    if (m) {
+      instrIndent = m[1].length;
+      instrLineIdx = i;
+      break;
+    }
+  }
+  if (instrLineIdx === -1) {
+    return { ok: false, reason: '代码块中未找到 `instructions/` 目录条目' };
+  }
+
+  const instrPrefix = lines[instrLineIdx].slice(0, instrIndent);
+  // 子节点行形如：`<instrPrefix>│   ├── X.md` 或 `... └── X.md`，允许 `# 注释` 后缀
+  const childRe = new RegExp(
+    '^' + escapeRegex(instrPrefix) + '│\\s+[├└]──\\s*([^\\s#]+\\.md)\\s*(?:#.*)?$'
+  );
+
+  const files = new Set();
+  for (let i = instrLineIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.length < instrIndent) break;
+    if (!line.startsWith(instrPrefix)) break;
+    const next = line[instrIndent];
+    if (next === '├' || next === '└') break; // instructions/ 的兄弟节点 → 离开子树
+    if (next !== '│') continue; // 缩进延续但非有效子行
+    const m = line.match(childRe);
+    if (m) files.add(m[1]);
+  }
+  return { ok: true, files };
+}
+
+function check7ReadmeTree() {
+  const name = 'README.md 目录树一致性';
+  const readmePath = path.resolve(ROOT, 'README.md');
+  let text;
+  try {
+    text = fs.readFileSync(readmePath, 'utf8');
+  } catch (e) {
+    return { name, pass: false, detail: `读取 README.md 失败: ${e.message}` };
+  }
+
+  // 收集所有围栏代码块，挑选含 `.kilo/instructions/` 的第一个
+  const blockRe = /```\w*\r?\n([\s\S]*?)```/g;
+  let picked = null;
+  let m;
+  while ((m = blockRe.exec(text)) !== null) {
+    if (m[1].includes('instructions/')) {
+      picked = m[1];
+      break;
+    }
+  }
+  if (picked === null) {
+    return { name, pass: false, detail: 'README.md 中未找到含 instructions/ 的代码块' };
+  }
+
+  const parsed = parseInstructionsTreeFiles(picked);
+  if (!parsed.ok) {
+    return { name, pass: false, detail: parsed.reason };
+  }
+  const treeFiles = parsed.files;
+
+  const dir = path.resolve(ROOT, '.kilo/instructions');
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    return { name, pass: false, detail: `读取 .kilo/instructions/ 失败: ${e.message}` };
+  }
+  const actualFiles = new Set(
+    entries
+      .filter((d) => d.isFile() && d.name.toLowerCase().endsWith('.md'))
+      .map((d) => d.name)
+  );
+
+  const onlyInTree = [...treeFiles].filter((x) => !actualFiles.has(x)).sort();
+  const onlyInFs = [...actualFiles].filter((x) => !treeFiles.has(x)).sort();
+
+  if (onlyInTree.length === 0 && onlyInFs.length === 0) {
+    return {
+      name,
+      pass: true,
+      detail: `共 ${actualFiles.size} 个 instructions 文件与 README 目录树一致`,
+    };
+  }
+  const parts = [];
+  if (onlyInTree.length) {
+    parts.push(`README 列出但目录缺失: [${onlyInTree.join(', ')}]`);
+  }
+  if (onlyInFs.length) {
+    parts.push(`目录存在但 README 未列出: [${onlyInFs.join(', ')}]`);
+  }
+  return { name, pass: false, detail: parts.join('; ') };
+}
+
+// ---------- Check 8: AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性 ----------
+function extractMdPaths(text) {
+  const paths = new Set();
+  const re = /\.kilo\/instructions\/[A-Za-z0-9_\-]+\.md/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    paths.add(m[0]);
+  }
+  return paths;
+}
+
+function check8DocIndex() {
+  const name = 'AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性';
+
+  let agentsText;
+  try {
+    agentsText = fs.readFileSync(path.resolve(ROOT, 'AGENTS.md'), 'utf8');
+  } catch (e) {
+    return { name, pass: false, detail: `读取 AGENTS.md 失败: ${e.message}` };
+  }
+  let checklistText;
+  try {
+    checklistText = fs.readFileSync(path.resolve(ROOT, 'CONFIG_CHANGE_CHECKLIST.md'), 'utf8');
+  } catch (e) {
+    return { name, pass: false, detail: `读取 CONFIG_CHANGE_CHECKLIST.md 失败: ${e.message}` };
+  }
+
+  const agentsPaths = extractMdPaths(agentsText);
+  const checklistPaths = extractMdPaths(checklistText);
+  const indexedPaths = new Set([...agentsPaths, ...checklistPaths]);
+
+  // 读取 README 树中的 instructions 文件列表，作为"必须被索引"的来源
+  const treeResult = check7ReadmeTree();
+  let requiredFiles;
+  if (treeResult.pass) {
+    requiredFiles = new Set();
+    const detailMatch = treeResult.detail.match(/共 (\d+) 个 instructions 文件/);
+    if (detailMatch) {
+      // 解析成功但拿不到文件集合：从 README 重新解析一次
+      const readmeText = fs.readFileSync(path.resolve(ROOT, 'README.md'), 'utf8');
+      const blockRe = /```\w*\r?\n([\s\S]*?)```/g;
+      let picked = null;
+      let bm;
+      while ((bm = blockRe.exec(readmeText)) !== null) {
+        if (bm[1].includes('instructions/')) {
+          picked = bm[1];
+          break;
+        }
+      }
+      if (picked) {
+        const parsed = parseInstructionsTreeFiles(picked);
+        if (parsed.ok) {
+          for (const f of parsed.files) {
+            requiredFiles.add(`.kilo/instructions/${f}`);
+          }
+        }
+      }
+    }
+  } else {
+    return { name, pass: false, detail: `无法获取 README 目录树: ${treeResult.detail}` };
+  }
+
+  const missingIndex = [];
+  for (const p of requiredFiles) {
+    if (!indexedPaths.has(p)) {
+      missingIndex.push(p);
+    }
+  }
+
+  const missingFiles = [];
+  for (const p of indexedPaths) {
+    if (!fs.existsSync(path.resolve(ROOT, p))) {
+      missingFiles.push(p);
+    }
+  }
+
+  if (missingIndex.length === 0 && missingFiles.length === 0) {
+    return {
+      name,
+      pass: true,
+      detail: `AGENTS.md 索引 ${agentsPaths.size} 条，CONFIG_CHANGE_CHECKLIST.md 索引 ${checklistPaths.size} 条，README 目录树 ${requiredFiles.size} 个文件全部被索引覆盖`,
+    };
+  }
+
+  const parts = [];
+  if (missingIndex.length) {
+    parts.push(`README 目录树中的文件未被 AGENTS.md 或 CONFIG_CHANGE_CHECKLIST.md 索引: [${missingIndex.join(', ')}]`);
+  }
+  if (missingFiles.length) {
+    parts.push(`AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 引用了不存在的文件: [${missingFiles.join(', ')}]`);
+  }
+  return { name, pass: false, detail: parts.join('; ') };
+}
+
 // ---------- 主流程：读取 kilo.json 一次，供后续 check 复用 ----------
 const kiloBuf = (() => {
   try {
@@ -187,14 +630,19 @@ const r1 = check1KiloJson();
 const r2 = check2Agents(config);
 const r3 = check3Instructions(config);
 const r4 = check4Skills();
-const results = [r1, r2, r3, r4];
+const r5 = check5AgentFrontmatter();
+const r6 = check6PromptPaths(config);
+const r7 = check7ReadmeTree();
+const r8 = check8DocIndex();
+const results = [r1, r2, r3, r4, r5, r6, r7, r8];
 
 // ---------- 输出 ----------
 const out = [];
 out.push('== kilo_config 配置自检 ==');
+const TOTAL = results.length;
 results.forEach((r, i) => {
   const status = r.pass ? 'PASS' : `FAIL (${r.detail})`;
-  out.push(`[${i + 1}/4] ${r.name}: ${status}`);
+  out.push(`[${i + 1}/${TOTAL}] ${r.name}: ${status}`);
 });
 const failCount = results.filter((r) => !r.pass).length;
 out.push(failCount === 0 ? '== 总结: 全部 PASS ==' : `== 总结: ${failCount} 项 FAIL ==`);

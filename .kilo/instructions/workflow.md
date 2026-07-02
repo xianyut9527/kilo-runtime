@@ -140,6 +140,32 @@ coderAgent 定级时必须对照以下矩阵，至少命中 2 个以上特征才
 - 可验证：有独立验证命令或静态/人工检查证据。
 - 可回滚：失败时能定位到本单元改动，不污染其他单元结论。
 
+## small_model 触发规则
+
+`kilo.json` 中已配置 `small_model` 字段（默认 `hx/MiniMax-M2.7-highspeed`）作为**降级路由入口**，不是强制替换。具体 agent 的 `model` 字段仍由 `kilo.json` 配置；`small_model` 仅在以下场景下被路由层选择使用：
+
+### 适用场景（允许使用 `small_model`）
+
+- **T0 极速通道任务**：符合极速通道全部 5 条标准的简单局部修改，推理深度低、上下文短。
+- **纯记录型任务**：`feedback-collector` 追加 JSONL 反馈信号（结构化字段、无深度推理）。
+- **轻量预审**：`pre-checker` 的 T0 轻量模式（仅做调用方检查 + 验收标准可验证性两项校验）。
+- **结构化总结/分类**：经验评估中的低复杂度分类、确定性字段填充等。
+
+### 不适用场景（必须使用 `agent.model` 配置的模型）
+
+- **主控**：`coderAgent`（负责任务理解、路由、跟踪、交付，需深度推理与上下文维护）。
+- **实现**：`engineer` / `executor-A` / `executor-B` / `executor-C`（需覆盖正常/边界/异常三条路径，搜索同类模式与调用方）。
+- **审查**：`reviewer`（三视角审查、跨会话经验标注、影响面汇总）。
+- **修复**：`fixer`（根因判定、同症状识别、范围约束）。
+- **复杂规划**：`architect`（单元 DAG、并行冲突判断）、`ensemble`（多模型并行编排、双门禁协调）、`synthesizer`（候选合并与冲突裁决）。
+- **知识沉淀**：`skills-writer` / `experience-ranker`（需阅读 skills-lifecycle.md、判断验证证据、5 维评分）。
+
+### 路由约束
+
+- `small_model` 是**可选降级路由**，不是 `agent.model` 的覆盖。具体 agent 仍以 `kilo.json` 中 `agent.<name>.model` 为准；只有路由层基于任务特征判断"低复杂度 + 短上下文"时才选择 `small_model`。
+- 不允许为追求"快"或"省 token"而把 T1+ 任务路由到 `small_model`；T1 及以上任务因推理深度、上下文长度、影响面要求，必须使用 `agent.model`。
+- 若 `agent.model` 不可用或失败，可临时降级到 `small_model`，但需在交付报告中显式标注降级原因。
+
 ## 单元 DAG 与并行规则
 
 `architect` 或 `coderAgent` 必须把 T1/T2 任务整理为任务 DAG：
@@ -288,7 +314,7 @@ GitNexus、Context7、Playwright 等 MCP 工具用于补充证据，不是每个
 - reviewer 审查后仍失败或风险高 → `fixer` 定向修复指出的问题 → 再次 `reviewer` 审查；第 2 轮 reviewer 仍不通过 → 升级 `ensemble`；ensemble 仍失败 → Circuit Breaker。
 - 修复后必须排查同症状异根路径——"还有哪些路径能导致相同症状？"，确认无遗漏后才可交付。
 - **同症状防空转**：连续 2 轮 fixer 命中同症状 → 自动判定方法层失败，直接升级 `reviewer`，不再继续 fixer 轮次。
-- **自动二检**：T1 及以上任务 checker PASS 后，自动触发 `reviewer` 简化视角自检做第二道门禁，重点拦截 `[SCOPE_CREEP]`、重复实现、顺手重构、过度抽象。二检 FAIL → 由 fixer 定向修复或升级 reviewer。T0 极速通道不触发自动二检。
+- **自动二检**：T1 及以上任务 checker PASS 后，自动触发 `reviewer` 简化视角自检做第二道门禁，重点拦截重复实现、顺手重构、过度抽象、修得过窄、diff 噪声；**`[SCOPE_CREEP]` 由 checker L2 反向核对负责，reviewer 自动二检不重复检测**。二检 FAIL → 由 fixer 定向修复或升级 reviewer。T0 极速通道不触发自动二检。
 
 ## 交付
 

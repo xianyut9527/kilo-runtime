@@ -2,7 +2,14 @@
 
 > 通用 AI 代理配置骨架与设计参考。运行时只注入 `./.kilo/instructions/` 中的轻量规则；本文件用于说明分层原则、智能体职责和项目级落地方式。
 >
-> 注：`skills-lifecycle.md` 作为按需引用的参考文档，不自动注入所有 agent 上下文，由 coderAgent 和 skills-writer 在需要时主动读取。
+> 运行时通用规则索引（`.kilo/instructions/*.md`，每条规则只在单一文件中完整维护，其他文件通过引用链接指向主文档，避免重复）：
+>
+> - `core.md` — 意图判定、通用安全约束、流程强制基线、编码前强制检查点
+> - `workflow.md` — 任务定级、单元 DAG、门禁、交付与程序化记忆触发
+> - `reflection.md` — 反思三层判定 / 根因 / Circuit Breaker
+> - `security-checklist.md` — checker L3 调用的可扩展安全/性能检测清单（INJ / PERF / AUTH）
+> - `output-schema.md` — 下游 agent 交付输出的最小公共字段与 `[MARKER]` 标记语言规范
+> - `skills-lifecycle.md` — 按需引用（不自动注入所有 agent 上下文），由 `coderAgent` / `skills-writer` 主动读取
 
 ## 单一事实来源与修改指南
 
@@ -102,6 +109,7 @@ your-project/
 2. **接口与契约**：输入输出格式、兼容性要求、调用方影响面、事件结构
 3. **测试与回归**：必须跑的测试、必须补测试的改动、可局部执行的验证、高风险链路
 4. **程序化记忆（memory）**：项目级冻结记忆，借鉴 Hermes Agent 的 MEMORY.md / USER.md 双轨设计
+5. **运行时安全基线（不属 skill）**：参见 `.kilo/instructions/security-checklist.md`，由 `checker` 在 L3 阶段调用；与 `.kilo/skills/` 中的 `anti-patterns` 互不重复——前者是检测项结构化清单，后者是踩坑模式沉淀。
 
 ### 判断标准
 
@@ -118,3 +126,4 @@ your-project/
   - `agent/` 目录下的对应文件（必须含完整 YAML frontmatter，详见 `CONFIG_CHANGE_CHECKLIST.md`）
 - **修改跨 agent 协同规则时**（如 fixer 轮次、升级阈值、三层框架、需求扩散），优先修改 `.kilo/instructions/` 中的单一规则源；agent 文件只保留必要引用。
 - **修改 `kilo.json` 中任何 agent 的 `prompt` 字段时**：必须同步检查 `agent/{name}.md` 是否含同类术语/规则，保持术语一致。pre-checker 校验同步性，遗漏标记 `[MISSING_LINKAGE]`。这是避免运行时行为锚点与长期文档脱节的结构性约束。
+  - 同时检查 `agent/{name}.md` 与 `.kilo/instructions/*.md` 中 `[MARKER]` / 检测项 ID 的一致性；避免 prompt 中引用的标记在 instructions 中无定义（`[MARKER]` 写法见 `output-schema.md` 标记语言规范；检测项 ID 与分类见 `security-checklist.md`「检测项总览」表）。

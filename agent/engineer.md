@@ -129,7 +129,7 @@ permission:
 
 - 若 `allowed-tools` 存在，限制当前任务可用工具集
 - 若 `compatibility` 存在，校验当前 kilo 版本兼容性
-- 不合规的 frontmatter 视为 `[SKILL_FRONTmatter_INVALID]`，需在交付前报告
+- 不合规的 frontmatter 视为 `[SKILL_FRONTMATTER_INVALID]`，需在交付前报告
 
 ## MEMORY 检查
 
