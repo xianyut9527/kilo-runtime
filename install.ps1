@@ -4,7 +4,16 @@
 $Source = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Target = "$env:USERPROFILE\.config\kilo"
 
-$Exclude = @(".git", ".gitignore", ".git/", "install.ps1", "install.sh", "README.md", "LICENSE", "node_modules", "package.json", "package-lock.json")
+# 仅在仓库根层级排除的项（防止误伤子目录中同名合法文件，如 .kilo/memory/README.md）
+$RootOnlyExclude = @("install.ps1", "install.sh", "README.md", "LICENSE")
+
+# 所有层级都排除的项
+$RecursiveExclude = @(
+    ".git", ".gitignore",
+    "node_modules",
+    "package.json", "package-lock.json", "pnpm-lock.yaml", "bun.lock", "yarn.lock",
+    "agent-manager.json"
+)
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Kilo Global Config Installer" -ForegroundColor Cyan
@@ -14,95 +23,135 @@ Write-Host "Source: $Source" -ForegroundColor Gray
 Write-Host "Target: $Target" -ForegroundColor Gray
 Write-Host ""
 
-# ============================================================
-# 全量更新策略：先清空目标目录所有内容，再从源目录全量同步
-# 这样确保每次安装不留历史残留垃圾
-# ============================================================
-if (Test-Path $Target) {
-    $ExistingItems = @(Get-ChildItem -Path $Target -Force -ErrorAction SilentlyContinue)
-    if ($ExistingItems.Count -gt 0) {
-        Write-Host "[CLEAN] Purging $($ExistingItems.Count) items from target..." -ForegroundColor Yellow
-        $ExistingItems | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+try {
+    # ============================================================
+    # 全量覆盖式更新策略：先彻底清空目标目录，再从源目录全量同步
+    # 这样确保每次安装后目标目录与源目录完全一致，不留历史残留垃圾
+    # ============================================================
+    if (Test-Path $Target) {
+        Write-Host "[CLEAN] Purging target directory: $Target" -ForegroundColor Yellow
+        Remove-Item -Path "$Target\*" -Recurse -Force -ErrorAction Stop
     }
-}
 
-if (-not (Test-Path $Target)) {
-    New-Item -ItemType Directory -Path $Target -Force | Out-Null
-    Write-Host "[CREATE] $Target" -ForegroundColor Green
-}
-Write-Host ""
+    if (-not (Test-Path $Target)) {
+        New-Item -ItemType Directory -Path $Target -Force | Out-Null
+        Write-Host "[CREATE] $Target" -ForegroundColor Green
+    }
+    Write-Host ""
 
-foreach ($item in Get-ChildItem -Path $Source) {
-    if ($Exclude -contains $item.Name) { continue }
+    function Should-Exclude($name, $depth) {
+        if ($depth -eq 0 -and $RootOnlyExclude -contains $name) { return $true }
+        if ($RecursiveExclude -contains $name) { return $true }
+        return $false
+    }
 
-    $dest = Join-Path $Target $item.Name
-
-    if ($item.PSIsContainer) {
-        if (Test-Path $dest) {
-            Remove-Item -Path $dest -Recurse -Force
-            Write-Host "[REMOVE] $($item.Name)" -ForegroundColor Yellow
+    function Copy-SourceTree($srcDir, $dstDir, $depth) {
+        if (-not (Test-Path $dstDir)) {
+            New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
         }
-        Copy-Item -Path $item.FullName -Destination $Target -Recurse -Force
-        Write-Host "[COPY]   $($item.Name)/" -ForegroundColor Green
-    } else {
-        Copy-Item -Path $item.FullName -Destination $Target -Force
-        Write-Host "[COPY]   $($item.Name)" -ForegroundColor Green
+
+        foreach ($item in Get-ChildItem -Path $srcDir -Force) {
+            if (Should-Exclude $item.Name $depth) { continue }
+
+            $dest = Join-Path $dstDir $item.Name
+
+            if ($item.PSIsContainer) {
+                Copy-SourceTree $item.FullName $dest ($depth + 1)
+                Write-Host "[COPY]   $($dest.Substring($Target.Length + 1))/" -ForegroundColor Green
+                $script:CopiedDirs++
+            } else {
+                Copy-Item -Path $item.FullName -Destination $dest -Force -ErrorAction Stop
+                Write-Host "[COPY]   $($dest.Substring($Target.Length + 1))" -ForegroundColor Green
+                $script:CopiedFiles++
+            }
+        }
     }
-}
 
-# 注意：不再创建 agents/ 兼容副本，避免 agent 被注册两次导致路由不稳定
-# 详见 https://kilo.ai/docs/configure/agents
+    $CopiedFiles = 0
+    $CopiedDirs = 0
+    Copy-SourceTree $Source $Target 0
 
-Write-Host ""
-Write-Host "Done! Restart Kilo to apply changes." -ForegroundColor Green
-Write-Host ""
+    # 注意：不再创建 agents/ 兼容副本，避免 agent 被注册两次导致路由不稳定
+    # 详见 https://kilo.ai/docs/configure/agents
 
-# ============================================================
-# UTF-8 编码配置（解决 Kilo 在 Windows PowerShell 上的中文乱码）
-# ============================================================
-# - 写入 $PROFILE：对未来的新 PowerShell 会话永久生效
-# - 立即 set：对当前安装脚本会话内的后续操作生效
-#   注意：立即 set 不会改变当前已运行交互式终端的输出编码，
-#   仅对安装脚本后续调用的子进程（如 Kilo 启动的子进程）生效
+    Write-Host ""
+    Write-Host "Done! Restart Kilo to apply changes." -ForegroundColor Green
+    Write-Host ""
 
-Write-Host "Configuring UTF-8 encoding..." -ForegroundColor Cyan
+    # ============================================================
+    # 关键文件存在性校验
+    # ============================================================
+    $CriticalFiles = @(
+        "kilo.json",
+        "AGENTS.md",
+        ".kilo/instructions/core.md",
+        ".kilo/instructions/workflow-core.md",
+        ".kilo/instructions/reflection.md"
+    )
 
-$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-$ProfileMarker = "# Kilo: UTF-8 encoding configuration"
+    $Missing = @()
+    foreach ($f in $CriticalFiles) {
+        $path = Join-Path $Target $f
+        if (-not (Test-Path $path)) {
+            $Missing += $f
+        }
+    }
 
-# 1. 立即生效（当前安装脚本会话内）
-$OutputEncoding = $Utf8NoBom
-[Console]::OutputEncoding = $Utf8NoBom
-[Console]::InputEncoding = $Utf8NoBom
+    if ($Missing.Count -gt 0) {
+        Write-Host "[SYNC] FAIL: missing critical files: $($Missing -join ', ')" -ForegroundColor Red
+        exit 1
+    }
 
-# 2. 写入 profile（未来新会话永久生效）
-$ProfilePath = $PROFILE.CurrentUserAllHosts
-$ProfileDir = Split-Path -Parent $ProfilePath
+    # ============================================================
+    # UTF-8 编码配置（解决 Kilo 在 Windows PowerShell 上的中文乱码）
+    # ============================================================
+    Write-Host "Configuring UTF-8 encoding..." -ForegroundColor Cyan
 
-# 确保 profile 目录存在
-if (-not (Test-Path $ProfileDir)) {
-    New-Item -ItemType Directory -Path $ProfileDir -Force | Out-Null
-    Write-Host "[CREATE] $ProfileDir" -ForegroundColor Green
-}
+    $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    $ProfileMarker = "# Kilo: UTF-8 encoding configuration"
 
-# 确保 profile 文件存在（处理首次使用场景，避免 Get-Content 报错）
-if (-not (Test-Path $ProfilePath)) {
-    New-Item -ItemType File -Path $ProfilePath -Force | Out-Null
-    Write-Host "[CREATE] $ProfilePath" -ForegroundColor Green
-}
+    # 1. 立即生效（当前安装脚本会话内）
+    $OutputEncoding = $Utf8NoBom
+    [Console]::OutputEncoding = $Utf8NoBom
+    [Console]::InputEncoding = $Utf8NoBom
 
-# 幂等检测：已配置则跳过
-$ExistingContent = Get-Content -Path $ProfilePath -Raw -ErrorAction SilentlyContinue
-if ($ExistingContent -notmatch [regex]::Escape($ProfileMarker)) {
-    $Utf8Block = @'
+    # 2. 写入 profile（未来新会话永久生效）
+    $ProfilePath = $PROFILE.CurrentUserAllHosts
+    $ProfileDir = Split-Path -Parent $ProfilePath
+
+    # 确保 profile 目录存在
+    if (-not (Test-Path $ProfileDir)) {
+        New-Item -ItemType Directory -Path $ProfileDir -Force | Out-Null
+        Write-Host "[CREATE] $ProfileDir" -ForegroundColor Green
+    }
+
+    # 确保 profile 文件存在（处理首次使用场景，避免 Get-Content 报错）
+    if (-not (Test-Path $ProfilePath)) {
+        New-Item -ItemType File -Path $ProfilePath -Force | Out-Null
+        Write-Host "[CREATE] $ProfilePath" -ForegroundColor Green
+    }
+
+    # 幂等检测：已配置则跳过
+    $ExistingContent = Get-Content -Path $ProfilePath -Raw -ErrorAction SilentlyContinue
+    if ($ExistingContent -notmatch [regex]::Escape($ProfileMarker)) {
+        $Utf8Block = @'
 
 # Kilo: UTF-8 encoding configuration
 $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
 '@
-    Add-Content -Path $ProfilePath -Value $Utf8Block -Encoding UTF8
-    Write-Host "[WRITE] UTF-8 encoding added to profile" -ForegroundColor Green
-} else {
-    Write-Host "[SKIP] UTF-8 encoding already configured in profile" -ForegroundColor Gray
+        Add-Content -Path $ProfilePath -Value $Utf8Block -Encoding UTF8
+        Write-Host "[WRITE] UTF-8 encoding added to profile" -ForegroundColor Green
+    } else {
+        Write-Host "[SKIP] UTF-8 encoding already configured in profile" -ForegroundColor Gray
+    }
+
+    Write-Host ""
+    Write-Host "[SYNC] OK | files=$CopiedFiles dirs=$CopiedDirs | critical=$($CriticalFiles.Count)/$($CriticalFiles.Count) | target=$Target" -ForegroundColor Green
+    exit 0
+}
+catch {
+    Write-Host "[SYNC] FAIL: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
 }

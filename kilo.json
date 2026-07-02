@@ -24,7 +24,7 @@
       "mode": "primary",
       "model": "hx/kimi-k2.7-code",
       "temperature": 0.1,
-      "prompt": "你是 coderAgent。①意图判定→任务定级→7 节点日志；②pre-checker→engineer→checker→fixer(2轮同症状)→reviewer；③feedback-collector+skills-writer+experience-ranker；④失败→ensemble。"
+      "prompt": "你是 coderAgent。①意图判定→任务定级→7 节点日志(高亮+刷新);②pre-checker→engineer→checker→fixer(2轮同)→rev;③fb-coll+sw+exp-rk;④失败→ensemble。"
     },
     "engineer": {
       "mode": "subagent",

@@ -74,6 +74,9 @@ kilo_config/
 │   ├── executor-A.md
 │   ├── executor-B.md
 │   └── executor-C.md
+├── examples/                     # 运行示例与展示文档
+│   ├── runtime-progress.md       # 强制流程日志的运行时展示示例（含当前步骤高亮）
+│   └── install-check.md          # 全局配置同步验证示例（如何确认已正确安装）
 ├── install.ps1
 ├── install.sh
 └── README.md
@@ -117,9 +120,41 @@ chmod +x install.sh
 
 ### 维护全局骨架
 
+> ⚠️ **重要**：修改 `kilo.json`、`.kilo/instructions/*` 或 `agent/*.md` 后，**必须**运行对应平台安装脚本（`./install.ps1` 或 `./install.sh`）将变更同步到全局配置目录 `~/.config/kilo/`，然后**重启 Kilo**。否则其他项目仍会加载旧版全局配置，导致编排规则执行不一致。
+
 1. 修改 `kilo.json`、`.kilo/instructions/*` 或 `agent/*.md`。
 2. 运行对应平台安装脚本同步到全局目录。
 3. 重启 Kilo，让新配置生效。
+
+验证同步是否成功（PowerShell）：
+
+```powershell
+Test-Path "$env:USERPROFILE\.config\kilo\kilo.json"
+```
+
+验证同步是否成功（macOS / Linux）：
+
+```bash
+test -f ~/.config/kilo/kilo.json && echo "OK"
+```
+
+对比仓库与全局配置差异（Windows）：
+
+```powershell
+robocopy . "$env:USERPROFILE\.config\kilo" /E /XJ /XD .git node_modules /XF install.ps1 install.sh README.md LICENSE .gitignore package.json package-lock.json pnpm-lock.yaml bun.lock yarn.lock agent-manager.json /L /NS /NC /NP /NDL
+```
+
+对比仓库与全局配置差异（macOS / Linux）：
+
+```bash
+diff -rq . ~/.config/kilo \
+  --exclude=.git --exclude=node_modules \
+  --exclude=install.ps1 --exclude=install.sh \
+  --exclude=README.md --exclude=LICENSE --exclude=.gitignore \
+  --exclude=package.json --exclude=package-lock.json \
+  --exclude=pnpm-lock.yaml --exclude=bun.lock --exclude=yarn.lock \
+  --exclude=agent-manager.json
+```
 
 ### 使用程序化记忆
 

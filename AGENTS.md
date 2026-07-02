@@ -125,6 +125,8 @@ your-project/
   - 本文件中的智能体清单表格
   - `README.md` 中的目录结构树
   - `agent/` 目录下的对应文件（必须含完整 YAML frontmatter，详见 `CONFIG_CHANGE_CHECKLIST.md`）
-- **修改跨 agent 协同规则时**（如 fixer 轮次、升级阈值、三层框架、需求扩散），优先修改 `.kilo/instructions/` 中的单一规则源；agent 文件只保留必要引用。
-- **修改 `kilo.json` 中任何 agent 的 `prompt` 字段时**：必须同步检查 `agent/{name}.md` 是否含同类术语/规则，保持术语一致。pre-checker 校验同步性，遗漏标记 `[MISSING_LINKAGE]`。这是避免运行时行为锚点与长期文档脱节的结构性约束。
-  - 同时检查 `agent/{name}.md` 与 `.kilo/instructions/*.md` 中 `[MARKER]` / 检测项 ID 的一致性；避免 prompt 中引用的标记在 instructions 中无定义（`[MARKER]` 写法见 `output-schema.md` 标记语言规范；检测项 ID 与分类见 `security-checklist.md`「检测项总览」表）。
+  - 运行 `./install.ps1` 或 `./install.sh` 将变更同步到 `~/.config/kilo/`，否则其他项目仍会加载旧版全局配置
+- **修改跨 agent 协同规则时**（如 fixer 轮次、升级阈值、三层框架、需求扩散），优先修改 `.kilo/instructions/` 中的单一规则源；agent 文件只保留必要引用；修改后必须运行 `./install.ps1` 或 `./install.sh` 同步到全局配置目录
+- **修改 `kilo.json` 中任何 agent 的 `prompt` 字段时**：必须同步检查 `agent/{name}.md` 是否含同类术语/规则，保持术语一致。pre-checker 校验同步性，遗漏标记 `[MISSING_LINKAGE]`。这是避免运行时行为锚点与长期文档脱节的结构性约束；修改后必须运行 `./install.ps1` 或 `./install.sh` 同步到全局配置目录
+  - 同时检查 `agent/{name}.md` 与 `.kilo/instructions/*.md` 中 `[MARKER]` / 检测项 ID 的一致性；避免 prompt 中引用的标记在 instructions 中无定义（`[MARKER]` 写法见 `output-schema.md` 标记语言规范；检测项 ID 与分类见 `security-checklist.md`「检测项总览」表）
+- **修改 `.kilo/instructions/*.md` 运行时规则后**：必须运行 `./install.ps1` 或 `./install.sh` 同步到 `~/.config/kilo/`，否则真实项目无法加载最新规则，编排流程不会稳定执行。

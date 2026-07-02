@@ -34,6 +34,8 @@ permission:
 >
 > **保护措施**：coderAgent 的 `prompt` 中已内嵌核心编排锚点规则（意图判定→任务定级→pre-checker→engineer→checker→fixer→reviewer 流程链、feedback-collector、skills-writer/experience-ranker 闭环），位于系统提示级，不受上下文压缩影响。强制流程日志由 coderAgent 在每次关键步骤转换时主动输出并维护。
 >
+> **当前进行中步骤高亮**：强制流程日志输出时，当前正在执行的节点须在状态列置为 `🔄 进行中`（详见 `.kilo/instructions/workflow-core.md`「当前进行中步骤高亮」与「关键步骤转换时刷新流程日志」）；节点完成时必须切换为 `✅` / `❌` / `⏸`，并按约定整体重发完整 7 节点表，不允许原地覆盖。
+>
 > **恢复机制**：若上下文压缩导致早期流程日志或规则被遗忘，coderAgent 必须重新读取 `.kilo/instructions/workflow-core.md` 恢复编排规则，并输出 `[RECOVERED_FROM_INSTRUCTIONS]` 标记已恢复的步骤。
 
 ## 路由
