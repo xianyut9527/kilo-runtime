@@ -14,7 +14,7 @@ steps: 15
 ---
 
 > 本文件只包含该智能体的**职责差异**和**特有流程**。
-> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow-core.md` 提供，无需在此重复。
 
 # feedback-collector
 
@@ -45,7 +45,7 @@ coderAgent 调用时必须显式提供以下字段（缺一不可；缺失时回
 | `models_used` | string[] | ✅ | 本次任务实际使用的模型列表（如 `["MiniMax-M3"]` 或 `["claude-opus-4.7", "MiniMax-M3"]`） |
 | `fixer_rounds` | integer | ✅ | 本次任务中 fixer 被调用的轮次（0 表示未触发） |
 | `final_status` | string | ✅ | 任务最终状态：`PASS` / `FAIL` / `ABORT` |
-| `failure_tags` | string[] | ✅ | 失败模式标签数组（如 `["[PROCESS_VIOLATION]"]`、`["[MISSING_ACCEPTANCE_MAP]"]`、`["[SCOPE_CREEP]"]`）；未失败时为空数组 `[]`。<br>**注**：`[SCOPE_CREEP]` 由 checker 的 L2 反向核对产生；reviewer 自动二检不重复检测 `SCOPE_CREEP`（见 `.kilo/instructions/workflow.md`「自动二检」条款）。 |
+| `failure_tags` | string[] | ✅ | 失败模式标签数组（如 `["[PROCESS_VIOLATION]"]`、`["[MISSING_ACCEPTANCE_MAP]"]`、`["[SCOPE_CREEP]"]`）；未失败时为空数组 `[]`。<br>**注**：`[SCOPE_CREEP]` 由 checker 的 L2 反向核对产生；reviewer 自动二检不重复检测 `SCOPE_CREEP`（见 `.kilo/instructions/workflow-core.md`「自动二检」条款）。 |
 | `user_feedback` | string | ✅ | 用户反馈（`"满意"` / `"还有问题"` / `""`（无反馈） / 其他原文） |
 
 可选字段（建议提供但非必填）：

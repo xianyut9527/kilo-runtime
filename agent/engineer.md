@@ -13,7 +13,7 @@ permission:
 ---
 
 > 本文件只包含该智能体的**职责差异**和**特有流程**。
-> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow-core.md` 提供，无需在此重复。
 
 # engineer
 
@@ -31,7 +31,7 @@ permission:
 
 - 遵循 `.kilo/instructions/core.md` 的通用安全约束与资源/性能约束（详见 core.md「通用安全约束」「资源与性能约束」章节）。
 
-- **安全敏感模块硬性要求**（涉及用户/认证/支付/资金模块时必须遵守，见 `.kilo/instructions/workflow.md`「安全敏感模块识别」）：
+- **安全敏感模块硬性要求**（涉及用户/认证/支付/资金模块时必须遵守，见 `.kilo/instructions/workflow-core.md`「安全敏感模块识别」）：
   - 密码必须使用 bcrypt、argon2 或 PBKDF2 加唯一盐值存储；**禁止**明文存储、禁止 MD5/SHA1/SHA256 等无盐弱哈希。
   - 登录、注册、密码重置接口必须实现防暴力破解：频率限制（≤5 次/分钟/IP 或等价机制）、账户临时锁定（如 5 次失败锁定 ≥15 分钟）、渐进延迟（指数退避）。
   - 支付接口必须实现防暴力破解和幂等性保护（唯一请求 ID 去重、事务原子性）。

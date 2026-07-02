@@ -33,7 +33,7 @@ coderAgent 在任务启动时（意图判定完成后）执行：
 
 ## 触发条件引用
 
-详细触发条件见 `.kilo/instructions/workflow.md` 的「程序化记忆触发条件」章节。
+详细触发条件见 `.kilo/instructions/workflow-reference.md` 的「程序化记忆触发条件」章节。
 
 ## 归档与回退
 

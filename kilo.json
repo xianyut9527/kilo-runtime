@@ -5,7 +5,7 @@
   "default_agent": "coderAgent",
   "instructions": [
     "./.kilo/instructions/core.md",
-    "./.kilo/instructions/workflow.md",
+    "./.kilo/instructions/workflow-core.md",
     "./.kilo/instructions/reflection.md"
   ],
   "snapshot": true,
@@ -118,7 +118,7 @@
     "context7": {
       "type": "remote",
       "url": "https://mcp.context7.com/mcp",
-      "enabled": true,
+      "enabled": false,
       "timeout": 8000
     },
     "gitnexus": {
@@ -137,7 +137,7 @@
         "npx",
         "@playwright/mcp"
       ],
-      "enabled": true,
+      "enabled": false,
       "timeout": 120000
     }
   },

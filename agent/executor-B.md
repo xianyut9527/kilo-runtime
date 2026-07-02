@@ -15,7 +15,7 @@ steps: 50
 ---
 
 > 本文件只包含该智能体的**职责差异**和**特有流程**。
-> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow-core.md` 提供，无需在此重复。
 
 # executor-B
 
@@ -31,7 +31,7 @@ steps: 50
 
 ## 安全与资源约束
 
-- 涉及用户/认证/支付/资金模块时，遵循 `.kilo/instructions/workflow.md`「安全敏感模块识别」和防护要求（密码安全哈希、防暴力破解、幂等性保护）。
+- 涉及用户/认证/支付/资金模块时，遵循 `.kilo/instructions/workflow-core.md`「安全敏感模块识别」和防护要求（密码安全哈希、防暴力破解、幂等性保护）。
 
 ## 资源生命周期管理
 

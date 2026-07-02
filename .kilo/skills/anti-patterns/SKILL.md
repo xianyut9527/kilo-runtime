@@ -124,7 +124,7 @@ const obj = JSON.parse(buf.toString('utf8'));
 **最近更新**: 2026-06-24
 
 **描述**:
-pre-checker 输出 FAIL 后，coderAgent 修正了单元 DAG，但未再次调用 pre-checker 验证，直接进入 engineer 阶段。这是**跳步违规**，违反 workflow.md 的"pre-checker FAIL → 修正后必须 PASS 才能推进"约束。
+pre-checker 输出 FAIL 后，coderAgent 修正了单元 DAG，但未再次调用 pre-checker 验证，直接进入 engineer 阶段。这是**跳步违规**，违反 workflow-core.md 的"pre-checker FAIL → 修正后必须 PASS 才能推进"约束。
 
 **上下文**:
 - 任何"修正后未复验"的情况都属于跳步
@@ -164,7 +164,7 @@ engineer 委派 | ✅ 已完成
 **最近更新**: 2026-06-24
 
 **描述**:
-当 `task` 工具委派的子智能体（reviewer / architect / checker）连续 2 次返回空 `task_result` 时，coderAgent 直接"内联执行"该子智能体的职责。这违反 workflow.md 的"T3 / 多轮失败 → 升级 ensemble"约束。
+当 `task` 工具委派的子智能体（reviewer / architect / checker）连续 2 次返回空 `task_result` 时，coderAgent 直接"内联执行"该子智能体的职责。这违反 workflow-core.md 的"T3 / 多轮失败 → 升级 ensemble"约束。
 
 **上下文**:
 - 子智能体返回空可能是 prompt 过长 / context 超限 / 模型路由问题
@@ -294,12 +294,12 @@ engineer 执行：
 
 **类型**: 反模式
 **添加时间**: 2026-06-30
-**来源任务**: kilo_config 优化升级（reviewer 审查 workflow.md 与 reviewer.md 执行主体矛盾）
+**来源任务**: kilo_config 优化升级（reviewer 审查 workflow-core.md 与 reviewer.md 执行主体矛盾）
 **验证状态**: 已验证
 **最近更新**: 2026-06-30
 
 **描述**:
-删除某个 agent 后，只清理 `agent/*.md` 和 `kilo.json` 中的定义，但未 grep 搜索该 agent 在所有 `instructions/*.md` 和 `agent/*.md` 中的**执行主体引用**（如 `AGENTS.md` 表格、`workflow.md` 路由规则、其他 agent 文档中的委派引用），导致出现"规则断链"：workflow.md 中要求调用已删除的 agent，运行时无法执行。
+删除某个 agent 后，只清理 `agent/*.md` 和 `kilo.json` 中的定义，但未 grep 搜索该 agent 在所有 `instructions/*.md` 和 `agent/*.md` 中的**执行主体引用**（如 `AGENTS.md` 表格、`workflow-core.md` 路由规则、其他 agent 文档中的委派引用），导致出现"规则断链"：workflow-core.md 中要求调用已删除的 agent，运行时无法执行。
 
 **上下文**:
 - agent 定义分三层：自身 `.md` 文件 → `kilo.json` 注册 → 其他文档的执行引用
@@ -313,9 +313,9 @@ engineer 执行：
 1. 删除 agent/review-simplification.md
 2. 从 kilo.json 移除 review-simplification 定义
 # 遗漏了：
-# - workflow.md 中 "简化视角自检" 调用了 review-simplification
+# - workflow-core.md 中 "简化视角自检" 调用了 review-simplification
 # - reviewer.md 中委派 review-simplification 的引用
-# 结果：运行时 workflow.md → reviewer → review-simplification 链断裂
+# 结果：运行时 workflow-core.md → reviewer → review-simplification 链断裂
 ```
 
 **示例（对的）**:
@@ -325,7 +325,7 @@ engineer 执行：
 2. 从 kilo.json 移除定义
 3. 全仓 grep 搜索 {name}（含中文别名、缩写、文件路径），更新所有引用：
    - AGENTS.md 表格
-   - workflow.md 路由/升级规则
+   - workflow-core.md 路由/升级规则
    - instructions/*.md 和 agent/*.md 中的委派/调用
    - 若属于 reviewer 子视角，同步清理 reviewer.md 的调度逻辑
 4. 运行 grep 确认无残留引用后提交
@@ -335,7 +335,7 @@ engineer 执行：
 - 删除 agent 后执行：`grep -r "review-simplification" .kilo/ --include="*.md"` 应返回 0 结果（不含被删除文件本身）
 - 搜索 agent 的中文别名、缩写确保全覆盖
 - 检查 `AGENTS.md` 表格行是否已移除
-- 检查 `workflow.md` 中涉及该 agent 的路由/升级条件是否已更新
+- 检查 `workflow-core.md` 中涉及该 agent 的路由/升级条件是否已更新
 
 **相关条目**:
 - architecture/SKILL.md#分层与依赖方向（agent 定义分层概念）

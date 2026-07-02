@@ -14,7 +14,7 @@ steps: 60
 ---
 
 > 本文件只包含该智能体的**职责差异**和**特有流程**。
-> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow-core.md` 提供，无需在此重复。
 
 # checker
 
@@ -30,7 +30,7 @@ steps: 60
 - 强制流程日志（用于流程合规核查）
 
 ### 审查原则
-- 遵循 `.kilo/instructions/workflow.md` 的验证原则（不信任声明、要求证据、怀疑一切）。
+- 遵循 `.kilo/instructions/workflow-core.md` 的验证原则（不信任声明、要求证据、怀疑一切）。
 
 1. **检查执行路径一致性** — 对比本次的实际流程和定级结论声明的执行路径是否一致。发现跳步/换路标记为 `[PATH_DEVIATION]`。
 
@@ -41,7 +41,7 @@ steps: 60
 - 逐条验收标准读取实际代码路径，确认实现、分支、错误路径和边界。
 - 触发需求扩散时，独立用 grep/glob 搜索同类入口、状态、校验、提交、回显路径；发现覆盖矩阵遗漏或局部补丁，标记 `[PARTIAL_IMPLEMENTATION]`。
 - 检查回归、范围越界、无关修改和需求映射。
-- 按 `.kilo/instructions/workflow.md` 的外部索引与 MCP 使用闸门选择证据来源；复杂影响面优先用 gitnexus_detect_changes 分析变更影响的执行流，并用当前代码搜索复核。
+- 按 `.kilo/instructions/workflow-reference.md` 的外部索引与 MCP 使用闸门选择证据来源；复杂影响面优先用 gitnexus_detect_changes 分析变更影响的执行流，并用当前代码搜索复核。
 - 涉及 API 变更时，优先用 gitnexus_api_impact 检查消费者和响应形状是否兼容；用当前代码搜索补充字符串引用。
 - 涉及数据变更时，优先用 gitnexus_data_impact 检查上游消费者是否受影响；用当前代码搜索补充 SQL/配置引用。
 

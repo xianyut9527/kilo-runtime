@@ -14,7 +14,7 @@ steps: 100
 ---
 
 > 本文件只包含该智能体的**职责差异**和**特有流程**。
-> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow-core.md` 提供，无需在此重复。
 
 # ensemble
 
@@ -40,7 +40,7 @@ steps: 100
 
 ## 输出
 
-遵循 `.kilo/instructions/workflow.md` 的交付章节，必须完成收尾三步：闭环确认、变更回顾、经验沉淀。交付输出开头必须标记 ✅/⚠️/❌。
+遵循 `.kilo/instructions/workflow-core.md` 的交付章节，必须完成收尾三步：闭环确认、变更回顾、经验沉淀。交付输出开头必须标记 ✅/⚠️/❌。
 
 输出模板：
 ```text

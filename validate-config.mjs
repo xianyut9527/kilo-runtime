@@ -626,7 +626,7 @@ const STRIP_RULES = [
   { name: '详见/参见/参照 引导句', re: /(?:详见|参见|参照)[^。\n]*[。\n]?/g },
   // 6) 角色声明句："你是 X。" 或 "你是 X，Y。"（吞到下一个句号）
   { name: '角色声明句', re: /你是\s*[^\n。]+[。]/g },
-  // 7) 花括号占位符残留（{core.md,workflow.md} 等）
+  // 7) 花括号占位符残留（{core.md,workflow-core.md,reflection.md} 等）
   { name: '花括号占位符', re: /\{[A-Za-z0-9_\-.,]+\}/g },
 ];
 

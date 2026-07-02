@@ -227,7 +227,7 @@ kilo_config 下游消费方（`experience-ranker` / `feedback-collector` / 未�
 | `[已修复]` / `[未修复]` / `[有条件修复]` | 修复状态 | fixer |
 | `[MISSING_ACCEPTANCE_MAP]` | 验收映射表缺失 | checker 判定 |
 | `[FAKE_CONTEXT]` | 已读取文件清单含虚假/无关路径 | checker 判定 |
-| `[SCOPE_CREEP]` | diff 中存在验收标准未声明的改动 | checker 判定；reviewer 自动二检不重复检测 SCOPE_CREEP（见 workflow.md 自动二检条款） |
+| `[SCOPE_CREEP]` | diff 中存在验收标准未声明的改动 | checker 判定；reviewer 自动二检不重复检测 SCOPE_CREEP（见 workflow-core.md 自动二检条款） |
 | `[OUT_OF_SCOPE]` | 越界修改 | checker 判定 |
 | `[PROCESS_VIOLATION]` | 流程日志缺步或行为漂移 | 任意 agent 判定 |
 | `[UNCLEANED_ARTIFACT]` / `[FOUND_ORPHAN_ARTIFACT: 路径]` | 临时文件未清理 | 任意 agent 判定 |

@@ -13,7 +13,7 @@ steps: 50
 ---
 
 > 本文件只包含该智能体的**职责差异**和**特有流程**。
-> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow.md` 提供，无需在此重复。
+> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow-core.md` 提供，无需在此重复。
 
 # fixer
 
@@ -21,11 +21,11 @@ steps: 50
 
 ## 原则
 
-- 遵循 `.kilo/instructions/workflow.md` 的修复原则（只修阻塞问题、对应证据）。
+- 遵循 `.kilo/instructions/workflow-core.md` 的修复原则（只修阻塞问题、对应证据）。
 - `[PARTIAL_IMPLEMENTATION]` 必须回到需求扩散包补齐同类点，不能只修展示出来的症状。
 - 修复后回溯相关验收标准和调用方，确认没有需求回归。
 - 修复后运行全部可用验证；验证变差时回滚本轮改动并上报 `[ROLLBACK]`。
-- 修复轮次和升级策略遵循 `.kilo/instructions/workflow.md`。
+- 修复轮次和升级策略遵循 `.kilo/instructions/workflow-core.md`。
 
 ## 资源生命周期管理
 

@@ -4,10 +4,10 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 
 ## 当前设计
 
-- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 coderAgent 和 skills-writer 在需要时主动读取。`security-checklist.md` 作为 checker 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按角色按需加载，不作为通用上下文全量注入。
+- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow-core.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`workflow-reference.md` / `skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 coderAgent 和 skills-writer 在需要时主动读取。`security-checklist.md` 作为 checker 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按角色按需加载，不作为通用上下文全量注入。
 - **长文档转为参考资料**：`AGENTS.md` 保留为设计标准和人工维护参考，不再承担高频运行时注入职责。
 - **高精度默认路由**：模型选择只在 `kilo.json` 中维护；运行规则按角色和任务复杂度路由，不硬编码具体模型名。
-- **扩展入口内置**：默认启用 `context7` 远程 MCP 作为最新文档检索入口；启用 `gitnexus` 辅助调用链/影响面分析；启用 `playwright` 辅助浏览器端验证。
+- **扩展入口内置**：默认仅启用 `gitnexus` 辅助调用链/影响面分析；`context7` 远程 MCP（最新文档检索）与 `playwright`（浏览器端验证）按需手动开启。
 - **职责分层**：通用规则集中在 `.kilo/instructions/`；`agent/*.md` 作为人工维护参考与职责差异记录；`kilo.json` 中的 `agent.*.prompt` 提供运行时行为锚点（极简、稳定、不堆积通用规则）。三层各司其职，避免重复维护。
 - **项目知识项目化**：项目知识不放在本仓库，而是下沉到真实项目根目录中的 `AGENTS.md` 和 `.kilo/skills/`。
 - **持续改进基于验证闭环**：质量提升依赖测试、构建、类型检查、review 审查与多模型升级，不依赖自动改写规则文件。
@@ -33,7 +33,7 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 3. 审查/对抗低发散（严谨判断模型族，temperature 0-0.1）。
 4. 验证/预审用高推理验证模型族；修复/审查/对抗用严谨判断模型族；规划/合并/简化审查用推理深度模型族。不简单追求低成本。
 5. 新增 agent 时按职责维度选模型，不按名字选；模型分配的唯一维护入口是 `kilo.json`。
-6. `kilo.json` 中配置的 `small_model` 是可选降级路由入口，**仅在低复杂度、短上下文的子任务上由路由层选择**；具体适用场景（agent）与禁用边界（T1 及以上任务、主控/实现/审查/修复/复杂规划等）见 `.kilo/instructions/workflow.md` 的 `small_model 触发规则` 章节。
+6. `kilo.json` 中配置的 `small_model` 是可选降级路由入口，**仅在低复杂度、短上下文的子任务上由路由层选择**；具体适用场景（agent）与禁用边界（T1 及以上任务、主控/实现/审查/修复/复杂规划等）见 `.kilo/instructions/workflow-reference.md` 的 `small_model 触发规则` 章节。
 
 ## 目录结构
 
@@ -45,7 +45,8 @@ kilo_config/
 ├── .kilo/
 │   ├── instructions/
 │   │   ├── core.md                # 运行时核心规则
-│   │   ├── workflow.md            # 运行时工作流规则
+│   │   ├── workflow-core.md       # 运行时工作流规则（自动注入）
+│   │   ├── workflow-reference.md  # 工作流参考内容（按需读取，不自动注入）
 │   │   ├── reflection.md          # 反思与错误恢复规则
 │   │   ├── security-checklist.md  # 安全/性能检查清单（由 checker 在 L3 调用）
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
@@ -142,11 +143,11 @@ chmod +x install.sh
 
 ## MCP 扩展
 
-本配置默认启用以下 MCP 服务器（详见 `kilo.json` 中的 `mcp` 节）：
+本配置默认仅启用 `gitnexus` MCP 服务器（详见 `kilo.json` 中的 `mcp` 节）：
 
-- **Context7** (`context7`): 远程文档检索，用于拉取最新官方文档与库文档
-- **GitNexus** (`gitnexus`): 本地调用链与影响面分析
-- **Playwright** (`playwright`): 浏览器端验证、截图和交互检查
+- **GitNexus** (`gitnexus`): 本地调用链与影响面分析（默认启用）
+- **Context7** (`context7`): 远程文档检索，用于拉取最新官方文档与库文档（默认关闭，按需手动开启）
+- **Playwright** (`playwright`): 浏览器端验证、截图和交互检查（默认关闭，按需手动开启）
 
 > 注意：MCP 服务器会增加上下文和工具面，不要同时启用太多高噪声服务器。
 

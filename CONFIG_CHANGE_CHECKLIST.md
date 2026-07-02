@@ -30,7 +30,7 @@
 ### 程序化记忆相关
 
 - [ ] 修改 `.kilo/memory/` 模板时是否同步 README.md 目录树？
-- [ ] 修改 memory 触发条件时是否同步 `.kilo/instructions/workflow.md` 的「程序化记忆触发条件」章节？
+- [ ] 修改 memory 触发条件时是否同步 `.kilo/instructions/workflow-reference.md` 的「程序化记忆触发条件」章节？
 - [ ] 是否同步更新 `agent/coderAgent.md` / `agent/skills-writer.md` / `agent/reviewer.md` 的相关职责描述？
 
 ### instructions 与 prompt 联动检查
@@ -41,16 +41,16 @@
 
 ## 已集中维护的规则
 
-- fixer 轮次、升级阈值、Circuit Breaker：`.kilo/instructions/workflow.md`
+- fixer 轮次、升级阈值、Circuit Breaker：`.kilo/instructions/workflow-core.md`
 - 三层错误恢复：`.kilo/instructions/reflection.md`
-- 交付和验证底线：`.kilo/instructions/core.md` + `workflow.md`
-- 需求扩散、同类点扫描、局部补丁拦截：`.kilo/instructions/workflow.md`
-- 修复方法论（全链路审计、完整阅读、验证剩余路径、推测与验证区分）：`.kilo/instructions/workflow.md` + `core.md` + `reflection.md`
-- pre-checker 预审、checker 分层、fixer 权限约束：`.kilo/instructions/workflow.md`
+- 交付和验证底线：`.kilo/instructions/core.md` + `workflow-core.md`
+- 需求扩散、同类点扫描、局部补丁拦截：`.kilo/instructions/workflow-reference.md`
+- 修复方法论（全链路审计、完整阅读、验证剩余路径、推测与验证区分）：`.kilo/instructions/workflow-core.md` + `core.md` + `reflection.md`
+- pre-checker 预审、checker 分层、fixer 权限约束：`.kilo/instructions/workflow-core.md`
 - Skills 生命周期管理（触发条件、回写流程、分类规范）：`.kilo/instructions/skills-lifecycle.md`
 - **安全/性能检测模式**（检测项总览、检测项 ID、INJ/PERF/AUTH 分类、检测流程）→ 集中维护在 `.kilo/instructions/security-checklist.md`；其他文件（`kilo.json` prompt、agent 文件、SKILL.md）只做引用。
 - **输出格式规范**（交付输出的最小公共字段、`[MARKER]` 标记语言规范、状态枚举）→ 集中维护在 `.kilo/instructions/output-schema.md`；其他文件只做引用。
-- **memory 触发条件** → 集中维护在 `.kilo/instructions/workflow.md`「程序化记忆触发条件」章节和 `.kilo/memory/README.md`；其他文件只做引用。
+- **memory 触发条件** → 集中维护在 `.kilo/instructions/workflow-reference.md`「程序化记忆触发条件」章节和 `.kilo/memory/README.md`；其他文件只做引用。
 - **SKILL.md frontmatter 规范**（agentskills.io 合规）→ 集中维护在 `.kilo/instructions/core.md` 和 `.kilo/skills/*/SKILL.md`；name 必须与目录名一致。
 
 修改这些规则时，优先改主文档；agent 文件只保留必要引用和角色化执行要求。

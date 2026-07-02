@@ -5,7 +5,8 @@
 > 运行时通用规则索引（`.kilo/instructions/*.md`，每条规则只在单一文件中完整维护，其他文件通过引用链接指向主文档，避免重复）：
 >
 > - `core.md` — 意图判定、通用安全约束、流程强制基线、编码前强制检查点
-> - `workflow.md` — 任务定级、单元 DAG、门禁、交付与程序化记忆触发
+> - `workflow-core.md` — 任务定级、单元 DAG、门禁、交付与程序化记忆触发（自动注入）
+> - `workflow-reference.md` — 工作流参考内容（按需读取）：small_model 触发规则、Trace-First、外部索引与 MCP 闸门、需求扩散与同类点扫描、委派包、知识沉淀、Anthropic 5 大模式映射、程序化记忆触发条件
 > - `reflection.md` — 反思三层判定 / 根因 / Circuit Breaker
 > - `security-checklist.md` — checker L3 调用的可扩展安全/性能检测清单（INJ / PERF / AUTH）
 > - `output-schema.md` — 下游 agent 交付输出的最小公共字段与 `[MARKER]` 标记语言规范
