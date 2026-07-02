@@ -2,14 +2,15 @@
 // validate-config.mjs
 // kilo_config 配置自检脚本（Node ESM，跨平台）
 // 校验项：
-//   [1/8] kilo.json JSON 合法性
-//   [2/8] agent 名单一致性
-//   [3/8] instructions 引用存在性
-//   [4/8] skills 分类一致性
-//   [5/8] agent 文件 frontmatter 合规性
-//   [6/8] kilo.json prompt 中引用的文档路径存在性
-//   [7/8] README.md 目录树一致性
-//   [8/8] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
+//   [1/9] kilo.json JSON 合法性
+//   [2/9] agent 名单一致性
+//   [3/9] instructions 引用存在性
+//   [4/9] skills 分类一致性
+//   [5/9] agent 文件 frontmatter 合规性
+//   [6/9] kilo.json prompt 中引用的文档路径存在性
+//   [7/9] README.md 目录树一致性
+//   [8/9] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
+//   [9/9] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -609,6 +610,146 @@ function check8DocIndex() {
   return { name, pass: false, detail: parts.join('; ') };
 }
 
+// ---------- Check 9: prompt 与 agent.md 过度文本重复检测 ----------
+// 通用模板剔除规则（按顺序应用；先剥离大块结构，再处理单行模板，最后折叠空白）。
+// 维护说明：新增/调整通用模板时，只需在此数组追加或修改对应条目。
+const STRIP_RULES = [
+  // 1) YAML frontmatter（agent.md 顶部，prompt 无此项）
+  { name: 'YAML frontmatter', re: /^---\r?\n[\s\S]*?\r?\n---\r?\n?/ },
+  // 2) Markdown 围栏代码块（含 ```text / ```ts 等任意语言）
+  { name: 'Markdown code blocks', re: /```\w*\r?\n[\s\S]*?\r?\n```/g },
+  // 3) 路径引用：.kilo/...（覆盖 instructions/、experience/log/、memory/、skills/ 等子路径）
+  { name: '.kilo/ paths', re: /\.kilo\/[A-Za-z0-9_\-.\/{}]+/g },
+  // 4) 路径引用：agent/...
+  { name: 'agent/ paths', re: /agent\/[A-Za-z0-9_\-.\/{}]+/g },
+  // 5) "详见/参见/参照" 引导句（吞到下一个句号或行尾）
+  { name: '详见/参见/参照 引导句', re: /(?:详见|参见|参照)[^。\n]*[。\n]?/g },
+  // 6) 角色声明句："你是 X。" 或 "你是 X，Y。"（吞到下一个句号）
+  { name: '角色声明句', re: /你是\s*[^\n。]+[。]/g },
+  // 7) 花括号占位符残留（{core.md,workflow.md} 等）
+  { name: '花括号占位符', re: /\{[A-Za-z0-9_\-.,]+\}/g },
+];
+
+// 剥离通用模板，返回折叠空白后的纯文本
+function stripCommonTemplates(text) {
+  let s = text;
+  for (const rule of STRIP_RULES) {
+    s = s.replace(rule.re, ' ');
+  }
+  // 折叠空白（包含换行、tab、连续空格）
+  s = s.replace(/\s+/g, ' ').trim();
+  return s;
+}
+
+// 生成 n-gram 字符集合
+function ngramSet(s, n) {
+  const set = new Set();
+  if (s.length < n) return set;
+  for (let i = 0; i <= s.length - n; i++) {
+    set.add(s.slice(i, i + n));
+  }
+  return set;
+}
+
+// Jaccard 相似度 = |A ∩ B| / |A ∪ B|
+function jaccardSimilarity(a, b) {
+  if (a.size === 0 && b.size === 0) return 0;
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  let inter = 0;
+  for (const x of small) {
+    if (large.has(x)) inter++;
+  }
+  const union = a.size + b.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
+function check9PromptOverlap(config) {
+  const name = 'prompt 与 agent.md 过度文本重复检测';
+  if (!config || typeof config !== 'object') {
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/9]）' };
+  }
+  if (!config.agent || typeof config.agent !== 'object') {
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/9]）' };
+  }
+
+  const SIMILARITY_THRESHOLD = 0.30; // > 30% 视为过度重复
+  const MIN_PROMPT_LEN = 20; // 剔除后 prompt 短于此值则视为"已充分压缩"，豁免
+  const NGRAM = 4; // 4-gram（字符级）
+  const agentDir = path.resolve(ROOT, 'agent');
+
+  const perAgent = [];
+  const overThreshold = [];
+  const exempt = [];
+  const errors = [];
+
+  for (const [agentName, agentConfig] of Object.entries(config.agent)) {
+    if (!agentConfig || typeof agentConfig !== 'object') continue;
+    const rawPrompt = agentConfig.prompt;
+    if (typeof rawPrompt !== 'string') continue;
+
+    const agentFile = path.join(agentDir, `${agentName}.md`);
+    if (!fs.existsSync(agentFile)) {
+      errors.push(`${agentName}: 缺少 agent/${agentName}.md`);
+      continue;
+    }
+    let agentText;
+    try {
+      agentText = fs.readFileSync(agentFile, 'utf8');
+    } catch (e) {
+      errors.push(`${agentName}: 读取失败 ${e.message}`);
+      continue;
+    }
+
+    // 模板变量 {name} → 实际 agent 名（与 check6 保持一致）
+    const resolvedPrompt = rawPrompt.replace(/\{name\}/g, agentName);
+    const strippedPrompt = stripCommonTemplates(resolvedPrompt);
+    const strippedAgent = stripCommonTemplates(agentText);
+
+    if (strippedPrompt.length < MIN_PROMPT_LEN) {
+      perAgent.push({ name: agentName, sim: 0, status: 'exempt' });
+      exempt.push(agentName);
+      continue;
+    }
+
+    const gramsPrompt = ngramSet(strippedPrompt, NGRAM);
+    const gramsAgent = ngramSet(strippedAgent, NGRAM);
+    const sim = jaccardSimilarity(gramsPrompt, gramsAgent);
+    const status = sim > SIMILARITY_THRESHOLD ? 'over' : 'ok';
+    perAgent.push({ name: agentName, sim, status });
+    if (status === 'over') {
+      overThreshold.push({ name: agentName, sim });
+    }
+  }
+
+  if (errors.length) {
+    return { name, pass: false, detail: errors.join('; ') };
+  }
+
+  const summary = perAgent
+    .map((x) => `${x.name}=${x.sim.toFixed(3)}${x.status === 'exempt' ? '(exempt)' : ''}`)
+    .join(', ');
+
+  if (overThreshold.length === 0) {
+    return {
+      name,
+      pass: true,
+      detail: `共检查 ${perAgent.length} 个 agent: ${summary}; 豁免: [${exempt.join(', ') || '无'}]`,
+    };
+  }
+
+  const overList = overThreshold
+    .sort((a, b) => b.sim - a.sim)
+    .map((x) => `${x.name}=${x.sim.toFixed(3)}`)
+    .join(', ');
+  return {
+    name,
+    pass: false,
+    detail: `超阈值 (>${
+      (SIMILARITY_THRESHOLD * 100).toFixed(0)
+    }%): [${overList}]; 全部: ${summary}`,
+  };
+}
+
 // ---------- 主流程：读取 kilo.json 一次，供后续 check 复用 ----------
 const kiloBuf = (() => {
   try {
@@ -634,7 +775,8 @@ const r5 = check5AgentFrontmatter();
 const r6 = check6PromptPaths(config);
 const r7 = check7ReadmeTree();
 const r8 = check8DocIndex();
-const results = [r1, r2, r3, r4, r5, r6, r7, r8];
+const r9 = check9PromptOverlap(config);
+const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9];
 
 // ---------- 输出 ----------
 const out = [];

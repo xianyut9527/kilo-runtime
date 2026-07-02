@@ -17,6 +17,13 @@
 
 ## [Unreleased]
 
+### Changed - 2026-07-02: 启用 context 压缩（compaction.auto: true）
+- `kilo.json` 中 `compaction.auto` 由 `false` 改为 `true`：启用 LLM 上下文窗口自动压缩，提升长对话速度与效率
+- 保护机制：引用 `agent/coderAgent.md`「编排流持久化保护」节的 prompt 锚点保护——核心编排锚点位于系统提示级（不受压缩影响）；若早期内容被压缩冲掉，coderAgent 必须重新读取 `.kilo/instructions/workflow.md` 恢复编排规则并输出 `[RECOVERED_FROM_INSTRUCTIONS]` 标记
+- 同步更新：`agent/coderAgent.md`「编排流持久化保护」段落中的 `auto` 描述已与 `kilo.json` 的 `compaction.auto: true` 一致
+- 进一步压缩 `kilo.json` 全部 agent prompt：总字符从 3357 降至 1199（-64.3%）
+- 扩展 `validate-config.mjs`：新增 [9/9] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard，阈值 30%）
+
 ### Added - 2026-06-30: 通用性 / 扩展性 / 维护性 / 输出质量增强（第二轮）
 - T0 极速通道新增调用方检查：即使 ≤2 行改动也必须 grep 调用方；命中 >1 个调用方 → 自动降级 T1
 - checker L2 新增反向核对：扫描 diff 中是否存在验收标准未声明的改动（范围外实现、顺手重构、多余逻辑）；命中标记 `[SCOPE_CREEP]` 并 FAIL
@@ -53,7 +60,7 @@
 - 压缩 `kilo.json` 全部 15 个 agent prompt：总字符从 5721 降至 3357（-41.3%），保留关键锚点
 - 修正 `agent/coderAgent.md` 中 `compaction.auto` 描述：与 `kilo.json` 实际 `auto: false` 配置一致
 - `workflow.md` 新增 `small_model` 触发规则：明确适用场景（T0 极速通道 / 纯记录型 / 轻量预审 / 结构化总结）与不适用场景（主控 / 实现 / 审查 / 修复 / 复杂规划 / 知识沉淀）
-- 扩展 `scripts/validate-config.mjs`：从 4 项检查扩展到 8 项，新增 frontmatter 合规性 / prompt 引用路径存在性 / README 目录树一致性 / AGENTS 与 CHECKLIST 索引一致性
+- 扩展 `validate-config.mjs`：从 4 项检查扩展到 8 项，新增 frontmatter 合规性 / prompt 引用路径存在性 / README 目录树一致性 / AGENTS 与 CHECKLIST 索引一致性
 - 更新 `README.md`：目录树与 `small_model` 路由说明同步
 - 更新 `AGENTS.md`：智能体清单索引与 `CONFIG_CHANGE_CHECKLIST.md` 检查项同步
 
