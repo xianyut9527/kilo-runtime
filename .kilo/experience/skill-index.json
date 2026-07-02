@@ -18,43 +18,6 @@
       ]
     },
     {
-      "name": "architecture",
-      "path": ".kilo/skills/architecture/SKILL.md",
-      "keywords": [
-        "architecture",
-        "module-boundary",
-        "dependency-direction",
-        "layering",
-        "cross-module",
-        "dependency",
-        "boundary",
-        "模块划分",
-        "依赖方向",
-        "分层",
-        "跨层",
-        "循环依赖",
-        "向上调用"
-      ]
-    },
-    {
-      "name": "contracts",
-      "path": ".kilo/skills/contracts/SKILL.md",
-      "keywords": [
-        "contracts",
-        "api",
-        "data-structure",
-        "event",
-        "compatibility",
-        "schema",
-        "interface",
-        "契约",
-        "接口",
-        "数据结构",
-        "兼容性",
-        "事件"
-      ]
-    },
-    {
       "name": "patterns",
       "path": ".kilo/skills/patterns/SKILL.md",
       "keywords": [
@@ -68,22 +31,6 @@
         "最佳实践",
         "实现范式",
         "可复用"
-      ]
-    },
-    {
-      "name": "testing",
-      "path": ".kilo/skills/testing/SKILL.md",
-      "keywords": [
-        "testing",
-        "regression",
-        "test-strategy",
-        "validation",
-        "high-risk",
-        "test-commands",
-        "测试",
-        "回归",
-        "验证",
-        "高风险链路"
       ]
     }
   ]

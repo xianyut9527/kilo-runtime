@@ -338,8 +338,6 @@ engineer 执行：
 - 检查 `workflow-core.md` 中涉及该 agent 的路由/升级条件是否已更新
 
 **相关条目**:
-- architecture/SKILL.md#分层与依赖方向（agent 定义分层概念）
-- contracts/SKILL.md（agent 接口契约变更治理）
 - AP-006 关联功能遗漏（同源：改了A漏了B的返工模式）
 
 ---
@@ -397,7 +395,6 @@ permission:
 - reviewer 安全视角自检必须包含此项核对
 
 **相关条目**:
-- architecture/SKILL.md#分层与依赖方向（agent 权限分层概念）
 - AP-002 软约束 vs 硬门禁（规则存在 ≠ 规则被遵守，同源权限与契约不一致陷阱）
 
 ---

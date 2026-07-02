@@ -57,7 +57,7 @@ steps: 30
 
 - `priority_score ≥ 0.75` 且 `泛化 ≥ 0.6` → 写入 MEMORY.md
 - `0.50 ≤ priority_score < 0.75` → 写入对应分类 SKILL.md
-- `0.30 ≤ priority_score < 0.50` → 暂存 `.kilo/experience/failure-clusters/`，下一轮重新评估
+- `0.30 ≤ priority_score < 0.50` → 在评估报告中标注为"待复评"，不写入长期知识库
 - `priority_score < 0.30` → 丢弃
 
 ## 与 skills-writer 的分工

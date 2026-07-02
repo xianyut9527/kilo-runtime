@@ -71,11 +71,8 @@ permission:
 
 编码前读取 `.kilo/skills/` 下与本次任务相关的 SKILL.md（按文件名或条目主题判断相关性）：
 
-- `architecture/` 中的边界规则
 - `patterns/` 中的实现范式与最佳实践
 - `anti-patterns/` 中的反复踩坑记录与禁止事项
-- `contracts/` 中的 API/数据/事件契约
-- `testing/` 中的测试策略与高风险链路
 
 遇到 skills 中已定义的规则或契约时，严格遵守；与本次需求冲突时，优先在交付报告中标注冲突点，由 coderAgent 决策。
 

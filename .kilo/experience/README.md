@@ -9,10 +9,8 @@
 ├── README.md                    # 本文件
 ├── wins.json                    # 模型与任务类型的胜率/通过率汇总
 ├── skill-index.json             # 技能索引（从 .kilo/skills/ frontmatter 提取）
-├── log/                         # 原始事件日志（feedback-collector 写入）
-│   └── YYYY-MM-DD.jsonl         # 按日期分片的 JSONL 事件流
-└── failure-clusters/            # 失败聚类产物（experience-ranker 写入）
-    └── cluster-YYYYMMDD-NN.md   # 聚类分析报告
+└── log/                         # 原始事件日志（feedback-collector 写入）
+    └── YYYY-MM-DD.jsonl         # 按日期分片的 JSONL 事件流
 ```
 
 ## 与 `.kilo/memory/` 的职责边界
@@ -35,7 +33,6 @@
 | 文件/目录 | 生产者（写入） | 消费者（读取） |
 |----------|---------------|---------------|
 | `log/*.jsonl` | feedback-collector（每个任务闭环后追加事件） | experience-ranker（聚合统计） |
-| `failure-clusters/*.md` | experience-ranker（周期性聚类分析） | coderAgent、reviewer（决策参考） |
 | `wins.json` | experience-ranker（从 log 聚合胜率） | **model-router**（未来：按模型/任务类型选路） |
 | `skill-index.json` | 初始化由本任务静态生成；后续可由 experience-ranker 更新 usage 字段 | model-router、coderAgent（关键词检索） |
 
@@ -70,7 +67,7 @@
   - `path`: SKILL.md 相对路径
   - `keywords`: string[]（来自 frontmatter `keywords`）
 
-**初始状态**：包含 5 个 skill（anti-patterns / architecture / contracts / patterns / testing）的索引条目。后续可由 experience-ranker 追加 `usage` 字段（被引用次数、最后使用时间等）而不破坏 schema。
+**初始状态**：包含 2 个 skill（anti-patterns / patterns）的索引条目。后续可由 experience-ranker 追加 `usage` 字段（被引用次数、最后使用时间等）而不破坏 schema。新增 skill 分类时，按 `.kilo/instructions/skills-lifecycle.md`「扩展机制」章节同步更新本文件。
 
 ### log/YYYY-MM-DD.jsonl
 
@@ -80,15 +77,11 @@
 {"ts":"2026-06-30T16:55:04+08:00","task_id":"...","agent":"engineer","model":"MiniMax-M3","task_type":"implementation","outcome":"pass","duration_ms":1234,"skill_used":["patterns"],"failure_mode":null}
 ```
 
-### failure-clusters/cluster-YYYYMMDD-NN.md
-
-Markdown 报告，描述一个失败聚类（共同症状、根因分析、修复建议）。由 experience-ranker 周期性生成。
-
 ## schema 演进规则
 
 - 任何字段新增/重命名/删除必须先升级 `schema_version`（如 `"1.0"` → `"1.1"`）。
 - 消费者读取时必须先校验 `schema_version`，不匹配则走迁移或拒绝读取。
-- 演进记录应同步到 `.kilo/plans/` 中对应计划的变更日志。
+- 演进记录应同步到 `CHANGELOG.md` 或对应任务 commit message 中。
 
 ## 写入约束
 

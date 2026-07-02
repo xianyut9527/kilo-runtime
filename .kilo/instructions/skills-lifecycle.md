@@ -37,11 +37,8 @@ coderAgent 确认文件内容
 
 | 分类 | 目录 | 存放内容 | 示例 |
 |------|------|----------|------|
-| 架构与边界 | `architecture/` | 模块划分、依赖方向、跨层限制、新逻辑落点 | "Service 层禁止直接调用 Repository，必须通过 UseCase" |
 | 代码模式 | `patterns/` | 可复用的实现范式、最佳实践、推荐写法 | "所有列表查询必须带 LIMIT 和 ORDER BY" |
 | 反模式 | `anti-patterns/` | 反复出现的错误、踩坑记录、禁止事项 | "禁止在循环内调用外部 HTTP 接口" |
-| 接口契约 | `contracts/` | API/数据/事件的结构、兼容性要求、变更记录 | "UserCreateRequest 的 email 字段改为必填" |
-| 测试与回归 | `testing/` | 测试策略、回归约定、验证命令、高风险链路 | "修改 auth 模块后必须跑 integration/auth.spec.ts" |
 
 ### 条目模板
 
@@ -121,7 +118,7 @@ keywords:
 
 新增 skills 分类时（如 `security/`、`performance/`、`migrations/`）需同步以下位置，确保单一事实来源：
 
-1. **目录创建**：在 `.kilo/skills/<新分类>/` 下创建 SKILL.md，遵循现有 5 个分类的模板结构，**并在 frontmatter 维护 `keywords` 数组**
+1. **目录创建**：在 `.kilo/skills/<新分类>/` 下创建 SKILL.md，遵循现有 2 个分类的模板结构，**并在 frontmatter 维护 `keywords` 数组**
 2. **本文件分类表**：在「Skills 分类规范」表格中增加一行（分类、目录、存放内容、示例）
 3. **agent/skills-writer.md**：更新「职责」章节"分类决策"步骤中的分类枚举
 4. **kilo.json coderAgent.prompt**（如显式提及分类）：更新分类列表

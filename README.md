@@ -52,11 +52,8 @@ kilo_config/
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
 │   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
 │   └── skills/                   # 长期知识库（按项目实例化）
-│       ├── architecture/
-│       ├── patterns/
 │       ├── anti-patterns/
-│       ├── contracts/
-│       └── testing/
+│       └── patterns/
 │   └── memory/                   # 程序化记忆（参考 Hermes Agent）
 │       ├── MEMORY.md             # agent 笔记（≤ 2200 字符）
 │       ├── USER.md               # 用户档案（≤ 1375 字符）
