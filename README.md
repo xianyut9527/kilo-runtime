@@ -1,16 +1,18 @@
 # kilo_config
 
-Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路由和运行时规则；真正决定上下文理解精度的知识，应该放在每个项目自己的 `AGENTS.md` 和 `.kilo/skills/` 中。
+Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由和运行时规则；项目级知识应下沉到各项目自己的 `AGENTS.md` 和 `.kilo/skills/`。
+
+> **仓库定位**：本仓库是 Kilo 的**全局通用配置唯一源**，通过 `install.ps1`/`install.sh` 全量部署到 `~/.config/kilo/`。仓库内的 `.kilo/` 目录是全局通用内容（instructions/memory/skills）的工作区，**不是项目级特化配置**——所有项目共享同一份全局配置，项目级特化应放在各项目根目录的 `AGENTS.md` 和 `.kilo/` 中。修改仓库内任何配置后必须重跑 install 同步到全局，否则全局版会落后。
 
 ## 当前设计
 
 - **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow-core.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`workflow-reference.md` / `skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 coderAgent 和 skills-writer 在需要时主动读取。`security-checklist.md` 作为 checker 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按角色按需加载，不作为通用上下文全量注入。
 - **长文档转为参考资料**：`AGENTS.md` 保留为设计标准和人工维护参考，不再承担高频运行时注入职责。
-- **高精度默认路由**：模型选择只在 `kilo.json` 中维护；运行规则按角色和任务复杂度路由，不硬编码具体模型名。
+- **默认路由**：模型选择只在 `kilo.json` 中维护；运行规则按角色和任务复杂度路由，不硬编码具体模型名。
 - **扩展入口内置**：默认仅启用 `gitnexus` 辅助调用链/影响面分析；`context7` 远程 MCP（最新文档检索）与 `playwright`（浏览器端验证）按需手动开启。
 - **职责分层**：通用规则集中在 `.kilo/instructions/`；`agent/*.md` 作为人工维护参考与职责差异记录；`kilo.json` 中的 `agent.*.prompt` 提供运行时行为锚点（极简、稳定、不堆积通用规则）。三层各司其职，避免重复维护。
-- **项目知识项目化**：项目知识不放在本仓库，而是下沉到真实项目根目录中的 `AGENTS.md` 和 `.kilo/skills/`。
-- **持续改进基于验证闭环**：质量提升依赖测试、构建、类型检查、review 审查与多模型升级，不依赖自动改写规则文件。
+- **项目知识隔离**：项目特化知识不放在本仓库，而是下沉到真实项目根目录的 `AGENTS.md` 和 `.kilo/skills/`。
+- **质量改进依赖项目反馈**：质量提升依赖具体项目的测试、review 审查与反馈，不依赖自动改写规则文件。
 
 ## 模型路由原则
 
@@ -67,16 +69,6 @@ kilo_config/
 ├── install.sh
 └── README.md
 ```
-
-## 设计收益
-
-- **规则更集中**：共享流程放在 `.kilo/instructions/`，agent 只保留职责差异。
-- **执行更聚焦**：默认单模型闭环，复杂或失败场景再升级多模型并行。
-- **单元化闭环**：中等及以上任务先拆为任务 DAG，architect 后经 pre-checker 校验方向；小单元独立执行 engineer/checker/fixer/checker 循环，无冲突单元可并行，最后再做整体 checker/reviewer 门禁。
-- **验证-修复循环放大**：pre-checker 在 engineer 前拦截方向错误，fixer 只修复明确阻塞问题；checker 分层执行（L1 格式/L2 逻辑/L3 安全），系统化验证-修复-再验证循环提升输出质量。
-- **遗漏更可控**：跨模块、互斥、唯一性等需求先做需求扩散和同类点扫描。
-- **维护更轻**：模型、MCP、权限由 `kilo.json` 管；项目知识放回真实项目，全局配置只保留骨架。
-- **高质量源于项目级 context pack**：真实项目应自建 `AGENTS.md` 和 `.kilo/skills/`，写入项目独有的架构边界、模块依赖、接口契约、踩坑记录，让项目级知识覆盖全局默认行为。
 
 ## 安装
 
@@ -200,7 +192,7 @@ diff -rq . ~/.config/kilo \
 }
 ```
 
-项目配置优先级高于全局配置，遵循深合并规则。高精度理解通常来自项目级 `AGENTS.md` 和 skills，而不是单纯覆盖模型。
+项目配置优先级高于全局配置，遵循深合并规则。项目级 `AGENTS.md` 和 skills 比单纯覆盖模型更有效。
 
 ## 注意事项
 
@@ -208,5 +200,4 @@ diff -rq . ~/.config/kilo \
 - MCP 服务器会增加上下文和工具面，不要同时启用太多高噪声服务器。
 - `context7` 适合最新文档检索；`gitnexus` 适合调用链和影响面分析；`playwright` 适合浏览器端验证。
 - 大型系统优先建设项目级 context pack；全局配置只做骨架和兜底，不承担具体项目知识。
-- 全局配置目录中的 `.kilo/skills/` 是模板/示例，安装脚本会同步到用户全局目录；实际项目经验应写入**项目根目录**的 `.kilo/skills/`，两者路径不同不会冲突。
-- `skills-writer` 写入路径强约束：仅写入当前项目工作区的 `.kilo/skills/`，禁止回写全局配置目录（`~/.config/kilo/.kilo/skills/`）。install 脚本会清空全局目录后重新同步，已配置的项目经验不会受影响（项目级 skills 在项目根目录，不在全局目录中）。
+- `skills-writer` 写入路径强约束：仅写入当前项目工作区的 `.kilo/skills/`，禁止回写全局配置目录（`~/.config/kilo/.kilo/skills/`）。install 脚本会清空全局目录后重新同步，项目级 skills 位于项目根目录，不受影响。

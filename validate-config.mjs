@@ -2,14 +2,15 @@
 // validate-config.mjs
 // kilo_config 配置自检脚本（Node ESM，跨平台）
 // 校验项：
-//   [1/8] kilo.json JSON 合法性
-//   [2/8] agent 名单一致性
-//   [3/8] skills 分类一致性
-//   [4/8] agent 文件 frontmatter 合规性
-//   [5/8] kilo.json prompt 中引用的文档路径存在性
-//   [6/8] README.md 目录树一致性
-//   [7/8] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
-//   [8/8] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
+//   [1/9] kilo.json JSON 合法性
+//   [2/9] agent 名单一致性
+//   [3/9] skills 分类一致性
+//   [4/9] agent 文件 frontmatter 合规性
+//   [5/9] kilo.json prompt 中引用的文档路径存在性
+//   [6/9] README.md 目录树一致性
+//   [7/9] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
+//   [8/9] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
+//   [9/9] coderAgent prompt 锚点关键词校验（防 compaction 误删）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -60,7 +61,7 @@ function check1KiloJson() {
 function check2Agents(config) {
   const name = 'agent 名单一致性';
   if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/8]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/9]）' };
   }
   const declared = new Set(Object.keys(config.agent));
   const agentDir = path.resolve(ROOT, 'agent');
@@ -329,10 +330,10 @@ function expandBraces(s) {
 function check6PromptPaths(config) {
   const name = 'kilo.json prompt 引用文档存在性';
   if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/8]）' };
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/9]）' };
   }
   if (!config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/8]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/9]）' };
   }
 
   // 匹配 `agent/<...>.md` 与 `.kilo/instructions/<...>.md`。
@@ -640,10 +641,10 @@ function jaccardSimilarity(a, b) {
 function check9PromptOverlap(config) {
   const name = 'prompt 与 agent.md 过度文本重复检测';
   if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/8]）' };
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/9]）' };
   }
   if (!config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/8]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/9]）' };
   }
 
   const SIMILARITY_THRESHOLD = 0.30; // > 30% 视为过度重复
@@ -724,6 +725,38 @@ function check9PromptOverlap(config) {
   };
 }
 
+// ---------- Check 10: coderAgent prompt 锚点关键词校验 ----------
+// 防止未来误删 coderAgent.prompt 中的防 compaction 锚点关键词
+const CODER_AGENT_ANCHORS = [
+  '意图判定',
+  '定级',
+  'pre-checker',
+  'engineer',
+  'checker',
+  'fixer',
+  'reviewer',
+  'feedback-collector',
+  'skills-writer',
+  'experience-ranker',
+  'compaction',
+];
+function check10CoderAgentAnchors(config) {
+  const name = 'coderAgent prompt 锚点关键词校验';
+  if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/9]）' };
+  }
+  const coderAgent = config.agent.coderAgent;
+  if (!coderAgent || typeof coderAgent !== 'object' || typeof coderAgent.prompt !== 'string') {
+    return { name, pass: false, detail: 'kilo.json.agent.coderAgent.prompt 不可用' };
+  }
+  const prompt = coderAgent.prompt;
+  const missing = CODER_AGENT_ANCHORS.filter((kw) => !prompt.includes(kw));
+  if (missing.length === 0) {
+    return { name, pass: true, detail: `coderAgent prompt 锚点关键词 ${CODER_AGENT_ANCHORS.length}/${CODER_AGENT_ANCHORS.length} 齐全` };
+  }
+  return { name, pass: false, detail: `coderAgent prompt 缺失锚点关键词: [${missing.join(', ')}]` };
+}
+
 // ---------- 主流程：读取 kilo.json 一次，供后续 check 复用 ----------
 const kiloBuf = (() => {
   try {
@@ -749,7 +782,8 @@ const r5 = check6PromptPaths(config);
 const r6 = check7ReadmeTree();
 const r7 = check8DocIndex();
 const r8 = check9PromptOverlap(config);
-const results = [r1, r2, r3, r4, r5, r6, r7, r8];
+const r9 = check10CoderAgentAnchors(config);
+const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9];
 
 // ---------- 输出 ----------
 const out = [];
