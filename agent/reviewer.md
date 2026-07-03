@@ -68,7 +68,7 @@ T2/T3 任务审查时，reviewer **自身**对三种专审视角执行自检，�
 
 - 本次任务中发现的重复错误、边界陷阱、契约变更、安全新知，是否值得写入 `.kilo/skills/` 长期知识库？
 - 若值得回写，在审查输出的"问题清单"末尾增加一条 `[建议回写 skills]` 标签，说明：
-  - 建议分类（architecture / patterns / anti-patterns / contracts / testing）
+  - 建议分类（patterns / anti-patterns）
   - 经验摘要（一句话描述规则或陷阱）
   - 证据来源（对应文件/位置/验证记录）
 - coderAgent 在最终交付阶段会读取此标签作为回写决策的输入之一。

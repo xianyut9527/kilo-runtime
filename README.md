@@ -40,9 +40,14 @@ kilo_config/
 │   │   ├── security-checklist.md  # 安全/性能检查清单（由 checker 在 L3 调用）
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
 │   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
-│   └── skills/                   # 长期知识库（按项目实例化）
+│   ├── skills/                   # 长期知识库（按项目实例化）
 │       ├── anti-patterns/
 │       └── patterns/
+│   ├── experience/               # 任务反馈与经验评估日志
+│       ├── README.md             # experience 模块说明
+│       ├── wins.json             # 成功经验索引
+│       ├── skill-index.json      # skills 索引（name/path/keywords）
+│       └── log/                  # 按日期分片的 feedback log
 │   └── memory/                   # 程序化记忆（参考 Hermes Agent）
 │       ├── MEMORY.md             # agent 笔记（≤ 2200 字符）
 │       └── USER.md               # 用户档案（≤ 1375 字符）

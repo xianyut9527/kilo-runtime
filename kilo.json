@@ -237,23 +237,6 @@
           }
         }
       }
-    },
-    "dp": {
-      "name": "dp",
-      "npm": "@ai-sdk/openai-compatible",
-      "options": {
-        "baseURL": "https://api.deepseek.com"
-      },
-      "models": {
-        "deepseek-v4-flash": {
-          "name": "deepseek-v4-flash",
-          "reasoning": true
-        },
-        "deepseek-v4-pro": {
-          "name": "deepseek-v4-pro",
-          "reasoning": true
-        }
-      }
     }
   }
 }

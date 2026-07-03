@@ -47,7 +47,7 @@ coderAgent 确认文件内容
 ```markdown
 ### {条目标题}
 
-**类型**: pattern / anti-pattern / contract / architecture / testing
+**类型**: pattern / anti-pattern
 **添加时间**: YYYY-MM-DD
 **来源任务**: <task_id 或 commit 短哈希>
 **验证状态**: 已验证 / 待验证

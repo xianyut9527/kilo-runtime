@@ -25,7 +25,7 @@ steps: 20
 ## 职责
 
 1. **经验分析**：接收 coderAgent 提供的本次任务「经验沉淀」摘要，判断是否命中回写触发条件。
-2. **分类决策**：根据经验主题，确定应写入哪个 skills 分类（architecture / patterns / anti-patterns / contracts / testing）。
+2. **分类决策**：根据经验主题，确定应写入哪个 skills 分类（patterns / anti-patterns）。
 3. **冲突检查**：读取现有 `.kilo/skills/` 下的 SKILL.md，确认是否已存在同类条目，避免重复。
 4. **格式写入**：按 `skills-lifecycle.md` 定义的条目模板，以增量方式追加或修改对应 SKILL.md。
 5. **回执汇报**：向 coderAgent 汇报写入的文件、条目标题和变更类型（追加/修改/新建）。

@@ -121,7 +121,7 @@ ranker **不直接调用** skills-writer；必须经由 coderAgent 中转，确�
 
 - 总候选: N
 - 建议写入 MEMORY.md: X
-- 建议写入 SKILL.md: Y（按分类拆: architecture=A, patterns=B, anti-patterns=C, contracts=D, testing=E）
+- 建议写入 SKILL.md: Y（按分类拆: patterns=B, anti-patterns=C）
 - 建议暂存: Z
 - 建议丢弃: W
 
