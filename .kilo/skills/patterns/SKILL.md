@@ -12,6 +12,12 @@ keywords:
   - 最佳实践
   - 实现范式
   - 可复用
+  - config-dedup
+  - runtime-injection
+  - prompt-minimal
+  - 全局配置
+  - 运行时注入
+  - 配置去重
 license: MIT
 compatibility:
   - kilo >= 1.0
@@ -58,6 +64,62 @@ metadata:
 
 **相关条目**:
 - anti-patterns/SKILL.md#AP-006（关联功能遗漏反模式）
+
+---
+
+### PAT-002: 全局配置去重与运行时注入模式
+
+**类型**: pattern
+**添加时间**: 2026-07-03
+**来源任务**: kilo_config 全仓冗余清理（通用规则去重与 AGENTS.md 锚点化）
+**验证状态**: 已验证
+**最近更新**: 2026-07-03
+
+**描述**:
+`kilo.json` 中的 `agent.*.prompt` 应只保留最小角色标识或防 compaction 锚点关键词；所有通用规则由运行时自动注入的 `.kilo/instructions/core.md` + `workflow-core.md` + `reflection.md` 提供；`AGENTS.md` 只列锚点和规则来源，不展开细则。
+
+**上下文**:
+- `kilo.json` 中 15 个 agent prompt 初始有 14 个重复 `"你是 X。完整职责见 agent/X.md。"` 字面句，coderAgent.prompt 硬编码完整流程链，造成第二事实来源与 `.kilo/instructions/*.md` 可能不一致。
+- 长任务中重复字面句占用 token 且易被压缩冲掉；去重后 14 个 subagent prompt 缩减为纯 agent 名，coderAgent prompt 仅保留 11 个锚点关键词。
+
+**示例（错的）**:
+```json
+{
+  "agents": {
+    "engineer":   { "prompt": "你是 engineer。完整职责见 agent/engineer.md。" },
+    "checker":    { "prompt": "你是 checker。完整职责见 agent/checker.md。" },
+    "reviewer":   { "prompt": "你是 reviewer。完整职责见 agent/reviewer.md。" },
+    // ... 共 14 个重复相同结构的 prompt
+    "coderAgent": { "prompt": "你是...（硬编码完整流程链 2000+ token）" }
+  }
+}
+```
+
+**示例（对的）**:
+```json
+{
+  "agents": {
+    "engineer":   { "prompt": "engineer" },
+    "checker":    { "prompt": "checker" },
+    "reviewer":   { "prompt": "reviewer" },
+    // ... 14 个 subagent 仅保留 agent 名
+    "coderAgent": { "prompt": "你是...（11 个锚点关键词，规则全由指令注入）" }
+  }
+}
+```
+且所有 `agent/*.md` 顶部声明统一为：
+```markdown
+> 通用规则由运行时注入的 core.md、workflow-core.md 和 reflection.md 提供。
+```
+
+**验证方式**:
+- 执行 `grep -r "完整职责见 agent" kilo.json` 应返回 0 条结果。
+- `node validate-config.mjs` 全部检查项 PASS。
+- 所有 `agent/*.md` 顶部声明一致引用运行时注入。
+
+**相关条目**:
+- anti-patterns/SKILL.md#AP-011（由校验代码反推运行时能力）
+- anti-patterns/SKILL.md#AP-012（引用化前确认目标覆盖完整性）
 
 ---
 

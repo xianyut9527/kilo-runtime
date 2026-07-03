@@ -2,11 +2,12 @@
 
 > Kilo 通过 `findUp` 自动发现本文件作为**唯一全局指令入口**。
 >
-> 完整规则来源（按需读取，不在此自动注入）：
+> 通用规则由 Kilo 运行时自动注入 `core.md` + `workflow-core.md` + `reflection.md`。本文件作为**唯一全局指令入口**，只列锚点名称与规则来源；细则按需读取 `.kilo/instructions/*.md` 与各 `agent/*.md`，不在此重复展开。
 > - `.kilo/instructions/core.md` — 通用基线、意图分类（咨询类/执行类）、安全约束、资源与生命周期管理
 > - `.kilo/instructions/workflow-core.md` — 执行类任务定级（T0–T3）、单元闭环、门禁、交付、强制流程日志
 > - `.kilo/instructions/workflow-reference.md` — 详细参考：需求扩散、Trace-First、MCP/委派包、知识沉淀
 > - `.kilo/instructions/skills-lifecycle.md` — memory / skills / feedback 的生命周期管理
+> - `.kilo/instructions/reflection.md` — 反思与错误恢复规则
 > - `agent/*.md` — 各 agent 的详细工作说明书
 >
 > 仓库维护指南见 `CONFIG_CHANGE_CHECKLIST.md`。

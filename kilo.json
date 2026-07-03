@@ -8,7 +8,7 @@
     "auto": true,
     "threshold_percent": 85,
     "tail_turns": 12,
-    "preserve_recent_tokens": 40000,
+    "preserve_recent_tokens": 60000,
     "prune": false
   },
   "skills": {
@@ -19,91 +19,91 @@
       "mode": "primary",
       "model": "hx/kimi-k2.7-code",
       "temperature": 0.1,
-      "prompt": "你是 coderAgent（主控 agent）。任务启动时按 core.md 完成意图判定与任务定级，执行 pre-checker→engineer→checker→fixer→reviewer 流程链；交付阶段触发 feedback-collector 与 skills-writer/experience-ranker 闭环。compaction 压缩后须重读 workflow-core.md 恢复编排规则并输出 [RECOVERED_FROM_INSTRUCTIONS]。完整职责见 agent/coderAgent.md。"
+      "prompt": "coderAgent（主控 agent）。锚点：意图判定、定级、pre-checker、engineer、checker、fixer、reviewer、feedback-collector、skills-writer、experience-ranker、compaction。"
     },
     "engineer": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
       "temperature": 0,
-      "prompt": "你是 engineer（实现 agent）。完整职责见 agent/engineer.md。"
+      "prompt": "engineer"
     },
     "architect": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
       "temperature": 0.3,
-      "prompt": "你是 architect（架构/规划 agent）。完整职责见 agent/architect.md。"
+      "prompt": "architect"
     },
     "checker": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
       "temperature": 0,
-      "prompt": "你是 checker（质量门禁 agent）。完整职责见 agent/checker.md。"
+      "prompt": "checker"
     },
     "pre-checker": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
       "temperature": 0,
-      "prompt": "你是 pre-checker（方向预审 agent）。完整职责见 agent/pre-checker.md。"
+      "prompt": "pre-checker"
     },
     "fixer": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
       "temperature": 0,
-      "prompt": "你是 fixer（定向修复 agent）。完整职责见 agent/fixer.md。"
+      "prompt": "fixer"
     },
     "reviewer": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
       "temperature": 0,
-      "prompt": "你是 reviewer（审查 agent）。完整职责见 agent/reviewer.md。"
+      "prompt": "reviewer"
     },
     "executor-A": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
       "temperature": 0,
-      "prompt": "你是 executor-A（稳健实现候选）。完整职责见 agent/executor-A.md。"
+      "prompt": "executor-A"
     },
     "executor-B": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
       "temperature": 0,
-      "prompt": "你是 executor-B（复用优先候选）。完整职责见 agent/executor-B.md。"
+      "prompt": "executor-B"
     },
     "executor-C": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
       "temperature": 0,
-      "prompt": "你是 executor-C（反向审查候选）。完整职责见 agent/executor-C.md。"
+      "prompt": "executor-C"
     },
     "synthesizer": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
       "temperature": 0.2,
-      "prompt": "你是 synthesizer（合并 agent）。完整职责见 agent/synthesizer.md。"
+      "prompt": "synthesizer"
     },
     "skills-writer": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
       "temperature": 0,
-      "prompt": "你是 skills-writer（经验回写 agent）。完整职责见 agent/skills-writer.md。"
+      "prompt": "skills-writer"
     },
     "feedback-collector": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
       "temperature": 0,
-      "prompt": "你是 feedback-collector（反馈采集 agent）。完整职责见 agent/feedback-collector.md。"
+      "prompt": "feedback-collector"
     },
     "experience-ranker": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
       "temperature": 0,
-      "prompt": "你是 experience-ranker（经验评估 agent）。完整职责见 agent/experience-ranker.md。"
+      "prompt": "experience-ranker"
     },
     "ensemble": {
       "mode": "all",
       "model": "hx/kimi-k2.6",
       "temperature": 0.2,
-      "prompt": "你是 ensemble（多模型并行主控）。完整职责见 agent/ensemble.md。"
+      "prompt": "ensemble"
     }
   },
   "commit_message": {

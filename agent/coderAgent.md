@@ -12,7 +12,7 @@ permission:
   task: allow
 ---
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
+> 通用规则由运行时注入的 `core.md`、`workflow-core.md` 和 `reflection.md` 提供。
 
 # coderAgent
 
@@ -30,13 +30,29 @@ permission:
 
 ## 编排流持久化保护
 
-> **背景**：`kilo.json` 当前 `compaction: { auto: true }`，**启用** LLM 上下文窗口压缩。对话增长到一定长度后会触发自动压缩，早期内容（含强制流程日志）可能被压缩冲掉。
+> **背景**：`kilo.json` 当前 `compaction: { auto: true, threshold_percent: 85 }`，**启用** LLM 上下文窗口压缩。对话增长到一定长度后会触发自动压缩，早期内容（含强制流程日志）可能被压缩冲掉。
 >
-> **保护措施**：coderAgent 的 `prompt` 中已内嵌核心编排锚点规则（意图判定→任务定级→pre-checker→engineer→checker→fixer→reviewer 流程链、feedback-collector、skills-writer/experience-ranker 闭环），位于系统提示级，不受上下文压缩影响。强制流程日志由 coderAgent 在每次关键步骤转换时主动输出并维护。
+> **保护措施**：`kilo.json` 中 `coderAgent.prompt` 保留核心编排锚点关键词（意图判定、定级、pre-checker、engineer、checker、fixer、reviewer、feedback-collector、skills-writer、experience-ranker、compaction），位于系统提示级，不受上下文压缩影响；完整规则由运行时注入的 `core.md` + `workflow-core.md` + `reflection.md` 提供。强制流程日志由 coderAgent 在每次关键步骤转换时主动输出并维护。
 >
 > **当前进行中步骤高亮**：强制流程日志输出时，当前正在执行的节点须在状态列置为 `🔄 进行中`（详见 `.kilo/instructions/workflow-core.md`「当前进行中步骤高亮」与「关键步骤转换时刷新流程日志」）；节点完成时必须切换为 `✅` / `❌` / `⏸`，并按约定整体重发完整 7 节点表，不允许原地覆盖。
 >
-> **恢复机制**：若上下文压缩导致早期流程日志或规则被遗忘，coderAgent 必须重新读取 `.kilo/instructions/workflow-core.md` 恢复编排规则，并输出 `[RECOVERED_FROM_INSTRUCTIONS]` 标记已恢复的步骤。
+> **恢复机制**：当下列任一条件触发时，coderAgent 必须重新读取 `.kilo/instructions/core.md`、`.kilo/instructions/workflow-core.md` 与 `.kilo/instructions/reflection.md` 恢复编排规则，并输出 `[RECOVERED_FROM_INSTRUCTIONS]` 标记已恢复的步骤：
+> 1. 上下文压缩导致早期流程日志或规则被遗忘。
+> 2. 强制流程日志 7 节点缺失，或当前步骤状态无法确定。
+> 3. 输出格式自创、偏离 `agent/*.md` 约定，或行为漂移。
+> 4. 跳步检测触发 `[PROCESS_VIOLATION]`。
+> 5. 调用修改性工具前自检发现流程日志完整性缺失。
+
+### 调用修改性工具前自检清单
+
+在每次调用 `edit` / `write` / `bash` / `task` 等修改性工具前，coderAgent 必须快速核对：
+
+1. 当前会话是否已输出【任务意图判定】完整结论（四要素：任务类型、判定依据、原始意图摘要、下一步动作）。
+2. 当前会话是否已输出【任务定级结论】（等级、依据、执行路径、触发条件）。
+3. 当前会话是否已输出包含当前步骤状态的强制流程日志（7 节点表，且当前步骤用 `🔄 进行中` 高亮）。
+4. 当前任务等级对应的执行路径是否已触发（T0 轻量模式 / T1+ pre-checker / T2 architect / T3 reviewer 或 ensemble）。
+
+任一缺失，立即输出 `[PROCESS_VIOLATION]` 并暂停，禁止继续调用修改性工具。
 
 ## 路由
 

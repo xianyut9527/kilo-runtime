@@ -414,9 +414,17 @@ coderAgent 在每次执行类任务中必须输出强制流程日志，覆盖任
 
 ### 违规恢复协议
 
-当上下文压缩导致流程日志缺步或行为漂移时，coderAgent **必须**：
+当下列任一条件触发时，coderAgent **必须**执行恢复协议：
 
-1. 重新读取 `.kilo/instructions/core.md` 和 `workflow-core.md` 恢复编排规则
+- 上下文压缩导致早期流程日志或规则被遗忘
+- 强制流程日志 7 节点缺失，或当前步骤状态无法确定
+- 输出格式自创、偏离 `agent/*.md` 约定，或行为漂移
+- 跳步检测触发 `[PROCESS_VIOLATION]`
+- 调用修改性工具前自检发现流程日志完整性缺失
+
+恢复动作：
+
+1. 重新读取 `.kilo/instructions/core.md`、`.kilo/instructions/workflow-core.md` 和 `.kilo/instructions/reflection.md` 恢复编排规则
 2. 在流程日志中显式输出 `[RECOVERED_FROM_INSTRUCTIONS]` 标记
 3. 立即输出当前进度快照（重新初始化的流程日志）
 4. 标记 `[PROCESS_VIOLATION]`（若存在跳步）并暂停等待用户决策

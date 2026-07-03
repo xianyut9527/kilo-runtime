@@ -38,7 +38,13 @@
         "模式",
         "最佳实践",
         "实现范式",
-        "可复用"
+        "可复用",
+        "config-dedup",
+        "runtime-injection",
+        "prompt-minimal",
+        "全局配置",
+        "运行时注入",
+        "配置去重"
       ]
     }
   ]

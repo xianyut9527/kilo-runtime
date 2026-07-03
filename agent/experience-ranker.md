@@ -17,7 +17,7 @@ permission:
 steps: 30
 ---
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
+> 通用规则由运行时注入的 `core.md`、`workflow-core.md` 和 `reflection.md` 提供。
 
 # experience-ranker
 

@@ -416,23 +416,36 @@ permission:
 **最近更新**: 2026-07-03
 
 **描述**:
-T2 任务拆为多个单元并行/串行执行时，各单元改动累积在工作区但未提交。若 checker 用 `git diff --stat` 全量比对工作区与 HEAD，会把前置单元已 PASS 的合法残留误判为当前单元的 SCOPE_CREEP。
+T2 任务拆为多个单元在同一工作区顺序执行时，各单元改动累积但未提交。若 checker 使用不正确的 git diff 范围进行 SCOPE_CREEP 检测，会把历史提交残留或前置单元已 PASS 的合法变更误判为当前单元的 SCOPE_CREEP。
+
+两种常见错误：
+1. **`git diff HEAD~1` 全量比对** — 与上一次 commit 比，会把历史提交的合法变更（如前置单元已提交的修改）也算入当前单元的 scope。
+2. **`git diff HEAD` / `git diff --stat` 全量比对** — 与当前 HEAD 比，会把同一工作区中前置单元已 PASS 但未提交的累积改动误判。
 
 **上下文**:
-- 多单元 DAG 在同一工作区顺序执行时常见；checker 的 L2 反向核对应以"本单元声明文件"为边界，而非整个工作区。
+- 多单元 DAG 在同一工作区顺序执行时常见；checker 的 L2 反向核对应以"本单元声明文件"为边界，而非整个工作区或整个提交历史。
+- 判断依据：先用 `git status --short` 确认实际工作区改动，用 `git diff -- <本单元文件>` 限定当前单元。
 
 **示例（错的）**:
 ```text
-单元 D 仅修改 kilo.json，但 `git diff --stat` 同时列出 core.md（来自单元 A）→ 判 FAIL。
+# 错误 1：比对上一次 commit
+git diff HEAD~1 → 列出 skills/ 缩减、dp provider 删除（历史提交）→ 判 FAIL
+
+# 错误 2：比对整个工作区
+git diff --stat → 同时列出 core.md（来自单元 A）、kilo.json（来自单元 B）→ 判 FAIL
 ```
 
 **示例（对的）**:
 ```text
-用 `git diff -- kilo.json` 限定范围；前置单元残留单独记录为"已知未提交变更"。
+git status --short                    # 先确认工作区实际改动
+git diff -- kilo.json                  # 仅比对当前单元声明文件
+# 前置单元残留单独记录为"已知未提交变更"
 ```
 
 **验证方式**:
-- checker 复验时限定 `git diff -- <本单元文件>`；全量 diff 仅用于单元 G 总体验收。
+- checker 复验时限定 `git diff -- <本单元文件>`，不使用 `git diff HEAD~1` 或 `git diff --stat` 全量范围。
+- 先用 `git status --short` 确认工作区实际改动文件，确认当前单元文件集合。
+- 全量 diff 仅用于单元 G 总体验收。
 
 **相关条目**:
 - AP-003（pre-checker FAIL 修正后未复验）
