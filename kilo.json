@@ -25,85 +25,85 @@
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
       "temperature": 0,
-      "prompt": "你是 engineer（实现 agent）。完整职责见 agent/engineer.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 engineer（实现 agent）。完整职责见 agent/engineer.md。"
     },
     "architect": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
       "temperature": 0.3,
-      "prompt": "你是 architect（架构/规划 agent）。完整职责见 agent/architect.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 architect（架构/规划 agent）。完整职责见 agent/architect.md。"
     },
     "checker": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
       "temperature": 0,
-      "prompt": "你是 checker（质量门禁 agent）。完整职责见 agent/checker.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 checker（质量门禁 agent）。完整职责见 agent/checker.md。"
     },
     "pre-checker": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
       "temperature": 0,
-      "prompt": "你是 pre-checker（方向预审 agent）。完整职责见 agent/pre-checker.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 pre-checker（方向预审 agent）。完整职责见 agent/pre-checker.md。"
     },
     "fixer": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
       "temperature": 0,
-      "prompt": "你是 fixer（定向修复 agent）。完整职责见 agent/fixer.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 fixer（定向修复 agent）。完整职责见 agent/fixer.md。"
     },
     "reviewer": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
       "temperature": 0,
-      "prompt": "你是 reviewer（审查 agent）。完整职责见 agent/reviewer.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 reviewer（审查 agent）。完整职责见 agent/reviewer.md。"
     },
     "executor-A": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
       "temperature": 0,
-      "prompt": "你是 executor-A（稳健实现候选）。完整职责见 agent/executor-A.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 executor-A（稳健实现候选）。完整职责见 agent/executor-A.md。"
     },
     "executor-B": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
       "temperature": 0,
-      "prompt": "你是 executor-B（复用优先候选）。完整职责见 agent/executor-B.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 executor-B（复用优先候选）。完整职责见 agent/executor-B.md。"
     },
     "executor-C": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
       "temperature": 0,
-      "prompt": "你是 executor-C（反向审查候选）。完整职责见 agent/executor-C.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 executor-C（反向审查候选）。完整职责见 agent/executor-C.md。"
     },
     "synthesizer": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
       "temperature": 0.2,
-      "prompt": "你是 synthesizer（合并 agent）。完整职责见 agent/synthesizer.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 synthesizer（合并 agent）。完整职责见 agent/synthesizer.md。"
     },
     "skills-writer": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
       "temperature": 0,
-      "prompt": "你是 skills-writer（经验回写 agent）。完整职责见 agent/skills-writer.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 skills-writer（经验回写 agent）。完整职责见 agent/skills-writer.md。"
     },
     "feedback-collector": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
       "temperature": 0,
-      "prompt": "你是 feedback-collector（反馈采集 agent）。完整职责见 agent/feedback-collector.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 feedback-collector（反馈采集 agent）。完整职责见 agent/feedback-collector.md。"
     },
     "experience-ranker": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
       "temperature": 0,
-      "prompt": "你是 experience-ranker（经验评估 agent）。完整职责见 agent/experience-ranker.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 experience-ranker（经验评估 agent）。完整职责见 agent/experience-ranker.md。"
     },
     "ensemble": {
       "mode": "all",
       "model": "hx/kimi-k2.6",
       "temperature": 0.2,
-      "prompt": "你是 ensemble（多模型并行主控）。完整职责见 agent/ensemble.md，通用规则见 .kilo/instructions/core.md 和 workflow-core.md。"
+      "prompt": "你是 ensemble（多模型并行主控）。完整职责见 agent/ensemble.md。"
     }
   },
   "commit_message": {

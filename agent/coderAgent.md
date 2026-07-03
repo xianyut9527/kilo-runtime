@@ -1,6 +1,7 @@
 ---
 description: 编排者。负责任务理解、智能体委派、进度跟踪、交付确认。不直接编码。
 mode: primary
+hidden: false
 color: "#8B5CF6"
 steps: 80
 permission:

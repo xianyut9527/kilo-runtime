@@ -1,6 +1,7 @@
 ---
 description: 多模型并行编排主控智能体。协调执行器候选、checker 验证、reviewer 审查、synthesizer 合并与 fixer 修复。
 mode: all
+hidden: false
 color: "#FF5733"
 permission:
   bash: allow

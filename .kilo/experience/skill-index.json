@@ -14,7 +14,15 @@
         "反模式",
         "踩坑",
         "错误",
-        "禁止"
+        "禁止",
+        "scope-creep",
+        "frontmatter",
+        "consumer-confirmation",
+        "引用化",
+        "validate-config",
+        "函数重命名",
+        "占位符",
+        "template-variable"
       ]
     },
     {

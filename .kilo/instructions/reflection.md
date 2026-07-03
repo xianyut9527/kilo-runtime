@@ -1,4 +1,10 @@
-﻿# 反思与错误恢复
+﻿---
+name: reflection
+description: 反思与错误恢复指南（执行层/方法层/需求层三层判定、Circuit Breaker、memory 引用规范）
+keywords: reflection, 反思, 错误恢复, 执行层, 方法层, 需求层, circuit-breaker, memory
+---
+
+# 反思与错误恢复
 
 ## 三层判定
 - **执行层**：路径、语法、命令、工具用法错误。直接修正，不计重试。

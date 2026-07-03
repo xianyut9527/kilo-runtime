@@ -2,15 +2,17 @@
 // validate-config.mjs
 // kilo_config 配置自检脚本（Node ESM，跨平台）
 // 校验项：
-//   [1/9] kilo.json JSON 合法性
-//   [2/9] agent 名单一致性
-//   [3/9] skills 分类一致性
-//   [4/9] agent 文件 frontmatter 合规性
-//   [5/9] kilo.json prompt 中引用的文档路径存在性
-//   [6/9] README.md 目录树一致性
-//   [7/9] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
-//   [8/9] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
-//   [9/9] coderAgent prompt 锚点关键词校验（防 compaction 误删）
+//   [1/11] kilo.json JSON 合法性
+//   [2/11] agent 名单一致性
+//   [3/11] skills 分类一致性
+//   [4/11] agent 文件 frontmatter 合规性（含 color / hidden）
+//   [5/11] kilo.json prompt 中引用的文档路径存在性
+//   [6/11] README.md 目录树一致性
+//   [7/11] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
+//   [8/11] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
+//   [9/11] coderAgent prompt 锚点关键词校验（防 compaction 误删）
+//   [10/11] skill-index.json 与 SKILL.md frontmatter 一致性（name/path/keywords）
+//   [11/11] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -61,7 +63,7 @@ function check1KiloJson() {
 function check2Agents(config) {
   const name = 'agent 名单一致性';
   if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/9]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/11]）' };
   }
   const declared = new Set(Object.keys(config.agent));
   const agentDir = path.resolve(ROOT, 'agent');
@@ -115,7 +117,7 @@ function parseSkillsDocumentedDirs() {
   return dirs;
 }
 
-function check4Skills() {
+function check3Skills() {
   const name = 'skills 分类一致性';
   let documented;
   try {
@@ -146,7 +148,7 @@ function check4Skills() {
   return { name, pass: false, detail: parts.join('; ') };
 }
 
-// ---------- Check 5: agent 文件 frontmatter 合规性 ----------
+// ---------- Check 4: agent 文件 frontmatter 合规性 ----------
 // 极简 YAML frontmatter 解析器（仅支持本项目使用的子集）：
 //   - 顶层 `key: value` 与嵌套 `key:` + 缩进子项
 //   - 标量：字符串（可被 `"`/`'` 包裹）、整数、布尔（true/false）、null
@@ -186,6 +188,37 @@ function parseFrontmatter(text) {
     if (raw.trim() === '' || raw.trim().startsWith('#')) continue;
     const indent = raw.match(/^ */)[0].length;
     const content = raw.trim();
+
+    // YAML 列表项：`- item`（行内不允许键值对），属于栈顶（缩进 < 当前）的容器。
+    // 栈顶容器原本是被空值 key 创建的空对象 {}，首次遇到列表项时把它就地转成数组并 push；
+    // 后续项直接 push 即可。
+    if (content.startsWith('- ')) {
+      // 弹到缩进 < 当前的父层
+      while (stack.length > 1 && stack[stack.length - 1].indent >= indent) {
+        stack.pop();
+      }
+      const top = stack[stack.length - 1];
+      if (top.indent < indent && top.container && typeof top.container === 'object') {
+        // 仅当容器仍是空对象 {} 时转换为数组
+        if (!Array.isArray(top.container) && Object.keys(top.container).length === 0) {
+          const parentStack = stack[stack.length - 2];
+          if (parentStack) {
+            for (const k of Object.keys(parentStack.container)) {
+              if (parentStack.container[k] === top.container) {
+                const arr = [];
+                parentStack.container[k] = arr;
+                top.container = arr;
+                break;
+              }
+            }
+          }
+        }
+        if (Array.isArray(top.container)) {
+          top.container.push(parseScalar(content.slice(2).trim()));
+        }
+      }
+      continue;
+    }
 
     // 弹出缩进 ≥ 当前的所有父层，找到真正的父容器
     while (stack.length > 1 && stack[stack.length - 1].indent >= indent) {
@@ -236,7 +269,7 @@ function isValidPermissionValue(val, agentName, fieldPath, errors) {
   return false;
 }
 
-function check5AgentFrontmatter() {
+function check4AgentFrontmatter() {
   const name = 'agent 文件 frontmatter 合规性';
   const agentDir = path.resolve(ROOT, 'agent');
   let entries;
@@ -274,6 +307,14 @@ function check5AgentFrontmatter() {
     if (typeof fm.mode !== 'string' || fm.mode.length === 0) {
       missing.push('mode(非空字符串)');
     }
+    if (typeof fm.color !== 'string' || fm.color.length === 0) {
+      missing.push('color(非空字符串)');
+    }
+    if (typeof fm.hidden !== 'boolean') {
+      missing.push('hidden(布尔值)');
+    } else if (fm.mode === 'subagent' && fm.hidden !== true) {
+      errors.push(`${fname}: mode === 'subagent' 时 hidden 必须为 true，实际为 ${fm.hidden}`);
+    }
     if (
       typeof fm.steps !== 'number' ||
       !Number.isInteger(fm.steps) ||
@@ -309,7 +350,7 @@ function check5AgentFrontmatter() {
   return { name, pass: false, detail: errors.join('; ') };
 }
 
-// ---------- Check 6: kilo.json prompt 中引用的文档路径存在性 ----------
+// ---------- Check 5: kilo.json prompt 中引用的文档路径存在性 ----------
 // 递归展开 `{a,b,c}` 大括号列表（支持嵌套）。
 function expandBraces(s) {
   if (!s.includes('{')) return [s];
@@ -327,13 +368,13 @@ function expandBraces(s) {
   return out;
 }
 
-function check6PromptPaths(config) {
+function check5PromptPaths(config) {
   const name = 'kilo.json prompt 引用文档存在性';
   if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/9]）' };
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/11]）' };
   }
   if (!config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/9]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/11]）' };
   }
 
   // 匹配 `agent/<...>.md` 与 `.kilo/instructions/<...>.md`。
@@ -383,7 +424,7 @@ function check6PromptPaths(config) {
   return { name, pass: false, detail: `缺失: [${missing.join(', ')}]` };
 }
 
-// ---------- Check 7: README.md 目录树一致性 ----------
+// ---------- Check 6: README.md 目录树一致性 ----------
 // 解析 README.md 中含 `.kilo/instructions/` 的目录树代码块，
 // 提取 `instructions/` 子树下列出的全部 `.md` 文件，与文件系统比对。
 function escapeRegex(s) {
@@ -428,7 +469,7 @@ function parseInstructionsTreeFiles(blockText) {
   return { ok: true, files };
 }
 
-function check7ReadmeTree() {
+function check6ReadmeTree() {
   const name = 'README.md 目录树一致性';
   const readmePath = path.resolve(ROOT, 'README.md');
   let text;
@@ -491,7 +532,7 @@ function check7ReadmeTree() {
   return { name, pass: false, detail: parts.join('; ') };
 }
 
-// ---------- Check 8: AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性 ----------
+// ---------- Check 7: AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性 ----------
 function extractMdPaths(text) {
   const paths = new Set();
   const re = /\.kilo\/instructions\/[A-Za-z0-9_\-]+\.md/g;
@@ -502,7 +543,7 @@ function extractMdPaths(text) {
   return paths;
 }
 
-function check8DocIndex() {
+function check7DocIndex() {
   const name = 'AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性';
 
   let agentsText;
@@ -523,7 +564,7 @@ function check8DocIndex() {
   const indexedPaths = new Set([...agentsPaths, ...checklistPaths]);
 
   // 读取 README 树中的 instructions 文件列表，作为"必须被索引"的来源
-  const treeResult = check7ReadmeTree();
+  const treeResult = check6ReadmeTree();
   let requiredFiles;
   if (treeResult.pass) {
     requiredFiles = new Set();
@@ -585,7 +626,7 @@ function check8DocIndex() {
   return { name, pass: false, detail: parts.join('; ') };
 }
 
-// ---------- Check 9: prompt 与 agent.md 过度文本重复检测 ----------
+// ---------- Check 8: prompt 与 agent.md 过度文本重复检测 ----------
 // 通用模板剔除规则（按顺序应用；先剥离大块结构，再处理单行模板，最后折叠空白）。
 // 维护说明：新增/调整通用模板时，只需在此数组追加或修改对应条目。
 const STRIP_RULES = [
@@ -638,13 +679,13 @@ function jaccardSimilarity(a, b) {
   return union === 0 ? 0 : inter / union;
 }
 
-function check9PromptOverlap(config) {
+function check8PromptOverlap(config) {
   const name = 'prompt 与 agent.md 过度文本重复检测';
   if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/9]）' };
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/11]）' };
   }
   if (!config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/9]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/11]）' };
   }
 
   const SIMILARITY_THRESHOLD = 0.30; // > 30% 视为过度重复
@@ -725,7 +766,7 @@ function check9PromptOverlap(config) {
   };
 }
 
-// ---------- Check 10: coderAgent prompt 锚点关键词校验 ----------
+// ---------- Check 9: coderAgent prompt 锚点关键词校验 ----------
 // 防止未来误删 coderAgent.prompt 中的防 compaction 锚点关键词
 const CODER_AGENT_ANCHORS = [
   '意图判定',
@@ -740,10 +781,10 @@ const CODER_AGENT_ANCHORS = [
   'experience-ranker',
   'compaction',
 ];
-function check10CoderAgentAnchors(config) {
+function check9CoderAgentAnchors(config) {
   const name = 'coderAgent prompt 锚点关键词校验';
   if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/9]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/11]）' };
   }
   const coderAgent = config.agent.coderAgent;
   if (!coderAgent || typeof coderAgent !== 'object' || typeof coderAgent.prompt !== 'string') {
@@ -755,6 +796,218 @@ function check10CoderAgentAnchors(config) {
     return { name, pass: true, detail: `coderAgent prompt 锚点关键词 ${CODER_AGENT_ANCHORS.length}/${CODER_AGENT_ANCHORS.length} 齐全` };
   }
   return { name, pass: false, detail: `coderAgent prompt 缺失锚点关键词: [${missing.join(', ')}]` };
+}
+
+// ---------- Check 10: skill-index.json 与 SKILL.md frontmatter 一致性 ----------
+// 比较 .kilo/experience/skill-index.json 与 .kilo/skills/*/SKILL.md 的
+// frontmatter（name / path / keywords）。两者必须完全一致。
+function check10SkillIndexSync() {
+  const name = 'skill-index.json 与 SKILL.md frontmatter 一致性';
+  const indexPath = path.resolve(ROOT, '.kilo/experience/skill-index.json');
+  const skillsDir = path.resolve(ROOT, '.kilo/skills');
+
+  // 1) 读取 skill-index.json
+  let indexDoc;
+  try {
+    const raw = fs.readFileSync(indexPath, 'utf8');
+    indexDoc = JSON.parse(raw);
+  } catch (e) {
+    return { name, pass: false, detail: `读取/解析 skill-index.json 失败: ${e.message}` };
+  }
+  if (!indexDoc || typeof indexDoc !== 'object' || !Array.isArray(indexDoc.skills)) {
+    return { name, pass: false, detail: 'skill-index.json 缺少 skills 数组' };
+  }
+
+  // 2) 读取 .kilo/skills/*/SKILL.md frontmatter
+  let dirEntries;
+  try {
+    dirEntries = fs.readdirSync(skillsDir, { withFileTypes: true });
+  } catch (e) {
+    return { name, pass: false, detail: `读取 .kilo/skills/ 失败: ${e.message}` };
+  }
+
+  const fsSkills = new Map(); // name -> { path, keywords, nameInFm }
+  for (const d of dirEntries) {
+    if (!d.isDirectory()) continue;
+    const skillName = d.name;
+    const skillFile = path.join(skillsDir, skillName, 'SKILL.md');
+    if (!fs.existsSync(skillFile)) continue;
+    let text;
+    try {
+      text = fs.readFileSync(skillFile, 'utf8');
+    } catch (e) {
+      return { name, pass: false, detail: `读取 ${skillFile} 失败: ${e.message}` };
+    }
+    const fm = parseFrontmatter(text);
+    if (!fm) {
+      return { name, pass: false, detail: `${skillFile} 缺少或不合法的 YAML frontmatter` };
+    }
+    fsSkills.set(skillName, {
+      nameInFm: typeof fm.name === 'string' ? fm.name : null,
+      keywords: Array.isArray(fm.keywords) ? fm.keywords.map((k) => String(k)) : null,
+    });
+  }
+
+  const indexMap = new Map(); // name -> { path, keywords, nameInIndex }
+  for (const entry of indexDoc.skills) {
+    if (!entry || typeof entry !== 'object') continue;
+    const en = typeof entry.name === 'string' ? entry.name : null;
+    if (!en) continue;
+    indexMap.set(en, {
+      path: typeof entry.path === 'string' ? entry.path : null,
+      keywords: Array.isArray(entry.keywords) ? entry.keywords.map((k) => String(k)) : null,
+    });
+  }
+
+  // 3) 比对
+  const onlyInIndex = [...indexMap.keys()].filter((n) => !fsSkills.has(n)).sort();
+  const onlyInFs = [...fsSkills.keys()].filter((n) => !indexMap.has(n)).sort();
+  const nameMismatch = [];
+  const pathMismatch = [];
+  const keywordMismatch = [];
+
+  for (const [n, idx] of indexMap) {
+    if (!fsSkills.has(n)) continue;
+    const fsFm = fsSkills.get(n);
+    if (fsFm.nameInFm !== null && fsFm.nameInFm !== n) {
+      nameMismatch.push(`${n}(frontmatter.name=${fsFm.nameInFm})`);
+    }
+    // 检查 path：index 中的 path 应当形如 `.kilo/skills/<n>/SKILL.md`
+    const expectedPath = `.kilo/skills/${n}/SKILL.md`;
+    if (idx.path !== null && idx.path !== expectedPath) {
+      pathMismatch.push(`${n}(index.path=${idx.path}, expected=${expectedPath})`);
+    }
+    if (idx.path === null) {
+      pathMismatch.push(`${n}(index.path 缺失)`);
+    }
+    // keywords 集合比较（顺序无关）
+    if (idx.keywords === null) {
+      keywordMismatch.push(`${n}(index.keywords 缺失)`);
+    } else if (fsFm.keywords === null) {
+      keywordMismatch.push(`${n}(frontmatter.keywords 缺失)`);
+    } else {
+      const a = new Set(idx.keywords);
+      const b = new Set(fsFm.keywords);
+      const onlyInIdx = [...a].filter((x) => !b.has(x)).sort();
+      const onlyInFm = [...b].filter((x) => !a.has(x)).sort();
+      if (onlyInIdx.length || onlyInFm.length) {
+        const parts = [];
+        if (onlyInIdx.length) parts.push(`index 多: [${onlyInIdx.join(', ')}]`);
+        if (onlyInFm.length) parts.push(`frontmatter 多: [${onlyInFm.join(', ')}]`);
+        keywordMismatch.push(`${n}(${parts.join('; ')})`);
+      }
+    }
+  }
+
+  const allErrors = [];
+  if (onlyInIndex.length) allErrors.push(`index 有但 .kilo/skills/ 无: [${onlyInIndex.join(', ')}]`);
+  if (onlyInFs.length) allErrors.push(`.kilo/skills/ 有但 index 无: [${onlyInFs.join(', ')}]`);
+  if (nameMismatch.length) allErrors.push(`name 不一致: [${nameMismatch.join(', ')}]`);
+  if (pathMismatch.length) allErrors.push(`path 不一致: [${pathMismatch.join(', ')}]`);
+  if (keywordMismatch.length) allErrors.push(`keywords 不一致: [${keywordMismatch.join(', ')}]`);
+
+  if (allErrors.length === 0) {
+    return {
+      name,
+      pass: true,
+      detail: `共 ${indexMap.size} 个 skill 条目与 SKILL.md frontmatter 一致`,
+    };
+  }
+  return { name, pass: false, detail: allErrors.join('; ') };
+}
+
+// ---------- Check 11: install.sh 与 install.ps1 EXCLUDE 列表一致性 ----------
+// 从两个脚本中提取 ROOT_ONLY_EXCLUDE / RootOnlyExclude 与
+// RECURSIVE_EXCLUDE / RecursiveExclude 数组条目，按 trim 后字符级相等比较。
+// bash 用 `(...)` 数组语法，PowerShell 用 `@(...)` 数组语法。
+// 仅匹配双引号内的字符串条目（两个脚本的现有条目都使用双引号）。
+function extractBashArray(text, varName) {
+  const re = new RegExp(`^${varName}\\s*=\\s*\\(([\\s\\S]*?)\\)`, 'm');
+  const m = text.match(re);
+  if (!m) return null;
+  const body = m[1];
+  const items = [];
+  const quoteRe = /"([^"]*)"/g;
+  let qm;
+  while ((qm = quoteRe.exec(body)) !== null) {
+    items.push(qm[1].trim());
+  }
+  return items;
+}
+
+function extractPsArray(text, varName) {
+  const re = new RegExp(`^\\$${varName}\\s*=\\s*@\\(([\\s\\S]*?)\\)`, 'm');
+  const m = text.match(re);
+  if (!m) return null;
+  const body = m[1];
+  const items = [];
+  const quoteRe = /"([^"]*)"/g;
+  let qm;
+  while ((qm = quoteRe.exec(body)) !== null) {
+    items.push(qm[1].trim());
+  }
+  return items;
+}
+
+function diffSets(aList, bList) {
+  const a = new Set(aList);
+  const b = new Set(bList);
+  const onlyInA = [...a].filter((x) => !b.has(x)).sort();
+  const onlyInB = [...b].filter((x) => !a.has(x)).sort();
+  return { onlyInA, onlyInB };
+}
+
+function check11InstallExcludeSync() {
+  const name = 'install.sh 与 install.ps1 EXCLUDE 列表一致性';
+  const shPath = path.resolve(ROOT, 'install.sh');
+  const ps1Path = path.resolve(ROOT, 'install.ps1');
+
+  let shText, psText;
+  try {
+    shText = fs.readFileSync(shPath, 'utf8');
+  } catch (e) {
+    return { name, pass: false, detail: `读取 install.sh 失败: ${e.message}` };
+  }
+  try {
+    psText = fs.readFileSync(ps1Path, 'utf8');
+  } catch (e) {
+    return { name, pass: false, detail: `读取 install.ps1 失败: ${e.message}` };
+  }
+
+  const shRoot = extractBashArray(shText, 'ROOT_ONLY_EXCLUDE');
+  const shRec = extractBashArray(shText, 'RECURSIVE_EXCLUDE');
+  const psRoot = extractPsArray(psText, 'RootOnlyExclude');
+  const psRec = extractPsArray(psText, 'RecursiveExclude');
+
+  if (shRoot === null) return { name, pass: false, detail: 'install.sh 未找到 ROOT_ONLY_EXCLUDE=(...) 数组' };
+  if (shRec === null) return { name, pass: false, detail: 'install.sh 未找到 RECURSIVE_EXCLUDE=(...) 数组' };
+  if (psRoot === null) return { name, pass: false, detail: 'install.ps1 未找到 $RootOnlyExclude = @(...) 数组' };
+  if (psRec === null) return { name, pass: false, detail: 'install.ps1 未找到 $RecursiveExclude = @(...) 数组' };
+
+  const errors = [];
+  const rootDiff = diffSets(shRoot, psRoot);
+  if (rootDiff.onlyInA.length || rootDiff.onlyInB.length) {
+    const parts = [];
+    if (rootDiff.onlyInA.length) parts.push(`install.sh 独有: [${rootDiff.onlyInA.join(', ')}]`);
+    if (rootDiff.onlyInB.length) parts.push(`install.ps1 独有: [${rootDiff.onlyInB.join(', ')}]`);
+    errors.push(`ROOT_ONLY: ${parts.join('; ')}`);
+  }
+  const recDiff = diffSets(shRec, psRec);
+  if (recDiff.onlyInA.length || recDiff.onlyInB.length) {
+    const parts = [];
+    if (recDiff.onlyInA.length) parts.push(`install.sh 独有: [${recDiff.onlyInA.join(', ')}]`);
+    if (recDiff.onlyInB.length) parts.push(`install.ps1 独有: [${recDiff.onlyInB.join(', ')}]`);
+    errors.push(`RECURSIVE: ${parts.join('; ')}`);
+  }
+
+  if (errors.length === 0) {
+    return {
+      name,
+      pass: true,
+      detail: `ROOT_ONLY ${shRoot.length} 条 + RECURSIVE ${shRec.length} 条在 install.sh / install.ps1 之间完全一致`,
+    };
+  }
+  return { name, pass: false, detail: errors.join('; ') };
 }
 
 // ---------- 主流程：读取 kilo.json 一次，供后续 check 复用 ----------
@@ -776,14 +1029,16 @@ if (kiloBuf && !(kiloBuf[0] === 0xef && kiloBuf[1] === 0xbb && kiloBuf[2] === 0x
 
 const r1 = check1KiloJson();
 const r2 = check2Agents(config);
-const r3 = check4Skills();
-const r4 = check5AgentFrontmatter();
-const r5 = check6PromptPaths(config);
-const r6 = check7ReadmeTree();
-const r7 = check8DocIndex();
-const r8 = check9PromptOverlap(config);
-const r9 = check10CoderAgentAnchors(config);
-const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9];
+const r3 = check3Skills();
+const r4 = check4AgentFrontmatter();
+const r5 = check5PromptPaths(config);
+const r6 = check6ReadmeTree();
+const r7 = check7DocIndex();
+const r8 = check8PromptOverlap(config);
+const r9 = check9CoderAgentAnchors(config);
+const r10 = check10SkillIndexSync();
+const r11 = check11InstallExcludeSync();
+const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11];
 
 // ---------- 输出 ----------
 const out = [];
