@@ -14,8 +14,7 @@ permission:
 steps: 50
 ---
 
-> 本文件只包含该智能体的**职责差异**和**特有流程**。
-> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow-core.md` 提供，无需在此重复。
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
 
 # executor-B
 
@@ -31,11 +30,7 @@ steps: 50
 
 ## 安全与资源约束
 
-- 涉及用户/认证/支付/资金模块时，遵循 `.kilo/instructions/workflow-core.md`「安全敏感模块识别」和防护要求（密码安全哈希、防暴力破解、幂等性保护）。
-
-## 资源生命周期管理
-
-清理临时文件、测试产物、调试脚本，使用系统临时目录（POSIX: `/tmp/`，Windows: `$env:TEMP`），交付前确认无项目目录残留；未清理的标记 `[UNCLEANED_ARTIFACT]` 并记录路径。
+- 遵循 `.kilo/instructions/core.md` 的通用安全约束与资源/性能约束，以及 `.kilo/instructions/workflow-core.md`「安全敏感模块识别」的定级与防护要求。
 
 ## 输出
 

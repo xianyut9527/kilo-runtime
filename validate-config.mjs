@@ -2,15 +2,14 @@
 // validate-config.mjs
 // kilo_config 配置自检脚本（Node ESM，跨平台）
 // 校验项：
-//   [1/9] kilo.json JSON 合法性
-//   [2/9] agent 名单一致性
-//   [3/9] instructions 引用存在性
-//   [4/9] skills 分类一致性
-//   [5/9] agent 文件 frontmatter 合规性
-//   [6/9] kilo.json prompt 中引用的文档路径存在性
-//   [7/9] README.md 目录树一致性
-//   [8/9] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
-//   [9/9] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
+//   [1/8] kilo.json JSON 合法性
+//   [2/8] agent 名单一致性
+//   [3/8] skills 分类一致性
+//   [4/8] agent 文件 frontmatter 合规性
+//   [5/8] kilo.json prompt 中引用的文档路径存在性
+//   [6/8] README.md 目录树一致性
+//   [7/8] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
+//   [8/8] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -91,32 +90,7 @@ function check2Agents(config) {
   return { name, pass: false, detail: parts.join('; ') };
 }
 
-// ---------- Check 3: instructions 引用存在性 ----------
-function check3Instructions(config) {
-  const name = 'instructions 引用存在性';
-  if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/8]）' };
-  }
-  const list = config.instructions;
-  if (!Array.isArray(list)) {
-    return { name, pass: false, detail: 'kilo.json.instructions 不是数组' };
-  }
-  const missing = [];
-  for (const p of list) {
-    if (typeof p !== 'string' || p.length === 0) {
-      missing.push(`<非字符串: ${JSON.stringify(p)}>`);
-      continue;
-    }
-    const abs = path.isAbsolute(p) ? p : path.resolve(ROOT, p);
-    if (!fs.existsSync(abs)) missing.push(p);
-  }
-  if (missing.length === 0) {
-    return { name, pass: true, detail: `共 ${list.length} 条引用全部存在` };
-  }
-  return { name, pass: false, detail: `缺失: [${missing.join(', ')}]` };
-}
-
-// ---------- Check 4: skills 分类一致性 ----------
+// ---------- Check 3: skills 分类一致性 ----------
 // 从 .kilo/instructions/skills-lifecycle.md 的分类表中解析出"目录"列
 function parseSkillsDocumentedDirs() {
   const file = path.resolve(ROOT, '.kilo/instructions/skills-lifecycle.md');
@@ -666,10 +640,10 @@ function jaccardSimilarity(a, b) {
 function check9PromptOverlap(config) {
   const name = 'prompt 与 agent.md 过度文本重复检测';
   if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/9]）' };
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/8]）' };
   }
   if (!config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/9]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/8]）' };
   }
 
   const SIMILARITY_THRESHOLD = 0.30; // > 30% 视为过度重复
@@ -769,14 +743,13 @@ if (kiloBuf && !(kiloBuf[0] === 0xef && kiloBuf[1] === 0xbb && kiloBuf[2] === 0x
 
 const r1 = check1KiloJson();
 const r2 = check2Agents(config);
-const r3 = check3Instructions(config);
-const r4 = check4Skills();
-const r5 = check5AgentFrontmatter();
-const r6 = check6PromptPaths(config);
-const r7 = check7ReadmeTree();
-const r8 = check8DocIndex();
-const r9 = check9PromptOverlap(config);
-const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9];
+const r3 = check4Skills();
+const r4 = check5AgentFrontmatter();
+const r5 = check6PromptPaths(config);
+const r6 = check7ReadmeTree();
+const r7 = check8DocIndex();
+const r8 = check9PromptOverlap(config);
+const results = [r1, r2, r3, r4, r5, r6, r7, r8];
 
 // ---------- 输出 ----------
 const out = [];

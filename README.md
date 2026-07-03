@@ -16,24 +16,11 @@ Kilo 全局配置骨架仓库。它负责通用 agent 编排、默认模型路�
 
 模型选择按 agent 职责的能力维度匹配，**不硬编码具体模型名**。具体模型名和 provider 配置集中在 `kilo.json` 的 `agent.*.model` 和 `provider` 字段，作为模型配置的唯一事实来源。
 
-> **模型事实来源**：本表只描述能力维度和路由原则，不硬编码模型名。修改模型分配请直接改 `kilo.json`，README 表无需同步。
-
-| 能力维度 | 推荐模型族 | 适用 agent | 选择依据 |
-|---------|-----------|-----------|---------|
-| 编排与主控（长上下文、稳定输出） | 长上下文主控模型 | coderAgent, engineer, executor-A | 主控需长上下文窗口和稳定结构化输出；engineer 需稳健正确性 |
-| 规划与架构（推理深度、适度发散） | 推理深度模型 | architect, executor-B, synthesizer, ensemble | 架构规划需推理深度；ensemble 编排需协调多候选 |
-| 审查与对抗（严谨判断、低发散） | 严谨判断模型 | reviewer, executor-C, **fixer** | 审查/对抗需严谨判断；reviewer 内置覆盖安全/架构/简化三种视角；fixer 需精确根因判定 |
-| 客观验证与复杂判断（高推理、准确） | 高推理验证模型 | **checker, pre-checker, experience-ranker** | 验证/预审/经验评估需高推理能力，降低漏判与错误路由；experience-ranker 多维评分需准确判断经验是否值得长期保留 |
-| 轻量辅助 | 轻量快速模型 | small_model, **feedback-collector** | 简单子任务降级用；feedback-collector 追加 JSONL 不需深度推理，结构化记录优先稳定性与低发散 |
-
 **选择原则**：
-
 1. 编排/实现优先稳定性（长上下文主控模型族，temperature 0）。
 2. 规划/合并保留适度发散（推理深度模型族，temperature 0.1-0.2）。
 3. 审查/对抗低发散（严谨判断模型族，temperature 0-0.1）。
-4. 验证/预审用高推理验证模型族；修复/审查/对抗用严谨判断模型族；规划/合并/简化审查用推理深度模型族。不简单追求低成本。
-5. 新增 agent 时按职责维度选模型，不按名字选；模型分配的唯一维护入口是 `kilo.json`。
-6. `kilo.json` 中配置的 `small_model` 是可选降级路由入口，**仅在低复杂度、短上下文的子任务上由路由层选择**；具体适用场景（agent）与禁用边界（T1 及以上任务、主控/实现/审查/修复/复杂规划等）见 `.kilo/instructions/workflow-reference.md` 的 `small_model 触发规则` 章节。
+4. `small_model` 是可选降级路由入口，适用场景见 `.kilo/instructions/workflow-reference.md`「small_model 触发规则」。
 
 ## 目录结构
 
@@ -56,8 +43,7 @@ kilo_config/
 │       └── patterns/
 │   └── memory/                   # 程序化记忆（参考 Hermes Agent）
 │       ├── MEMORY.md             # agent 笔记（≤ 2200 字符）
-│       ├── USER.md               # 用户档案（≤ 1375 字符）
-│       └── README.md             # memory 机制说明
+│       └── USER.md               # 用户档案（≤ 1375 字符）
 ├── agent/                        # 智能体定义（全局可用）
 │   ├── coderAgent.md
 │   ├── architect.md
@@ -89,7 +75,8 @@ kilo_config/
 - **单元化闭环**：中等及以上任务先拆为任务 DAG，architect 后经 pre-checker 校验方向；小单元独立执行 engineer/checker/fixer/checker 循环，无冲突单元可并行，最后再做整体 checker/reviewer 门禁。
 - **验证-修复循环放大**：pre-checker 在 engineer 前拦截方向错误，fixer 只修复明确阻塞问题；checker 分层执行（L1 格式/L2 逻辑/L3 安全），系统化验证-修复-再验证循环提升输出质量。
 - **遗漏更可控**：跨模块、互斥、唯一性等需求先做需求扩散和同类点扫描。
-- **维护更轻**：模型、MCP、权限由 `kilo.json` 管；项目知识放回真实项目。
+- **维护更轻**：模型、MCP、权限由 `kilo.json` 管；项目知识放回真实项目，全局配置只保留骨架。
+- **高质量源于项目级 context pack**：真实项目应自建 `AGENTS.md` 和 `.kilo/skills/`，写入项目独有的架构边界、模块依赖、接口契约、踩坑记录，让项目级知识覆盖全局默认行为。
 
 ## 安装
 
@@ -164,7 +151,7 @@ diff -rq . ~/.config/kilo \
 2. 在项目根目录创建 `.kilo/memory/USER.md` 存放用户偏好和项目约定（≤ 1375 字符）
 3. coderAgent 在任务启动时自动检测并加载为冻结快照
 
-详见 `.kilo/memory/README.md`。
+详见 `.kilo/instructions/workflow-reference.md`「程序化记忆触发条件」章节。
 
 ### 给真实项目接入项目级 context pack
 
@@ -214,16 +201,6 @@ diff -rq . ~/.config/kilo \
 ```
 
 项目配置优先级高于全局配置，遵循深合并规则。高精度理解通常来自项目级 `AGENTS.md` 和 skills，而不是单纯覆盖模型。
-
-## 一次性成功率的终极杠杆
-
-本仓库只是全局骨架。真正决定单次任务输出质量的，是**每个真实项目自己的 `AGENTS.md` 和 `.kilo/skills/`**：
-
-1. 在项目根目录创建 `AGENTS.md`，写入该项目独有的架构边界、模块依赖方向、接口契约、高风险链路。
-2. 在项目根目录创建 `.kilo/skills/`，沉淀该项目的编码范式、反模式、测试回归命令、踩坑记录。
-3. 让项目级知识覆盖全局默认行为；不要把项目知识写回本仓库。
-
-项目级 context pack 越完整，engineer 的"上下文确认"和"验收映射表"就越准确，一次性成功率就越高。
 
 ## 注意事项
 

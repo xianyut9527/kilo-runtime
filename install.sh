@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Kilo 全局配置安装脚本 (macOS / Linux)
 # 将本仓库内容复制到全局配置目录：~/.config/kilo/
+# IMPORTANT: EXCLUDE lists must be kept in sync with install.ps1
 
 set -euo pipefail
 

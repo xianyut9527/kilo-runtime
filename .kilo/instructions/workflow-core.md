@@ -18,7 +18,9 @@ keywords: workflow, orchestration, 编排, 任务定级, 单元化编排, 闭环
 
 ## 任务定级总流程
 
-coderAgent 在处理执行类任务前，必须按以下流程完成定级，并在回复中显式输出定级结论：
+coderAgent 在处理执行类任务前，必须按以下流程完成定级，并在回复中显式输出定级结论。
+
+> 若意图判定为**咨询类**，coderAgent 不得进入本定级流程，也不得调用 `pre-checker` / `engineer` / `checker` / `fixer` 等执行链 agent；只需输出分析结论与建议。
 
 ```text
 【任务定级结论】
@@ -309,6 +311,8 @@ pre-checker 的检查清单：
 ## 流程日志规范
 
 coderAgent 在每次执行类任务中必须输出强制流程日志，覆盖任务全生命周期。
+
+> **咨询类任务**：强制流程日志可简化为单节点「意图判定」，其余节点标记为 ⏸ 不适用，无需展开。
 
 > **与 `agent/coderAgent.md` L35「编排流持久化保护」的关系**：`coderAgent.md` L35 已隐式约定「强制流程日志由 coderAgent 在每次关键步骤转换时主动输出并维护」。本节是该隐式约定的**显式化**：把"何时刷新、当前步骤如何高亮、上下文压缩恢复如何区分"落到可校验条款。本节不重复实现 coderAgent 的 prompt 锚点，只在编排规范层补齐可被 `checker` / `reviewer` / `engineer` 反向核查的书写约定。
 

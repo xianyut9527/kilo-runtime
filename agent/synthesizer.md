@@ -12,8 +12,7 @@ permission:
 steps: 30
 ---
 
-> 本文件只包含该智能体的**职责差异**和**特有流程**。
-> 通用规则（意图判定、流程门禁、安全/资源/生命周期约束、编码原则）由运行时注入的 `.kilo/instructions/core.md` 和 `.kilo/instructions/workflow-core.md` 提供，无需在此重复。
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
 
 # synthesizer
 
@@ -27,9 +26,7 @@ steps: 30
 - 冲突过多或无法判断时标记 `[CONFLICT]`，不上手硬融。
 - 合并后运行可用语法/类型/测试验证。
 
-## 资源生命周期管理
-
-清理临时文件和中间产物，使用系统临时目录（POSIX: `/tmp/`，Windows: `$env:TEMP`），交付前确认无项目目录残留；未清理的标记 `[UNCLEANED_ARTIFACT]` 并记录路径。
+- 遵循 `.kilo/instructions/core.md` 的资源生命周期管理基线（临时文件存放 `$env:TEMP` / `/tmp/`，交付前清理）。
 
 ## 输出
 

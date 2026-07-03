@@ -1,150 +1,27 @@
 # AGENTS.md
 
-> 通用 AI 代理配置骨架与设计参考。Kilo 通过 `findUp` 自动发现本文件，无需在 `kilo.json` 的 `instructions` 中声明路径。
+> Kilo 通过 `findUp` 自动发现本文件作为**唯一全局指令入口**。
+>
+> 完整规则来源（按需读取，不在此自动注入）：
+> - `.kilo/instructions/core.md` — 通用基线、意图分类（咨询类/执行类）、安全约束、资源与生命周期管理
+> - `.kilo/instructions/workflow-core.md` — 执行类任务定级（T0–T3）、单元闭环、门禁、交付、强制流程日志
+> - `.kilo/instructions/workflow-reference.md` — 详细参考：需求扩散、Trace-First、MCP/委派包、知识沉淀
+> - `.kilo/instructions/skills-lifecycle.md` — memory / skills / feedback 的生命周期管理
+> - `.kilo/agent/*.md` — 各 agent 的详细工作说明书
+>
+> 仓库维护指南见 `CONFIG_CHANGE_CHECKLIST.md`。
 
 ## 强制编排锚点（每个项目启动时自动加载）
 
-Kilo 通过 `findUp` 自动发现 `AGENTS.md` 作为唯一全局注入点。本节是所有智能体**不可妥协**的硬约束；详细规则见下方「详细参考」中列出的 `.kilo/instructions/*.md`。
+本文件只列锚点名称与规则来源，细则不重复写入。所有智能体必须遵守：
 
-- **执行类任务三段开场白**：先输出「意图判定」+「任务定级」+「强制流程日志」（≥7 节点），再调用任何修改性工具。
-- **定级前置**：T0 / T1 / T2 / T3 按 `workflow-core.md` 决策树判定；命中安全敏感关键词（user / auth / payment / wallet / transfer 等）→ 最低 T2。
-- **单元闭环**：T1+ 拆为可验证小单元（DAG），每单元独立 engineer → checker → fixer → checker；最多 2 轮 fixer，连续 2 轮同症状自动升级 reviewer。
-- **验收必附映射表 + 已读取文件清单**：缺则 `[MISSING_ACCEPTANCE_MAP]` / `[FAKE_CONTEXT]` FAIL。
-- **SCOPE_CREEP**：checker L2 反向核对 diff，命中即 FAIL。
-- **自验无效**：智能体不得用自身验证替代 checker 客观验证。
-- **memory / skills 合规**：任务启动加载 `MEMORY.md`（≤2200）+ `USER.md`（≤1375）；经验回写必须经闭环验证，禁止 LLM 自动编造规则写入长期文档。
-- **流程违规即停**：发现跳步立即标 `[PROCESS_VIOLATION]` 并暂停。
-- **临时文件**：写入 `$env:TEMP` / `/tmp/`，禁止污染项目目录。
-
----
-
-## 详细参考（仅作索引，不在自动加载列表）
-
-`.kilo/instructions/*.md` 在本仓库中保留作为详细文档，由 coderAgent / skills-writer **按需读取**（不依赖 `kilo.json` 的 `instructions` 字段自动注入）：
-
-- `core.md` — 意图判定、通用安全约束、流程强制基线、编码前强制检查点
-- `workflow-core.md` — 任务定级、单元 DAG、门禁、交付与程序化记忆触发
-- `workflow-reference.md` — 按需读取：small_model 触发规则、Trace-First、MCP 闸门、需求扩散、Anthropic 5 大模式、程序化记忆触发条件
-- `reflection.md` — 反思三层判定 / 根因 / Circuit Breaker
-- `security-checklist.md` — checker L3 安全/性能检测清单（INJ / PERF / AUTH）
-- `output-schema.md` — 下游 agent 交付输出的最小公共字段与 `[MARKER]` 标记语言规范
-- `skills-lifecycle.md` — Skills 生命周期管理（按需引用）
-
-## 单一事实来源与修改指南
-
-- **本文件是智能体清单和架构设计的唯一权威来源**。所有智能体的名称、类型、模式和职责概览以本文件为准。
-- 每个智能体的**详细行为规则**在各自的 `agent/{name}.md` 中维护，本文件只做索引，不写详细规则。
-- **修改前**：请同步阅读 `CONFIG_CHANGE_CHECKLIST.md`，确认变更涉及的关联文件和检查要点。
-
-## 设计目标
-
-- 全局配置只负责通用行为、安全边界、默认模型路由和编排骨架。
-- 真正决定"上下文理解是否精准"的信息，必须沉淀在每个项目自己的 `AGENTS.md` 和 `.kilo/skills/` 中。
-- 不把具体项目的目录、框架、命令或领域规则硬编码到全局配置里。
-
-## 分层原则
-
-### 全局层
-- 定义默认 agent、模型、权限、通用 instructions 和通用审查流程。保持精简，避免堆叠项目知识。
-
-### 项目层
-- 在项目根目录维护项目级 `AGENTS.md`。
-- 使用项目级 `.kilo/skills/` 注入架构、领域模型、接口契约、测试约定等高价值知识。
-
-### 运行原则
-- 先读后写，先定位后修改，先验证后交付。
-- 默认最小改动；只有在复杂、高风险或单模型反复不稳定时才升级多模型并行。
-- 项目级上下文优先于全局规则；全局规则只做兜底，不与项目规范争抢主导权。
-
-## 智能体清单
-
-| 智能体 | 类型 | 模式 | 职责 |
-|--------|------|-------|------|
-| coderAgent | 单模型编排 | primary | 日常入口；任务分级、单元化编排、委派、跟踪与交付 |
-| architect | 单模型规划 | subagent | 复杂需求分析、架构拆解、边界识别、任务规划 |
-| engineer | 单模型实现 | subagent | 读取、实现、验证、修复 |
-| reviewer | 主审查者 | subagent | 主审查；内置覆盖安全/架构/简化三种视角；汇总 findings |
-| skills-writer | 知识沉淀 | subagent | 将经 checker/reviewer 确认的经验写入 `.kilo/skills/` 长期知识库 |
-| feedback-collector | 反馈采集 | subagent | 任务结束后将反馈信号（task_id、task_type、agent_chain、models_used、fixer_rounds、final_status、failure_tags、user_feedback 等）追加写入 `.kilo/experience/log/YYYY-MM-DD.jsonl`，只记录不修改文件 |
-| experience-ranker | 经验评估 | subagent | 周期性读取 `.kilo/experience/log/` 的 feedback log，按复现频率/修复收益/泛化价值/置信度/衰减度多维评估，决定经验写入 MEMORY.md / SKILL.md / 丢弃，并委派 skills-writer 执行写入 |
-| ensemble | 多模型并行编排 | all | 需求解析 → 并行编码 → 候选评估 → 双门禁 → 定向修复 → 交付 |
-| executor-A | 多模型执行 A | subagent | 偏稳健正确性与回归控制 |
-| executor-B | 多模型执行 B | subagent | 偏更小 diff、更高复用、更清晰实现 |
-| executor-C | 多模型执行 C | subagent | 偏完整性与对抗性检查，补足边界条件、兼容性、失败路径与隐藏遗漏 |
-| synthesizer | 多模型合并 | subagent | 在候选差异较大时进行必要融合 |
-| checker | 客观验证门禁 | subagent | 运行测试、构建、类型检查、Lint，并检查范围与需求映射是否合格，输出明确的 PASS/FAIL 结论 |
-| pre-checker | 预审门禁 | subagent | 需求理解偏差、单元边界遗漏、验收标准可验证性校验 |
-| fixer | 定向修复 | subagent | 根据高置信失败项做定向修复，只修改 checker/reviewer 明确指出的问题 |
-
-## 工作流选择
-
-### 路径 A：单模型默认链路
-适用：需求清晰、中等复杂度、改动范围可控的任务。
-
-用户 → `coderAgent` → 简单任务直达 `engineer`；中等及以上任务先拆为任务 DAG，再按小单元调度 `architect` / `pre-checker` / `engineer` / `checker` / `fixer` / `reviewer`
-
-### 路径 B：多模型并行链路
-适用：复杂、高风险、跨模块、边界多、单模型多轮仍不稳定的任务。
-
-用户 → `ensemble` → 需求解析 → 并行实现 → 候选评估 → 双门禁 → 定向修复 → 交付
-
-## 上下文策略
-
-动态项目探测：读取根目录 `package.json`、`pyproject.toml`、`Cargo.toml`、`pom.xml` 等基础配置推断构建与验证命令，用于自测和审查。
-
-项目知识优先：推荐优先沉淀的 skill：架构与边界、编码规范、接口契约、领域模型、测试与回归策略。
-
-## 交付规范
-
-- 输出只保留高信号内容：改了什么、为什么改、影响范围、如何验证。
-- 验证结果优先给出命令、结论和关键失败片段。
-- 发现需求歧义、关键信息缺失或置信度不足时，先一次性澄清，不基于猜测执行。
-- 禁止自动编造规则：LLM 不得凭空生成规则写入长期文档。进入 `.kilo/skills/` 的内容必须经过闭环验证（触发条件匹配 + checker/reviewer 客观验证通过 + 标注验证证据来源），见 `.kilo/instructions/skills-lifecycle.md`。
-- 用户或项目维护者可直接确认规则写入，不依赖自动回写触发条件。
-
-## 项目级接入
-
-真实项目应在项目根目录自行维护项目级 context pack，让全局配置保持通用精简，让项目知识留在项目目录。
-
-### 最小结构
-
-```text
-your-project/
-├── AGENTS.md
-├── kilo.json                  # 可选
-└── .kilo/
-    ├── skills/
-    │   ├── architecture/SKILL.md
-    │   ├── contracts/SKILL.md
-    │   └── testing/SKILL.md
-    └── memory/
-        ├── MEMORY.md          # agent 笔记（≤ 2200 字符）
-        └── USER.md            # 用户档案（≤ 1375 字符）
-```
-
-### 推荐的 3 个首批 skills
-
-1. **架构与边界**：模块划分、依赖方向、跨层限制、新逻辑落点
-2. **接口与契约**：输入输出格式、兼容性要求、调用方影响面、事件结构
-3. **测试与回归**：必须跑的测试、必须补测试的改动、可局部执行的验证、高风险链路
-4. **程序化记忆（memory）**：项目级冻结记忆，借鉴 Hermes Agent 的 MEMORY.md / USER.md 双轨设计
-5. **运行时安全基线（不属 skill）**：参见 `.kilo/instructions/security-checklist.md`，由 `checker` 在 L3 阶段调用；与 `.kilo/skills/` 中的 `anti-patterns` 互不重复——前者是检测项结构化清单，后者是踩坑模式沉淀。
-
-### 判断标准
-
-离开某项目后仍成立的信息适合放全局，只对某个项目成立的信息应放项目级 context pack。
-
-项目级经验沉淀应优先判断：跨项目通用 → 写入 MEMORY.md；项目特定 → 写入 SKILL.md。
-
-## 修改本仓库时的注意事项
-
-- **禁止在多个位置重复维护同一规则**。同一规则只在一处完整维护，其他位置使用引用或索引方式指向主文档。
-- **新增或删除 agent 时**，必须同步更新以下位置：
-  - 本文件中的智能体清单表格
-  - `README.md` 中的目录结构树
-  - `agent/` 目录下的对应文件（必须含完整 YAML frontmatter，详见 `CONFIG_CHANGE_CHECKLIST.md`）
-  - 运行 `./install.ps1` 或 `./install.sh` 将变更同步到 `~/.config/kilo/`，否则其他项目仍会加载旧版全局配置
-- **修改跨 agent 协同规则时**（如 fixer 轮次、升级阈值、三层框架、需求扩散），优先修改 `.kilo/instructions/` 中的单一规则源；agent 文件只保留必要引用；修改后必须运行 `./install.ps1` 或 `./install.sh` 同步到全局配置目录
-- **修改 `kilo.json` 中任何 agent 的 `prompt` 字段时**：必须同步检查 `agent/{name}.md` 是否含同类术语/规则，保持术语一致。pre-checker 校验同步性，遗漏标记 `[MISSING_LINKAGE]`。这是避免运行时行为锚点与长期文档脱节的结构性约束；修改后必须运行 `./install.ps1` 或 `./install.sh` 同步到全局配置目录
-  - 同时检查 `agent/{name}.md` 与 `.kilo/instructions/*.md` 中 `[MARKER]` / 检测项 ID 的一致性；避免 prompt 中引用的标记在 instructions 中无定义（`[MARKER]` 写法见 `output-schema.md` 标记语言规范；检测项 ID 与分类见 `security-checklist.md`「检测项总览」表）
-- **修改 `.kilo/instructions/*.md` 运行时规则后**：必须运行 `./install.ps1` 或 `./install.sh` 同步到 `~/.config/kilo/`，否则真实项目无法加载最新规则，编排流程不会稳定执行。
+1. **意图判定优先**：任何任务先按 `core.md` 判定「咨询类 / 执行类」。咨询类任务只分析、不改文件、不调用修改性工具；执行类任务才进入后续流程。
+2. **执行类三段开场白**：意图判定 → 任务定级 → 强制流程日志（≥7 节点），然后才可调用修改性工具（来源：`workflow-core.md`）。
+3. **定级前置**：执行类任务按 `workflow-core.md` 决策树定级 T0 / T1 / T2 / T3；命中安全敏感关键词 → 最低 T2。
+4. **单元闭环**：T1+ 任务拆为可验证小单元，每单元独立 engineer → checker → fixer 闭环（来源：`workflow-core.md`）。
+5. **验收必附映射表 + 已读取文件清单**：缺则 `[MISSING_ACCEPTANCE_MAP]` / `[FAKE_CONTEXT]` FAIL。
+6. **SCOPE_CREEP**：checker L2 反向核对 diff，命中即 FAIL。
+7. **自验无效**：智能体不得以自身验证替代 checker 客观验证。
+8. **memory / skills 合规**：任务启动加载 `MEMORY.md` + `USER.md`；经验回写必须经闭环验证，禁止 LLM 自动编造规则写入长期文档。
+9. **流程违规即停**：发现跳步立即标 `[PROCESS_VIOLATION]` 并暂停。
+10. **临时文件**：写入 `$env:TEMP` / `/tmp/`，禁止污染项目目录。

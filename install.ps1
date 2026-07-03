@@ -1,5 +1,6 @@
 # Kilo Global Config Installer (Windows)
 # Syncs this repo to: $env:USERPROFILE\.config\kilo\
+# IMPORTANT: EXCLUDE lists must be kept in sync with install.sh
 
 $Source = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Target = "$env:USERPROFILE\.config\kilo"
