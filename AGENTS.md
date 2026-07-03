@@ -7,7 +7,7 @@
 > - `.kilo/instructions/workflow-core.md` — 执行类任务定级（T0–T3）、单元闭环、门禁、交付、强制流程日志
 > - `.kilo/instructions/workflow-reference.md` — 详细参考：需求扩散、Trace-First、MCP/委派包、知识沉淀
 > - `.kilo/instructions/skills-lifecycle.md` — memory / skills / feedback 的生命周期管理
-> - `.kilo/agent/*.md` — 各 agent 的详细工作说明书
+> - `agent/*.md` — 各 agent 的详细工作说明书
 >
 > 仓库维护指南见 `CONFIG_CHANGE_CHECKLIST.md`。
 

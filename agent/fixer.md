@@ -52,7 +52,7 @@ steps: 50
 
 - **只允许**增量追加 / 局部修改 / 删除具体条目
 - **禁止**整文件重写 SKILL.md 或 MEMORY.md
-- **禁止**修改 frontmatter 块的 `name` 字段（agentskills.io 规范要求 name 与目录名一致）
+- **禁止**修改 frontmatter 块的 `name` 字段（SKILL.md frontmatter 规范要求 name 与目录名一致，详见 `.kilo/instructions/skills-lifecycle.md`）
 
 ## 根因回传（强制）
 

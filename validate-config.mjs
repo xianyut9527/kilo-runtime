@@ -11,7 +11,7 @@
 //   [7/11] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
 //   [8/11] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
 //   [9/11] coderAgent prompt 锚点关键词校验（防 compaction 误删）
-//   [10/11] skill-index.json 与 SKILL.md frontmatter 一致性（name/path/keywords）
+//   [10/11] skill-index.json 与 SKILL.md frontmatter 一致性（name/path/keywords + keywords 数量 [3,20]）
 //   [11/11] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
@@ -801,6 +801,8 @@ function check9CoderAgentAnchors(config) {
 // ---------- Check 10: skill-index.json 与 SKILL.md frontmatter 一致性 ----------
 // 比较 .kilo/experience/skill-index.json 与 .kilo/skills/*/SKILL.md 的
 // frontmatter（name / path / keywords）。两者必须完全一致。
+// 另对 keywords 数量做边界校验 [3, 20]（与 .kilo/instructions/skills-lifecycle.md
+// "SKILL.md frontmatter 扩展：keywords 字段" 一致），index 与 frontmatter 各源单独校验。
 function check10SkillIndexSync() {
   const name = 'skill-index.json 与 SKILL.md frontmatter 一致性';
   const indexPath = path.resolve(ROOT, '.kilo/experience/skill-index.json');
@@ -893,8 +895,31 @@ function check10SkillIndexSync() {
       if (onlyInIdx.length || onlyInFm.length) {
         const parts = [];
         if (onlyInIdx.length) parts.push(`index 多: [${onlyInIdx.join(', ')}]`);
-        if (onlyInFm.length) parts.push(`frontmatter 多: [${onlyInFm.join(', ')}]`);
+        if (onlyInFm.length) parts.push(`frontmatter 多: [${onlyInFm.length ? onlyInFm.join(', ') : ''}]`);
         keywordMismatch.push(`${n}(${parts.join('; ')})`);
+      }
+    }
+  }
+
+  // 4) keywords 数量边界校验 [3, 20]（与 skills-lifecycle.md "SKILL.md frontmatter 扩展" 一致）
+  //    缺失（非数组）的情况已在上面以 "index.keywords 缺失" / "frontmatter.keywords 缺失" 报出。
+  //    index 与 frontmatter 理论上应一致，但各来源单独校验以防御漂移。
+  const KEYWORDS_MIN = 3;
+  const KEYWORDS_MAX = 20;
+  const keywordLengthMismatch = [];
+  for (const [n, idx] of indexMap) {
+    if (idx.keywords !== null) {
+      const len = idx.keywords.length;
+      if (len < KEYWORDS_MIN || len > KEYWORDS_MAX) {
+        keywordLengthMismatch.push(`${n}(index): keywords 数量 ${len}，超出 [${KEYWORDS_MIN},${KEYWORDS_MAX}] 范围`);
+      }
+    }
+  }
+  for (const [n, fsFm] of fsSkills) {
+    if (fsFm.keywords !== null) {
+      const len = fsFm.keywords.length;
+      if (len < KEYWORDS_MIN || len > KEYWORDS_MAX) {
+        keywordLengthMismatch.push(`${n}(frontmatter): keywords 数量 ${len}，超出 [${KEYWORDS_MIN},${KEYWORDS_MAX}] 范围`);
       }
     }
   }
@@ -905,6 +930,7 @@ function check10SkillIndexSync() {
   if (nameMismatch.length) allErrors.push(`name 不一致: [${nameMismatch.join(', ')}]`);
   if (pathMismatch.length) allErrors.push(`path 不一致: [${pathMismatch.join(', ')}]`);
   if (keywordMismatch.length) allErrors.push(`keywords 不一致: [${keywordMismatch.join(', ')}]`);
+  if (keywordLengthMismatch.length) allErrors.push(`keywords 数量越界: [${keywordLengthMismatch.join(', ')}]`);
 
   if (allErrors.length === 0) {
     return {

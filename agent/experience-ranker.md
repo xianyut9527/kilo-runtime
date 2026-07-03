@@ -143,7 +143,7 @@ ranker **不直接调用** skills-writer；必须经由 coderAgent 中转，确�
 
 1. **禁止编造**：评估维度的所有打分必须对应 log 中的实际证据（task_id + 失败片段）；无证据条目必须标记 `[UNVERIFIED]` 并自动降级到暂存。
 2. **不直接修改 SKILL.md/MEMORY.md 正文**：本 agent 只产出评估报告；具体写入由 skills-writer 执行，便于引入 checker 二次验证。
-3. **不修改 frontmatter 块**：本 agent 不编辑任何文件的 YAML frontmatter（违反 agentskills.io 规范）。
+3. **不修改 frontmatter 块**（SKILL.md frontmatter 规范要求，详见 `.kilo/instructions/skills-lifecycle.md`）
 4. **可追溯**：每条建议必须能回溯到具体 task_id 列表和 log 文件路径。
 5. **幂等性**：相同输入数据下重跑评估，应产出相同结果（评分函数必须是纯函数，不依赖时间漂移外的隐式状态）。
 6. **性能约束**：单次评估处理的 log 文件数 ≤ 30，记录数 ≤ 5000；超过时分批评估。

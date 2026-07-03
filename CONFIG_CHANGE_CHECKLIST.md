@@ -52,7 +52,7 @@
 - **安全/性能检测模式**（检测项总览、检测项 ID、INJ/PERF/AUTH 分类、检测流程）→ 集中维护在 `.kilo/instructions/security-checklist.md`；其他文件（`kilo.json` prompt、agent 文件、SKILL.md）只做引用。
 - **输出格式规范**（交付输出的最小公共字段、`[MARKER]` 标记语言规范、状态枚举）→ 集中维护在 `.kilo/instructions/output-schema.md`；其他文件只做引用。
 - **memory 触发条件** → 集中维护在 `.kilo/instructions/workflow-reference.md`「程序化记忆触发条件」章节和 `.kilo/memory/README.md`；其他文件只做引用。
-- **SKILL.md frontmatter 规范**（agentskills.io 合规）→ 集中维护在 `.kilo/instructions/core.md` 和 `.kilo/skills/*/SKILL.md`；name 必须与目录名一致。
+- **SKILL.md frontmatter 规范**（含 keywords 数量、name 与目录名一致等，参考 agentskills.io）→ 集中维护在 `.kilo/instructions/skills-lifecycle.md` 和 `.kilo/skills/*/SKILL.md`；name 必须与目录名一致。
 
 修改这些规则时，优先改主文档；agent 文件只保留必要引用和角色化执行要求。
 
