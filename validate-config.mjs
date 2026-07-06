@@ -11,7 +11,7 @@
 //   [7/11] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
 //   [8/11] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
 //   [9/11] coderAgent prompt 锚点关键词校验（防 compaction 误删）
-//   [10/11] skill-index.json 与 SKILL.md frontmatter 一致性（name/path/keywords + keywords 数量 [3,20]）
+//   [10/11] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
 //   [11/11] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
@@ -776,9 +776,6 @@ const CODER_AGENT_ANCHORS = [
   'checker',
   'fixer',
   'reviewer',
-  'feedback-collector',
-  'skills-writer',
-  'experience-ranker',
   'compaction',
 ];
 function check9CoderAgentAnchors(config) {
@@ -798,29 +795,14 @@ function check9CoderAgentAnchors(config) {
   return { name, pass: false, detail: `coderAgent prompt 缺失锚点关键词: [${missing.join(', ')}]` };
 }
 
-// ---------- Check 10: skill-index.json 与 SKILL.md frontmatter 一致性 ----------
-// 比较 .kilo/experience/skill-index.json 与 .kilo/skills/*/SKILL.md 的
-// frontmatter（name / path / keywords）。两者必须完全一致。
-// 另对 keywords 数量做边界校验 [3, 20]（与 .kilo/instructions/skills-lifecycle.md
-// "SKILL.md frontmatter 扩展：keywords 字段" 一致），index 与 frontmatter 各源单独校验。
-function check10SkillIndexSync() {
-  const name = 'skill-index.json 与 SKILL.md frontmatter 一致性';
-  const indexPath = path.resolve(ROOT, '.kilo/experience/skill-index.json');
+// ---------- Check 10: SKILL.md frontmatter 合规性 ----------
+// 校验 .kilo/skills/*/SKILL.md 的 frontmatter：
+//   - name 必填且与目录名一致（兼容 agentskills.io 开放标准）
+//   - description 必填且 ≤ 1024 字符
+//   - keywords 必填为数组，数量 [3, 20]（与 skills-lifecycle.md 一致）
+function check10SkillFrontmatter() {
+  const name = 'SKILL.md frontmatter 合规性';
   const skillsDir = path.resolve(ROOT, '.kilo/skills');
-
-  // 1) 读取 skill-index.json
-  let indexDoc;
-  try {
-    const raw = fs.readFileSync(indexPath, 'utf8');
-    indexDoc = JSON.parse(raw);
-  } catch (e) {
-    return { name, pass: false, detail: `读取/解析 skill-index.json 失败: ${e.message}` };
-  }
-  if (!indexDoc || typeof indexDoc !== 'object' || !Array.isArray(indexDoc.skills)) {
-    return { name, pass: false, detail: 'skill-index.json 缺少 skills 数组' };
-  }
-
-  // 2) 读取 .kilo/skills/*/SKILL.md frontmatter
   let dirEntries;
   try {
     dirEntries = fs.readdirSync(skillsDir, { withFileTypes: true });
@@ -828,118 +810,60 @@ function check10SkillIndexSync() {
     return { name, pass: false, detail: `读取 .kilo/skills/ 失败: ${e.message}` };
   }
 
-  const fsSkills = new Map(); // name -> { path, keywords, nameInFm }
+  const errors = [];
+  let checked = 0;
+  const KEYWORDS_MIN = 3;
+  const KEYWORDS_MAX = 20;
+  const DESC_MAX = 1024;
+
   for (const d of dirEntries) {
     if (!d.isDirectory()) continue;
     const skillName = d.name;
     const skillFile = path.join(skillsDir, skillName, 'SKILL.md');
-    if (!fs.existsSync(skillFile)) continue;
+    if (!fs.existsSync(skillFile)) {
+      errors.push(`${skillName}: 缺少 SKILL.md`);
+      continue;
+    }
     let text;
     try {
       text = fs.readFileSync(skillFile, 'utf8');
     } catch (e) {
-      return { name, pass: false, detail: `读取 ${skillFile} 失败: ${e.message}` };
+      errors.push(`${skillName}: 读取失败 ${e.message}`);
+      continue;
     }
     const fm = parseFrontmatter(text);
     if (!fm) {
-      return { name, pass: false, detail: `${skillFile} 缺少或不合法的 YAML frontmatter` };
+      errors.push(`${skillName}: 缺少或不合法的 YAML frontmatter`);
+      continue;
     }
-    fsSkills.set(skillName, {
-      nameInFm: typeof fm.name === 'string' ? fm.name : null,
-      keywords: Array.isArray(fm.keywords) ? fm.keywords.map((k) => String(k)) : null,
-    });
-  }
-
-  const indexMap = new Map(); // name -> { path, keywords, nameInIndex }
-  for (const entry of indexDoc.skills) {
-    if (!entry || typeof entry !== 'object') continue;
-    const en = typeof entry.name === 'string' ? entry.name : null;
-    if (!en) continue;
-    indexMap.set(en, {
-      path: typeof entry.path === 'string' ? entry.path : null,
-      keywords: Array.isArray(entry.keywords) ? entry.keywords.map((k) => String(k)) : null,
-    });
-  }
-
-  // 3) 比对
-  const onlyInIndex = [...indexMap.keys()].filter((n) => !fsSkills.has(n)).sort();
-  const onlyInFs = [...fsSkills.keys()].filter((n) => !indexMap.has(n)).sort();
-  const nameMismatch = [];
-  const pathMismatch = [];
-  const keywordMismatch = [];
-
-  for (const [n, idx] of indexMap) {
-    if (!fsSkills.has(n)) continue;
-    const fsFm = fsSkills.get(n);
-    if (fsFm.nameInFm !== null && fsFm.nameInFm !== n) {
-      nameMismatch.push(`${n}(frontmatter.name=${fsFm.nameInFm})`);
+    checked++;
+    // name 必填且与目录名一致
+    if (typeof fm.name !== 'string' || fm.name.length === 0) {
+      errors.push(`${skillName}: frontmatter.name 缺失`);
+    } else if (fm.name !== skillName) {
+      errors.push(`${skillName}: frontmatter.name="${fm.name}" 与目录名不一致`);
     }
-    // 检查 path：index 中的 path 应当形如 `.kilo/skills/<n>/SKILL.md`
-    const expectedPath = `.kilo/skills/${n}/SKILL.md`;
-    if (idx.path !== null && idx.path !== expectedPath) {
-      pathMismatch.push(`${n}(index.path=${idx.path}, expected=${expectedPath})`);
+    // description 必填且 ≤ 1024 字符
+    if (typeof fm.description !== 'string' || fm.description.length === 0) {
+      errors.push(`${skillName}: frontmatter.description 缺失`);
+    } else if (fm.description.length > DESC_MAX) {
+      errors.push(`${skillName}: frontmatter.description 长度 ${fm.description.length} 超过 ${DESC_MAX}`);
     }
-    if (idx.path === null) {
-      pathMismatch.push(`${n}(index.path 缺失)`);
-    }
-    // keywords 集合比较（顺序无关）
-    if (idx.keywords === null) {
-      keywordMismatch.push(`${n}(index.keywords 缺失)`);
-    } else if (fsFm.keywords === null) {
-      keywordMismatch.push(`${n}(frontmatter.keywords 缺失)`);
+    // keywords 必填为数组，数量 [3, 20]
+    if (!Array.isArray(fm.keywords)) {
+      errors.push(`${skillName}: frontmatter.keywords 缺失或非数组`);
     } else {
-      const a = new Set(idx.keywords);
-      const b = new Set(fsFm.keywords);
-      const onlyInIdx = [...a].filter((x) => !b.has(x)).sort();
-      const onlyInFm = [...b].filter((x) => !a.has(x)).sort();
-      if (onlyInIdx.length || onlyInFm.length) {
-        const parts = [];
-        if (onlyInIdx.length) parts.push(`index 多: [${onlyInIdx.join(', ')}]`);
-        if (onlyInFm.length) parts.push(`frontmatter 多: [${onlyInFm.length ? onlyInFm.join(', ') : ''}]`);
-        keywordMismatch.push(`${n}(${parts.join('; ')})`);
-      }
-    }
-  }
-
-  // 4) keywords 数量边界校验 [3, 20]（与 skills-lifecycle.md "SKILL.md frontmatter 扩展" 一致）
-  //    缺失（非数组）的情况已在上面以 "index.keywords 缺失" / "frontmatter.keywords 缺失" 报出。
-  //    index 与 frontmatter 理论上应一致，但各来源单独校验以防御漂移。
-  const KEYWORDS_MIN = 3;
-  const KEYWORDS_MAX = 20;
-  const keywordLengthMismatch = [];
-  for (const [n, idx] of indexMap) {
-    if (idx.keywords !== null) {
-      const len = idx.keywords.length;
+      const len = fm.keywords.length;
       if (len < KEYWORDS_MIN || len > KEYWORDS_MAX) {
-        keywordLengthMismatch.push(`${n}(index): keywords 数量 ${len}，超出 [${KEYWORDS_MIN},${KEYWORDS_MAX}] 范围`);
-      }
-    }
-  }
-  for (const [n, fsFm] of fsSkills) {
-    if (fsFm.keywords !== null) {
-      const len = fsFm.keywords.length;
-      if (len < KEYWORDS_MIN || len > KEYWORDS_MAX) {
-        keywordLengthMismatch.push(`${n}(frontmatter): keywords 数量 ${len}，超出 [${KEYWORDS_MIN},${KEYWORDS_MAX}] 范围`);
+        errors.push(`${skillName}: frontmatter.keywords 数量 ${len}，超出 [${KEYWORDS_MIN},${KEYWORDS_MAX}] 范围`);
       }
     }
   }
 
-  const allErrors = [];
-  if (onlyInIndex.length) allErrors.push(`index 有但 .kilo/skills/ 无: [${onlyInIndex.join(', ')}]`);
-  if (onlyInFs.length) allErrors.push(`.kilo/skills/ 有但 index 无: [${onlyInFs.join(', ')}]`);
-  if (nameMismatch.length) allErrors.push(`name 不一致: [${nameMismatch.join(', ')}]`);
-  if (pathMismatch.length) allErrors.push(`path 不一致: [${pathMismatch.join(', ')}]`);
-  if (keywordMismatch.length) allErrors.push(`keywords 不一致: [${keywordMismatch.join(', ')}]`);
-  if (keywordLengthMismatch.length) allErrors.push(`keywords 数量越界: [${keywordLengthMismatch.join(', ')}]`);
-
-  if (allErrors.length === 0) {
-    return {
-      name,
-      pass: true,
-      detail: `共 ${indexMap.size} 个 skill 条目与 SKILL.md frontmatter 一致`,
-    };
+  if (errors.length === 0) {
+    return { name, pass: true, detail: `共 ${checked} 个 SKILL.md frontmatter 合规` };
   }
-  return { name, pass: false, detail: allErrors.join('; ') };
+  return { name, pass: false, detail: errors.join('; ') };
 }
 
 // ---------- Check 11: install.sh 与 install.ps1 EXCLUDE 列表一致性 ----------
@@ -1062,7 +986,7 @@ const r6 = check6ReadmeTree();
 const r7 = check7DocIndex();
 const r8 = check8PromptOverlap(config);
 const r9 = check9CoderAgentAnchors(config);
-const r10 = check10SkillIndexSync();
+const r10 = check10SkillFrontmatter();
 const r11 = check11InstallExcludeSync();
 const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11];
 

@@ -14,6 +14,7 @@ permission:
 ---
 
 > 通用规则由运行时注入的 `core.md`、`workflow-core.md` 和 `reflection.md` 提供。
+> **独立上下文声明**：你不继承父会话上下文，只依赖 coderAgent 委派包传入的信息（需求 + 约束 + 关键文件 + 影响面）。若信息不足，标记 `[NEEDS_CLARIFICATION]` 退回，不得基于猜测规划。
 
 # architect
 

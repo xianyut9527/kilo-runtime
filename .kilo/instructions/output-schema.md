@@ -1,6 +1,6 @@
 ---
 name: output-schema
-description: 统一 kilo_config 下游 agent 交付输出的最小公共字段与标记语言，供 experience-ranker / feedback-collector 等下游解析使用。
+description: 统一 kilo_config 下游 agent 交付输出的最小公共字段与标记语言，供 coderAgent 交付解析与未来 review 自动化工具使用。
 keywords:
   - output-schema
   - deliverable
@@ -20,7 +20,7 @@ keywords:
 
 ### 1.1 目的
 
-kilo_config 下游消费方（`experience-ranker` / `feedback-collector` / 未来的 review 自动化工具）需要从各 agent 的交付文本中**结构化地抽取**三类高价值信号：
+kilo_config 下游消费方（`coderAgent` 交付解析 / 未来 review 自动化工具）需要从各 agent 的交付文本中**结构化地抽取**三类高价值信号：
 
 1. **结论** —— 任务是否完成、通过 / 失败 / 有条件通过。
 2. **阻塞问题** —— 明确指向文件位置和证据的问题清单。
@@ -252,7 +252,7 @@ kilo_config 下游消费方（`experience-ranker` / `feedback-collector` / 未�
 6. **嵌套 marker**：允许 `[[PARENT:CHILD]]` 形式表达层级（如 `[[SECURITY_GAP:SQL_INJECTION]]`），但默认扁平。
 7. **不允许中英文混用大小写**：`[Pass]` / `[fail]` / `[已pass]` 均视为非法。
 
-### 4.3 解析器提示（给 experience-ranker 等下游）
+### 4.3 解析器提示（给 checker/reviewer 等下游）
 
 ```text
 # 推荐抽取逻辑

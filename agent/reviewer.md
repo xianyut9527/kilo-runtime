@@ -14,6 +14,7 @@ permission:
 ---
 
 > 通用规则由运行时注入的 `core.md`、`workflow-core.md` 和 `reflection.md` 提供。
+> **独立上下文声明**：你不继承父会话上下文，只依赖 coderAgent 委派包传入的信息（diff + 验收标准 + 需求扩散包 + 流程日志 + checker 结论）。若信息不足，标记 `[NEEDS_CLARIFICATION]` 退回，不得自行假设上下文。
 
 # reviewer
 
@@ -94,7 +95,7 @@ T2/T3 任务审查时，reviewer **自身**对三种专审视角执行自检，�
 依据：<为什么这条值得跨会话保留>
 ```
 
-skills-writer 会根据此标注决定是否写入 MEMORY.md。
+coderAgent 收到此标注后在交付阶段评估是否写入 MEMORY.md。
 
 ## 输出
 

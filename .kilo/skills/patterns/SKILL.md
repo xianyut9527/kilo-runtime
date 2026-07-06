@@ -1,6 +1,6 @@
 ---
 name: patterns
-description: 本 SKILL 存放项目在可复用的实现范式、最佳实践、推荐写法方面的长期知识。由 skills-writer 根据验证后的经验写入。
+description: 本 SKILL 存放项目在可复用的实现范式、最佳实践、推荐写法方面的长期知识。由 coderAgent 在交付阶段根据验证后的经验写入。
 keywords:
   - patterns
   - best-practice
@@ -29,7 +29,7 @@ metadata:
 # 代码模式
 
 > 本文件存放本项目在可复用的实现范式、最佳实践、推荐写法方面的长期知识。
-> 由 skills-writer 根据验证后的经验写入，禁止手动编造未经验证的内容。
+> 由 coderAgent 在交付阶段根据验证后的经验写入，禁止手动编造未经验证的内容。
 > 新增条目请参考 `.kilo/instructions/skills-lifecycle.md` 的条目模板。
 
 ## 条目列表

@@ -24,7 +24,7 @@ metadata:
 
 <!-- 由用户直接编辑；agent 不得自动写入 -->
 
-> 触发条件与写入权限见 `.kilo/instructions/workflow-reference.md`「程序化记忆触发条件」章节。
+> 写入权限见 `.kilo/instructions/workflow-reference.md`「程序化记忆」章节。
 
 ## 安全约束
 

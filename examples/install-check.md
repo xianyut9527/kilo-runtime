@@ -67,8 +67,8 @@ diff -rq . ~/.config/kilo \
 
 - 安装脚本刚执行完毕时，全局目录应**只含仓库中的文件**（被排除项不出现）。Kilo 运行后会重新生成 `.gitignore`、`node_modules`、`package.json`、`package-lock.json`、`agent-manager.json` 等运行时依赖，这不代表同步失败。
 - Kilo 运行时可能会向全局 `~/.config/kilo/kilo.json` 追加运行时字段（如 `permission`）。这**不代表同步失败**；只要 `instructions`、`agent.*.prompt`、`default_agent`、`model` 等关键配置与仓库一致即可。
-- `robocopy /XF` 和 `diff --exclude` 是**递归**排除，会把所有层级的 `README.md` 都忽略，因此无法用来验证 `.kilo/memory/README.md`、`.kilo/experience/README.md` 等嵌套 README 是否已同步。这些文件需单独检查：
+- `robocopy /XF` 和 `diff --exclude` 是**递归**排除，会把所有层级的 `README.md` 都忽略，因此无法用来验证 `.kilo/memory/` 等嵌套目录的 README 是否已同步。这些文件需单独检查：
   ```bash
-  ls ~/.config/kilo/.kilo/memory/README.md ~/.config/kilo/.kilo/experience/README.md
+  ls ~/.config/kilo/.kilo/memory/MEMORY.md
   ```
 - 判断同步是否成功，应看**安装脚本输出 `[SYNC] OK` 后立即检查的关键文件存在性**，而不是 Kilo 运行一段时间后的目录状态。

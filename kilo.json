@@ -6,9 +6,9 @@
   "snapshot": true,
   "compaction": {
     "auto": true,
-    "threshold_percent": 85,
-    "tail_turns": 12,
-    "preserve_recent_tokens": 60000,
+    "threshold_percent": 70,
+    "tail_turns": 20,
+    "preserve_recent_tokens": 80000,
     "prune": false
   },
   "skills": {
@@ -19,7 +19,7 @@
       "mode": "primary",
       "model": "hx/kimi-k2.7-code",
       "temperature": 0.1,
-      "prompt": "coderAgent（主控 agent）。锚点：意图判定、定级、pre-checker、engineer、checker、fixer、reviewer、feedback-collector、skills-writer、experience-ranker、compaction。"
+      "prompt": "coderAgent（主控 agent）。锚点：意图判定、定级、pre-checker、engineer、checker、fixer、reviewer、compaction。"
     },
     "engineer": {
       "mode": "subagent",
@@ -80,24 +80,6 @@
       "model": "hx/kimi-k2.6",
       "temperature": 0.2,
       "prompt": "synthesizer"
-    },
-    "skills-writer": {
-      "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
-      "temperature": 0,
-      "prompt": "skills-writer"
-    },
-    "feedback-collector": {
-      "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
-      "temperature": 0,
-      "prompt": "feedback-collector"
-    },
-    "experience-ranker": {
-      "mode": "subagent",
-      "model": "hx/MiniMax-M3",
-      "temperature": 0,
-      "prompt": "experience-ranker"
     },
     "ensemble": {
       "mode": "all",

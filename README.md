@@ -6,7 +6,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 
 ## 当前设计
 
-- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow-core.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`workflow-reference.md` / `skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 coderAgent 和 skills-writer 在需要时主动读取。`security-checklist.md` 作为 checker 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按角色按需加载，不作为通用上下文全量注入。
+- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow-core.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`workflow-reference.md` / `skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 coderAgent 在需要时主动读取。`security-checklist.md` 作为 checker 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按角色按需加载，不作为通用上下文全量注入。
 - **长文档转为参考资料**：`AGENTS.md` 保留为设计标准和人工维护参考，不再承担高频运行时注入职责。
 - **默认路由**：模型选择只在 `kilo.json` 中维护；运行规则按角色和任务复杂度路由，不硬编码具体模型名。
 - **扩展入口内置**：默认仅启用 `gitnexus` 辅助调用链/影响面分析；`context7` 远程 MCP（最新文档检索）与 `playwright`（浏览器端验证）按需手动开启。
@@ -40,14 +40,9 @@ kilo_config/
 │   │   ├── security-checklist.md  # 安全/性能检查清单（由 checker 在 L3 调用）
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
 │   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
-│   ├── skills/                   # 长期知识库（按项目实例化）
-│       ├── anti-patterns/
-│       └── patterns/
-│   ├── experience/               # 任务反馈与经验评估日志
-│       ├── README.md             # experience 模块说明
-│       ├── wins.json             # 成功经验索引
-│       ├── skill-index.json      # skills 索引（name/path/keywords）
-│       └── log/                  # 按日期分片的 feedback log
+│   ├── skills/                   # 长期知识库（按项目实例化，兼容 agentskills.io 标准）
+│   │   ├── anti-patterns/
+│   │   └── patterns/
 │   └── memory/                   # 程序化记忆（参考 Hermes Agent）
 │       ├── MEMORY.md             # agent 笔记（≤ 2200 字符）
 │       └── USER.md               # 用户档案（≤ 1375 字符）
@@ -56,9 +51,6 @@ kilo_config/
 │   ├── architect.md
 │   ├── engineer.md
 │   ├── reviewer.md               # 主审查者，内置覆盖安全/架构/简化三种视角
-│   ├── skills-writer.md          # 经验写入，维护长期知识库
-│   ├── feedback-collector.md     # 反馈采集，任务结束后追加写入 .kilo/experience/log/
-│   ├── experience-ranker.md     # 经验评估，周期性评估 feedback log 并委派 skills-writer 写入
 │   ├── ensemble.md
 │   ├── synthesizer.md
 │   ├── checker.md
@@ -148,7 +140,7 @@ diff -rq . ~/.config/kilo \
 2. 在项目根目录创建 `.kilo/memory/USER.md` 存放用户偏好和项目约定（≤ 1375 字符）
 3. coderAgent 在任务启动时自动检测并加载为冻结快照
 
-详见 `.kilo/instructions/workflow-reference.md`「程序化记忆触发条件」章节。
+详见 `.kilo/instructions/workflow-reference.md`「程序化记忆」章节。
 
 ### 给真实项目接入项目级 context pack
 
@@ -205,4 +197,5 @@ diff -rq . ~/.config/kilo \
 - MCP 服务器会增加上下文和工具面，不要同时启用太多高噪声服务器。
 - `context7` 适合最新文档检索；`gitnexus` 适合调用链和影响面分析；`playwright` 适合浏览器端验证。
 - 大型系统优先建设项目级 context pack；全局配置只做骨架和兜底，不承担具体项目知识。
-- `skills-writer` 写入路径强约束：仅写入当前项目工作区的 `.kilo/skills/`，禁止回写全局配置目录（`~/.config/kilo/.kilo/skills/`）。install 脚本会清空全局目录后重新同步，项目级 skills 位于项目根目录，不受影响。
+- `.kilo/skills/` 写入路径约束：仅写入当前项目工作区的 `.kilo/skills/`，禁止回写全局配置目录（`~/.config/kilo/.kilo/skills/`）。install 脚本会清空全局目录后重新同步，项目级 skills 位于项目根目录，不受影响。
+- `.kilo/skills/` 兼容 [agentskills.io](https://agentskills.io/specification) 开放标准，可与 Hermes / Claude Code 等工具的技能目录互通。

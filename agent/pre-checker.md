@@ -14,6 +14,7 @@ steps: 20
 ---
 
 > 通用规则由运行时注入的 `core.md`、`workflow-core.md` 和 `reflection.md` 提供。
+> **独立上下文声明**：你不继承父会话上下文，只依赖 coderAgent 委派包传入的信息（单元 DAG + 验收标准 + 需求扩散包）。若信息不足，标记 `[NEEDS_CLARIFICATION]` 退回，不得自行假设单元边界。
 
 # pre-checker
 

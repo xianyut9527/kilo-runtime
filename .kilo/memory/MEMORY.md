@@ -1,6 +1,6 @@
 ---
 name: memory
-description: 项目级冻结记忆（agent 笔记）。由 coderAgent / skills-writer 在任务过程中追加，由 reviewer 评估是否属于系统级经验。经 reviewer 确认后保留，否则回退到 skills 分类。
+description: 项目级冻结记忆（agent 笔记）。由 coderAgent 在任务过程中追加，由 reviewer 评估是否属于系统级经验。经 reviewer 确认后保留，否则回退到 skills 分类。
 license: MIT
 compatibility:
   - kilo >= 1.0
@@ -34,7 +34,7 @@ metadata:
 
 ## 归档协议
 
-超过 2200 字符时，由 skills-writer 触发压缩：
+超过 2200 字符时，由 coderAgent 触发压缩：
 - 将最旧的低频条目迁移到 `archive/YYYY-MM/` 子目录
 - 在原位置保留 1 行索引（如 `[已归档] 详见 archive/2026-06/foo.md`）
 - 总长度回到 ≤ 1800 字符后停止归档

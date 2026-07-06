@@ -13,6 +13,7 @@ steps: 50
 ---
 
 > 通用规则由运行时注入的 `core.md`、`workflow-core.md` 和 `reflection.md` 提供。
+> **独立上下文声明**：你不继承父会话上下文，只依赖 coderAgent 委派包传入的信息（checker/reviewer 的阻塞问题 + 证据片段 + 验证命令 + 反馈报告）。若信息不足，标记 `[NEEDS_CLARIFICATION]` 退回，不得自行假设问题范围。
 
 # fixer
 

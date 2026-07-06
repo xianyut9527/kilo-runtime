@@ -15,7 +15,7 @@ keywords: reflection, 反思, 错误恢复, 执行层, 方法层, 需求层, cir
 
 当同类错误反复出现时，优先读取 `MEMORY.md` 确认是否为已知陷阱，避免重复踩坑。
 
-若错误模式未在 MEMORY.md 中记录，触发 `skills-writer` 评估是否应写入 MEMORY.md。
+若错误模式未在 MEMORY.md 中记录，在交付报告中标注 `[建议写入 MEMORY.md]`，由 coderAgent 评估是否写入。
 
 ## 反馈格式
 方法层失败必须输出可复用反馈：

@@ -1,13 +1,13 @@
 ---
 name: workflow-reference
-description: 编排参考规则（按需读取）— small_model 触发、Trace-First、MCP 闸门、需求扩散、委派包、skills 回写、Anthropic 模式映射、程序化记忆触发、MEMORY 回写说明
+description: 编排参考规则（按需读取）— small_model 触发、Trace-First、MCP 闸门、需求扩散、委派包、skills 回写、Anthropic 模式映射、程序化记忆、MEMORY 回写说明
 keywords: workflow, reference, 编排参考, small_model, Trace-First, MCP, 需求扩散, 委派包, skills 回写, MEMORY, 程序化记忆, Anthropic 模式
 ---
 
 # Workflow Reference Rules
 
 > 编排参考规则，按需读取。核心编排规则见 `workflow-core.md`。
-> 涵盖：`small_model` 触发规则、Trace-First、外部索引与 MCP 使用闸门、需求扩散与同类点扫描、委派包、知识沉淀与 skills 回写、Anthropic 工作流模式映射、程序化记忆触发条件、交付 MEMORY 回写说明。
+> 涵盖：`small_model` 触发规则、Trace-First、外部索引与 MCP 使用闸门、需求扩散与同类点扫描、委派包、知识沉淀与 skills 回写、Anthropic 工作流模式映射、程序化记忆、交付 MEMORY 回写说明。
 
 ## small_model 触发规则
 
@@ -16,9 +16,8 @@ keywords: workflow, reference, 编排参考, small_model, Trace-First, MCP, 需�
 ### 适用场景（允许使用 `small_model`）
 
 - **T0 极速通道任务**：符合极速通道全部 5 条标准的简单局部修改，推理深度低、上下文短。
-- **纯记录型任务**：`feedback-collector` 追加 JSONL 反馈信号（结构化字段、无深度推理）。
 - **轻量预审**：`pre-checker` 的 T0 轻量模式（仅做调用方检查 + 验收标准可验证性两项校验）。
-- **结构化总结/分类**：经验评估中的低复杂度分类、确定性字段填充等。
+- **结构化总结/分类**：低复杂度分类、确定性字段填充等。
 
 ### 不适用场景（必须使用 `agent.model` 配置的模型）
 
@@ -27,7 +26,6 @@ keywords: workflow, reference, 编排参考, small_model, Trace-First, MCP, 需�
 - **审查**：`reviewer`（三视角审查、跨会话经验标注、影响面汇总）。
 - **修复**：`fixer`（根因判定、同症状识别、范围约束）。
 - **复杂规划**：`architect`（单元 DAG、并行冲突判断）、`ensemble`（多模型并行编排、双门禁协调）、`synthesizer`（候选合并与冲突裁决）。
-- **知识沉淀**：`skills-writer` / `experience-ranker`（需阅读 skills-lifecycle.md、判断验证证据、5 维评分）。
 
 ### 路由约束
 
@@ -155,25 +153,21 @@ Step 5: 任务需要迭代优化吗？→ 是 → Evaluator-Optimizer（reviewer
 | Evaluator-Optimizer | Parallelization | 多轮优化仍不收敛 |
 | 任何模式 | ensemble | fixer 3 轮仍失败 / 用户反馈不干净 |
 
-## 程序化记忆触发条件
+## 程序化记忆
 
 `.kilo/memory/` 目录下的 MEMORY.md 和 USER.md 是项目级程序化记忆。
 
-### MEMORY.md 写入触发条件
+### MEMORY.md 写入触发
 
-满足以下任一条件时，coderAgent / skills-writer 主动评估是否追加：
+满足以下任一条件时，coderAgent 在交付阶段评估是否追加：
 
 1. **跨 2 次以上任务重复出现的架构约束**（如"本项目必须用 DTO 而非裸 dict"）
 2. **经 reviewer 确认为系统级而非项目级的经验**（如"所有 Python 项目统一用 uv 而非 pip"）
 3. **修复不收敛（fixer 多轮失败）时发现的根因模式**（如"Windows 路径长度 260 限制反复触发"）
 
-### USER.md 写入触发条件
+### USER.md 写入触发
 
-满足以下任一条件时，由用户主动追加：
-
-1. **用户明确要求的持久化偏好**（代码风格、命名约定）
-2. **用户指定的特殊验证命令或环境要求**
-3. **用户直接编辑写入**（agent 不得自动写入 USER.md）
+仅由用户直接编辑写入（agent 不得自动写入 USER.md）。
 
 ### 加载机制
 
@@ -183,44 +177,24 @@ coderAgent 在任务启动时（意图判定完成后）执行：
 2. 若存在，将 `MEMORY.md` 和 `USER.md` 内容作为冻结快照注入当前会话上下文
 3. 优先级：MEMORY > USER > 项目级 AGENTS.md > 全局 instructions
 
-### 字符限制
+### 字符限制与超限处理
 
 | 文件 | 字符限制 | 来源 |
 |------|----------|------|
 | MEMORY.md | ≤ 2200 字符 | 参照 Hermes Agent 设计 |
 | USER.md | ≤ 1375 字符 | 参照 Hermes Agent 设计 |
 
-### 超限处理
-
-MEMORY.md 超过 2200 字符时，skills-writer 触发压缩协议：
-
-- 将最旧的低频条目迁移到 `.kilo/memory/archive/YYYY-MM/` 子目录
-- 在原位置保留 1 行索引（如 `[已归档] 详见 archive/2026-06/foo.md`）
-- 总长度回到 ≤ 1800 字符后停止归档
+MEMORY.md 超过 2200 字符时，coderAgent 触发压缩：将最旧的低频条目迁移到 `.kilo/memory/archive/YYYY-MM/`，原位置保留 1 行索引，总长度回到 ≤ 1800 字符后停止归档。
 
 ### 安全约束
 
-⚠️ **禁止写入以下内容**（`reviewer` 安全视角自检会检查并拦截）：
+⚠️ **禁止写入**（`reviewer` 安全视角自检会拦截）：API Key / Token / 密码 / 凭证 / 内部域名 / IP / PII / NDA 内容。
 
-- API Key / Token / 密码 / 凭证
-- 内部域名 / IP / 内部 URL
-- 个人身份信息（PII）
-- 受 NDA / 保密协议保护的内容
+## 交付 MEMORY / skills 回写说明
 
-## 交付 MEMORY 回写说明
+### 回写决策矩阵
 
-在「知识沉淀与 skills 回写」中追加以下 MEMORY.md 回写说明：
-
-### 回写触发条件
-
-coderAgent / skills-writer 在交付阶段必须评估：
-
-1. **是否命中跨会话价值**（如架构级决策、反复踩坑、根因修复）？
-2. **若是**，先评估写入 MEMORY.md（高优先级，跨任务约束）
-3. **再评估**是否写入 SKILL.md（项目特定知识）
-4. **不重复**：MEMORY 中已存在的条目不要重复写入 SKILL
-
-### 决策矩阵
+coderAgent 在交付阶段评估本次任务经验：
 
 | 经验类型 | 写入目标 | 决策依据 |
 |----------|----------|----------|
@@ -229,11 +203,8 @@ coderAgent / skills-writer 在交付阶段必须评估：
 | 临时调试上下文 | 不写 | 无复用价值 |
 | 易于重新发现的事实 | 不写 | 可由网络搜索替代 |
 
-### 写入权限
-
-- **MEMORY.md**：仅由 `coderAgent` / `skills-writer` 写入
-- **USER.md**：仅由用户直接编辑
-- **SKILL.md**：由 `skills-writer` 写入
+- **不重复**：MEMORY 中已存在的条目不要重复写入 SKILL。
+- **写入权限**：MEMORY.md 由 coderAgent 写入；USER.md 由用户直接编辑；SKILL.md 由 coderAgent 在交付阶段写入（命中触发条件时）。
 
 ### reviewer 标注
 
@@ -245,4 +216,4 @@ reviewer 在审查结论末尾若发现经验属于跨会话级别，应追加�
 依据：<为什么这条值得跨会话保留>
 ```
 
-skills-writer 收到此标注后评估是否追加到 MEMORY.md。
+coderAgent 收到此标注后在交付阶段评估是否写入 MEMORY.md。

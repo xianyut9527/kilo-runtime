@@ -1,6 +1,6 @@
 ---
 name: anti-patterns
-description: 本 SKILL 存放项目在反复出现的错误模式、踩坑记录、禁止事项方面的长期知识。由 skills-writer 根据验证后的经验写入。
+description: 本 SKILL 存放项目在反复出现的错误模式、踩坑记录、禁止事项方面的长期知识。由 coderAgent 在交付阶段根据验证后的经验写入。
 keywords:
   - anti-patterns
   - pitfalls
@@ -31,8 +31,27 @@ metadata:
 # 反模式
 
 > 本文件存放本项目在反复出现的错误模式、踩坑记录、禁止事项方面的长期知识。
-> 由 skills-writer 根据验证后的经验写入，禁止手动编造未经验证的内容。
+> 由 coderAgent 在交付阶段根据验证后的经验写入，禁止手动编造未经验证的内容。
 > 新增条目请参考 `.kilo/instructions/skills-lifecycle.md` 的条目模板。
+> 兼容 [agentskills.io](https://agentskills.io/specification) 开放标准，可与 Hermes / Claude Code 等工具的技能目录互通。
+
+## 条目索引
+
+| ID | 标题 | 关键词 |
+|----|------|--------|
+| AP-001 | Edit 工具 BOM 污染 | BOM, UTF-8, JSON.parse |
+| AP-002 | 软约束 vs 硬门禁 | 规则淹没, 嵌套, 平级 |
+| AP-003 | pre-checker FAIL 修正后未复验 | 跳步, 复验, 流程日志 |
+| AP-004 | 子智能体返回空结果未升级 | 空结果, 内联执行, 升级 |
+| AP-005 | PowerShell 5.1 GBK 编码根因 | Windows, GBK, 编码 |
+| AP-006 | 关联功能遗漏 | 调用方, 同类点, 返工 |
+| AP-007 | Agent 删除遗漏执行主体引用 | 规则断链, grep, 清理 |
+| AP-008 | Agent Frontmatter 权限与职责不一致 | 越权, permission, 契约 |
+| AP-009 | 多单元工作区 SCOPE_CREEP 全量 diff 误判 | git diff, 单元边界 |
+| AP-010 | 删除配置字段前未确认外部消费者 | 外部消费者, TUI, 校验 |
+| AP-011 | 由校验代码反推运行时能力 | 占位符, 模板变量, 静态 |
+| AP-012 | 引用化前未确认目标文件覆盖完整性 | 引用化, 逐条核对, 丢失 |
+| AP-013 | 重命名函数时遗漏内部调用同步 | 重命名, 内部调用, ReferenceError |
 
 ## 条目列表
 
@@ -354,12 +373,12 @@ engineer 执行：
 
 **类型**: 反模式
 **添加时间**: 2026-06-30
-**来源任务**: kilo_config 优化升级（reviewer 审查 experience-ranker frontmatter 权限越界）
+**来源任务**: kilo_config 优化升级（reviewer 审查 agent frontmatter 权限越界）
 **验证状态**: 已验证
 **最近更新**: 2026-06-30
 
 **描述**:
-agent 文件的 YAML frontmatter 中 `permission.edit` 允许的路径范围，与其正文中声明的"写入职责"契约不一致。正文声明"不直接编辑，委派 skills-writer"，但 frontmatter 却授予了对应文件的 edit 权限，造成权限敞口：agent 虽按契约不会主动写，但框架按其 frontmatter 配置认为它有权写入，存在越权风险。
+agent 文件的 YAML frontmatter 中 `permission.edit` 允许的路径范围，与其正文中声明的"写入职责"契约不一致。正文声明"不直接编辑"，但 frontmatter 却授予了对应文件的 edit 权限，造成权限敞口：agent 虽按契约不会主动写，但框架按其 frontmatter 配置认为它有权写入，存在越权风险。
 
 **上下文**:
 - `permission.edit` 是运行时行为门禁，决定框架是否允许该 agent 修改指定路径
@@ -369,30 +388,38 @@ agent 文件的 YAML frontmatter 中 `permission.edit` 允许的路径范围，�
 
 **示例（错的）**:
 ```yaml
-# agent/experience-ranker.md frontmatter
+# 某 subagent frontmatter
 permission:
   edit:
-    - .kilo/memory/MEMORY.md         # 有权限
-    - .kilo/skills/**/*.md            # 有权限
+    - src/**/*.ts          # 有权限
 ---
 # 正文职责：
-# > experience-ranker 不直接编辑 SKILL.md/MEMORY.md 正文，
-# > 委派 skills-writer 执行写入
+# > 本 agent 只审查不修复，不直接编辑源码
 # 矛盾：frontmatter 授予了正文声明不做的权限
 ```
 
 **示例（对的）**:
 ```yaml
-# agent/experience-ranker.md frontmatter
+# 某 subagent frontmatter
 permission:
-  edit:
-    - .kilo/experience/log/*.jsonl    # 只允许追加 feedback log
-    # 不授予 SKILL.md / MEMORY.md 编辑权限
-    # 写入正文必须通过委派 skills-writer
+  edit: []                 # 只读 agent，不授予编辑权限
 ---
 # 正文职责：
-# > experience-ranker 评估经验后将结果委派 skills-writer 写入
-# > 自身只追加 feedback log
+# > 本 agent 只审查不修复
+# 一致：frontmatter 权限 = 正文声明的实际写入范围
+```
+
+**示例（对的）**:
+```yaml
+# agent/foo.md frontmatter
+permission:
+  edit:
+    - .kilo/log/*.jsonl    # 只允许追加 log
+    # 不授予 SKILL.md / MEMORY.md 编辑权限
+---
+# 正文职责：
+# > foo 评估后由 coderAgent 中转写入
+# > 自身只追加 log
 # 一致：frontmatter 权限 = 正文声明的实际写入范围
 ```
 
