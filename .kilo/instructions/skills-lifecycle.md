@@ -38,6 +38,8 @@ coderAgent 确认文件内容
 |------|------|----------|------|
 | 代码模式 | `patterns/` | 可复用的实现范式、最佳实践、推荐写法 | "所有列表查询必须带 LIMIT 和 ORDER BY" |
 | 反模式 | `anti-patterns/` | 反复出现的错误、踩坑记录、禁止事项 | "禁止在循环内调用外部 HTTP 接口" |
+| 工作流 | `workflow/` | 编码工作流机制（自进化闭环、记忆架构、根因回溯） | "跨会话根因回溯协议" |
+| 迁移工具包 | `hermes-migration/` | Kilo → Hermes 迁移映射、SOUL.md 模板、config.yaml 模板 | "C 档迁移步骤" |
 
 ### 条目模板
 
@@ -121,3 +123,38 @@ license: MIT
 3. **项目级优先**：只对某个项目成立的信息写入该项目 `.kilo/skills/`；全局规则留在本仓库的 `.kilo/instructions/`。
 4. **可追溯**：每条经验应能追溯到具体任务或验证证据（如 PR、commit、测试报告）。
 5. **定期清理**：每季度 review 一次 skills 文件，删除过时或已被框架/工具内置的条目。
+
+## 社区技能发现（Skills Hub）
+
+Kilo 兼容 [agentskills.io](https://agentskills.io) 开放标准，可通过 `kilo.json` 的 `skills.external_dirs` 引入外部技能目录：
+
+### 已知社区技能源
+
+| 源 | 仓库 | 内容 |
+|----|------|------|
+| Anthropic 官方 | [anthropics/skills](https://github.com/anthropics/skills) | Claude Code 官方技能集 |
+| OpenAI 官方 | [openai/skills](https://github.com/openai/skills) | OpenAI 官方技能集 |
+| Vercel Labs | [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) | 前端/全栈最佳实践 |
+| skills.sh 目录 | [skills.sh](https://skills.sh) | Vercel 维护的公共技能目录 |
+| 知名端点 | `/.well-known/skills/index.json` | 网站发布的技能索引（如 [Mintlify](https://mintlify.com/docs/.well-known/skills/index.json)） |
+| 社区精选 | [VoltAgent/awesome-agent-skills](https://github.com/VoltAgent/awesome-agent-skills) | 社区精选技能合集 |
+
+### 启用方式
+
+在 `kilo.json` 中配置 `skills.external_dirs`：
+
+```json
+{
+  "skills": {
+    "external_dirs": ["~/.agents/skills"]
+  }
+}
+```
+
+将社区技能仓库 clone 到 `~/.agents/skills/` 后，Kilo 会扫描其 SKILL.md 并纳入技能索引。外部技能为**只读引用**，项目级 `.kilo/skills/` 始终优先；命名冲突时按 `name` 字段去重。
+
+### 迁移到 Hermes
+
+迁移到 Hermes 后，同一份 `~/.agents/skills/` 目录可直接被 Hermes 的 `skills.external_dirs` 配置扫描，无需改动技能内容。Hermes 还支持 `hermes skills install` 直接从 GitHub/skills.sh/well-known 端点安装技能。
+
+> 详见 `hermes-migration` 技能的迁移工具包。

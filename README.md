@@ -42,7 +42,9 @@ kilo_config/
 │   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
 │   ├── skills/                   # 长期知识库（按项目实例化，兼容 agentskills.io 标准）
 │   │   ├── anti-patterns/
-│   │   └── patterns/
+│   │   ├── patterns/
+│   │   ├── workflow/             # 自进化工作流（记忆三层架构、根因回溯）
+│   │   └── hermes-migration/     # Kilo→Hermes 迁移工具包（C 档方案）
 │   └── memory/                   # 程序化记忆（参考 Hermes Agent）
 │       ├── MEMORY.md             # agent 笔记（≤ 2200 字符）
 │       └── USER.md               # 用户档案（≤ 1375 字符）
@@ -151,17 +153,17 @@ diff -rq . ~/.config/kilo \
 
 ## MCP 扩展
 
-本配置默认仅启用 `gitnexus` MCP 服务器（详见 `kilo.json` 中的 `mcp` 节）：
+本配置启用以下 MCP 服务器（详见 `kilo.json` 中的 `mcp` 节）：
 
 - **GitNexus** (`gitnexus`): 本地调用链与影响面分析（默认启用）
-- **Context7** (`context7`): 远程文档检索，用于拉取最新官方文档与库文档（默认关闭，按需手动开启）
+- **Context7** (`context7`): 远程文档检索，用于拉取最新官方文档与库文档（默认启用，增强编码准确度）
 - **Playwright** (`playwright`): 浏览器端验证、截图和交互检查（默认关闭，按需手动开启）
 
 > 注意：MCP 服务器会增加上下文和工具面，不要同时启用太多高噪声服务器。
 
-## Skills 跨项目复用（可选）
+## Skills 跨项目复用
 
-`kilo.json` 支持 `skills.external_dirs` 数组，启用后可扫描外部 skill 目录（如 `~/.agents/skills/`）。默认空数组，向后兼容。
+`kilo.json` 已配置 `skills.external_dirs` 指向 `~/.agents/skills/`，可扫描社区技能目录。社区技能源见 `.kilo/instructions/skills-lifecycle.md`「社区技能发现」章节（含 anthropics/skills、openai/skills、vercel-labs/agent-skills、skills.sh 等已知源）。
 
 ```json
 {
@@ -171,7 +173,7 @@ diff -rq . ~/.config/kilo \
 }
 ```
 
-外部 skill 目录为**只读**引用，项目级 `.kilo/skills/` 始终优先；命名冲突时按 `name` 字段去重。
+外部 skill 目录为**只读**引用，项目级 `.kilo/skills/` 始终优先；命名冲突时按 `name` 字段去重。frontmatter 兼容 [agentskills.io](https://agentskills.io/specification) 开放标准，可与 Hermes / Claude Code 等工具的技能目录互通。
 
 ## 项目级覆盖
 

@@ -110,12 +110,28 @@ coderAgent 执行意图判定时，必须逐项检查以下清单，确保不遗
 - 优先使用项目级 `AGENTS.md` 和 `.kilo/skills/`；全局规则只兜底。
 - 优先使用专用读取/搜索工具和局部代码阅读理解调用链、数据流、状态流和同类点；缺乏工具支持时用简短只读 shell 命令。
 
-### Memory 探测
+### Memory 探测（三层记忆架构）
 
 陌生项目除查看构建配置、入口目录、关键导出、测试/Lint 命令外，还需检查是否存在 `.kilo/memory/`：
 
-- 若存在，优先读取 `MEMORY.md`（系统级约束）和 `USER.md`（用户偏好）
-- 加载的 memory 内容作为项目级知识，**优先级高于全局 instructions**
+- **L1 冻结快照**：若 `.kilo/memory/` 存在，优先读取 `MEMORY.md`（系统级约束）和 `USER.md`（用户偏好），作为冻结快照注入上下文。优先级高于全局 instructions。
+- **L2 跨会话历史**：任务启动时或错误复发时，调用 `kilo_local_recall`（search 模式）检索本机历史对话中的同类问题与解决方案。每个搜索词必须出现在匹配会话中。
+- **L3 代码图谱**：涉及调用链/影响面/数据依赖时，调用 `gitnexus_context` / `gitnexus_impact` / `gitnexus_query` 查询代码知识图谱，补充静态搜索的盲区。
+
+> 三层记忆详细机制与触发条件见 `.kilo/skills/workflow/SKILL.md`「记忆三层架构」与「自进化闭环流程」。
+
+## 自进化触发点
+
+以下条件命中时，coderAgent **必须**先执行跨会话根因回溯（调用 `kilo_local_recall` 搜索历史同类问题），再决定修复策略：
+
+1. **checker/reviewer FAIL 且错误类型为方法层或需求层**（见 `reflection.md` 三层判定）
+2. **fixer 连续 2 轮命中同症状**（workflow-core.md 同症状防空转触发）
+3. **用户反馈"还是有问题/不对/遗漏/不干净"**
+4. **Circuit Breaker 触发**（连续 3 次仍无法收敛）
+
+回溯流程详见 `.kilo/skills/workflow/SKILL.md`「自进化闭环流程」。
+
+**核心原则**：不靠 LLM 自觉回写（已证明无效），用真实工具驱动自进化——`kilo_local_recall` 检索历史、`gitnexus_*` 验证影响面、git history 持久留痕、MEMORY.md/SKILL.md 冻结关键经验。
 
 ## 验证与安全
 

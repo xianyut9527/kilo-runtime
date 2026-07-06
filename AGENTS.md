@@ -6,7 +6,7 @@
 > - `.kilo/instructions/core.md` — 通用基线、意图分类（咨询类/执行类）、安全约束、资源与生命周期管理
 > - `.kilo/instructions/workflow-core.md` — 执行类任务定级（T0–T3）、单元闭环、门禁、交付、强制流程日志
 > - `.kilo/instructions/workflow-reference.md` — 详细参考：需求扩散、Trace-First、MCP/委派包、知识沉淀
-> - `.kilo/instructions/skills-lifecycle.md` — memory / skills 的生命周期管理
+> - `.kilo/instructions/skills-lifecycle.md` — skills 生命周期管理 + 社区技能发现 + Hermes 迁移
 > - `.kilo/instructions/reflection.md` — 反思与错误恢复规则
 > - `agent/*.md` — 各 agent 的详细工作说明书
 >
@@ -23,6 +23,6 @@
 5. **验收必附映射表 + 已读取文件清单**：缺则 `[MISSING_ACCEPTANCE_MAP]` / `[FAKE_CONTEXT]` FAIL。
 6. **SCOPE_CREEP**：checker L2 反向核对 diff，命中即 FAIL。
 7. **自验无效**：智能体不得以自身验证替代 checker 客观验证。
-8. **memory / skills 合规**：任务启动加载 `MEMORY.md` + `USER.md`；经验回写必须经闭环验证，禁止 LLM 自动编造规则写入长期文档。
+8. **memory / skills / 自进化合规**：任务启动加载 `MEMORY.md` + `USER.md`；方法层/需求层失败触发跨会话根因回溯（`kilo_local_recall` 检索历史 + `gitnexus` 验证影响面）；经验回写必须经闭环验证，禁止 LLM 自动编造规则写入长期文档。
 9. **流程违规即停**：发现跳步立即标 `[PROCESS_VIOLATION]` 并暂停。
 10. **临时文件**：写入 `$env:TEMP` / `/tmp/`，禁止污染项目目录。

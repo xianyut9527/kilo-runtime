@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### Added
+- **2026-07-07**: 极强自进化编码智能体升级——基于 Kilo 真实工具构建可落地的自学习闭环。
+  - 新增 `.kilo/skills/workflow/SKILL.md`：自进化工作流技能。基于 `kilo_local_recall`（跨会话记忆检索）+ `gitnexus_*`（代码图谱）+ git history（持久经验）构建真实可落地的自我学习闭环。定义记忆三层架构（L1 冻结快照 / L2 跨会话历史 / L3 代码图谱 / L4 持久经验）、5 个触发条件、5 步闭环流程。不依赖 LLM 自觉回写（已证明无效），每一层都用真实工具驱动。
+  - 新增 `.kilo/skills/hermes-migration/SKILL.md`：Kilo → Hermes 迁移工具包（C 档方案）。包含迁移映射表、SOUL.md 模板、config.yaml 模板、9 步迁移流程、VS Code/Trae 编辑器集成、回退方案。保留 Kilo 编排哲学精华，获得 Hermes 47 工具+execute_code+session_search+prompt caching+delegate_task+checkpoint+RL 训练等框架级 SOTA 能力。
+  - `core.md` 新增「自进化触发点」章节：4 个触发条件命中时强制调用 `kilo_local_recall` 执行跨会话根因回溯。
+  - `core.md` Memory 探测扩展为「三层记忆架构」：L1 冻结快照 + L2 跨会话历史（kilo_local_recall）+ L3 代码图谱（gitnexus）。
+  - `reflection.md` memory 回溯扩展为「跨会话根因回溯协议」：检索历史 → 判断命中 → 代码图谱验证 → 回写留痕，4 步真实工具驱动流程。
+  - `skills-lifecycle.md` 新增 `workflow/` + `hermes-migration/` 两个技能分类。
+  - `skills-lifecycle.md` 新增「社区技能发现」章节：6 个已知社区技能源（anthropics/skills、openai/skills、vercel-labs/agent-skills、skills.sh、well-known 端点、VoltAgent/awesome-agent-skills）+ external_dirs 启用方式 + Hermes 迁移说明。
+  - `kilo.json` 启用 `context7` MCP（远程文档检索增强编码准确度）；`skills.external_dirs` 指向 `~/.agents/skills`（社区技能源）。
+  - 同步更新 README.md / AGENTS.md 目录树与引用。
+
 ### Changed
 - **2026-07-06**: 删除伪自进化功能 + 采纳 agentskills.io 标准 + 借力 Hermes 协同（B 档优化）。
   - 删除 `feedback-collector` / `experience-ranker` / `skills-writer` 3 个 agent（LLM 自觉回写=无效，无运行时落地）。

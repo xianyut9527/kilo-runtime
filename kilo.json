@@ -12,7 +12,7 @@
     "prune": false
   },
   "skills": {
-    "external_dirs": []
+    "external_dirs": ["~/.agents/skills"]
   },
   "agent": {
     "coderAgent": {
@@ -95,7 +95,7 @@
     "context7": {
       "type": "remote",
       "url": "https://mcp.context7.com/mcp",
-      "enabled": false,
+      "enabled": true,
       "timeout": 8000
     },
     "gitnexus": {
