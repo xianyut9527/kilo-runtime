@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Hermes Config Installer (Linux / macOS / WSL2)
-# Syncs hermes/ directory to: ~/.hermes/
+# Syncs hermes_config/ directory to: ~/.hermes/
 # IMPORTANT: EXCLUDE lists must be kept in sync with install-hermes.ps1
-# 本脚本只安装 Hermes 配置产物（SOUL.md + config.yaml + .hermes.md + skills + memories + delegate-templates）
+# 本脚本只安装 Hermes 配置产物（SOUL.md + config.yaml + .hermes.md + skills）
+# memories/ 是可选个人模板，不强制覆盖，避免覆盖设备本地记忆
 # Kilo 配置仍由 install.sh 安装到 ~/.config/kilo/
 
 set -euo pipefail
@@ -12,7 +13,7 @@ SOURCE="$SCRIPT_DIR/hermes_config"
 TARGET="$HOME/.hermes"
 
 if [ ! -d "$SOURCE" ]; then
-    echo "[SYNC] FAIL: hermes/ directory not found at $SOURCE"
+    echo "[SYNC] FAIL: hermes_config/ directory not found at $SOURCE"
     exit 1
 fi
 
@@ -105,6 +106,21 @@ else
     echo "[COPY] Synced $CopiedFiles files, $CopiedDirs dirs via cp"
 fi
 
+# memories 模板：仅在目标不存在时复制，不覆盖
+TEMPLATES_DIR="$SCRIPT_DIR/templates/memories"
+if [ -d "$TEMPLATES_DIR" ]; then
+    mkdir -p "$TARGET/memories"
+    for f in "$TEMPLATES_DIR"/*; do
+        name=$(basename "$f")
+        if [ ! -e "$TARGET/memories/$name" ]; then
+            cp "$f" "$TARGET/memories/"
+            echo "[INIT] copied template $name -> $TARGET/memories/"
+        else
+            echo "[SKIP] $TARGET/memories/$name exists, not overwriting"
+        fi
+    done
+fi
+
 echo ""
 
 # ============================================================
@@ -132,6 +148,6 @@ echo "  2. Configure provider: hermes model (select custom endpoint)"
 echo "  3. Start: hermes"
 echo "  4. Verify: hermes doctor"
 echo ""
-echo "For VS Code/Trae integration: hermes acp"
+echo "Note: memories/ are optional personal templates and are NOT overwritten if they already exist."
 echo ""
 exit 0
