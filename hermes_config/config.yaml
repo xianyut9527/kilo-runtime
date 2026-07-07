@@ -25,9 +25,6 @@ mcp_servers:
       - mcp
 display:
   tool_progress: all
-agent:
-  verify_on_stop: false
-_config_version: 32
 model:
   default: kimi-k2.7-code
   provider: custom:huixin

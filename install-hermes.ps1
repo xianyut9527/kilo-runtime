@@ -122,7 +122,7 @@ try {
     Write-Host ""
     Write-Host "Next steps:" -ForegroundColor Cyan
     Write-Host "  1. Configure provider: hermes model (select custom endpoint)" -ForegroundColor Gray
-    Write-Host "  2. Set API key in .env: HX_API_KEY=<your-key>" -ForegroundColor Gray
+    Write-Host "  2. Set API key env: \$env:NAT100_API_KEY = '<your-key>'" -ForegroundColor Gray
     Write-Host "  3. Start: hermes" -ForegroundColor Gray
     Write-Host "  4. Verify: hermes doctor" -ForegroundColor Gray
     Write-Host ""
