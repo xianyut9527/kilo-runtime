@@ -34,14 +34,15 @@ metadata:
 > 不依赖 LLM 自觉回写，每一层都用真实工具驱动。
 > 兼容 [agentskills.io](https://agentskills.io/specification) 开放标准。
 
-## 记忆三层架构
+## 记忆架构
 
 | 层 | 工具 | 存什么 | 检索方式 | 持久性 |
 |----|------|--------|----------|--------|
-| L1 冻结快照 | `SOUL.md` / `.hermes.md` / `skills/` | 项目流程、编码标准、安全约束、模式/反模式 | 任务启动时自动注入 | git 永久 |
-| L2 跨会话历史 | `session_search` | 历史对话中的错误模式、解决方案、踩坑记录 | SQLite+FTS5 全文检索 | 本机持久 |
-| L3 代码图谱 | `gitnexus_context` / `gitnexus_impact` / `gitnexus_query` | 调用链、影响面、数据依赖、API 消费者 | Cypher 查询 + 自然语言检索 | git 索引持久 |
-| L4 持久经验 | `git log` / `git diff` | commit message 中的经验标注、SKILL.md 条目 | `git log --grep` / SKILL.md 全文 | git 永久 |
+| L1 冻结快照 | `SOUL.md` / `.hermes.md` / `skills/` | 项目流程、编码标准、安全约束、模式/反模式 | 任务启动自动注入 | git 永久 |
+| L2 会话历史 | `session_search` | 原始对话中的错误模式、解决方案 | SQLite FTS5 全文检索 | 本机持久 |
+| L3 结构化事实 | `fact_store` / `fact_feedback` | 提炼后的可复用经验、环境偏好、技术陷阱 | 实体 probe / 跨实体 reason / 信任评分 | SQLite 持久 |
+| L4 代码图谱 | `gitnexus_*` | 调用链、影响面、数据依赖 | Cypher 查询 | git 索引持久 |
+| L5 git 历史 | `git log` / `git diff` | commit message 经验标注 | `git log --grep` | git 永久 |
 
 ## 触发条件
 
@@ -58,43 +59,47 @@ metadata:
 ```
 触发条件命中
     ↓
-Step 1: 跨会话根因回溯（session_search）
-    ↓ 找到历史同类问题？
-    ├─ 是 → 提取历史解决方案，直接应用，跳过 Step 2
+Step 1: 根因回溯
+    ├─ `session_search` 检索历史同类错误
+    └─ `fact_store` probe 相关实体获取结构化经验
+    ↓ 找到？
+    ├─ 是 → 直接应用，跳过 Step 2
     └─ 否 → 继续 Step 2
 Step 2: 代码图谱验证（gitnexus）
-    ↓ 确认修改的爆炸半径与调用方
-Step 3: 修复 + 验证（正常 engineer→checker 闭环）
+    ↓
+Step 3: 修复 + 验证（engineer→checker 闭环）
     ↓ PASS
-Step 4: 经验回写评估
-    ├─ 跨项目价值 → 回写 `SOUL.md` / `.hermes.md`
-    ├─ 项目特定模式/陷阱 → 回写对应 `SKILL.md`
-    └─ 仅本次 → commit message 标注（git history 留痕）
+Step 4: 经验回写
+    ├─ 可复用事实 → `fact_store` add
+    ├─ 项目特定模式/陷阱 → 对应 `SKILL.md`
+    ├─ 跨项目架构约束 → `SOUL.md` / `.hermes.md`
+    └─ 仅本次 → commit message
     ↓
 Step 5: 回写后验证
-    ↓ session_search 搜索确认新经验可被未来会话检索到
+    ├─ `session_search` 确认新经验可被检索
+    └─ `fact_store` search 确认新事实可被召回
 ```
 
-### Step 1：跨会话根因回溯
+### Step 1：根因回溯
 
-**何时调用 `session_search`**：触发条件命中后，fixer 修复前。
+**顺序**：先 `session_search` → 再 `fact_store` probe。
 
-**怎么搜**：
-- 用错误症状关键词（如 "BOM 污染"、"SCOPE_CREEP 误判"、"PowerShell 编码"）
-- 用失败的技术词（如函数名、错误消息、文件路径片段）
-- 用错误类型（如 "方法层失败"、"同症状复发"）
+| 工具 | 搜索内容 | 命中后动作 |
+|------|----------|------------|
+| `session_search` | 错误症状、函数名、错误消息、文件路径 | 提取历史解决方案 |
+| `fact_store` | 错误类型实体、技术栈实体、模块实体 | 获取信任评分高的结构化经验 |
 
-**搜索后判断**：
-- 找到历史同类问题 → 提取历史解决方案，直接应用
-- 找到但解决方案过时 → 更新方案后应用
+- 找到 → 直接应用，跳过 Step 2
+- 找到但过时 → 更新后应用
 - 没找到 → 标记为新经验，Step 4 评估回写
 
 **示例**：
 ```
 错误：checker FAIL，"config.yaml 修改后 JSON.parse 失败"
-搜索词：BOM JSON.parse config.yaml
+session_search: BOM JSON.parse config.yaml
 → 命中历史会话：AP-001 BOM 污染反模式
-→ 提取解决方案：检测并剥离 BOM
+fact_store probe: "BOM 污染"
+→ 信任评分 0.9，确认检测并剥离 BOM
 → 直接应用，不重复诊断
 ```
 
@@ -110,15 +115,18 @@ Step 5: 回写后验证
 
 > GitNexus 索引可能滞后，结果必须用当前代码搜索复核。
 
-### Step 4：经验回写规范
+### Step 4：经验回写
 
-| 经验类型 | 写入目标 | 触发条件 | 执行者 |
-|----------|----------|----------|--------|
-| 跨项目通用架构约束 | `SOUL.md` / `.hermes.md` | reviewer 标注 `[建议写入 SOUL.md]` + 跨 2 次任务复现 | agent |
-| 项目特定模式/陷阱 | 对应 `SKILL.md`（patterns/anti-patterns/workflow） | 命中回写触发条件 | agent |
-| 仅本次任务的调试上下文 | commit message | 无跨会话价值 | engineer 在 commit 中标注 |
+| 经验类型 | 写入目标 | 示例 |
+|----------|----------|------|
+| 可复用事实（环境、偏好、陷阱、API 行为） | `fact_store` | "Windows PowerShell 默认 GBK"、"YAML 注释行 `provider` 被解析为键" |
+| 项目特定模式/陷阱 | `skills/` 对应 SKILL.md | AP-001 BOM 污染、PAT-004 规则进版本控制 |
+| 跨项目架构约束 | `SOUL.md` / `.hermes.md` | T0-T3 定级、7 节点流程日志 |
+| 仅本次上下文 | commit message | 调试时的临时 workaround |
 
-**回写后验证**：用 `session_search` 搜索刚写入的经验关键词，确认未来会话能检索到。
+**回写后验证**：
+- `session_search` 搜索关键词，确认可被未来会话检索
+- `fact_store` search 确认新事实可被召回
 
 ## 与错误三层判定的关系
 

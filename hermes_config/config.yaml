@@ -2,7 +2,8 @@ compression:
   enabled: true
   threshold: 0.5
   target_ratio: 0.2
-  protect_last_n: 20
+  protect_last_n: 30
+  protect_first_n: 5
 delegation:
   max_iterations: 50
   default_toolsets:
@@ -10,6 +11,10 @@ delegation:
     - file
     - web
     - browser
+    - code_execution
+  architect_toolsets:
+    - file
+    - web
     - code_execution
 memory:
   memory_enabled: false

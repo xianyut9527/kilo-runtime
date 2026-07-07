@@ -84,14 +84,19 @@
 
 ## 自进化触发点
 
-以下条件命中时，**必须**先执行跨会话根因回溯，再决定修复策略：
+以下条件命中时，**必须**先执行根因回溯，再决定修复策略：
 
 1. checker/reviewer FAIL 且错误类型为方法层或需求层
 2. fixer 连续 2 轮命中同症状
 3. 用户反馈"还是有问题/不对/遗漏/不干净"
 4. Circuit Breaker 触发
 
-回溯流程：`session_search`（Hermes 原生，SQLite+FTS5 全文检索所有历史会话）→ 判断命中 → 代码图谱验证（gitnexus MCP）→ 修复 → 经验回写（`skills/` / `SOUL.md` / `.hermes.md`）。
+回溯流程：
+1. `session_search` 检索历史同类错误（SQLite FTS5）
+2. `fact_store` probe 相关实体获取结构化经验
+3. 代码图谱验证（gitnexus MCP）
+4. 修复
+5. 经验回写：`fact_store`（可复用事实）→ `skills/`（流程/模式）→ `SOUL.md` / `.hermes.md`（架构约束）
 
 **核心原则**：不靠 LLM 自觉回写，用真实工具驱动自进化。
 
@@ -135,6 +140,6 @@
 
 1. **闭环确认**（逐条验收 → 实现位置 → 验证证据 → 状态）
 2. **变更回顾**（改了什么 / 为什么改 / 影响范围 / 清理调试代码）
-3. **经验沉淀**（踩坑记录 / 可复用发现；命中跨会话价值 → 回写 `skills/` / `SOUL.md` / `.hermes.md`）
+3. **经验沉淀**（可复用事实 → `fact_store`；流程/模式 → `skills/`；架构约束 → `SOUL.md` / `.hermes.md`）
 
 交付输出开头必须标记 ✅/⚠️/❌。
