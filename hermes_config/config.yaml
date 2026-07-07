@@ -33,14 +33,17 @@ display:
 plugins:
   enabled:
     - security-guidance
+
 model:
   default: kimi-k2.6
   provider: custom:huixin
-  max_tokens: 16384
+  max_tokens: 262144
+  reasoning: true
 providers:
   huixin:
     name: huixin
     base_url: https://huixin.nat100.top/v1
     key_env: NAT100_API_KEY
     default_model: kimi-k2.6
-    max_output_tokens: 16384
+    max_output_tokens: 262144
+_config_version: 32
