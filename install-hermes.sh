@@ -2,9 +2,8 @@
 # Hermes Config Installer (Linux / macOS / WSL2)
 # Syncs hermes_config/ directory to: ~/.hermes/
 # IMPORTANT: EXCLUDE lists must be kept in sync with install-hermes.ps1
-# 本脚本只安装 Hermes 配置产物（SOUL.md + config.yaml + .hermes.md + skills）
-# memories/ 是可选个人模板，不强制覆盖，避免覆盖设备本地记忆
-# Kilo 配置仍由 install.sh 安装到 ~/.config/kilo/
+# 本脚本只安装 Hermes 配置产物（SOUL.md + config.yaml + .hermes.md + skills）。
+# 本地记忆（~/.hermes/memories/）属于个人/设备资产，不纳入仓库同步。
 
 set -euo pipefail
 
@@ -43,32 +42,23 @@ echo ""
 echo "Source: $SOURCE"
 echo "Target: $TARGET"
 echo ""
+echo "Mode: merge update — preserve Hermes runtime dirs (sessions/cron/logs/...)"
+echo "Scope: SOUL.md + config.yaml + .hermes.md + skills"
+echo ""
 
-# 全量覆盖式更新：先清空目标目录，再同步
+# 合并式更新：只删除/覆盖要同步的配置产物，保留运行时目录
 if [ -d "$TARGET" ]; then
-    echo "[CLEAN] Purging target directory: $TARGET"
-    rm -rf "${TARGET:?}/"*
+    echo "[CLEAN] Removing old config files in $TARGET"
+    rm -rf "$TARGET/SOUL.md"
+    rm -rf "$TARGET/config.yaml"
+    rm -rf "$TARGET/.hermes.md"
+    rm -rf "$TARGET/skills"
 fi
 
 mkdir -p "$TARGET"
 
 CopiedFiles=0
 CopiedDirs=0
-
-# 构建排除参数
-build_excludes() {
-    local depth="$1"
-    local excludes=()
-    if [ "$depth" -eq 0 ]; then
-        for e in "${ROOT_ONLY_EXCLUDE[@]}"; do
-            excludes+=("--exclude=$e")
-        done
-    fi
-    for e in "${RECURSIVE_EXCLUDE[@]}"; do
-        excludes+=("--exclude=$e")
-    done
-    printf '%s\n' "${excludes[@]}"
-}
 
 # 使用 rsync 同步（如果可用），否则用 cp
 if command -v rsync &> /dev/null; then
@@ -106,21 +96,6 @@ else
     echo "[COPY] Synced $CopiedFiles files, $CopiedDirs dirs via cp"
 fi
 
-# memories 模板：仅在目标不存在时复制，不覆盖
-TEMPLATES_DIR="$SCRIPT_DIR/templates/memories"
-if [ -d "$TEMPLATES_DIR" ]; then
-    mkdir -p "$TARGET/memories"
-    for f in "$TEMPLATES_DIR"/*; do
-        name=$(basename "$f")
-        if [ ! -e "$TARGET/memories/$name" ]; then
-            cp "$f" "$TARGET/memories/"
-            echo "[INIT] copied template $name -> $TARGET/memories/"
-        else
-            echo "[SKIP] $TARGET/memories/$name exists, not overwriting"
-        fi
-    done
-fi
-
 echo ""
 
 # ============================================================
@@ -148,6 +123,6 @@ echo "  2. Configure provider: hermes model (select custom endpoint)"
 echo "  3. Start: hermes"
 echo "  4. Verify: hermes doctor"
 echo ""
-echo "Note: memories/ are optional personal templates and are NOT overwritten if they already exist."
+echo "Note: local memories/ are personal/device assets and are NOT synced by this script."
 echo ""
 exit 0

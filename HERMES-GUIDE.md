@@ -13,10 +13,6 @@ repo/
 │   ├── SOUL.md
 │   ├── .hermes.md
 │   └── skills/
-├── templates/            ← 可选个人模板（仅首次安装初始化）
-│   └── memories/
-│       ├── MEMORY.md
-│       └── USER.md
 ├── HERMES-GUIDE.md       ← 本文件
 ├── install-hermes.sh     ← Linux/macOS 同步脚本
 └── install-hermes.ps1    ← Windows 同步脚本
@@ -34,11 +30,11 @@ repo/
 | SOUL.md | ✅ 团队通用 | 编码智能体身份与强制流程 |
 | .hermes.md | ✅ 团队通用 | 项目上下文规则 |
 | skills/ | ✅ 团队通用 | 共享反模式、模式、工作流 |
-| memories/ | ❌ 个人本地 | 仅首次安装时从 templates/ 初始化，后续不覆盖 |
+| memories/ | ❌ 个人本地 | 由 Hermes 在本地自动生成/维护，不纳入版本控制 |
 
 **为什么 memories 不团队同步？**
 
-Hermes 的真实记忆主要存储在 SQLite 数据库（`memory_store.db`、`state.db`、`sessions/`）和 holographic provider 中。`MEMORY.md` / `USER.md` 只是启动时注入系统提示的**静态补充**，属于个人/设备本地资产。强制团队同步会互相覆盖个人经验。
+Hermes 的真实记忆主要存储在 SQLite 数据库（`memory_store.db`、`state.db`、`sessions/`）和 holographic provider 中。内置的 `MEMORY.md` / `USER.md` 只是启动时注入系统提示的**静态补充**，属于个人/设备本地资产。团队同步会互相覆盖个人经验，且与 `SOUL.md`、`.hermes.md`、skills 的功能重叠。
 
 ---
 
@@ -75,8 +71,8 @@ $env:NAT100_API_KEY="your-key"
 ```
 
 脚本行为：
-- 全量覆盖 `config.yaml`、`SOUL.md`、`.hermes.md`、`skills/`
-- **仅在 `~/.hermes/memories/` 不存在时**，从 `templates/memories/` 复制模板
+- 合并式更新：只覆盖 `SOUL.md`、`config.yaml`、`.hermes.md`、`skills/`
+- **不触碰 `~/.hermes/memories/`、`.env`、数据库、logs、sessions 等个人运行时数据**
 - 保留 Hermes 运行时数据：`sessions/`、`memory_store.db`、`state.db`、`logs/` 等
 
 ### 3.4 验证
@@ -99,7 +95,8 @@ hermes
 | `hermes_config/SOUL.md` | `~/.hermes/SOUL.md` | ✅ 覆盖 |
 | `hermes_config/.hermes.md` | `~/.hermes/.hermes.md` | ✅ 覆盖 |
 | `hermes_config/skills/` | `~/.hermes/skills/` | ✅ 覆盖 |
-| `templates/memories/` | `~/.hermes/memories/` | ❌ 不覆盖（首次初始化） |
+
+**不要复制 `memories/`。** 这是 Hermes 本地个人记忆，由各设备自己管理。
 
 ---
 

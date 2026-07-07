@@ -3,8 +3,7 @@
 # IMPORTANT: EXCLUDE lists must be kept in sync with install-hermes.sh
 # 本脚本采用合并式部署：保留 Hermes 运行时目录（sessions/cron/hooks/logs 等），
 # 只覆盖配置产物（SOUL.md/config.yaml/.hermes.md）和 skills。
-# memories/ 是可选个人模板，仅在不存在时初始化，避免覆盖设备本地记忆。
-# Kilo 配置仍由 install.ps1 安装到 ~/.config/kilo/
+# 本地记忆（~/.hermes/memories/）属于个人/设备资产，不纳入仓库同步。
 
 $Source = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "hermes_config"
 
@@ -39,17 +38,26 @@ Write-Host ""
 Write-Host "Source: $Source" -ForegroundColor Gray
 Write-Host "Target: $Target" -ForegroundColor Gray
 Write-Host ""
+Write-Host "Mode: merge update — preserve Hermes runtime dirs" -ForegroundColor Gray
+Write-Host "Scope: SOUL.md + config.yaml + .hermes.md + skills" -ForegroundColor Gray
+Write-Host ""
 
 try {
-    # 合并式更新：保留 Hermes 运行时目录（sessions/cron/hooks/logs/audio_cache/image_cache/pairing/scripts），
-    # 只覆盖配置产物（SOUL.md/config.yaml/.hermes.md）和 skills。
-    # 不清空目标目录，避免删除 Hermes 运行时数据
-
     if (-not (Test-Path $Target)) {
         New-Item -ItemType Directory -Path $Target -Force | Out-Null
         Write-Host "[CREATE] $Target" -ForegroundColor Green
     }
     Write-Host ""
+
+    # 只删除要同步的旧配置产物，保留运行时目录和本地记忆
+    $SyncItems = @("SOUL.md", "config.yaml", ".hermes.md", "skills")
+    foreach ($item in $SyncItems) {
+        $path = Join-Path $Target $item
+        if (Test-Path $path) {
+            Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "[CLEAN]  $item" -ForegroundColor Yellow
+        }
+    }
 
     function Should-Exclude($name, $depth) {
         if ($depth -eq 0 -and $RootOnlyExclude -contains $name) { return $true }
@@ -82,24 +90,6 @@ try {
     $CopiedFiles = 0
     $CopiedDirs = 0
     Copy-SourceTree $Source $Target 0
-
-    # memories 模板：仅在目标不存在时复制，不覆盖
-    $TemplatesDir = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "templates\memories"
-    if (Test-Path $TemplatesDir) {
-        $MemoriesTarget = Join-Path $Target "memories"
-        if (-not (Test-Path $MemoriesTarget)) {
-            New-Item -ItemType Directory -Path $MemoriesTarget -Force | Out-Null
-        }
-        foreach ($f in Get-ChildItem -Path $TemplatesDir -File) {
-            $dest = Join-Path $MemoriesTarget $f.Name
-            if (-not (Test-Path $dest)) {
-                Copy-Item -Path $f.FullName -Destination $dest -Force
-                Write-Host "[INIT]   copied template $($f.Name) -> $MemoriesTarget" -ForegroundColor Green
-            } else {
-                Write-Host "[SKIP]   $dest exists, not overwriting" -ForegroundColor Yellow
-            }
-        }
-    }
 
     Write-Host ""
     Write-Host "Done! Restart Hermes to apply changes." -ForegroundColor Green
@@ -136,7 +126,7 @@ try {
     Write-Host "  3. Start: hermes" -ForegroundColor Gray
     Write-Host "  4. Verify: hermes doctor" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "Note: memories/ are optional personal templates and are NOT overwritten if they already exist." -ForegroundColor Gray
+    Write-Host "Note: local memories/ are personal/device assets and are NOT synced by this script." -ForegroundColor Gray
     Write-Host ""
     exit 0
 }

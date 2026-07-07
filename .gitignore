@@ -1,11 +1,37 @@
-node_modules
-package.json
-package-lock.json
-pnpm-lock.yaml
-bun.lock
-yarn.lock
-.gitignore
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
 
-.kilo/cache/
-.kilo/worktrees/
-.kilo/agent-manager.json
+# Node
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Hermes runtime data (local per-device)
+.hermes_history
+sessions/
+memory_store.db
+state.db
+verification_evidence.db
+logs/
+cron/
+hooks/
+audio_cache/
+image_cache/
+pastes/
+pairing/
+sandboxes/
+
+# Secrets
+.env
+*.key
+*.pem
