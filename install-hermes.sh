@@ -3,7 +3,7 @@
 # Syncs hermes_config/ directory to: ~/.hermes/
 # IMPORTANT: EXCLUDE lists must be kept in sync with install-hermes.ps1
 # 本脚本只安装 Hermes 配置产物（SOUL.md + config.yaml + .hermes.md + skills）。
-# 本地记忆（~/.hermes/memories/）属于个人/设备资产，不纳入仓库同步。
+# 个人运行时数据（~/.hermes/ 下除配置产物外的内容）属于个人资产，不纳入仓库同步。
 
 set -euo pipefail
 
@@ -131,6 +131,8 @@ echo "  2. Configure provider: hermes model (select custom endpoint)"
 echo "  3. Start: hermes"
 echo "  4. Verify: hermes doctor"
 echo ""
-echo "Note: local memories/ are personal/device assets and are NOT synced by this script."
+echo "Note: personal runtime data (.env, DBs, logs, sessions) are NOT synced by this script."
+echo "      Windows local path: %LOCALAPPDATA%\\hermes\\"
+echo "      Linux/macOS local path: ~/.hermes/"
 echo ""
 exit 0

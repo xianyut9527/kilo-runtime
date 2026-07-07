@@ -91,7 +91,7 @@
 3. 用户反馈"还是有问题/不对/遗漏/不干净"
 4. Circuit Breaker 触发
 
-回溯流程：`session_search`（Hermes 原生，SQLite+FTS5 全文检索所有历史会话）→ 判断命中 → 代码图谱验证（gitnexus MCP）→ 修复 → 经验回写（MEMORY.md/SKILL.md）。
+回溯流程：`session_search`（Hermes 原生，SQLite+FTS5 全文检索所有历史会话）→ 判断命中 → 代码图谱验证（gitnexus MCP）→ 修复 → 经验回写（`skills/` / `SOUL.md` / `.hermes.md`）。
 
 **核心原则**：不靠 LLM 自觉回写，用真实工具驱动自进化。
 
@@ -135,6 +135,6 @@
 
 1. **闭环确认**（逐条验收 → 实现位置 → 验证证据 → 状态）
 2. **变更回顾**（改了什么 / 为什么改 / 影响范围 / 清理调试代码）
-3. **经验沉淀**（踩坑记录 / 可复用发现；命中跨会话价值 → 回写 MEMORY.md/SKILL.md）
+3. **经验沉淀**（踩坑记录 / 可复用发现；命中跨会话价值 → 回写 `skills/` / `SOUL.md` / `.hermes.md`）
 
 交付输出开头必须标记 ✅/⚠️/❌。

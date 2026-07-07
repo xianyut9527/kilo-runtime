@@ -22,7 +22,7 @@ repo/
 
 ## 2. 设计原则
 
-**Hermes 配置 ≠ 个人记忆**
+**Hermes 配置 ≠ 个人运行时数据**
 
 | 内容 | 是否团队同步 | 说明 |
 |------|-------------|------|
@@ -30,11 +30,15 @@ repo/
 | SOUL.md | ✅ 团队通用 | 编码智能体身份与强制流程 |
 | .hermes.md | ✅ 团队通用 | 项目上下文规则 |
 | skills/ | ✅ 团队通用 | 共享反模式、模式、工作流 |
-| memories/ | ❌ 个人本地 | 由 Hermes 在本地自动生成/维护，不纳入版本控制 |
 
-**为什么 memories 不团队同步？**
+**为什么项目规则必须进版本控制？**
 
-Hermes 的真实记忆主要存储在 SQLite 数据库（`memory_store.db`、`state.db`、`sessions/`）和 holographic provider 中。内置的 `MEMORY.md` / `USER.md` 只是启动时注入系统提示的**静态补充**，属于个人/设备本地资产。团队同步会互相覆盖个人经验，且与 `SOUL.md`、`.hermes.md`、skills 的功能重叠。
+Hermes 的记忆主要存储在 SQLite 数据库（`memory_store.db`、`state.db`、`sessions/`）和 holographic provider 中，这些都是个人/设备本地资产。团队共享的项目规则必须写入 `SOUL.md`、`.hermes.md` 或 `skills/`，才能跨设备同步、可审计、不丢失。
+
+Windows 本地资产路径：`%LOCALAPPDATA%\hermes\`
+Linux/macOS 本地资产路径：`~/.hermes/`
+
+团队同步不会覆盖个人运行时数据。
 
 ---
 
@@ -73,7 +77,7 @@ $env:NAT100_API_KEY="your-key"
 脚本行为：
 - 合并式更新：只覆盖 `SOUL.md`、`config.yaml`、`.hermes.md`、`skills/`
 - 自动启用 `config.yaml` 中声明的 plugins（如 `security-guidance`）
-- **不触碰 `~/.hermes/memories/`、`.env`、数据库、logs、sessions 等个人运行时数据**
+- **不触碰个人运行时数据：`.env`、数据库、logs、sessions 等**
 - 保留 Hermes 运行时数据：`sessions/`、`memory_store.db`、`state.db`、`logs/` 等
 
 ### 3.4 验证
@@ -108,7 +112,7 @@ hermes
 | `hermes_config/.hermes.md` | `~/.hermes/.hermes.md` | ✅ 覆盖 |
 | `hermes_config/skills/` | `~/.hermes/skills/` | ✅ 覆盖 |
 
-**不要复制 `memories/`。** 这是 Hermes 本地个人记忆，由各设备自己管理。
+**不要复制个人运行时数据。** `.env`、数据库、logs、sessions 等由各设备自己管理。
 
 ---
 
@@ -151,7 +155,7 @@ providers:
 | 新成员加入 | clone → 设置 key → 运行 install-hermes 脚本 |
 | 个人改通用配置 | 改 `hermes_config/` 后提交 |
 | 添加新 skill | 放到 `hermes_config/skills/` 后提交 |
-| 更新个人记忆 | 各设备本地用 `memory` / `fact_store` 工具维护，不回传仓库 |
+| 更新个人数据 | 各设备本地用 `memory` / `fact_store` 工具维护，不回传仓库 |
 
 ---
 

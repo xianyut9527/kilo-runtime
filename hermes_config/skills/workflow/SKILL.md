@@ -38,7 +38,7 @@ metadata:
 
 | 层 | 工具 | 存什么 | 检索方式 | 持久性 |
 |----|------|--------|----------|--------|
-| L1 冻结快照 | `MEMORY.md` / `USER.md` | 跨项目架构约束、用户偏好（≤2200/≤1375 字符） | 任务启动时自动注入 | 手动维护 |
+| L1 冻结快照 | `SOUL.md` / `.hermes.md` / `skills/` | 项目流程、编码标准、安全约束、模式/反模式 | 任务启动时自动注入 | git 永久 |
 | L2 跨会话历史 | `session_search` | 历史对话中的错误模式、解决方案、踩坑记录 | SQLite+FTS5 全文检索 | 本机持久 |
 | L3 代码图谱 | `gitnexus_context` / `gitnexus_impact` / `gitnexus_query` | 调用链、影响面、数据依赖、API 消费者 | Cypher 查询 + 自然语言检索 | git 索引持久 |
 | L4 持久经验 | `git log` / `git diff` | commit message 中的经验标注、SKILL.md 条目 | `git log --grep` / SKILL.md 全文 | git 永久 |
@@ -67,8 +67,8 @@ Step 2: 代码图谱验证（gitnexus）
 Step 3: 修复 + 验证（正常 engineer→checker 闭环）
     ↓ PASS
 Step 4: 经验回写评估
-    ├─ 跨会话价值 → 回写 MEMORY.md
-    ├─ 项目特定 → 回写对应 SKILL.md
+    ├─ 跨项目价值 → 回写 `SOUL.md` / `.hermes.md`
+    ├─ 项目特定模式/陷阱 → 回写对应 `SKILL.md`
     └─ 仅本次 → commit message 标注（git history 留痕）
     ↓
 Step 5: 回写后验证
@@ -114,7 +114,7 @@ Step 5: 回写后验证
 
 | 经验类型 | 写入目标 | 触发条件 | 执行者 |
 |----------|----------|----------|--------|
-| 跨项目通用架构约束 | `MEMORY.md` | reviewer 标注 `[建议写入 MEMORY.md]` + 跨 2 次任务复现 | agent |
+| 跨项目通用架构约束 | `SOUL.md` / `.hermes.md` | reviewer 标注 `[建议写入 SOUL.md]` + 跨 2 次任务复现 | agent |
 | 项目特定模式/陷阱 | 对应 `SKILL.md`（patterns/anti-patterns/workflow） | 命中回写触发条件 | agent |
 | 仅本次任务的调试上下文 | commit message | 无跨会话价值 | engineer 在 commit 中标注 |
 

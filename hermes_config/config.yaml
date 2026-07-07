@@ -12,10 +12,10 @@ delegation:
     - browser
     - code_execution
 memory:
-  memory_enabled: true
-  user_profile_enabled: true
-  memory_char_limit: 2200
-  user_char_limit: 1375
+  memory_enabled: false
+  user_profile_enabled: false
+  memory_char_limit: 0
+  user_char_limit: 0
   provider: holographic
 mcp_servers:
   gitnexus:
@@ -29,7 +29,7 @@ plugins:
   enabled:
     - security-guidance
 model:
-  default: kimi-k2.7-code
+  default: kimi-k2.6
   provider: custom:huixin
   max_tokens: 16384
 providers:
@@ -37,5 +37,5 @@ providers:
     name: huixin
     base_url: https://huixin.nat100.top/v1
     key_env: NAT100_API_KEY
-    default_model: kimi-k2.7-code
+    default_model: kimi-k2.6
     max_output_tokens: 16384

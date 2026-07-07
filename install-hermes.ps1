@@ -3,7 +3,7 @@
 # IMPORTANT: EXCLUDE lists must be kept in sync with install-hermes.sh
 # 本脚本采用合并式部署：保留 Hermes 运行时目录（sessions/cron/hooks/logs 等），
 # 只覆盖配置产物（SOUL.md/config.yaml/.hermes.md）和 skills。
-# 本地记忆（~/.hermes/memories/）属于个人/设备资产，不纳入仓库同步。
+# 个人运行时数据（`%LOCALAPPDATA%\hermes\` 下除配置产物外的内容）属于个人资产，不纳入仓库同步。
 
 $Source = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "hermes_config"
 
@@ -135,7 +135,8 @@ try {
     Write-Host '  3. Start: hermes' -ForegroundColor Gray
     Write-Host '  4. Verify: hermes doctor' -ForegroundColor Gray
     Write-Host ""
-    Write-Host "Note: local memories/ are personal/device assets and are NOT synced by this script." -ForegroundColor Gray
+    Write-Host "Note: personal runtime data (.env, DBs, logs, sessions) are NOT synced by this script." -ForegroundColor Gray
+    Write-Host '      Windows local path: %LOCALAPPDATA%\hermes\' -ForegroundColor Gray
     Write-Host ""
     exit 0
 }
