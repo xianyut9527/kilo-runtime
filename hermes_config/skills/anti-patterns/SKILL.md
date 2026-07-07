@@ -75,7 +75,7 @@ metadata:
 **描述**：`delegate_task` 连续 2 次返回空结果时，父代理直接内联执行该子代理职责，跳过独立验证。
 
 **验证方式**：
-- 2 次空结果后必须标记 `[SUBAGENT_RETURNED_EMPTY]` 并升级（拆细任务 / 换模型 / ensemble）
+- 2 次空结果后必须标记 `[SUBAGENT_RETURNED_EMPTY]` 并升级（拆细任务 / 换模型 / 用户介入）
 - 不得直接内联
 
 ---
@@ -161,7 +161,7 @@ Write-Host "Set API key env: `$env:NAT100_API_KEY = \"<your-key>\""
 | 项目流程 / 编码标准 / 交付格式 | `SOUL.md` / `.hermes.md` |
 | 项目特定反模式 / 踩坑 / 模式 | `skills/anti-patterns/` / `skills/patterns/` |
 | 跨项目通用约束 | 版本控制的 `skills/...` 或 `SOUL.md` |
-| 个人偏好 | 个人运行时数据（如 SQLite fact_store） |
+| 个人偏好 | 个人运行时数据（如 SQLite `memory`） |
 
 **修复动作**：
 1. 识别个人运行时数据中的项目规则内容

@@ -1,48 +1,11 @@
-compression:
-  enabled: true
-  threshold: 0.8
-  target_ratio: 0.4
-  protect_last_n: 30
-  protect_first_n: 5
-delegation:
-  max_iterations: 50
-  default_toolsets:
-    - terminal
-    - file
-    - web
-    - browser
-    - code_execution
-  architect_toolsets:
-    - file
-    - web
-    - code_execution
-memory:
-  memory_enabled: false
-  user_profile_enabled: true
-  memory_char_limit: 0
-  user_char_limit: 1375
-mcp_servers:
-  gitnexus:
-    command: npx
-    args:
-      - gitnexus
-      - mcp
-display:
-  tool_progress: all
-plugins:
-  enabled:
-    - security-guidance
-
 model:
   default: kimi-k2.6
   provider: custom:huixin
-  max_tokens: 131072
-  reasoning: true
+  max_tokens: 16384
 providers:
   huixin:
     name: huixin
     base_url: https://huixin.nat100.top/v1
     key_env: NAT100_API_KEY
     default_model: kimi-k2.6
-    max_output_tokens: 131072
-_config_version: 33
+    max_output_tokens: 16384

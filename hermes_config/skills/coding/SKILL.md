@@ -15,7 +15,7 @@ license: MIT
 compatibility:
   - hermes-agent >= 2026
 metadata:
-  version: "1.0"
+  version: "2.0"
   category: coding
 ---
 
@@ -70,8 +70,14 @@ search_files(target='content', pattern='def target_function', path='src/')
 | 测试覆盖 | `pytest <相关测试文件> -x` | 失败不提交 |
 | 类型检查 | `mypy <file>` 或 `pyright <file>` | 优先修复 |
 | 安全扫描 | `bandit -r <dir>` |  blocker |
+| 调用方确认 | `search_files` 搜索修改符号的全部引用 | 同步调整 |
+| diff 范围确认 | `git diff -- <file>` | 防止 SCOPE_CREEP |
 
 **规则**：未通过验证门禁的修改不得标记为完成。
+
+**优先自动化验证，子代理审查仅作兜底**：
+- T1 及以下任务：优先跑 `execute_code` 批量验证脚本，不创建 checker 子代理
+- 子代理返回空结果或明显 truncation → 直接内联执行其职责
 
 ## 5. 上下文管理
 
@@ -91,7 +97,7 @@ search_files(target='content', pattern='def target_function', path='src/')
 
 ### 提交规范
 - commit message 包含：修改摘要 + 关联的反模式/模式 ID（如 `fix(AP-001): 修复 BOM 污染`）
-- 大重构拆分为多个小 commit，每个 commit 对应一个 checker 验证单元
+- 大重构拆分为多个小 commit，每个 commit 对应一个验证单元
 
 ## 7. 工具链建议
 
