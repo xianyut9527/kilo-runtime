@@ -1,7 +1,7 @@
 compression:
   enabled: true
-  threshold: 0.5
-  target_ratio: 0.2
+  threshold: 0.8
+  target_ratio: 0.4
   protect_last_n: 30
   protect_first_n: 5
 delegation:
@@ -18,10 +18,9 @@ delegation:
     - code_execution
 memory:
   memory_enabled: false
-  user_profile_enabled: false
+  user_profile_enabled: true
   memory_char_limit: 0
-  user_char_limit: 0
-  # built-in memory 已禁用；持久记忆通过 fact_store (holographic) 工具独立访问
+  user_char_limit: 1375
 mcp_servers:
   gitnexus:
     command: npx
@@ -46,4 +45,4 @@ providers:
     key_env: NAT100_API_KEY
     default_model: kimi-k2.6
     max_output_tokens: 131072
-_config_version: 32
+_config_version: 33
