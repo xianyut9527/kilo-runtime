@@ -5,6 +5,18 @@
 ## [Unreleased]
 
 ### Added
+- **2026-07-07**: C 档方案落地——Kilo + Hermes 双轨架构，获得框架级 SOTA 能力。
+  - 新增 `hermes/` 目录存放 Hermes Agent 配置产物：
+    - `hermes/SOUL.md`：身份文件，从 coderAgent + workflow-core 提取编排精华（T0-T3 定级、7 节点流程日志、checker/reviewer 门禁、SCOPE_CREEP、验收映射表、自进化闭环、压缩后结构化恢复模板）。
+    - `hermes/config.yaml`：从 kilo.json 迁移 provider/compression/mcp/delegation/memory/skills 配置，适配 Hermes 双层压缩 + Anthropic prompt caching。
+    - `hermes/.hermes.md`：项目上下文文件，从 AGENTS.md 迁移编排锚点 + 工具体系映射表 + 子代理委派策略。
+    - `hermes/memories/`：复制 MEMORY.md + USER.md（Hermes 原生兼容 2200/1375 字符限制）。
+    - `hermes/skills/`：复制 4 个技能分类（anti-patterns/patterns/workflow/hermes-migration，agentskills.io 标准兼容）。
+    - `hermes/delegate-templates/README.md`：从 12 个 agent.md 提取 delegate_task 委派模板（engineer/checker/fixer/reviewer/architect/pre-checker/ensemble）。
+  - 新增 `install-hermes.ps1` + `install-hermes.sh`：双平台 Hermes 配置安装脚本，同步 `hermes/` 到 `~/.hermes/`。
+  - `validate-config.mjs` 新增 check12（Hermes 产物存在性：SOUL.md/config.yaml/.hermes.md/memories/skills/delegate-templates）+ check13（install-hermes 双平台 EXCLUDE 一致性）。总校验项 11→13。
+  - `README.md` 目录树新增 `hermes/` 子树 + install-hermes 脚本说明。
+  - **架构定位**：Kilo 保留为编排规则 + 项目知识层（B 档优化全部保留），Hermes 作为执行引擎获得 47 工具 + execute_code + session_search + prompt caching + delegate_task + checkpoint + RL 训练等框架级 SOTA 能力。两套配置共享 `~/.agents/skills` 社区技能源。
 - **2026-07-07**: 极强自进化编码智能体升级——基于 Kilo 真实工具构建可落地的自学习闭环。
   - 新增 `.kilo/skills/workflow/SKILL.md`：自进化工作流技能。基于 `kilo_local_recall`（跨会话记忆检索）+ `gitnexus_*`（代码图谱）+ git history（持久经验）构建真实可落地的自我学习闭环。定义记忆三层架构（L1 冻结快照 / L2 跨会话历史 / L3 代码图谱 / L4 持久经验）、5 个触发条件、5 步闭环流程。不依赖 LLM 自觉回写（已证明无效），每一层都用真实工具驱动。
   - 新增 `.kilo/skills/hermes-migration/SKILL.md`：Kilo → Hermes 迁移工具包（C 档方案）。包含迁移映射表、SOUL.md 模板、config.yaml 模板、9 步迁移流程、VS Code/Trae 编辑器集成、回退方案。保留 Kilo 编排哲学精华，获得 Hermes 47 工具+execute_code+session_search+prompt caching+delegate_task+checkpoint+RL 训练等框架级 SOTA 能力。

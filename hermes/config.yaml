@@ -1,0 +1,84 @@
+# Hermes Agent 配置（从 kilo.json 迁移）
+# 部署位置：~/.hermes/config.yaml
+# 迁移工具：见 .kilo/skills/hermes-migration/SKILL.md
+
+# ============================================================
+# Provider / Model（从 kilo.json provider.hx 迁移）
+# ============================================================
+# Hermes v0.18+ 要求 provider/model 配置在 model: section 下
+# 首次使用需运行 `hermes model` 选择 custom provider 并配置 API key
+# 或在此处直接配置 + 在 .env 设置 CUSTOM_API_KEY
+model:
+  default: kimi-k2.7-code          # 主模型（从 kilo.json agent.coderAgent.model 迁移）
+  provider: custom                  # 使用 custom endpoint（OpenAI 兼容）
+  custom_base_url: "https://huixin.nat100.top/v1"  # 从 kilo.json provider.hx.options.baseURL 迁移
+  # API key 从 .env 的 CUSTOM_API_KEY 读取，不硬编码
+
+# 可用模型（从 kilo.json provider.hx.models 迁移）：
+# - kimi-k2.7-code（主控，200K 上下文，16K 输出）
+# - kimi-k2.6（规划/合并，200K 上下文）
+# - MiniMax-M3（实现，200K 上下文，16K 输出，多模态）
+# - MiniMax-M2.7-highspeed（降级路由，200K 上下文）
+# - deepseek-v4-flash（checker/fixer，reasoning）
+# - deepseek-v4-pro（reasoning）
+# - glm-5.2（reviewer/executor-C，reasoning）
+# - qwen3.7-max / qwen3.7-plus（reasoning）
+# 切换模型：hermes config set model <model-name>
+
+# ============================================================
+# Compression（从 kilo.json compaction 迁移 + Hermes 升级）
+# ============================================================
+# Kilo compaction: threshold_percent 70, tail_turns 20, preserve_recent_tokens 80000
+# Hermes 升级：双层压缩（网关 85% 安全网 + 代理 50% 主压缩）+ 结构化摘要
+compression:
+  enabled: true
+  threshold: 0.50           # 50% 触发主压缩（比 Kilo 70% 更早，Hermes 算法更强）
+  target_ratio: 0.20        # 尾部保护 token 预算比例
+  protect_last_n: 20        # 对齐 Kilo tail_turns:20
+
+# ============================================================
+# Delegation（从 kilo.json agent.*.model 迁移）
+# ============================================================
+# Hermes delegate_task 子代理配置
+# 对应 Kilo 的 engineer/checker/fixer/reviewer/architect 角色分配
+delegation:
+  max_iterations: 50                        # 每个子代理最大迭代数
+  default_toolsets: ["terminal", "file", "web"]
+  # 子代理可用更便宜的模型（对应 Kilo small_model 降级路由）
+  # model: "MiniMax-M2.7-highspeed"
+  # provider: "custom"
+
+# ============================================================
+# Memory（与 Kilo .kilo/memory/ 完全兼容）
+# ============================================================
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 2200     # 与 Kilo MEMORY.md 一致
+  user_char_limit: 1375       # 与 Kilo USER.md 一致
+
+# ============================================================
+# MCP Servers（从 kilo.json mcp 迁移）
+# ============================================================
+mcp_servers:
+  gitnexus:
+    command: npx
+    args: ["gitnexus", "mcp"]
+  # context7 已启用（从 kilo.json mcp.context7.enabled: true 迁移）
+  # Hermes 原生支持 web_search/web_extract，context7 可选保留
+  # context7:
+  #   command: npx
+  #   args: ["-y", "@upstash/context7-mcp"]
+
+# ============================================================
+# Skills（与 Kilo .kilo/skills/ 共享，兼容 agentskills.io 标准）
+# ============================================================
+skills:
+  external_dirs:
+    - ~/.agents/skills       # 社区技能源（与 Kilo 共享）
+    - ~/.config/kilo/.kilo/skills  # Kilo 项目级技能（只读引用）
+
+# ============================================================
+# Personality（可选，通过 /personality 切换）
+# ============================================================
+# personality: default

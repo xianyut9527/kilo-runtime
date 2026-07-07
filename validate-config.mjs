@@ -2,17 +2,21 @@
 // validate-config.mjs
 // kilo_config 配置自检脚本（Node ESM，跨平台）
 // 校验项：
-//   [1/11] kilo.json JSON 合法性
-//   [2/11] agent 名单一致性
-//   [3/11] skills 分类一致性
-//   [4/11] agent 文件 frontmatter 合规性（含 color / hidden）
-//   [5/11] kilo.json prompt 中引用的文档路径存在性
-//   [6/11] README.md 目录树一致性
-//   [7/11] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
-//   [8/11] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
-//   [9/11] coderAgent prompt 锚点关键词校验（防 compaction 误删）
-//   [10/11] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
-//   [11/11] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
+//   [1/13] kilo.json JSON 合法性
+//   [2/13] agent 名单一致性
+//   [3/13] skills 分类一致性
+//   [4/13] agent 文件 frontmatter 合规性（含 color / hidden）
+//   [5/13] kilo.json prompt 中引用的文档路径存在性
+//   [6/13] README.md 目录树一致性
+//   [7/13] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
+//   [8/13] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
+//   [9/13] coderAgent prompt 锚点关键词校验（防 compaction 误删）
+//   [10/13] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
+//   [11/13] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
+//   [12/13] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
+//   [13/13] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
+//   [12/13] Hermes 产物存在性（SOUL.md + config.yaml + .hermes.md + memories + skills + delegate-templates）
+//   [13/13] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -960,7 +964,99 @@ function check11InstallExcludeSync() {
   return { name, pass: false, detail: errors.join('; ') };
 }
 
-// ---------- 主流程：读取 kilo.json 一次，供后续 check 复用 ----------
+// ---------- Check 12: Hermes 产物存在性 ----------
+// 校验 hermes/ 目录下的关键配置产物是否存在：
+//   SOUL.md（身份文件）、config.yaml（配置）、.hermes.md（上下文文件）
+//   memories/MEMORY.md + USER.md（记忆，与 Kilo 兼容）
+//   skills/ 下至少有 workflow + hermes-migration 分类
+function check12HermesArtifacts() {
+  const name = 'Hermes 产物存在性';
+  const hermesDir = path.resolve(ROOT, 'hermes');
+  if (!fs.existsSync(hermesDir) || !fs.statSync(hermesDir).isDirectory()) {
+    return { name, pass: false, detail: 'hermes/ 目录不存在' };
+  }
+
+  const required = [
+    'SOUL.md',
+    'config.yaml',
+    '.hermes.md',
+    'memories/MEMORY.md',
+    'memories/USER.md',
+    'skills/workflow/SKILL.md',
+    'skills/hermes-migration/SKILL.md',
+    'delegate-templates/README.md',
+  ];
+
+  const missing = [];
+  for (const f of required) {
+    const abs = path.resolve(hermesDir, f);
+    if (!fs.existsSync(abs)) {
+      missing.push(f);
+    }
+  }
+
+  if (missing.length === 0) {
+    return { name, pass: true, detail: `hermes/ 下 ${required.length} 个关键产物全部存在` };
+  }
+  return { name, pass: false, detail: `缺失: [${missing.join(', ')}]` };
+}
+
+// ---------- Check 13: install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性 ----------
+function check13HermesInstallExcludeSync() {
+  const name = 'install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性';
+  const shPath = path.resolve(ROOT, 'install-hermes.sh');
+  const ps1Path = path.resolve(ROOT, 'install-hermes.ps1');
+
+  if (!fs.existsSync(shPath)) {
+    return { name, pass: false, detail: 'install-hermes.sh 不存在' };
+  }
+  if (!fs.existsSync(ps1Path)) {
+    return { name, pass: false, detail: 'install-hermes.ps1 不存在' };
+  }
+
+  let shText, psText;
+  try {
+    shText = fs.readFileSync(shPath, 'utf8');
+    psText = fs.readFileSync(ps1Path, 'utf8');
+  } catch (e) {
+    return { name, pass: false, detail: `读取失败: ${e.message}` };
+  }
+
+  const shRoot = extractBashArray(shText, 'ROOT_ONLY_EXCLUDE');
+  const shRec = extractBashArray(shText, 'RECURSIVE_EXCLUDE');
+  const psRoot = extractPsArray(psText, 'RootOnlyExclude');
+  const psRec = extractPsArray(psText, 'RecursiveExclude');
+
+  if (shRoot === null) return { name, pass: false, detail: 'install-hermes.sh 未找到 ROOT_ONLY_EXCLUDE' };
+  if (shRec === null) return { name, pass: false, detail: 'install-hermes.sh 未找到 RECURSIVE_EXCLUDE' };
+  if (psRoot === null) return { name, pass: false, detail: 'install-hermes.ps1 未找到 $RootOnlyExclude' };
+  if (psRec === null) return { name, pass: false, detail: 'install-hermes.ps1 未找到 $RecursiveExclude' };
+
+  const errors = [];
+  const rootDiff = diffSets(shRoot, psRoot);
+  if (rootDiff.onlyInA.length || rootDiff.onlyInB.length) {
+    const parts = [];
+    if (rootDiff.onlyInA.length) parts.push(`sh 独有: [${rootDiff.onlyInA.join(', ')}]`);
+    if (rootDiff.onlyInB.length) parts.push(`ps1 独有: [${rootDiff.onlyInB.join(', ')}]`);
+    errors.push(`ROOT_ONLY: ${parts.join('; ')}`);
+  }
+  const recDiff = diffSets(shRec, psRec);
+  if (recDiff.onlyInA.length || recDiff.onlyInB.length) {
+    const parts = [];
+    if (recDiff.onlyInA.length) parts.push(`sh 独有: [${recDiff.onlyInA.join(', ')}]`);
+    if (recDiff.onlyInB.length) parts.push(`ps1 独有: [${recDiff.onlyInB.join(', ')}]`);
+    errors.push(`RECURSIVE: ${parts.join('; ')}`);
+  }
+
+  if (errors.length === 0) {
+    return {
+      name,
+      pass: true,
+      detail: `ROOT_ONLY ${shRoot.length} 条 + RECURSIVE ${shRec.length} 条在 install-hermes.sh / install-hermes.ps1 之间完全一致`,
+    };
+  }
+  return { name, pass: false, detail: errors.join('; ') };
+}
 const kiloBuf = (() => {
   try {
     return fs.readFileSync(path.resolve(ROOT, 'kilo.json'));
@@ -988,7 +1084,9 @@ const r8 = check8PromptOverlap(config);
 const r9 = check9CoderAgentAnchors(config);
 const r10 = check10SkillFrontmatter();
 const r11 = check11InstallExcludeSync();
-const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11];
+const r12 = check12HermesArtifacts();
+const r13 = check13HermesInstallExcludeSync();
+const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13];
 
 // ---------- 输出 ----------
 const out = [];

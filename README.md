@@ -28,10 +28,25 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 
 ```text
 kilo_config/
-├── kilo.json                     # 全局配置入口
+├── kilo.json                     # 全局配置入口（Kilo 侧）
 ├── AGENTS.md                     # 全局骨架设计与长期参考文档
 ├── CONFIG_CHANGE_CHECKLIST.md    # 配置变更一致性检查清单
-├── .kilo/
+├── hermes/                       # Hermes Agent 配置产物（C 档方案）
+│   ├── SOUL.md                   # 身份文件（从 coderAgent 迁移编排精华）
+│   ├── config.yaml               # Hermes 配置（provider/compression/mcp/delegation）
+│   ├── .hermes.md                # 项目上下文文件（从 AGENTS.md 迁移）
+│   ├── memories/                 # 记忆（与 Kilo .kilo/memory/ 兼容）
+│   │   ├── MEMORY.md             # agent 笔记（≤ 2200 字符）
+│   │   └── USER.md               # 用户档案（≤ 1375 字符）
+│   ├── skills/                   # 技能（与 Kilo .kilo/skills/ 共享，agentskills.io 标准）
+│   │   ├── anti-patterns/
+│   │   ├── patterns/
+│   │   ├── workflow/             # 自进化工作流
+│   │   └── hermes-migration/     # Kilo→Hermes 迁移工具包
+│   └── delegate-templates/       # delegate_task 委派模板（从 agent/*.md 迁移）
+├── install-hermes.ps1            # Hermes 配置安装脚本（Windows）
+├── install-hermes.sh             # Hermes 配置安装脚本（macOS/Linux）
+├── .kilo/                        # Kilo 配置（保留为编排规则 + 项目知识层）
 │   ├── instructions/
 │   │   ├── core.md                # 运行时核心规则
 │   │   ├── workflow-core.md       # 运行时工作流规则（自动注入）
@@ -48,7 +63,7 @@ kilo_config/
 │   └── memory/                   # 程序化记忆（参考 Hermes Agent）
 │       ├── MEMORY.md             # agent 笔记（≤ 2200 字符）
 │       └── USER.md               # 用户档案（≤ 1375 字符）
-├── agent/                        # 智能体定义（全局可用）
+├── agent/                        # Kilo 智能体定义（全局可用）
 │   ├── coderAgent.md
 │   ├── architect.md
 │   ├── engineer.md
@@ -64,8 +79,8 @@ kilo_config/
 ├── examples/                     # 运行示例与展示文档
 │   ├── runtime-progress.md       # 强制流程日志的运行时展示示例（含当前步骤高亮）
 │   └── install-check.md          # 全局配置同步验证示例（如何确认已正确安装）
-├── install.ps1
-├── install.sh
+├── install.ps1                   # Kilo 配置安装脚本（Windows）
+├── install.sh                    # Kilo 配置安装脚本（macOS/Linux）
 └── README.md
 ```
 
