@@ -72,6 +72,7 @@ $env:NAT100_API_KEY="your-key"
 
 脚本行为：
 - 合并式更新：只覆盖 `SOUL.md`、`config.yaml`、`.hermes.md`、`skills/`
+- 自动启用 `config.yaml` 中声明的 plugins（如 `security-guidance`）
 - **不触碰 `~/.hermes/memories/`、`.env`、数据库、logs、sessions 等个人运行时数据**
 - 保留 Hermes 运行时数据：`sessions/`、`memory_store.db`、`state.db`、`logs/` 等
 
@@ -85,7 +86,18 @@ hermes
 
 ---
 
-## 4. 手动同步清单
+## 4. 策略说明
+
+本配置采用**单强模型 + 双重验证 + 三视角审查**策略：
+
+- **单强模型**：所有任务默认使用 `kimi-k2.7-code`，不启用多模型路由，避免分配判断引入噪声。
+- **双重 checker**：正向 checker 验证需求满足度、语法、逻辑、边界、安全；反向 checker 扫描 SCOPE_CREEP、调试残留、重复实现。
+- **三视角 reviewer**：安全 / 架构 / 简化。
+- **一次性完成判定**：正向 checker PASS + 反向 checker PASS + reviewer 无 blocker + 无 fixer 轮次。
+
+---
+
+## 5. 手动同步清单
 
 不想用脚本时，复制这些文件到 `~/.hermes/`（Windows 是 `%LOCALAPPDATA%\hermes\`）：
 
@@ -100,7 +112,7 @@ hermes
 
 ---
 
-## 5. 可选：切换官方 Kimi Provider
+## 6. 可选：切换官方 Kimi Provider
 
 如 huixin 转发不稳定，替换 `hermes_config/config.yaml` 中 providers 段：
 
@@ -118,21 +130,21 @@ providers:
 
 ---
 
-## 6. 编码统一规则
+## 7. 编码统一规则
 
 同步后所有设备默认遵循：
 
 1. 意图判定优先
 2. T0-T3 任务定级
-3. 7 节点流程日志
-4. engineer → checker → fixer 闭环
-5. reviewer 总体验收
-6. SCOPE_CREEP 反向核对
-7. 验收必附映射表
+3. 7 节点强制流程日志
+4. engineer → 双重 checker（正向 + 反向）→ fixer → reviewer 三视角 闭环
+5. SCOPE_CREEP 反向核对
+6. 验收必附映射表
+7. 一次性完成判定：双重 checker PASS + reviewer 无 blocker + 无 fixer 轮次
 
 ---
 
-## 7. 团队协作要点
+## 8. 团队协作要点
 
 | 场景 | 操作 |
 |------|------|

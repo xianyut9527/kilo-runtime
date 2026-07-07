@@ -119,12 +119,21 @@ try {
 
     Write-Host "[SYNC] OK | files=$CopiedFiles dirs=$CopiedDirs | critical=$($CriticalFiles.Count)/$($CriticalFiles.Count) | target=$Target" -ForegroundColor Green
 
+    # 启用 config.yaml 中声明的 plugins（如果 hermes CLI 可用）
+    if (Get-Command hermes -ErrorAction SilentlyContinue) {
+        $pluginList = hermes plugins list --plain 2>$null
+        if ($pluginList -match "security-guidance") {
+            Write-Host "[PLUGIN] Enabling security-guidance..." -ForegroundColor Cyan
+            hermes plugins enable security-guidance 2>$null
+        }
+    }
+
     Write-Host ""
     Write-Host "Next steps:" -ForegroundColor Cyan
-    Write-Host "  1. Configure provider: hermes model (select custom endpoint)" -ForegroundColor Gray
-    Write-Host "  2. Set API key env: \$env:NAT100_API_KEY = '<your-key>'" -ForegroundColor Gray
-    Write-Host "  3. Start: hermes" -ForegroundColor Gray
-    Write-Host "  4. Verify: hermes doctor" -ForegroundColor Gray
+    Write-Host '  1. Configure provider: hermes model (select custom endpoint)' -ForegroundColor Gray
+    Write-Host '  2. Set API key env: $env:NAT100_API_KEY = "<your-key>"' -ForegroundColor Gray
+    Write-Host '  3. Start: hermes' -ForegroundColor Gray
+    Write-Host '  4. Verify: hermes doctor' -ForegroundColor Gray
     Write-Host ""
     Write-Host "Note: local memories/ are personal/device assets and are NOT synced by this script." -ForegroundColor Gray
     Write-Host ""

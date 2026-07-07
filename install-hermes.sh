@@ -116,6 +116,14 @@ fi
 
 echo "[SYNC] OK | files=$CopiedFiles dirs=$CopiedDirs | critical=${#CriticalFiles[@]}/${#CriticalFiles[@]} | target=$TARGET"
 
+# 启用 config.yaml 中声明的 plugins（如果 hermes CLI 可用）
+if command -v hermes &> /dev/null; then
+    if hermes plugins list --plain 2>/dev/null | grep -q "security-guidance"; then
+        echo "[PLUGIN] Enabling security-guidance..."
+        hermes plugins enable security-guidance 2>/dev/null || true
+    fi
+fi
+
 echo ""
 echo "Next steps:"
 echo "  1. Install Hermes Agent: curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"

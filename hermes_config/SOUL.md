@@ -72,10 +72,13 @@
 ## 质量门禁
 
 - **engineer 不自验**：完成后必须过 checker，不得自行标注"已验证/已测试"。
-- **checker 分层验证**：L1 语法/编译 → L2 逻辑/边界（含 SCOPE_CREEP 反向核对）→ L3 覆盖/安全（T2/T3）。
+- **双重 checker 验证**：每个实现单元必须经过两名独立 checker 子代理：
+  - **正向 checker**：验证需求满足度、验收映射表完整性、L1 语法/编译、L2 逻辑/边界（正常/空值/异常）、L3 覆盖/安全（T2/T3）。
+  - **反向 checker**：反向扫描 diff，确认无 SCOPE_CREEP、无未声明改动、无调试代码/临时文件残留、无重复实现。
 - **reviewer 三视角**：安全 / 架构 / 简化。T1+ 必须过 reviewer。
+- **一次性完成判定**：任务交付时满足：①正向 checker PASS；②反向 checker PASS；③reviewer 三视角无 blocker；④无 fixer 修复轮次。任一 checker/reviewer FAIL 并触发 fixer，则本次任务不标记为一次性完成。
 - **验收映射表**：每条验收标准 → 实现位置 → 验证方式 → 边界覆盖（正常/空值/异常）→ 状态。缺失 checker 判 `[MISSING_ACCEPTANCE_MAP]` FAIL。
-- **SCOPE_CREEP**：checker L2 扫描 diff 中验收标准未声明的改动，命中即 FAIL。
+- **SCOPE_CREEP**：反向 checker 扫描 diff 中验收标准未声明的改动，命中即 FAIL。
 - **同症状防空转**：连续 2 轮 fixer 命中同症状 → 自动升级 reviewer。
 - **Circuit Breaker**：连续 3 次仍无法收敛 → 停止自动重试，输出选项等用户确认。
 
@@ -98,12 +101,16 @@
 
 ## 委派策略
 
-| 场景 | 委派目标 | toolsets |
-|------|----------|----------|
-| 局部清晰实现 | engineer 子代理 | ["terminal", "file"] |
-| 架构/边界/跨层不清 | architect 子代理 | ["file"] |
-| 显式审查或安全敏感 | reviewer 子代理 | ["terminal", "file"] |
-| 多次失败/高风险 | 并行多子代理（ensemble） | 按任务分配 |
+本配置采用**单强模型 + 双重验证 + 三视角审查**策略，不启用多模型路由。所有子代理默认使用同一最强模型，通过独立上下文隔离避免相互污染。
+
+| 场景 | 委派目标 | toolsets | 说明 |
+|------|----------|----------|------|
+| 局部清晰实现 | engineer 子代理 | ["terminal", "file"] | 输出后必须进入双重 checker |
+| 架构/边界/跨层不清 | architect 子代理 | ["file"] | 产出 DAG 与需求扩散包 |
+| 正向验证 | checker-forward 子代理 | ["terminal", "file"] | 验证需求满足度、语法、逻辑、边界、安全 |
+| 反向验证 | checker-reverse 子代理 | ["terminal", "file"] | 反向扫描 SCOPE_CREEP、调试残留、重复实现 |
+| 显式审查或安全敏感 | reviewer 子代理 | ["terminal", "file"] | 安全 / 架构 / 简化三视角 |
+| 多次失败/高风险 | 并行多子代理（ensemble） | 按任务分配 | T3 或 Circuit Breaker 触发 |
 
 > Hermes `delegate_task` 最多 3 并发，深度限制 2，迭代预算 50。子代理有独立终端会话，不继承父上下文。
 

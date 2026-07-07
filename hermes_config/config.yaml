@@ -25,6 +25,9 @@ mcp_servers:
       - mcp
 display:
   tool_progress: all
+plugins:
+  enabled:
+    - security-guidance
 model:
   default: kimi-k2.7-code
   provider: custom:huixin
