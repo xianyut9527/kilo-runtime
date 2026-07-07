@@ -1,0 +1,48 @@
+compression:
+  enabled: true
+  threshold: 0.5
+  target_ratio: 0.2
+  protect_last_n: 20
+delegation:
+  max_iterations: 50
+  default_toolsets:
+    - terminal
+    - file
+    - web
+    - browser
+    - code_exec
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 2200
+  user_char_limit: 1375
+  provider: holographic
+mcp_servers:
+  gitnexus:
+    command: npx
+    args:
+      - gitnexus
+      - mcp
+display:
+  tool_progress: all
+agent:
+  verify_on_stop: false
+plugins:
+  enabled:
+    - hermes-memory-store
+  hermes-memory-store:
+    db_path: null
+    auto_extract: true
+    default_trust: 0.5
+_config_version: 32
+model:
+  default: kimi-k2.7-code
+  provider: custom:huixin
+  max_tokens: 16384
+providers:
+  huixin:
+    name: huixin
+    base_url: https://huixin.nat100.top/v1
+    key_env: NAT100_API_KEY
+    default_model: kimi-k2.7-code
+    max_output_tokens: 16384

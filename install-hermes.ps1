@@ -5,7 +5,7 @@
 # 只覆盖配置产物（SOUL.md/config.yaml/.hermes.md）和技能/记忆/委派模板。
 # Kilo 配置仍由 install.ps1 安装到 ~/.config/kilo/
 
-$Source = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "hermes"
+$Source = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "hermes_config"
 
 # Windows: Hermes 使用 LOCALAPPDATA\hermes（不是 ~/.hermes/）
 # Linux/macOS: Hermes 使用 ~/.hermes/

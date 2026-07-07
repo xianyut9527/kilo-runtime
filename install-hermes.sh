@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE="$SCRIPT_DIR/hermes"
+SOURCE="$SCRIPT_DIR/hermes_config"
 TARGET="$HOME/.hermes"
 
 if [ ! -d "$SOURCE" ]; then

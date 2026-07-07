@@ -33,6 +33,17 @@ metadata:
 > 当用户决定全面 Hermes 化（C 档方案）以获得框架级 SOTA 能力时使用本技能。
 > 迁移后保留 Kilo 编排哲学精华（T0-T3 定级、7 节点流程日志、checker/reviewer 门禁），获得 Hermes 47 工具+execute_code+session_search+prompt caching+delegate_task+checkpoint+RL 训练。
 
+## 关键认知：kilo 与 Hermes 的关系
+
+**kilo 与 Hermes 是两套独立的 AI Agent 框架**，不是同一套系统的不同配置。
+
+- **kilo** 是旧的 Agent 运行时（基于 `kilo.json` + `AGENTS.md` + `.kilo/instructions/`）
+- **Hermes** 是新的 Agent 运行时（基于 `config.yaml` + `SOUL.md` + 47 工具）
+- Hermes 启动时可以**参考/继承** kilo 里沉淀的编排规则、skills、memory，但运行时互不依赖
+- 把 kilo 的精华迁移到 Hermes 后，Hermes 的 `config.yaml` 里可能还残留指向 kilo 目录的 `external_dirs`，这只是配置层面的快捷方式，**删除后不影响 Hermes 独立运行**
+
+> 一句话：旧车的零件和驾驶经验已经搬到新车上了，但两辆车的发动机、油箱、电路系统是独立的。
+
 ## 何时使用本技能
 
 - 用户明确要求"全面 Hermes 化"或"抛弃 Kilo 用 Hermes"
@@ -181,6 +192,142 @@ hermes           # 启动，确认欢迎横幅显示模型/工具/技能
 | 47 工具+19 工具集 | ~10 工具 | ✅ | 浏览器/终端/Docker/SSH/MCP |
 | RL 训练+轨迹生成 | ❌ | ✅ Atropos | 真正的"自进化" |
 | Skills Hub | external_dirs | ✅ 7 个注册中心 | openai/skills、anthropics/skills、skills.sh... |
+
+## 迁移后解耦 kilo（关键收尾步骤）
+
+迁移完成后，Hermes 的 `config.yaml` 里可能还残留指向 kilo 目录的 `external_dirs` 引用，例如：
+
+```yaml
+skills:
+  external_dirs:
+    - ~/.agents/skills
+    - ~/.config/kilo/.kilo/skills   # ← 迁移后应移除
+```
+
+这条引用只是配置层面的快捷方式，让 Hermes 启动时额外扫描 kilo 目录。由于 Hermes 本地 `~/.hermes/skills/` 已经完整复制了 kilo 的精华（甚至可能比 kilo 目录的版本更新），保留该引用会带来**隐式不同步风险**而没有任何收益。
+
+### 解耦步骤
+
+1. **备份原配置**
+   ```bash
+   cp ~/.hermes/config.yaml ~/.hermes/config.yaml.bak.$(date +%Y%m%d-%H%M%S)
+   ```
+
+2. **移除 kilo 引用**
+   ```yaml
+   skills:
+     external_dirs:
+       - ~/.agents/skills
+   # 删除 ~/.config/kilo/.kilo/skills
+   ```
+
+3. **验证无 kilo 残留**
+   ```bash
+   grep -i kilo ~/.hermes/config.yaml || echo 'NO_KILO_REFS'
+   ```
+
+4. **验证本地 skills 完整**
+   ```bash
+   ls ~/.hermes/skills/
+   # 至少包含：anti-patterns、patterns、workflow、hermes-migration
+   ```
+
+5. **验证 memory 一致**
+   ```bash
+   diff -q ~/.hermes/memories/MEMORY.md <kilo-repo>/.kilo/memory/MEMORY.md
+   diff -q ~/.hermes/memories/USER.md <kilo-repo>/.kilo/memory/USER.md
+   ```
+
+### 解耦后的架构边界
+
+| 组件 | Hermes 路径 | kilo 路径 | 关系 |
+|------|-------------|-----------|------|
+| 运行时配置 | `~/.hermes/config.yaml` | `kilo.json` | 独立 |
+| 记忆数据库 | `~/.hermes/memory_store.db` | 无 | 独立 |
+| 冻结记忆 | `~/.hermes/memories/` | `.kilo/memory/` | Hermes 已复用，需显式同步 |
+| skills | `~/.hermes/skills/` | `.kilo/skills/` | Hermes 已复制，不再依赖扫描 |
+| 跨会话搜索 | `session_search` | `kilo_local_recall`（规划） | 独立且更强 |
+
+> 一句话：解耦后 kilo 仓库可以作为**历史备份/参考源**，但 Hermes 不再通过 `external_dirs` 隐式依赖它。后续若要从 kilo 同步更新，应 diff 后显式合并到 `~/.hermes/skills/` 和 `~/.hermes/memories/`。
+
+## 迁移后性能优化
+
+迁移解耦完成后，建议进一步开启 Hermes 的自动记忆提取和核心工具集，把框架潜力释放出来。
+
+> 完整快照见 `references/hermes-config-snapshot.yaml`。
+
+### 推荐配置
+
+```yaml
+delegation:
+  max_iterations: 50
+  default_toolsets:
+    - terminal
+    - file
+    - web
+    - browser
+    - code_exec
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 2200
+  user_char_limit: 1375
+  provider: holographic
+
+plugins:
+  enabled:
+    - hermes-memory-store
+  hermes-memory-store:
+    db_path: null
+    auto_extract: true
+    default_trust: 0.5
+```
+
+### 关键变更说明
+
+| 配置 | 作用 |
+|------|------|
+| `browser` 工具集 | 需要查网页/调试前端时默认可用 |
+| `code_exec` 工具集 | 复杂多步逻辑通过 Python 脚本一次完成 |
+| `hermes-memory-store` plugin | 自动从对话中提取事实写入 `fact_store` |
+| `auto_extract: true` | 记忆管理从手动变为半自动 |
+
+### 验证命令
+
+```bash
+hermes config check
+hermes skills list
+hermes
+```
+
+## 团队/多设备同步清单
+
+将 Hermes 配置复制到新设备或分发给团队时，同步以下文件即可保证编码一致性：
+
+```bash
+# 安装 Hermes
+curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+
+# 同步配置
+rsync -av ~/.hermes/config.yaml        <target>~/.hermes/
+rsync -av ~/.hermes/SOUL.md            <target>~/.hermes/
+rsync -av ~/.hermes/.hermes.md         <target>~/.hermes/
+rsync -av ~/.hermes/memories/          <target>~/.hermes/memories/
+rsync -av ~/.hermes/skills/            <target>~/.hermes/skills/
+
+# 安装依赖
+npm install -g gitnexus
+
+# 在新设备上设置环境变量
+export NAT100_API_KEY=<key>   # 或 KIMI_API_KEY，取决于 provider
+
+# 验证
+hermes config check
+hermes
+```
+
+> 环境变量（`NAT100_API_KEY` / `KIMI_API_KEY`）不包含在配置文件中，需单独分发。
 
 ## 回退方案
 
