@@ -9,3 +9,8 @@ providers:
     key_env: NAT100_API_KEY
     default_model: kimi-k2.6
     max_output_tokens: 16384
+
+mcp_servers:
+  gitnexus:
+    command: gitnexus
+    args: ["mcp"]

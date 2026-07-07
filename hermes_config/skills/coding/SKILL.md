@@ -15,7 +15,7 @@ license: MIT
 compatibility:
   - hermes-agent >= 2026
 metadata:
-  version: "2.0"
+  version: "2.1"
   category: coding
 ---
 
@@ -67,11 +67,12 @@ search_files(target='content', pattern='def target_function', path='src/')
 | 验证类型 | 命令 | 失败处理 |
 |----------|------|----------|
 | 语法检查 | `python -m py_compile <file>` 或对应 linter | 立即修复 |
-| 测试覆盖 | `pytest <相关测试文件> -x` | 失败不提交 |
 | 类型检查 | `mypy <file>` 或 `pyright <file>` | 优先修复 |
-| 安全扫描 | `bandit -r <dir>` |  blocker |
+| 测试覆盖 | `pytest <相关测试文件> -x` | 失败不提交 |
+| 安全扫描 | `bandit -r <dir>` | blocker |
 | 调用方确认 | `search_files` 搜索修改符号的全部引用 | 同步调整 |
 | diff 范围确认 | `git diff -- <file>` | 防止 SCOPE_CREEP |
+| 架构影响 | `gitnexus_impact <modified_symbol>` | 确认爆炸半径 |
 
 **规则**：未通过验证门禁的修改不得标记为完成。
 
@@ -99,14 +100,37 @@ search_files(target='content', pattern='def target_function', path='src/')
 - commit message 包含：修改摘要 + 关联的反模式/模式 ID（如 `fix(AP-001): 修复 BOM 污染`）
 - 大重构拆分为多个小 commit，每个 commit 对应一个验证单元
 
-## 7. 工具链建议
+## 7. gitnexus 命令参考（已安装 v1.6.5-2）
 
-| 工具 | 安装命令 | 提升 |
-|------|----------|------|
-| ripgrep | `choco install ripgrep` / `apt install ripgrep` | 搜索速度 10x |
-| agent-browser | `npm install -g @anthropic-ai/agent-browser` | 浏览器自动化 |
-| mypy | `pip install mypy` | 静态类型检查 |
-| bandit | `pip install bandit` | 安全漏洞扫描 |
-| pytest-xdist | `pip install pytest-xdist` | 并行测试 |
+> gitnexus MCP 已集成，以下命令通过 MCP 调用或 terminal 直接执行。
 
-> 未安装时 Hermes 回退到 grep/browser fallback，体验降级但可用。
+| 命令 | 用途 | 何时调用 |
+|------|------|----------|
+| `gitnexus analyze` | 分析/索引当前仓库 | 首次使用或重大变更后 |
+| `gitnexus status` | 检查索引状态 | 不确定是否已索引 |
+| `gitnexus impact <symbol>` | 修改爆炸半径 | 修改函数/类/接口前 |
+| `gitnexus context <symbol>` | 360° 符号视图 | 需要 callers/callees 时 |
+| `gitnexus detect_changes` | 映射 diff 到受影响流 | git diff 后确认 |
+| `gitnexus query <concept>` | 语义搜索执行流 | 概念级定位 |
+| `gitnexus cypher "<query>"` | 原始 Cypher 查询 | 高级自定义查询 |
+
+**索引状态检查**：
+```bash
+cd <repo> && gitnexus status
+# ✅ up-to-date → 可用
+# not indexed → gitnexus analyze
+```
+
+## 8. 工具链状态
+
+| 工具 | 安装命令 | 状态 | 用途 |
+|------|----------|------|------|
+| gitnexus | `npm install -g gitnexus` | ✅ v1.6.5-2 | 代码图谱 |
+| mypy | `pip install mypy` | ✅ v2.1.0 | 类型检查 |
+| bandit | `pip install bandit` | ✅ v1.9.4 | 安全扫描 |
+| pytest | `pip install pytest` | ✅ v9.1.1 | 测试执行 |
+| pytest-cov | `pip install pytest-cov` | ✅ v7.1.0 | 覆盖率 |
+| pytest-asyncio | `pip install pytest-asyncio` | ✅ v1.4.0 | 异步测试 |
+| ripgrep | `choco install ripgrep` / `apt install ripgrep` | ❌ 未装 | 搜索速度 10x |
+
+> 未安装时 Hermes 回退到 grep fallback，体验降级但可用。
