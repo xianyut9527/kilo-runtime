@@ -20,7 +20,7 @@ keywords:
   - C 档
 license: MIT
 compatibility:
-  - kilo >= 1.0
+  - hermes-agent >= 2026
   - target: hermes-agent >= 2026
   - requires WSL2 on Windows
 metadata:

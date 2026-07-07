@@ -1,34 +1,31 @@
 ---
 name: user
-description: 用户档案（用户偏好 + 项目约定）。可由用户直接编辑；coderAgent 在加载时作为 USER 偏好注入上下文。
+description: 用户档案。存放用户偏好和项目约定，由用户直接编辑。
 license: MIT
 compatibility:
-  - kilo >= 1.0
+  - hermes-agent >= 2026
 metadata:
   version: "1.0"
   char_limit: 1375
   category: memory
 ---
 
-# USER.md（用户档案）
+# USER.md
 
-> 本文件存放用户偏好和项目约定。可由用户直接编辑。
-> 字符限制：**≤ 1375 字符**（约 300–450 tokens）。
-> 加载机制：与 MEMORY.md 一同由 coderAgent 在任务启动时注入。
+> 用户偏好 + 项目约定。
+> 字符限制：≤ 1375 字符。
 
 ## 用户偏好
 
-<!-- 由用户直接编辑；agent 不得自动写入 -->
+<!-- 由用户直接编辑 -->
 
 ## 项目约定
 
-<!-- 由用户直接编辑；agent 不得自动写入 -->
-
-> 写入权限见 `.kilo/instructions/workflow-reference.md`「程序化记忆」章节。
+<!-- 由用户直接编辑 -->
 
 ## 安全约束
 
-⚠️ **禁止写入以下内容**（review-security 会检查并拦截）：
+⚠️ **禁止写入以下内容**：
 - API Key / Token / 密码 / 凭证
 - 内部域名 / IP 地址 / 内部 URL
 - 个人身份信息（PII）

@@ -7,8 +7,7 @@
 ## 1. 目录结构
 
 ```text
-kilo_config/
-├── kilo_config/          ← kilo 历史配置（不再作为运行时）
+repo/
 ├── hermes_config/        ← Hermes 配置资产（同步这个目录）
 │   ├── config.yaml
 │   ├── SOUL.md
@@ -38,33 +37,28 @@ pip install hermes-agent
 
 ### 2.2 设置 API Key
 
-当前使用 huixin 转发 Kimi：
-
 ```bash
+# Linux / macOS / WSL2
 export NAT100_API_KEY="your-key"
-```
 
-Windows PowerShell：
-
-```powershell
+# Windows PowerShell
 $env:NAT100_API_KEY="your-key"
 ```
 
 ### 2.3 同步配置
 
-Linux / macOS / WSL2：
-
 ```bash
-cd kilo_config
+# Linux / macOS / WSL2
 ./install-hermes.sh
-```
 
-Windows：
-
-```powershell
-cd kilo_config
+# Windows
 .\install-hermes.ps1
 ```
+
+配置会被复制到：
+
+- Linux/macOS：`~/.hermes/`
+- Windows：`%LOCALAPPDATA%\hermes\`
 
 ### 2.4 验证
 
@@ -119,6 +113,17 @@ providers:
 5. reviewer 总体验收
 6. SCOPE_CREEP 反向核对
 7. 验收必附映射表
+
+---
+
+## 6. 团队协作要点
+
+| 场景 | 操作 |
+|------|------|
+| 新成员加入 | clone → 设置 key → 运行 install-hermes 脚本 |
+| 个人改配置 | 改完后复制回 `hermes_config/` 并提交 |
+| 添加新 skill | 放到 `hermes_config/skills/` 并提交 |
+| 更新记忆约束 | 改 `hermes_config/memories/MEMORY.md` 并提交 |
 
 ---
 
