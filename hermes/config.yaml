@@ -5,14 +5,21 @@
 # ============================================================
 # Provider / Model（从 kilo.json provider.hx 迁移）
 # ============================================================
-# Hermes v0.18+ 要求 provider/model 配置在 model: section 下
-# 首次使用需运行 `hermes model` 选择 custom provider 并配置 API key
-# 或在此处直接配置 + 在 .env 设置 CUSTOM_API_KEY
+# Hermes v0.18+ 要求 custom provider 用 providers: dict 格式
+# providers.<name>.key_env 指定读取哪个环境变量作为 API key
+# .env 中设置 NAT100_API_KEY=<your-key>（变量名由 base_url host huixin.nat100.top 推导）
 model:
-  default: kimi-k2.7-code          # 主模型（从 kilo.json agent.coderAgent.model 迁移）
-  provider: custom                  # 使用 custom endpoint（OpenAI 兼容）
-  custom_base_url: "https://huixin.nat100.top/v1"  # 从 kilo.json provider.hx.options.baseURL 迁移
-  # API key 从 .env 的 CUSTOM_API_KEY 读取，不硬编码
+  default: kimi-k2.7-code
+  provider: custom:huixin
+  max_tokens: 16384
+  max_tokens: 16384            # kimi-k2.7-code output limit（超过 32768 会报 400）
+providers:
+  huixin:
+    name: huixin
+    base_url: "https://huixin.nat100.top/v1"  # 从 kilo.json provider.hx.options.baseURL 迁移
+    key_env: NAT100_API_KEY                    # 从 .env 读取，不硬编码
+    default_model: kimi-k2.7-code
+    max_output_tokens: 16384                   # kimi-k2.7-code output limit
 
 # 可用模型（从 kilo.json provider.hx.models 迁移）：
 # - kimi-k2.7-code（主控，200K 上下文，16K 输出）
@@ -23,7 +30,7 @@ model:
 # - deepseek-v4-pro（reasoning）
 # - glm-5.2（reviewer/executor-C，reasoning）
 # - qwen3.7-max / qwen3.7-plus（reasoning）
-# 切换模型：hermes config set model <model-name>
+# 切换模型：hermes config set model.default <model-name>
 
 # ============================================================
 # Compression（从 kilo.json compaction 迁移 + Hermes 升级）
@@ -49,13 +56,23 @@ delegation:
   # provider: "custom"
 
 # ============================================================
-# Memory（与 Kilo .kilo/memory/ 完全兼容）
+# Memory（内置 MEMORY.md + Holographic 记忆提供商双轨）
 # ============================================================
+# L1 内置：MEMORY.md / USER.md 冻结快照（与 Kilo 完全兼容）
+# L2 Holographic：本地 SQLite + 自动事实提取 + 语义搜索 + 信任评分 + 矛盾检测
 memory:
   memory_enabled: true
   user_profile_enabled: true
-  memory_char_limit: 2200     # 与 Kilo MEMORY.md 一致
-  user_char_limit: 1375       # 与 Kilo USER.md 一致
+  memory_char_limit: 2200     # 内置 MEMORY.md 限制（与 Kilo 一致）
+  user_char_limit: 1375       # 内置 USER.md 限制（与 Kilo 一致）
+  provider: holographic       # 外部记忆提供商：本地 SQLite，免费，无需 API key
+
+# Holographic 记忆提供商配置
+plugins:
+  hermes-memory-store:
+    db_path: null             # 默认 $HERMES_HOME/memory_store.db
+    auto_extract: true        # 会话结束时自动提取事实（启用自学习）
+    default_trust: 0.5        # 默认信任分值（0.0-1.0）
 
 # ============================================================
 # MCP Servers（从 kilo.json mcp 迁移）

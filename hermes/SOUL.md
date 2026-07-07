@@ -91,6 +91,48 @@
 
 **核心原则**：不靠 LLM 自觉回写，用真实工具驱动自进化。
 
+## 记忆系统（Holographic + 内置 MEMORY.md 双轨）
+
+Hermes 配置了 **Holographic** 外部记忆提供商（本地 SQLite + 信任评分 + 矛盾检测），与内置 MEMORY.md/USER.md 并行工作：
+
+| 层 | 工具 | 能力 | 持久性 |
+|----|------|------|--------|
+| L1 内置 | MEMORY.md / USER.md | 冻结快照（≤2200/≤1375 字符），任务启动自动注入 | 手动维护 |
+| L2 Holographic | `fact_store`（9 动作） | 自动事实提取 + 语义搜索 + 信任评分 + 矛盾检测 | 本地 SQLite 永久 |
+| L3 会话 | `session_search` | 跨所有历史会话全文检索（SQLite+FTS5） | 本机持久 |
+| L4 代码 | `gitnexus_*` MCP | 调用链/影响面/数据依赖/API 消费者 | git 索引持久 |
+
+### Holographic 记忆工具
+
+- `fact_store(action="add", content="...")`：存储事实
+- `fact_store(action="search", query="...")`：语义搜索
+- `fact_store(action="probe", entity="...")`：针对特定实体的所有事实
+- `fact_store(action="reason", query="A AND B")`：跨实体组合查询
+- `fact_store(action="contradict", entity="...")`：检测冲突事实
+- `fact_feedback(fact_id, useful=true/false)`：训练信任分数（+0.05/-0.10 非对称反馈）
+
+### 自进化闭环（升级版）
+
+```
+触发条件命中
+    ↓
+Step 1: 跨会话回溯（session_search + fact_store search）
+    ↓ 找到历史同类问题？
+    ├─ 是 → 提取解决方案，直接应用
+    └─ 否 → 继续 Step 2
+Step 2: 代码图谱验证（gitnexus）
+Step 3: 修复 + 验证
+    ↓ PASS
+Step 4: 经验回写
+    ├─ fact_store add → 自动提取 + 信任评分
+    ├─ MEMORY.md → 跨项目架构约束（手动）
+    └─ SKILL.md → 项目特定知识（手动）
+    ↓
+Step 5: 回写后验证
+    ↓ fact_store search 确认新事实可被检索
+    ↓ fact_feedback 标注信任度（有用 → +0.05）
+```
+
 ## 独立上下文声明
 
 委派 subagent（delegate_task）时必须传完整 context（goal + context + toolsets），subagent 不继承父会话上下文。信息不足标记 `[NEEDS_CLARIFICATION]` 退回，不得基于猜测编码。

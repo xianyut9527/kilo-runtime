@@ -5,6 +5,18 @@
 ## [Unreleased]
 
 ### Added
+- **2026-07-07**: 接入 Holographic 记忆提供商——真自学习记忆系统落地。
+  - `hermes/config.yaml` 新增 `memory.provider: holographic` + `plugins.hermes-memory-store` 配置（auto_extract: true 启用自动事实提取）。
+  - Holographic 是 8 个 Hermes 记忆提供商中唯一**免费 + 本地 SQLite + 零外部依赖**的方案：
+    - `fact_store`（9 动作：添加/搜索/探测/相关/推理/矛盾/更新/删除/列出）
+    - `fact_feedback`（信任评分训练，+0.05/-0.10 非对称反馈）
+    - `probe`（针对特定实体的代数式回忆）
+    - `reason`（跨多实体的组合 AND 查询）
+    - `contradict`（自动检测冲突事实）
+  - `hermes/SOUL.md` 补充「记忆系统」章节：L1 内置 MEMORY.md + L2 Holographic + L3 session_search + L4 gitnexus 四层架构。
+  - `hermes/SOUL.md` 自进化闭环升级：Step 4 经验回写增加 `fact_store add` 自动提取 + 信任评分；Step 5 增加回写后 `fact_feedback` 标注信任度。
+  - `hermes/.hermes.md` 锚点 8 更新：经验回写用 `fact_store` 自动提取 + 信任评分。
+  - **架构升级**：从"MEMORY.md 2200 字符手动维护"升级为"Holographic 自动事实提取 + 语义检索 + 信任评分 + 矛盾检测的真记忆系统"。
 - **2026-07-07**: C 档方案落地——Kilo + Hermes 双轨架构，获得框架级 SOTA 能力。
   - 新增 `hermes/` 目录存放 Hermes Agent 配置产物：
     - `hermes/SOUL.md`：身份文件，从 coderAgent + workflow-core 提取编排精华（T0-T3 定级、7 节点流程日志、checker/reviewer 门禁、SCOPE_CREEP、验收映射表、自进化闭环、压缩后结构化恢复模板）。
