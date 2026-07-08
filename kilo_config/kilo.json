@@ -8,7 +8,7 @@
   "agent": {
     "coderAgent": {
       "mode": "primary",
-      "model": "hx/kimi-k2.7-code",
+      "model": "hx/MiniMax-M3",
       "temperature": 0.1,
       "prompt": "coderAgent（主控 agent）。锚点：意图判定、定级、pre-checker、engineer、checker、fixer、reviewer、compaction。T0/T1 任务跳过 ensemble，直接用 single engineer。"
     },
@@ -82,11 +82,7 @@
   "mcp": {
     "gitnexus": {
       "type": "local",
-      "command": [
-        "npx",
-        "gitnexus",
-        "mcp"
-      ],
+      "command": ["npx", "gitnexus", "mcp"],
       "enabled": true,
       "timeout": 30000
     }
