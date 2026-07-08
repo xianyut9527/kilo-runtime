@@ -1,25 +1,16 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
-  "model": "hx/MiniMax-M3",
-  "small_model": "hx/MiniMax-M2.7-highspeed",
+  "model": "hx/kimi-k2.7-code",
   "default_agent": "coderAgent",
-  "snapshot": true,
   "compaction": {
-    "auto": true,
-    "threshold_percent": 70,
-    "tail_turns": 20,
-    "preserve_recent_tokens": 80000,
-    "prune": false
-  },
-  "skills": {
-    "external_dirs": ["~/.agents/skills"]
+    "auto": true
   },
   "agent": {
     "coderAgent": {
       "mode": "primary",
       "model": "hx/kimi-k2.7-code",
       "temperature": 0.1,
-      "prompt": "coderAgent（主控 agent）。锚点：意图判定、定级、pre-checker、engineer、checker、fixer、reviewer、compaction。"
+      "prompt": "coderAgent（主控 agent）。锚点：意图判定、定级、pre-checker、engineer、checker、fixer、reviewer、compaction。T0/T1 任务跳过 ensemble，直接用 single engineer。"
     },
     "engineer": {
       "mode": "subagent",
@@ -30,7 +21,7 @@
     "architect": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
-      "temperature": 0.3,
+      "temperature": 0.1,
       "prompt": "architect"
     },
     "checker": {
@@ -88,16 +79,7 @@
       "prompt": "ensemble"
     }
   },
-  "commit_message": {
-    "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
-  },
   "mcp": {
-    "context7": {
-      "type": "remote",
-      "url": "https://mcp.context7.com/mcp",
-      "enabled": true,
-      "timeout": 8000
-    },
     "gitnexus": {
       "type": "local",
       "command": [
@@ -107,15 +89,6 @@
       ],
       "enabled": true,
       "timeout": 30000
-    },
-    "playwright": {
-      "type": "local",
-      "command": [
-        "npx",
-        "@playwright/mcp"
-      ],
-      "enabled": false,
-      "timeout": 120000
     }
   },
   "provider": {
@@ -128,29 +101,31 @@
       "models": {
         "deepseek-v4-flash": {
           "name": "deepseek-v4-flash",
-          "reasoning": true
+          "reasoning": true,
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
         },
         "deepseek-v4-pro": {
           "name": "deepseek-v4-pro",
-          "reasoning": true
+          "reasoning": true,
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
         },
         "glm-5.2": {
           "name": "glm-5.2",
-          "reasoning": true
+          "reasoning": true,
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
         },
         "kimi-k2.6": {
           "name": "kimi-k2.6",
           "reasoning": true,
-          "attachment": true,
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
           "limit": {
             "context": 200000,
             "output": 16384
@@ -159,16 +134,6 @@
         "kimi-k2.7-code": {
           "name": "kimi-k2.7-code",
           "reasoning": true,
-          "attachment": true,
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
           "limit": {
             "context": 200000,
             "output": 16384
@@ -176,25 +141,23 @@
         },
         "qwen3.7-max": {
           "name": "qwen3.7-max",
-          "reasoning": true
+          "reasoning": true,
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
         },
         "qwen3.7-plus": {
           "name": "qwen3.7-plus",
-          "reasoning": true
+          "reasoning": true,
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
         },
         "MiniMax-M3": {
           "name": "MiniMax-M3",
           "reasoning": true,
-          "attachment": true,
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
           "limit": {
             "context": 200000,
             "output": 16384
@@ -203,16 +166,6 @@
         "MiniMax-M2.7-highspeed": {
           "name": "MiniMax-M2.7-highspeed",
           "reasoning": true,
-          "attachment": true,
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
           "limit": {
             "context": 200000,
             "output": 16384
