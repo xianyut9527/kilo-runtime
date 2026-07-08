@@ -11,7 +11,7 @@
 
 ## 执行类流程
 
-意图判定 → 任务定级（T0-T3）→ 7 节点流程日志 → 调用修改性工具。
+意图判定 → 任务定级（T0-T3）→ 自检清单 → 调用修改性工具。
 
 ### T0-T3 定级
 
@@ -24,59 +24,121 @@
 
 安全敏感词：user/auth/payment/wallet → **最低 T2**。
 
-### 7 节点流程日志
+## 质量门禁
 
-```
-## 强制流程日志
-| 步骤 | 状态 | 备注 |
-|------|------|------|
-| 意图判定 | ✅/🔄/⏳ | |
-| 任务定级 | ✅/🔄/⏳ | |
-| pre-checker | ✅/🔄/⏳ | T1+ |
-| engineer 委派 | ✅/🔄/⏳ | |
-| checker 验证 | ✅/🔄/⏳ | T1+ |
-| fixer 修复 | ✅/🔄/⏸ | |
-| reviewer 审查 | ✅/🔄/⏳ | T2+ |
-```
-
-- 至多一行 🔄，关键步骤转换时重发完整表。
-- pre-checker FAIL → 修正后复验。
-
-### 质量门禁
-
-- engineer **不自验**，必须过 checker。
-- **双重 checker**：正向（需求/语法/逻辑/边界）+ 反向（SCOPE_CREEP/调试残留/重复实现）。
-- **reviewer 三视角**：安全 / 架构 / 简化。
-- **验收映射表**：每条标准 → 实现位置 → 验证方式 → 边界覆盖 → 状态。缺失判 `[MISSING_ACCEPTANCE_MAP]` FAIL。
-- **SCOPE_CREEP**：反向 checker 扫描 diff 中未声明的改动，命中即 FAIL。
-- **同症状防空转**：连续 2 轮 fixer 同症状 → 升级 reviewer。
-- **Circuit Breaker**：连续 3 次无法收敛 → 停止，输出选项等用户决策。
-
-## 委派策略
-
-| 场景 | 目标 | toolsets |
-|------|------|----------|
-| 局部清晰实现 | engineer | `["terminal", "file"]` |
-| 架构/边界不清 | architect | `["file"]` |
-| 正向验证 | checker-forward | `["terminal", "file"]` |
-| 反向验证 | checker-reverse | `["terminal", "file"]` |
-| 显式审查或安全敏感 | reviewer | `["terminal", "file"]` |
+- **Circuit Breaker**：连续 3 次无法收敛 → 停止，等用户决策。
 
 ## 安全敏感模块
 
-命中 user/account/auth/login/password/token/jwt/session/payment/checkout/wallet/balance/fund/transfer → **最低 T2，必须 reviewer 安全视角。**
+命中 user/account/auth/login/password/token/jwt/session/payment/checkout/wallet/balance/fund/transfer → **最低 T2，必须安全视角检查。**
 
+## 需求扩散（编码前必须）
+
+用户描述简单时，编码前必须回答以下问题。
+
+### 新项目 vs 已有项目策略
+
+| 项目状态 | 范围确认 | 兼容确认 | 历史确认 | 工具优先级 |
+|----------|----------|----------|----------|------------|
+| **新项目**（无 gitnexus 索引） | `search_files` 搜目录结构 + 技术栈识别 | `search_files` 搜调用方 + 手动梳理依赖 | 无历史数据，标记为风险 | search_files > read_file > session_search |
+| **已有项目**（有 gitnexus 索引） | `gitnexus_impact` + search_files 补充 | `gitnexus_context` 调用链 | `gitnexus_data_impact` 表影响 | gitnexus > search_files |
+
+### 新项目扩散（强制输出）
+
+编码前必须完成：
+
+1. **目录结构速览**：`search_files(pattern="*", target="files")` 或 `ls` 确认项目组织
+2. **技术栈识别**：`read_file` 读取 `package.json` / `pyproject.toml` / `pom.xml` / `go.mod` 确认依赖
+3. **入口点定位**：`search_files` 搜 `main` / `app` / `server` / `index` 找到程序入口
+4. **配置扫描**：`search_files` 搜 `config` / `.env` / `yaml` / `json` 确认运行配置
+
+### 扩散自检（6 问）
+1. **范围**：影响哪些文件/模块？新项目先速览目录，已有项目用 `gitnexus_impact`。
+2. **边界**：正常/异常/空值/边界情况是什么？
+3. **兼容**：是否破坏现有调用方？新项目搜入口调用链，已有项目用 `gitnexus_context`。
+4. **历史**：是否需要数据迁移或兼容旧数据？新项目标记"无历史数据，风险未知"，已有项目用 `gitnexus_data_impact`。
+5. **回滚**：改错了如何恢复？新项目先确认是否有 git，无 git 时标记高风险。
+6. **验收**：用什么命令/测试验证正确？新项目先确认测试框架是否存在。
+
+### 提示增强（自动补全）
+- 用户只说"改一下" → 必须问"改哪里？改成什么样？"
+- 用户只说"加个功能" → 必须问"输入/输出？影响范围？"
+- 用户只说"修复 bug" → 必须问"什么现象？期望结果？"
+- **新项目额外**："项目技术栈是什么？有测试吗？怎么运行？"
+
+**以上任一不确定 → 标记 `[NEEDS_CLARIFICATION]`，先问用户，不编码。**
+
+### 扩散包输出模板
+
+编码前必须输出（哪怕只有一句话）：
+```
 ## 需求扩散
+- 范围：[gitnexus_impact/search_files 确认的文件/模块列表]
+- 边界：[正常/异常/空值情况]
+- 兼容：[gitnexus_context/search_files 查到的调用链影响]
+- 历史：[gitnexus_data_impact/标记风险 确认是否需要迁移]
+- 回滚：[如何恢复；新项目：是否有 git？]
+- 验收：[验证命令/测试；编码后 gitnexus_detect_changes/search_files 确认]
+- **新项目补充**：
+  - 技术栈：[语言/框架/依赖]
+  - 入口点：[main/app/server 位置]
+  - 测试框架：[pytest/jest/junit/无]
+  - 运行方式：[npm start/python main.py/无]
+```
 
-以下场景先形成需求扩散包，未形成前不得编码：
+## 执行清单（单会话自律）
 
-- 用户表达含"所有/任何/全部/同类/模块/互斥/唯一/全局/统一/联动/权限/角色"
-- 需求改变业务规则（非只改文案/样式）
-- 涉及多个入口、状态、配置、保存、校验、回显或历史数据
+单会话内自己完成所有步骤，不假装有子代理。
+
+编码前：
+- [ ] `search_files` 搜目标符号定义和引用
+- [ ] `search_files` 搜同类平行实现
+- [ ] 确定临时文件放 `/tmp/` 或 `$env:TEMP`
+
+编码后：
+- [ ] 语法检查通过
+- [ ] 测试通过（如有）
+- [ ] `git diff --stat` 确认范围无溢出
+- [ ] `search_files` 搜索调用方确认兼容
+
+T2+ 额外：
+- [ ] 安全视角：输入校验、敏感信息保护
+- [ ] 架构视角：分层、依赖方向、契约一致性
+- [ ] 简化视角：无重复实现、无不必要抽象
 
 ## 交付
 
-输出开头标记 ✅/⚠️/❌，包含：
+输出开头标记 ✅/⚠️/❌：
 1. **闭环确认**（验收 → 实现位置 → 验证证据 → 状态）
-2. **变更回顾**（改了什么 / 为什么改 / 影响范围 / 清理调试代码）
-3. **经验沉淀**（可复用事实 → `memory`；流程/模式 → `skills/`；架构约束 → `SOUL.md`）
+2. **变更回顾**（改了什么 / 为什么改 / 影响范围）
+3. **经验快照**（仅 T2+：关键决策 + 边界教训 + 用户纠正点）
+
+## 自进化契约（全自动）
+
+> 编码任务结束后，经验回写自动触发，**不询问用户**。
+
+### 记忆加载优先级
+
+```
+用户记忆(memory user) > 项目技能(skills/project-knowledge/) > 通用经验(skills/patterns/) > 规则基线(skills/coding/)
+```
+
+### 经验提取与路由
+
+任务完成 / 失败 / 用户纠正时，提取以下 4 类并自动路由：
+
+| 类型 | 内容 | 路由 |
+|------|------|------|
+| 关键决策 | "为什么选方案 A 而非 B" | project-knowledge / patterns |
+| 边界教训 | "参数为 null 时会怎样" | project-knowledge / anti-patterns |
+| 用户纠正 | 用户说"不要..."/"换成..." | memory(target='user') |
+| 验证教训 | "测试覆盖了 X 但没覆盖 Y" | project-knowledge / patterns |
+
+**写入前验证**：不可编造、不可冲突（冲突时标记 `[RULE_CONFLICT]`）、必须带上下文。
+
+### 交付后必做
+
+1. 清理临时文件
+2. 扫描 `[RULE_CONFLICT]` 待处理
+3. 更新 `todo` 状态
+4. **触发经验回写**（无条件）
