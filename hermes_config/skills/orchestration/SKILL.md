@@ -33,7 +33,25 @@ metadata:
 
 安全敏感词：user, account, auth, login, password, token, jwt, session, payment, checkout, wallet, balance, fund, transfer
 
-## 二、编码前自检（调用 patch/write_file 前必须）
+## 二、T2+ Ensemble 触发
+
+T2/T3 判定后，主代理不直接编码，触发 ensemble：
+
+```
+T2/T3 → execute_code 运行 skills/ensemble/scripts/ensemble.py
+              ↓
+        并行 engineer-A (kimi-k2.6) + engineer-B (MiniMax-M3)
+              ↓
+        checker (glm-5.2) 独立审查择优
+              ↓
+        主代理应用最优方案 → 四门门禁验证
+```
+
+T0/T1 跳过 ensemble，直接编码。
+
+加载方式：任务前缀加 `ensemble:` 或在 T2/T3 判定后自动触发。
+
+## 三、编码前自检（调用 patch/write_file 前必须）
 
 - [ ] `search_files` 搜目标符号定义和引用
 - [ ] `search_files` 搜同类平行实现

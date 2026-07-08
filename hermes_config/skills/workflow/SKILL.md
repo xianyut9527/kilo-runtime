@@ -123,14 +123,14 @@ search_files: config.yaml 相关修改
 
 **回写目标与格式**：
 
-| 经验类型 | 写入目标 | 回写工具 | 示例 |
-|----------|----------|----------|------|
-| 可复用事实（环境、偏好、陷阱） | `memory` + `skills/...` | `memory` 或 `skill_manage` | "Windows PowerShell 默认 GBK" |
-| 项目特定反模式/陷阱 | `skills/anti-patterns/SKILL.md` | `skill_manage` | AP-001 BOM 污染 |
-| 项目特定最佳实践 | `skills/patterns/SKILL.md` | `skill_manage` | PAT-001 关联功能检查 |
-| 工作流/机制改进 | `skills/workflow/SKILL.md` | `skill_manage` | 本文件自进化流程 |
-| 跨项目架构约束 | `SOUL.md` / `.hermes.md` | `patch` / `write_file` | T0-T3 定级规则 |
-| 用户个人偏好 | `USER.md` | `patch` / `write_file` | "用户偏好简洁中文" |
+| 经验类型 | 写入目标 | 工具 |
+|----------|----------|------|
+| 环境/偏好/陷阱 | `memory` + `skills/...` | `memory` / `skill_manage` |
+| 项目反模式/陷阱 | `skills/anti-patterns/` | `skill_manage` |
+| 项目最佳实践 | `skills/patterns/` | `skill_manage` |
+| 工作流改进 | `skills/workflow/` | `skill_manage` |
+| 架构约束 | `SOUL.md` / `.hermes.md` | `patch` / `write_file` |
+| 用户偏好 | `USER.md` | `patch` / `write_file` |
 
 **回写后验证**（必须执行）：
 1. `session_search` 搜索关键词，确认可被未来会话检索

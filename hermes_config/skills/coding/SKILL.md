@@ -123,14 +123,11 @@ cd <repo> && gitnexus status
 
 ## 8. 工具链状态
 
-| 工具 | 安装命令 | 状态 | 用途 |
-|------|----------|------|------|
-| gitnexus | `npm install -g gitnexus` | ✅ v1.6.5-2 | 代码图谱 |
-| mypy | `pip install mypy` | ✅ v2.1.0 | 类型检查 |
-| bandit | `pip install bandit` | ✅ v1.9.4 | 安全扫描 |
-| pytest | `pip install pytest` | ✅ v9.1.1 | 测试执行 |
-| pytest-cov | `pip install pytest-cov` | ✅ v7.1.0 | 覆盖率 |
-| pytest-asyncio | `pip install pytest-asyncio` | ✅ v1.4.0 | 异步测试 |
-| ripgrep | `choco install ripgrep` / `apt install ripgrep` | ❌ 未装 | 搜索速度 10x |
+| 工具 | 状态 | 用途 |
+|------|------|------|
+| gitnexus | ✅ v1.6.5-2 | 代码图谱 |
+| mypy | ✅ v2.1.0 | 类型检查 |
+| bandit | ✅ v1.9.4 | 安全扫描 |
+| pytest | ✅ v9.1.1 | 测试执行 |
 
-> 未安装时 Hermes 回退到 grep fallback，体验降级但可用。
+> 未安装时 Hermes 回退到 grep fallback。

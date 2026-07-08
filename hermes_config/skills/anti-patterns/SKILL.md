@@ -108,75 +108,32 @@ metadata:
 - 用 `git status --short` 确认实际改动
 - 用 `git diff -- <本单元文件>` 限定范围
 
----
+### AP-005: PowerShell 编码与变量泄露
 
-### AP-008: 验收映射表缺失
-
-**描述**：交付时未提供验收标准 → 实现位置 → 验证方式 → 边界覆盖 → 状态 的映射表，导致 checker 无法客观验证。
-
-**验证方式**：engineer 输出必须包含验收映射表；缺失判 `[MISSING_ACCEPTANCE_MAP]` FAIL。
-
----
-
-### AP-009: PowerShell 双引号意外展开 `$env:` 变量
-
-**描述**：PowerShell 中双引号字符串会展开 `$env:VAR`。在脚本提示语中写 `"Set $env:FOO = '...'"` 时，运行时会展开成真实环境变量值，可能泄露 API key 等敏感信息。
-
-**关键细节**：
-- `反斜杠` \ 不是 PowerShell 转义符，加 `\$env:FOO` 仍会被展开
-- PowerShell 转义符是 `反引号`，但更容易错过的做法是使用单引号字符串
+**描述**：PowerShell 5.1 默认 GBK 输出中文乱码；双引号字符串会展开 `$env:` 变量，可能泄露 API key。
 
 **正确做法**：
 ```powershell
-# 对带 $env: 的提示语使用单引号
-Write-Host 'Set API key env: $env:NAT100_API_KEY = "<your-key>"'
-
-# 或显式转义（但单引号更简洁）
-Write-Host "Set API key env: `$env:NAT100_API_KEY = \"<your-key>\""
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8  # 解决 GBK
+Write-Host 'Set env: $env:FOO = \"<value>\"'             # 单引号防展开
 ```
 
-**验证方式**：
-1. 设置 fake key：`$env:NAT100_API_KEY = 'sk-FAKE-TEST-12345'`
-2. 运行 PowerShell 脚本
-3. 检查 stdout/stderr 不含 `sk-FAKE-TEST-12345`
-
-**影响场景**：任何在 PowerShell 脚本中打印环境变量提示语的安装/配置脚本。
+**验证**：检查 stdout 不含真实 key 值。
 
 ---
 
 ### AP-010: 项目规则只存个人运行时数据
 
-**描述**：把项目级流程、编码标准、安全约束、模式/反模式只存在个人运行时数据中（如 SQLite 数据库、`.env`、logs、sessions 等），而不写入版本控制的 `SOUL.md`、`.hermes.md` 或 `skills/`。这会导致项目规则无法团队同步、不可审计、换设备即丢失。
-
-**典型错误内容**：
-- "User wants Hermes and kilo to remain independent agents..."
-- "single strong model + dual checker + triple-reviewer..."
-- "禁止写入 API Key / 内部 URL / PII"
-- "Kilo-legacy-free + team-syncable"
+**描述**：项目级流程、编码标准、安全约束、模式/反模式只存在个人运行时数据中，而不写入版本控制的 `SOUL.md`、`.hermes.md` 或 `skills/`。
 
 **正确位置**：
+- 项目流程/标准 → `SOUL.md` / `.hermes.md`
+- 项目反模式/模式 → `skills/`
+- 个人偏好 → 个人运行时数据
 
-| 内容 | 正确位置 |
-|------|----------|
-| 项目流程 / 编码标准 / 交付格式 | `SOUL.md` / `.hermes.md` |
-| 项目特定反模式 / 踩坑 / 模式 | `skills/anti-patterns/` / `skills/patterns/` |
-| 跨项目通用约束 | 版本控制的 `skills/...` 或 `SOUL.md` |
-| 个人偏好 | 个人运行时数据（如 SQLite `memory`） |
+**修复**：识别越界内容 → 迁移到版本控制 → 清空个人数据中的重复。
 
-**修复动作**：
-1. 识别个人运行时数据中的项目规则内容
-2. 迁移到 `SOUL.md`、`.hermes.md` 或对应 `skills/`
-3. 清空个人运行时数据中的重复内容
-
-**验证方式**：
-- 搜索 `%LOCALAPPDATA%\hermes\` 或 `~/.hermes/` 下的 SQLite 数据库、日志、会话中是否出现项目规则关键词：
-  ```bash
-  # Windows
-  grep -RiE "kilo|dual checker|triple-reviewer|team-syncable|single strong model|SCOPE_CREEP|7 节点" "$LOCALAPPDATA/hermes/"
-  ```
-- 结果应为空；若命中，按 SOP 迁移
-
-**相关条目**：patterns/SKILL.md#PAT-004, .hermes.md#项目规则存储边界
+**相关条目**：patterns/SKILL.md#PAT-004
 
 ---
 
