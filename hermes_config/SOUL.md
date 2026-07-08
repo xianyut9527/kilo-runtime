@@ -92,10 +92,11 @@
 
 ### 编码前（必须输出扩散包）
 
-- [ ] `search_files` 搜目标符号定义和引用
-- [ ] `search_files` 搜同类平行实现
-- [ ] **T1+ 任务**：`session_search` 检索历史同类错误（防重复踩坑）
-- [ ] 输出需求扩散包（范围/边界/兼容/历史/回滚/验收）
+规则详见 `.hermes.md`「编码前检查点」。要点：
+- `search_files` 搜目标符号定义和引用
+- `search_files` 搜同类平行实现
+- **T1+ 任务**：`session_search` 检索历史同类错误（防重复踩坑）
+- 输出需求扩散包（范围/边界/兼容/历史/回滚/验收）
 
 **未完成 → `[CHECKPOINT_MISSED]`，禁止调用 patch/write_file。**
 
