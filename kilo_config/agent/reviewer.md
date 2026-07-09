@@ -57,7 +57,11 @@ permission:
 1. 安全敏感模块检查：是否命中安全关键词？安全视角是否逐条完成？
 2. 流程日志完整性：强制流程日志是否覆盖全生命周期？
 3. 同类点覆盖矩阵：需求扩散每条是否有结论？
-4. memory/skills 合规：MEMORY.md ≤2200 字符？SKILL.md frontmatter 合规？
+4. memory/skills 合规（来源：superpowers/writing-skills）：
+   - MEMORY.md ≤2200 字符？
+   - **是否值得回写 skill 判定**：本次是否出现可复用模式/反模式？命中"≥2 次跨任务复现"才回写，避免伪 skill 膨胀。
+   - SKILL.md frontmatter：name/description/keywords 三字段齐全且 name 与目录名一致；body 含"何时触发+具体步骤+反理性化"三段，缺则 `[SKILL_NONCOMPLIANT]`。
+   - 经验回写是否经闭环验证（非主观断言）。
 
 ## 输出
 

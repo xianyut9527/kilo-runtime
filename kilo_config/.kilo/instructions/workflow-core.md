@@ -61,9 +61,11 @@ T0 直达 engineer，无需 pre-checker、checker、reviewer。
 
 | 级别 | 标准 | 执行路径 |
 |------|------|----------|
-| T1 | 2-5 文件，单模块，有明确验收标准 | 拆单元，每单元 engineer → checker 闭环 |
-| T2 | 跨模块，5+ 文件，规则扩散，命中安全敏感词 | architect 规划 → 单元 DAG → reviewer |
+| T1 | 2-5 文件，单模块，有明确验收标准 | architect 短设计门 → 拆单元，每单元 engineer → checker 闭环 |
+| T2 | 跨模块，5+ 文件，规则扩散，命中安全敏感词 | architect 完整规划 → 单元 DAG → reviewer |
 | T3 | 安全/资金/权限/核心逻辑，fixer 3 轮仍失败 | 全量 ensemble → reviewer → 用户决策 |
+
+> **设计门分级**（来源：superpowers/brainstorming）：T1 走"短设计门"（architect 输出 1-3 句方案+验收点即可放行 engineer）；T2 走"完整规划"（architect 输出任务 DAG+依赖+风险）。连 1 行配置变更也走短设计门--"太简单不需要设计"是反模式，简单任务正是未审视假设造成返工的高发区。
 
 ### 安全敏感模块识别
 
@@ -111,6 +113,7 @@ architect 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验
 
 | 门禁 | 说明 | 失败标记 |
 |------|------|----------|
+| 设计门（T1+）| T1 短设计门、T2 完整规划未过不得进 engineer；通过标记 `[DESIGN_GATE_PASS]`，未过/跳过标记 `[DESIGN_GATE_MISS]` | `[DESIGN_GATE_MISS]` |
 | 不自验 | engineer 不得自行验证 | `[PROCESS_VIOLATION]` |
 | 双重 checker | 正向（需求/语法/逻辑/边界）+ 反向（SCOPE_CREEP/调试残留/重复实现） | `[SCOPE_CREEP]` / `[MISSING_ACCEPTANCE_MAP]` |
 | 同症状防空转 | 连续 2 轮 fixer 同症状 → 升级 reviewer | `[NEEDS_REVIEW]` |
@@ -121,9 +124,18 @@ architect 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验
 
 ### 收尾三步
 
-1. **验证确认**：测试、构建、类型、Lint 通过。
+1. **验证确认**：测试、构建、类型、Lint 通过；声明完成必须有本轮 fresh 证据，不得援引上一轮或他人结论（来源：superpowers/verification-before-completion）。
 2. **范围确认**：`git diff --` 确认改动范围，无 SCOPE_CREEP。
-3. **经验沉淀**：可复用事实 → `MEMORY.md`；模式/反模式 → `.kilo/skills/`; 架构约束 → `AGENTS.md`。
+3. **经验沉淀**：可复用事实 → `MEMORY.md`；模式/反模式 → `.kilo/skills/`；架构约束 → `AGENTS.md`。
+
+### 分支收尾协议（来源：superpowers/finishing-a-development-branch）
+
+执行类任务交付后，coderAgent 必须按序确认：
+
+1. **工作树状态**：`git status` 确认无遗留未跟踪文件、无残留临时脚本/构建产物。
+2. **提交边界**：单次提交对应单一定级单元；跨单元改动必须分提交，禁止"一锅烩"。
+3. **分支去向**：明确告知用户当前分支名、是否需要 PR/MR、是否需要回主干合并；不擅自 push 或合并。
+4. **worktree 隔离**（可选）：高风险或长任务建议在 git worktree 中执行，交付后清理 worktree（`git worktree remove`），避免污染主工作树。
 
 ### 交付信号
 

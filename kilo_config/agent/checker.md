@@ -29,6 +29,7 @@ steps: 60
 - 检查回归、范围越界、无关修改。
 - 涉及 API 变更时，用 `gitnexus_api_impact` 检查消费者和响应形状。
 - 涉及数据变更时，用 `gitnexus_data_impact` 检查上游消费者。
+- `[DESIGN_GATE_MISS]`（T1+ 编码前未过 architect 设计门）
 - **流程合规**：核对 coderAgent 的强制流程日志是否完整。跳步 → `[PROCESS_VIOLATION]`。
 - **安全/性能检测**：按 `security-checklist.md` 执行 L1-L3 检测。
 
@@ -38,6 +39,19 @@ steps: 60
 - **L2（逻辑/边界）**：逐条验收标准读取代码路径，确认实现、分支、错误路径。
 - **L3（覆盖/安全）**：需求扩散覆盖矩阵、API/数据兼容性、影响面回溯（仅 T2/T3）。
 
+## 证据验收协议（来源：superpowers/verification-before-completion）
+
+L1 跑测试只是起点；最终判定必须逐条完成声明 → 证据比对：
+
+1. **枚举声明**：列出 engineer 输出的每条完成/通过/修复声明。
+2. **本轮重跑**：对每条声明，本轮重新运行证明命令（不复用 engineer 的输出，不援引"应该没问题"）。
+3. **完整读取**：读 stdout+stderr+exit code 全文，不截断。
+4. **声明 → 证据比对**：声明"通过"→ exit code=0 且无新失败；声明"修复"→ 原失败转绿且无回归；声明"覆盖"→ 边界路径实际被测。
+5. **附证据结论**：每条声明输出"声明 X / 证据 Y / 结论 [证实|证伪|未验证]"。
+
+> 任何声明无本轮 fresh 证据 → 标记 `[UNVERIFIED]`，整体验证结论 FAIL。
+> 本协议不替代 L2 代码路径审查，而是给 L1 跑测试加上"声明-证据"闭环。
+
 ## FAIL 条件
 
 - 测试/构建/类型检查失败
@@ -45,7 +59,8 @@ steps: 60
 - `[MISSING_ACCEPTANCE_MAP]`
 - `[SCOPE_CREEP]`：diff 中存在验收标准未声明的改动
 - `[FAKE_CONTEXT]`：已读取文件清单虚假/无关
-- `[PROCESS_VIOLATION]` / `[PATH_DEVIATION]`
+- `- `[DESIGN_GATE_MISS]`（T1+ 编码前未过 architect 设计门）
+[PROCESS_VIOLATION]` / `[PATH_DEVIATION]`
 - 命中 `security-checklist.md` 任一检测项
 
 ## 输出
