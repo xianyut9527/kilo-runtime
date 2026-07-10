@@ -2,6 +2,12 @@
 name: plan-execution
 description: 计划执行追踪与变更管理。coderAgent 执行 architect DAG 时必须加载此 skill。
 keywords: plan, execution, tracking, todo, DAG
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: workflow
 ---
 
 # 计划执行追踪
