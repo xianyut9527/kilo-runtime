@@ -82,6 +82,24 @@ spec✅+quality✅ → 标记完成
 
 **DONE_WITH_CONCERNS**：读关切再审。正确性/范围先处理；观察（"文件大了"）记下进审。**NEEDS_CONTEXT**：补上下文重派。**BLOCKED**：上下文问题补+重派；任务需推理→强模型；任务太大→拆；plan 错→升级用户。**绝不**忽略升级或同模型盲重试。
 
+## Block 状态升级硬规则（避免盲重试循环）
+
+**禁止盲重试**：同一 subagent 同一任务连续 2 次 `BLOCKED`/`NEEDS_CONTEXT` → **立即停止派发**，升级 coderAgent 决策。
+
+**升级决策树**（按 BLOCKED 原因选择）：
+
+| 原因分类 | 升级动作 |
+|----------|----------|
+| 上下文不足（文件权限/环境变量/依赖版本） | coderAgent 补全上下文后换模型重派（避免同模型盲试） |
+| 任务需求推理（设计/架构判断） | 换强模型（默认升级到 architect 模型档位） |
+| 任务过大（spec 包含 3+ 独立子目标） | 拆任务为多个 subagent 并行 |
+| plan 错（与现有代码/契约冲突） | **立即升级用户**，不在 subagent 层继续 |
+| subagent 自报"部分完成" | 视为 BLOCKED，**禁止**接受"80% 完成"（部分完成 = 未完成） |
+| 连续 2 轮 BLOCKED 后仍"再试一次" | `[BLIND_RETRY]` 红旗，立即升级用户 |
+
+**反盲重试红旗**（输出含以下词立即 STOP）：
+"再试一次""换个说法重派""同模型再跑一次""应该能成""或许换行号试试"
+
 ## 红旗（Never）
 
 main/master 直实现（无显式用户同意）/ 跳审查或接受缺 verdict / 未修复 issue 继续 / 平行派多 implementer / 让 subagent 读整 plan / 忽略 subagent 提问 / 接受"差不多"（spec ❌ = 未完成）/ 用自审替代审查 / 告诉审查忽略什么 / 无 diff 派审查（先生成 review-package）/ 审查有 Critical/Important 时跳下一任务 / 重派 ledger 已完成任务
