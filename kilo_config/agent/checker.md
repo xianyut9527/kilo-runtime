@@ -31,6 +31,7 @@ steps: 60
 - 涉及数据变更时，用 `gitnexus_data_impact` 检查上游消费者。
 - `[DESIGN_GATE_MISS]`（T1+ 编码前未过 architect 设计门）
 - **流程合规**：核对 coderAgent 的强制流程日志是否完整。跳步 → `[PROCESS_VIOLATION]`。
+- **状态信号合规**：核对 engineer/executor 输出是否包含 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`。缺失 → `[MISSING_STATUS_SIGNAL]`。
 - **安全/性能检测**：按 `security-checklist.md` 执行 L1-L3 检测。
 
 ## 分层验证

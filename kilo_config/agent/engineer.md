@@ -34,7 +34,11 @@ permission:
    - T1+：优先用 GitNexus 分析执行流、调用链和影响面；涉及数据库/API 时用 `gitnexus_data_impact` / `gitnexus_api_impact`。
    - GitNexus 索引可能滞后，结果必须用当前代码搜索复核。
 3. **自测自修**：改代码 → 跑测试 → 修复 → 再跑，直到通过或确定阻塞。
-   - **TDD 心法**（来源：superpowers/test-driven-development）：新功能/bug 修复/行为变更，优先红绿重构--先写失败测试，**看着它失败**，再写最小代码让它通过。"如果没看到测试失败，就不知道它测对了什么"。测试一写就通过 = 什么都没证明，需改成能失败的形式。已有测试套件的项目不得跳过此心法；无测试套件的项目至少补一条针对本次改动的验证用例。
+    - **TDD 执行模板**（来源：`.kilo/skills/tdd-execution/SKILL.md`#执行步骤 + superpowers/test-driven-development）：
+      - **红**：为本次改动写失败测试，**看着它失败**，记录失败消息。测试一写就通过 = 什么都没证明，改输入使其失败。
+      - **绿**：写最小代码让测试通过，禁止一次性写过多实现。
+      - **重构**：通过后再优化结构，保持测试绿。
+      - 已有测试套件的项目必须走此模板；无测试套件的项目至少补一条针对本次改动的验证用例。
 4. **运行验证**：测试、构建、类型检查、Lint。
 5. **输出**：变更摘要、验收映射表、验证结果、遗留风险。
 
@@ -70,6 +74,17 @@ permission:
 5. **附证据陈述**：输出"声明 X / 证据 Y（命令+exit code+关键输出片段）"。
 
 > 本 5 步门强化"engineer 不自验"--engineer 产出证据，但**最终完成判定权归 checker**。engineer 的 5 步门只证明"我跑了且结果是这些"，不等于"任务已验收"。
+
+## 状态信号（来源：superpowers/subagent-driven-development）
+
+engineer 完成单元后，必须在输出顶部显式标注以下状态之一：
+
+- `DONE`：完成，所有验收标准满足，验证通过。
+- `DONE_WITH_CONCERNS`：功能完成，但有已知风险/遗留项，需在验收映射表中列出。
+- `NEEDS_CONTEXT`：缺少必要上下文（文件权限、环境变量、依赖版本），无法继续。
+- `BLOCKED`：遇到无法自行解决的阻塞（基础设施故障、需求矛盾、架构冲突），需升级 coderAgent。
+
+> coderAgent 根据信号决定：DONE→进 checker；DONE_WITH_CONCERNS→附带风险说明进 checker；NEEDS_CONTEXT/BLOCKED→停止并回传。
 
 ## 遗留风险
 - [风险或待确认项]

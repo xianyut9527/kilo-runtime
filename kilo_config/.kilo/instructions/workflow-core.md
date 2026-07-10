@@ -14,6 +14,18 @@ keywords: workflow, orchestration, 任务定级, 单元编排, 闭环, 流程日
 - 显式 review 或安全/资金/权限/核心逻辑 → `reviewer`
 - 多次失败、高风险、用户反馈"还是不对/有遗漏" → `ensemble`
 
+## 模型选择策略（来源：`.kilo/skills/plan-execution/SKILL.md` 追踪规范 + superpowers/subagent-driven-development）
+
+coderAgent 委派 agent 时，按任务复杂度选择模型：
+
+| 复杂度 | 模型 | 场景 |
+|--------|------|------|
+| 机械任务 | `small_model` | 1-2 文件纯表面修改、搜索、读取确认 |
+| 标准任务 | `agent.model` | 多文件集成、常规功能实现、checker/fix |
+| 架构/审查 | `model` 或最强推理模型 | 完整规划、安全审查、T3 ensemble、复杂根因分析 |
+
+> 默认 agent 配置在 `kilo.json` 中声明；coderAgent 可在委派时按上表覆盖。
+
 ## 任务定级
 
 执行类任务必须按以下流程定级，并显式输出定级结论：
@@ -99,6 +111,8 @@ architect 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验
 每单元：engineer → checker → 如需 fixer → 重新 checker。
 
 - engineer 不自验，必须过 checker。
+- engineer 输出必须包含状态信号（`DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED`）。
+- `NEEDS_CONTEXT` / `BLOCKED` → coderAgent 停止并回传，不进入 checker。
 - checker FAIL → fixer 修复 → 重新 checker。
 - fixer 连续 2 轮同症状 → 升级 reviewer。
 
@@ -115,10 +129,12 @@ architect 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验
 |------|------|----------|
 | 设计门（T1+）| T1 短设计门、T2 完整规划未过不得进 engineer；通过标记 `[DESIGN_GATE_PASS]`，未过/跳过标记 `[DESIGN_GATE_MISS]` | `[DESIGN_GATE_MISS]` |
 | 不自验 | engineer 不得自行验证 | `[PROCESS_VIOLATION]` |
+| 状态信号 | engineer 必须输出 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED` | `[MISSING_STATUS_SIGNAL]` |
 | 双重 checker | 正向（需求/语法/逻辑/边界）+ 反向（SCOPE_CREEP/调试残留/重复实现） | `[SCOPE_CREEP]` / `[MISSING_ACCEPTANCE_MAP]` |
 | 同症状防空转 | 连续 2 轮 fixer 同症状 → 升级 reviewer | `[NEEDS_REVIEW]` |
 | Circuit Breaker | 连续 3 次无法收敛 → 停止 | `[CIRCUIT_BREAKER]` |
 | 验收映射表 | 每条标准 → 实现位置 → 验证方式 → 边界覆盖 → 状态 | `[MISSING_ACCEPTANCE_MAP]` |
+| 计划执行门禁 | 计划执行前必须 critical review；遇 blocker 立即停止不猜测 | `[PLAN_DEVIATION]` |
 
 ## 交付
 
@@ -142,6 +158,16 @@ architect 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验
 - **正常交付**："任务完成，以上是全部变更和验证结果。"
 - **降级交付**："任务部分完成，以下是已完成内容、未完成项和阻塞原因。"
 - **失败交付**："任务未完成，阻塞原因是 X，建议方案是 Y。"
+
+### 计划执行门禁（来源：`.kilo/skills/plan-execution/SKILL.md`#执行前-Critical-Review + superpowers/executing-plans）
+
+T2+ 任务执行 architect 计划前，coderAgent 必须：
+
+1. **Critical Review**：重新审阅计划，标记任何疑问或风险；有疑虑先澄清再执行。
+2. **创建追踪 todo**：按任务 DAG 生成结构化 todo 列表，逐条标记进度。
+3. **遇 blocker 即停**：缺失依赖、测试失败、指令不清 → 停止，请求澄清，**不猜测**。
+4. **顺序执行**：按 DAG 依赖顺序执行，不擅自并行串行依赖单元。
+5. **每步验证**：每个单元完成后按验收标准验证，不累积到全部完成再验。
 
 ## 验证与修复通用原则
 

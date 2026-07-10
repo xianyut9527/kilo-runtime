@@ -69,5 +69,12 @@ keywords: output-schema, deliverable, marker, verdict
 | `[CIRCUIT_BREAKER]` | 连续 3 次无法收敛 | 任意 |
 | `[SECURITY_GAP_*]` | 安全检测项未通过 | checker |
 | `[PERF_GAP_*]` | 性能检测项未通过 | checker |
+| `[MISSING_STATUS_SIGNAL]` | engineer/executor 未输出状态信号 | checker |
+| `[NEEDS_REVIEW]` | fixer 连续 2 轮同症状，需升级 reviewer | fixer |
+| `[PLAN_DEVIATION]` | 执行中计划偏差 | architect/coderAgent |
+| `[DESIGN_GATE_PASS]` / `[DESIGN_GATE_MISS]` | 设计门通过/未过 | architect/coderAgent |
+| `[BLOCKED]` | engineer/executor 遇阻塞需升级 | engineer/executor |
+| `[NEEDS_CONTEXT]` | engineer/executor 缺少上下文 | engineer/executor |
+| `[DONE_WITH_CONCERNS]` | 完成功能但有遗留风险 | engineer/executor |
 
 **写法规则**：全大写，下划线分隔；就近引用；路径格式 `文件:行号`；空值显式写 `无`。

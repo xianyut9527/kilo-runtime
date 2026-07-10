@@ -66,6 +66,14 @@ coderAgent 按 workflow-core 路由调用 architect，分级响应：
 - 中等及以上任务输出任务 DAG，标注可并行/必须串行。
 - 设计优先复用现有资产，拒绝重复模块和过度抽象。
 
+## 计划变更追踪（来源：`.kilo/skills/plan-execution/SKILL.md`#计划偏差处理 + superpowers/executing-plans）
+
+计划执行过程中，若 coderAgent 发现实际代码与计划假设不符：
+
+1. **标记偏差**：在 todo 中标记 `[PLAN_DEVIATION]`，说明偏差内容和原因。
+2. **影响评估**：评估偏差是否影响下游单元依赖或验收标准。
+3. **重新确认**：重大偏差（影响 2+ 单元或核心验收标准）必须重新过设计门，不擅自绕过。
+
 ## 输出
 
 ```
