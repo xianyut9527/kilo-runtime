@@ -17,19 +17,19 @@
   "agent": {
     "coderAgent": {
       "mode": "primary",
-      "model": "hx/MiniMax-M3",
+      "model": "hx/kimi-k2.6",
       "temperature": 0.1,
       "prompt": "coderAgent（主控 agent）。锚点：意图判定、定级、pre-checker、engineer、checker、fixer、reviewer、compaction。T0/T1 任务跳过 ensemble，直接用 single engineer。"
     },
     "engineer": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
+      "model": "hx/kimi-k2.6",
       "temperature": 0,
       "prompt": "engineer"
     },
     "architect": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
+      "model": "hx/kimi-k2.6",
       "temperature": 0.1,
       "prompt": "architect"
     },
@@ -41,7 +41,7 @@
     },
     "pre-checker": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
+      "model": "hx/kimi-k2.6",
       "temperature": 0,
       "prompt": "pre-checker"
     },
@@ -59,13 +59,13 @@
     },
     "executor-A": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
+      "model": "hx/kimi-k2.6",
       "temperature": 0,
       "prompt": "executor-A"
     },
     "executor-B": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
+      "model": "hx/kimi-k2.6",
       "temperature": 0,
       "prompt": "executor-B"
     },
@@ -77,13 +77,13 @@
     },
     "synthesizer": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
+      "model": "hx/kimi-k2.6",
       "temperature": 0.2,
       "prompt": "synthesizer"
     },
     "ensemble": {
       "mode": "all",
-      "model": "hx/MiniMax-M3",
+      "model": "hx/kimi-k2.6",
       "temperature": 0.2,
       "prompt": "ensemble"
     }

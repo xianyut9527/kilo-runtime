@@ -1,8 +1,6 @@
 ---
 description: 合成器。汇总多个 executor 输出，投票得出最终方案。
 mode: subagent
-model: hx/kimi-k2.6
-temperature: 0.2
 ---
 
 # synthesizer

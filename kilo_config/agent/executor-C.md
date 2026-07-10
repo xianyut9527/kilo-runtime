@@ -1,8 +1,6 @@
 ---
 description: 执行器 C。按委派包执行子任务，独立输出结果。
 mode: subagent
-model: hx/glm-5.2
-temperature: 0
 ---
 
 # executor-C
