@@ -8,6 +8,7 @@ compatibility:
 metadata:
   version: "1.0"
   category: knowledge
+  derived_from: superpowers/test-driven-development
 ---
 
 # TDD 执行模板

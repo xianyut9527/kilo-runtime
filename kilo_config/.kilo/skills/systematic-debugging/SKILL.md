@@ -8,6 +8,7 @@ compatibility:
 metadata:
   version: "1.0"
   category: knowledge
+  derived_from: superpowers/systematic-debugging
 ---
 
 # 系统化调试

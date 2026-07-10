@@ -8,6 +8,7 @@ compatibility:
 metadata:
   version: "1.0"
   category: workflow
+  derived_from: superpowers/executing-plans
 ---
 
 # 计划执行追踪
