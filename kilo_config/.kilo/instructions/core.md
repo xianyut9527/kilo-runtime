@@ -47,12 +47,14 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 ## 自进化触发点
 
-以下条件命中时，先执行跨会话根因回溯（`kilo_local_recall`），再决定修复策略：
+以下条件命中时，**强制**执行 `kilo_local_recall` 并贴出结果，再决定修复策略：
 
 1. checker/reviewer FAIL 且错误为方法层/需求层
 2. fixer 连续 2 轮同症状
 3. 用户反馈"还是有问题/不对/遗漏"
 4. Circuit Breaker 触发（连续 3 次无法收敛）
+
+未跑 recall = `[MISSING_RECALL]`，暂停修复。
 
 ## 验证与安全
 

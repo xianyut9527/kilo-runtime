@@ -81,6 +81,11 @@ L1 跑测试只是起点；最终判定必须逐条完成声明 → 证据比对
 - [严重/警告] [文件:位置] [问题] → [建议] | 证据:[片段]
 ```
 
+## skill 使用记录
+
+完成任务或反思触发时，必须向 `.kilo/memory/skill-usage.log` 追加一行：
+`[ISO8601] [session_id] [skill_name] [trigger] [outcome]`
+
 ## 加载的 skills
 
 <!-- 加载 skill: verification-before-completion -->

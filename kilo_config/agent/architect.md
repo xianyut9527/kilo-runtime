@@ -86,6 +86,11 @@ coderAgent 按 workflow-core 路由调用 architect，分级响应：
 ## 风险
 ```
 
+## skill 使用记录
+
+完成任务或反思触发时，必须向 `.kilo/memory/skill-usage.log` 追加一行：
+`[ISO8601] [session_id] [skill_name] [trigger] [outcome]`
+
 ## 加载的 skills
 
 <!-- 加载 skill: brainstorming -->

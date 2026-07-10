@@ -100,6 +100,11 @@ engineer 完成单元后，必须在输出顶部显式标注以下状态之一�
 等待 checker 验证
 ```
 
+## skill 使用记录
+
+完成任务或反思触发时，必须向 `.kilo/memory/skill-usage.log` 追加一行：
+`[ISO8601] [session_id] [skill_name] [trigger] [outcome]`
+
 ## 加载的 skills
 
 <!-- 加载 skill: verification-before-completion -->

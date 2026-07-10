@@ -16,15 +16,17 @@ keywords: reflection, 根因回溯, Circuit Breaker
 | **方法层** | 搜索不全、分析偏差、验证遗漏 | 改进方法，补充搜索/验证 |
 | **需求层** | 需求理解错误、范围不清、验收标准缺失 | 重新澄清需求，调整验收标准 |
 
-### 跨会话根因回溯
+### 强制跨会话根因回溯
 
-触发条件：
+`[MISSING_RECALL]` 标记：以下强制触发条件下，agent 跳过了 `kilo_local_recall` 跨会话根因回溯而直接进入修复阶段。即：未跑 recall 不得标完成、不得进入修复阶段、不得输出"已修复"声明。
+
+**强制触发**：
 1. checker/reviewer FAIL 且错误为方法层/需求层
 2. fixer 连续 2 轮同症状
 3. 用户反馈"还是有问题/不对/遗漏"
 4. Circuit Breaker 触发
 
-回溯动作：
+回溯动作（**未跑 kilo_local_recall 不得进入修复阶段**）：
 - `kilo_local_recall` 搜索历史同类问题
 - `gitnexus_*` 验证影响面
 - 对比历史修复方案
