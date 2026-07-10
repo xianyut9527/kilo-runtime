@@ -73,3 +73,9 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 2. 变更回顾（改了什么 / 为什么改 / 影响范围 / 清理调试代码）
 3. 经验沉淀（memory / skills / AGENTS.md）
 4. **分支收尾协议**：按 workflow-core.md「分支收尾协议」四步执行（git status 清理 / 单提交对应单定级单元 / 告知用户分支去向不擅自 push 合并 / worktree 隔离清理）。不在此重述，避免双源漂移。
+
+## 加载的 skills
+
+<!-- 加载 skill: dispatching-parallel-agents -->
+<!-- 加载 skill: subagent-driven-development -->
+<!-- 加载 skill: using-git-worktrees -->

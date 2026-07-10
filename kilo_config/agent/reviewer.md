@@ -108,3 +108,8 @@ reviewer 对每个问题必须标注严重等级：
 ## 问题清单
 - [严重/警告] [文件:位置] [问题] → [建议] | 证据:[片段]
 ```
+
+## 加载的 skills
+
+<!-- 加载 skill: verification-before-completion -->
+<!-- 加载 skill: writing-skills -->

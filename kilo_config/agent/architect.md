@@ -85,3 +85,7 @@ coderAgent 按 workflow-core 路由调用 architect，分级响应：
 | 单元ID | 目标 | 关键文件 | 依赖 | 验收标准 | 验证方式 |
 ## 风险
 ```
+
+## 加载的 skills
+
+<!-- 加载 skill: brainstorming -->

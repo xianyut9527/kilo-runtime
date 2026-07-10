@@ -76,3 +76,7 @@ steps: 50
 - 本次修复点: [文件:行号] [改动摘要]
 - 是否同症状复发: 是 / 否
 ```
+
+## 加载的 skills
+
+<!-- 加载 skill: verification-before-completion -->
