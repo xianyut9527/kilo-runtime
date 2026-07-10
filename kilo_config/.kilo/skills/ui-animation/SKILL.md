@@ -5,6 +5,13 @@ description: >
   为 UI 提供有目的、高性能、符合物理直觉的动画决策框架。
   每次涉及 transition、animation、微交互时激活。
   若项目已有动画规范，严格遵循。
+keywords: animation, motion, transition, 动画, 动效, micro-interaction, spring
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: ui
 ---
 
 # UI Animation Skill — 动效决策引擎

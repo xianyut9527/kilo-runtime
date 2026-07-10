@@ -5,6 +5,13 @@ description: >
   提供 perceptually uniform 的配色方案、对比度检查、色盲模拟。
   每次定义色彩系统、选择品牌色、处理暗色模式时激活。
   若项目已有色彩规范，严格遵循。
+keywords: color, oklch, palette, contrast, 色彩, 配色, 色盲
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: ui
 ---
 
 # UI Color Skill — 感知均匀色彩系统

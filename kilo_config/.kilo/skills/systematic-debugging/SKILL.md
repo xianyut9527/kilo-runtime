@@ -2,6 +2,12 @@
 name: systematic-debugging
 description: 系统化调试决策树与信息收集模板。fixer 执行修复前必须加载此 skill。
 keywords: debugging, 调试, 根因分析, bugfix
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: knowledge
 ---
 
 # 系统化调试

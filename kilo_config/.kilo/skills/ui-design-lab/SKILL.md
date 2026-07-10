@@ -5,6 +5,13 @@ description: >
   通过用户访谈、生成变体、反馈精炼的循环，系统性探索最佳 UI 方案。
   每次需要探索多种设计方案、做 A/B 对比、或从用户反馈中迭代时激活。
   若项目已有成熟设计流程，严格遵循。
+keywords: design-lab, exploration, variant, ab-test, 设计探索, 变体
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: ui
 ---
 
 # UI Design Lab Skill — 设计探索工作流

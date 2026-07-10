@@ -2,6 +2,12 @@
 name: tdd-execution
 description: TDD 红绿重构执行模板与测试用例设计规范。工程师编码前必须加载此 skill。
 keywords: tdd, test-driven, red-green-refactor, 测试
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: knowledge
 ---
 
 # TDD 执行模板

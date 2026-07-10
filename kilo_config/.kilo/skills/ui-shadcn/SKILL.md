@@ -5,6 +5,13 @@ description: >
   提供 shadcn/ui 组件选择、主题定制、组合模式的最佳实践。
   每次使用 shadcn/ui、Radix UI、Tailwind CSS 组件时激活。
   若项目已配置 shadcn/ui，严格遵循现有 theme 和组件约定。
+keywords: shadcn, daisyui, radix, tailwind, components, 组件库
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: ui
 ---
 
 # UI Shadcn Skill — shadcn/ui 与组件库规范

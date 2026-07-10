@@ -5,6 +5,13 @@ description: >
   为 UI 提供系统化的无障碍审计和修复指南。
   每次生成/修改 UI 代码时激活，确保产品可被所有人使用。
   若项目已有 a11y 规范，严格遵循。
+keywords: a11y, accessibility, wcag, 无障碍, aria, contrast, 对比度
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: ui
 ---
 
 # UI Accessibility Skill — 无障碍审计引擎

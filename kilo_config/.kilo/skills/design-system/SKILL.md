@@ -4,6 +4,13 @@ description: >
   针对新开发/缺乏设计规范的系统，强制建立设计系统与UI规范。
   涵盖视觉设计、组件规范、前端实现、交互体验、动画与无障碍。
   每次涉及 UI/前端实现时自动激活，确保输出不业余、不丑、不反模式。
+keywords: design-system, design-tokens, component, ui, spec, 设计系统, 规范, tokens
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: design
 ---
 
 # Design System Skill — 新系统 UI 规范引擎

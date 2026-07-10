@@ -4,6 +4,13 @@ description: >
   设计词汇与动画术语 skill。参考 emilkowalski/animation-vocabulary 和 pbakaus/impeccable，
   为 agent 提供描述 UI 设计问题的精确词汇，让设计沟通从"好看一点"变成专业术语。
   每次描述设计问题、评审 UI、写设计文档时激活。
+keywords: vocabulary, terminology, design-language, 词汇, 术语, 设计语言
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: ui
 ---
 
 # UI Vocabulary Skill — 设计词汇与术语引擎

@@ -5,6 +5,13 @@ description: >
   为已有页面提供系统化的视觉审计、润色建议和重设计流程。
   每次对现有 UI 进行优化、review 或 redesign 时激活。
   若项目已有成熟规范，严格遵循，只做规范内的微调。
+keywords: polish, audit, review, redesign, 润色, 审计, 优化
+license: MIT
+compatibility:
+  - kilo >= 1.0
+metadata:
+  version: "1.0"
+  category: ui
 ---
 
 # UI Polish Skill — 视觉审计与润色引擎
