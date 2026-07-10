@@ -43,6 +43,7 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 - **平行 executor 隔离**：ensemble 模式下，3 个 executor 互不知道彼此存在；synthesizer 负责汇总，executor 不得自封结论。
 - **边界声明**：委派包显式列出"禁止触碰"的文件/模块，executor 越界 → `[SCOPE_CREEP]`。
 - **模型选择**：按 workflow-core「模型选择策略」为每个委派包选择合适模型。
+- **并行 vs 串行区分**：dispatching-parallel-agents 处理独立问题域并发；subagent-driven-development 处理顺序任务流。混用 = 协同失效。
 
 ## 7 节点流程日志
 
