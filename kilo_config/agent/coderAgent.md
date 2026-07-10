@@ -85,3 +85,4 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 <!-- 加载 skill: dispatching-parallel-agents -->
 <!-- 加载 skill: subagent-driven-development -->
 <!-- 加载 skill: using-git-worktrees -->
+<!-- 加载 skill: requesting-code-review -->
