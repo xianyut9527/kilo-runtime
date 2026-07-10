@@ -8,7 +8,9 @@ compatibility:
 metadata:
   version: "1.0"
   category: workflow
-  derived_from: superpowers/executing-plans
+  source: obra/superpowers@main
+  derived_from: https://github.com/obra/superpowers/tree/main/skills/executing-plans/SKILL.md
+  rewrite_ratio: 0.5
 ---
 
 # 计划执行追踪

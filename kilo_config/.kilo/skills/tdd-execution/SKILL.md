@@ -8,7 +8,9 @@ compatibility:
 metadata:
   version: "1.0"
   category: knowledge
-  derived_from: superpowers/test-driven-development
+  source: obra/superpowers@main
+  derived_from: https://github.com/obra/superpowers/tree/main/skills/test-driven-development/SKILL.md
+  rewrite_ratio: 0.5
 ---
 
 # TDD 执行模板
