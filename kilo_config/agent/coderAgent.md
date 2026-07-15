@@ -77,10 +77,10 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 
 ## skill 使用记录
 
-`kilo.json` `memory.enabled` 为 true 时，完成任务或反思触发后，向 `.kilo/memory/skill-usage.log` 追加一行：
+`.kilo/memory/` 目录存在且包含有效记忆文件时，完成任务或反思触发后，向 `.kilo/memory/skill-usage.log` 追加一行：
 `[ISO8601] [session_id] [skill_name] [trigger] [outcome]`
 
-`memory.enabled` 为 false 时，跳过 skill-usage.log 追加，不报错、不删除规则。
+`.kilo/memory/` 目录为空或不存在时，跳过 skill-usage.log 追加，不报错、不删除规则。
 
 ## 加载的 skills
 

@@ -22,6 +22,6 @@
 5. **验收必附映射表 + 已读取文件清单**：缺则 `[MISSING_ACCEPTANCE_MAP]` / `[FAKE_CONTEXT]` FAIL。
 6. **SCOPE_CREEP**：checker L2 反向核对 diff，命中即 FAIL。
 7. **自验无效**：智能体不得以自身验证替代 checker 客观验证。
-8. **memory / skills / 自进化合规**：`kilo.json` `memory.enabled` 为 true 时，任务启动加载 `MEMORY.md` + `USER.md`；方法层/需求层失败触发跨会话根因回溯（`kilo_local_recall` + `gitnexus`）。`memory.enabled` 为 false 时，跳过 L1/L2 记忆注入和强制回溯。skills、AGENTS.md 回写与经验回写（经闭环验证）不受影响。
+8. **memory / skills / 自进化合规**：`.kilo/memory/` 目录存在且包含有效记忆文件（`MEMORY.md`/`USER.md`）时，任务启动加载记忆内容；方法层/需求层失败触发跨会话根因回溯（`kilo_local_recall` + `gitnexus`）。`.kilo/memory/` 目录不存在或为空时，跳过 L1/L2 记忆注入和强制回溯。skills、AGENTS.md 回写与经验回写（经闭环验证）不受影响。
 9. **流程违规即停**：发现跳步立即标 `[PROCESS_VIOLATION]` 并暂停。
 10. **临时文件**：写入 `$env:TEMP` / `/tmp/`，禁止污染项目目录。

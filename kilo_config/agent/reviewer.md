@@ -89,7 +89,7 @@ reviewer 对每个问题必须标注严重等级：
 2. 流程日志完整性：强制流程日志是否覆盖全生命周期？
 3. 同类点覆盖矩阵：需求扩散每条是否有结论？
 4. memory/skills 合规（来源：superpowers/writing-skills）：
-   - `kilo.json` `memory.enabled` 为 true 时检查 MEMORY.md ≤2200 字符？为 false 时跳过此项。
+   - `.kilo/memory/` 目录存在且包含有效记忆文件时检查 MEMORY.md ≤2200 字符？为空或不存在时跳过此项。
    - **是否值得回写 skill 判定**：本次是否出现可复用模式/反模式？命中"≥2 次跨任务复现"才回写，避免伪 skill 膨胀。
    - SKILL.md frontmatter：name/description/keywords 三字段齐全且 name 与目录名一致；body 含"何时触发+具体步骤+反理性化"三段，缺则 `[SKILL_NONCOMPLIANT]`。
    - 经验回写是否经闭环验证（非主观断言）。
@@ -111,10 +111,10 @@ reviewer 对每个问题必须标注严重等级：
 
 ## skill 使用记录
 
-`kilo.json` `memory.enabled` 为 true 时，完成任务或反思触发后，向 `.kilo/memory/skill-usage.log` 追加一行：
+`.kilo/memory/` 目录存在且包含有效记忆文件时，完成任务或反思触发后，向 `.kilo/memory/skill-usage.log` 追加一行：
 `[ISO8601] [session_id] [skill_name] [trigger] [outcome]`
 
-`memory.enabled` 为 false 时，跳过 skill-usage.log 追加，不报错、不删除规则。
+`.kilo/memory/` 目录为空或不存在时，跳过 skill-usage.log 追加，不报错、不删除规则。
 
 ## 加载的 skills
 
