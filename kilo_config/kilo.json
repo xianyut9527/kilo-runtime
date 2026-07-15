@@ -65,13 +65,13 @@
     },
     "executor-B": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6",
+      "model": "hx/glm-5.2",
       "temperature": 0,
       "prompt": "executor-B"
     },
     "executor-C": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
+      "model": "hx/MiniMax-M3",
       "temperature": 0,
       "prompt": "executor-C"
     },
