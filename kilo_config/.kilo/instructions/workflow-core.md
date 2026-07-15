@@ -142,7 +142,7 @@ architect 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验
 
 1. **验证确认**：测试、构建、类型、Lint 通过；声明完成必须有本轮 fresh 证据，不得援引上一轮或他人结论（来源：superpowers/verification-before-completion）。
 2. **范围确认**：`git diff --` 确认改动范围，无 SCOPE_CREEP。
-3. **经验沉淀**：可复用事实 → `MEMORY.md`；模式/反模式 → `.kilo/skills/`；架构约束 → `AGENTS.md`。
+3. **经验沉淀**：`kilo.json` `memory.enabled` 为 true 时，可复用事实 → `MEMORY.md`；模式/反模式 → `.kilo/skills/`；架构约束 → `AGENTS.md`。为 false 时，跳过 MEMORY.md 回写（文件保留），skills 和 AGENTS.md 回写不受影响。
 
 ### 分支收尾协议（来源：superpowers/finishing-a-development-branch）
 

@@ -40,21 +40,24 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 ### Memory 探测
 
+`kilo.json` `memory.enabled` 为 true 时探测以下项：
 - `.kilo/memory/MEMORY.md`：系统级约束
 - `.kilo/memory/USER.md`：用户偏好
 - `kilo_local_recall`：跨会话历史检索
-- `gitnexus_*`：代码图谱（调用链/影响面）
+
+`gitnexus_*`：代码图谱（调用链/影响面）—— 不受 `memory.enabled` 影响，由 `kilo.json` `mcp.gitnexus.enabled` 独立控制。
 
 ## 自进化触发点
 
-以下条件命中时，**强制**执行 `kilo_local_recall` 并贴出结果，再决定修复策略：
+`kilo.json` `memory.enabled` 为 true 时，以下条件命中后**强制**执行 `kilo_local_recall` 并贴出结果，再决定修复策略：
 
 1. checker/reviewer FAIL 且错误为方法层/需求层
 2. fixer 连续 2 轮同症状
 3. 用户反馈"还是有问题/不对/遗漏"
 4. Circuit Breaker 触发（连续 3 次无法收敛）
 
-未跑 recall = `[MISSING_RECALL]`，暂停修复。
+`memory.enabled` 为 true 时未跑 recall = `[MISSING_RECALL]`，暂停修复。
+`memory.enabled` 为 false 时，跳过本章节强制回溯（`kilo_local_recall` 仍可作为独立工具手动调用）。
 
 ## 验证与安全
 

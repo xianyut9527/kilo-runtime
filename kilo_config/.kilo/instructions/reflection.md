@@ -18,18 +18,22 @@ keywords: reflection, 根因回溯, Circuit Breaker
 
 ### 强制跨会话根因回溯
 
-`[MISSING_RECALL]` 标记：以下强制触发条件下，agent 跳过了 `kilo_local_recall` 跨会话根因回溯而直接进入修复阶段。即：未跑 recall 不得标完成、不得进入修复阶段、不得输出"已修复"声明。
+`[MISSING_RECALL]` 标记：`kilo.json` `memory.enabled` 为 true 时，以下强制触发条件下 agent 跳过了 `kilo_local_recall` 跨会话根因回溯而直接进入修复阶段。即：未跑 recall 不得标完成、不得进入修复阶段、不得输出"已修复"声明。
 
-**强制触发**：
+`memory.enabled` 为 false 时，本章节不生效，不输出 `[MISSING_RECALL]`，`kilo_local_recall` 仍可作为独立工具手动调用。
+
+**强制触发**（仅 `memory.enabled=true` 时生效）：
 1. checker/reviewer FAIL 且错误为方法层/需求层
 2. fixer 连续 2 轮同症状
 3. 用户反馈"还是有问题/不对/遗漏"
 4. Circuit Breaker 触发
 
-回溯动作（**未跑 kilo_local_recall 不得进入修复阶段**）：
+回溯动作（`memory.enabled=true` 时，**未跑 kilo_local_recall 不得进入修复阶段**）：
 - `kilo_local_recall` 搜索历史同类问题
 - `gitnexus_*` 验证影响面
 - 对比历史修复方案
+
+> 注：`gitnexus_*` 工具本身不受 `memory.enabled` 影响（见 `core.md`），此处条件化仅指作为强制回溯动作的**自动触发**部分，工具仍可手动调用。
 
 ## Circuit Breaker
 

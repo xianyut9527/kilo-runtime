@@ -70,12 +70,16 @@ Step 2: 代码图谱验证（gitnexus）
 Step 3: 修复 + 验证（正常 engineer→checker 闭环）
     ↓ PASS
 Step 4: 经验回写评估
-    ├─ 跨会话价值 → 回写 MEMORY.md（coderAgent 执行）
+    ├─ 跨会话价值 → 回写 MEMORY.md（coderAgent 执行，仅 `kilo.json` `memory.enabled` 为 true 时）
+    │   └─ `memory.enabled` 为 true 时：是否值得写入？reviewer 判定，见 skills-lifecycle.md「程序化记忆触发条件」
+    │      ├─ 是 → MEMORY.md 追加经验条目
+    │      └─ 否 → 丢弃（不写入）
+    │   └─ `memory.enabled` 为 false 时：跳过 MEMORY.md 回写，文件保留
     ├─ 项目特定 → 回写对应 SKILL.md（coderAgent 执行）
     └─ 仅本次 → commit message 标注（git history 留痕）
     ↓
 Step 5: 回写后验证
-    ↓ kilo_local_recall 搜索确认新经验可被未来会话检索到
+    ↓ `memory.enabled` 为 true 时，用 `kilo_local_recall` 搜索确认新经验可被未来会话检索到。为 false 时跳过验证。
 ```
 
 ### Step 1：跨会话根因回溯
@@ -119,11 +123,9 @@ Step 5: 回写后验证
 
 | 经验类型 | 写入目标 | 触发条件 | 执行者 |
 |----------|----------|----------|--------|
-| 跨项目通用架构约束 | `MEMORY.md` | reviewer 标注 `[建议写入 MEMORY.md]` + 跨 2 次任务复现 | coderAgent |
-| 项目特定模式/陷阱 | 对应 `SKILL.md`（patterns/anti-patterns/workflow） | 命中 skills-lifecycle.md 回写触发条件 | coderAgent |
-| 仅本次任务的调试上下文 | commit message | 无跨会话价值 | engineer 在 commit 中标注 |
+| 跨项目通用架构约束 | `MEMORY.md` | `memory.enabled` 为 true 时：reviewer 标注 `[建议写入 MEMORY.md]` + 跨 2 次任务复现 | coderAgent |
 
-**回写后验证**：用 `kilo_local_recall` 搜索刚写入的经验关键词，确认未来会话能检索到。
+**回写后验证**：`memory.enabled` 为 true 时，用 `kilo_local_recall` 搜索刚写入的经验关键词，确认未来会话能检索到。为 false 时跳过验证。
 
 ## 与 reflection.md 三层判定的关系
 

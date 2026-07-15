@@ -14,7 +14,7 @@ metadata:
 
 > 本文件存放用户偏好和项目约定。可由用户直接编辑。
 > 字符限制：**≤ 1375 字符**（约 300–450 tokens）。
-> 加载机制：与 MEMORY.md 一同由 coderAgent 在任务启动时注入。
+> 加载机制：`kilo.json` `memory.enabled` 为 true 时，与 MEMORY.md 一同由 coderAgent 在任务启动时注入。为 false 时跳过注入，文件保留，不报错。
 
 ## 用户偏好
 

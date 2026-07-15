@@ -12,13 +12,13 @@ metadata:
 
 # Skill 使用频次记录协议
 
-> 6 主流程 agent（coderAgent / engineer / architect / checker / fixer / reviewer）每次加载或回写 skill 时，必须向 `.kilo/memory/skill-usage.log` 追加一行。
+> `kilo.json` `memory.enabled` 为 true 时，6 主流程 agent（coderAgent / engineer / architect / checker / fixer / reviewer）每次加载或回写 skill 后，向 `.kilo/memory/skill-usage.log` 追加一行。为 false 时跳过追加，不删除历史日志。
 > 用途：沉淀 skill 实际使用频次与失败率，为 skills-lifecycle 治理提供数据。
 
 ## 1. 何时记录
 
-- **完成触发**：agent 单元完成 / 整体任务交付时，记录本次任务中实际加载的每个 skill。
-- **反思触发**：触发 reflection.md 的"强制跨会话根因回溯"或 Circuit Breaker 时，记录反思中涉及的 skill。
+- **完成触发**：`kilo.json` `memory.enabled` 为 true 时，agent 单元完成 / 整体任务交付后，向 `.kilo/memory/skill-usage.log` 追加本次任务中实际加载的每个 skill。为 false 时跳过追加，不删除历史日志。
+- **反思触发**：`kilo.json` `memory.enabled` 为 true 且触发 reflection.md 的"强制跨会话根因回溯"或 Circuit Breaker 时，记录反思中涉及的 skill。为 false 时跳过。
 
 ## 2. 记录什么
 
@@ -34,7 +34,7 @@ metadata:
 
 ## 3. 如何聚合
 
-- 写入路径：`.kilo/memory/skill-usage.log`（项目内，相对工作区根）。
+- 写入路径：`.kilo/memory/skill-usage.log`（项目内，相对工作区根）。仅在 `kilo.json` `memory.enabled` 为 true 时写入。
 - 格式：`<timestamp>|<session_id>|<skill_name>|<trigger>|<outcome>`（竖线分隔，便于后续 awk / rg 统计）。
 - 追加方式：`Add-Content` / `>> append`，不得覆盖；不得修改历史行。
 - 隐私：禁止记录 prompt 正文、密钥、用户隐私。

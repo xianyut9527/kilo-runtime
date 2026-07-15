@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+- **2026-07-15**: 记忆系统可插拔化改造 —— L1/L2 硬编码注入与回溯规则全面条件化。
+  - `kilo.json` 新增 `memory.enabled` 总控开关（默认 `true`，向后兼容）。为 `false` 时优雅降级：跳过 MEMORY.md/USER.md 自动注入、跳过 `kilo_local_recall` 强制回溯、跳过 skill-usage.log 追加，不删除文件、不报错。
+  - `AGENTS.md` / `core.md` / `workflow-core.md` / `reflection.md` / `skill-usage-tracking.md` 中所有记忆相关规则改为条件执行。
+  - `agent/coderAgent.md` / `engineer.md` / `architect.md` / `checker.md` / `fixer.md` / `reviewer.md` 的 skill-usage.log 追加要求改为条件追加。
+  - `MEMORY.md` / `USER.md` 加载机制说明改为条件注入。
+  - `.kilo/skills/workflow/SKILL.md` 记忆回写与回写后验证改为条件执行。
+  - `validate-config.mjs` 新增 check14（`memory.enabled` 字段存在性与类型校验），总校验项 13→14。
+
 ### Added
 - **2026-07-07**: 接入 Holographic 记忆提供商——真自学习记忆系统落地。
   - `hermes/config.yaml` 新增 `memory.provider: holographic` + `plugins.hermes-memory-store` 配置（auto_extract: true 启用自动事实提取）。

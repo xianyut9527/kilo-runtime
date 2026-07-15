@@ -151,11 +151,11 @@ diff -rq . ~/.config/kilo \
 
 ### 使用程序化记忆
 
-借鉴 Hermes Agent 的 MEMORY.md / USER.md 双轨设计，kilo 支持项目级程序化记忆：
+借鉴 Hermes Agent 的 MEMORY.md / USER.md 双轨设计，kilo 支持项目级程序化记忆，并通过 `kilo.json` `memory.enabled` 总控开关启用或禁用（默认 `true`，向后兼容）：
 
 1. 在项目根目录创建 `.kilo/memory/MEMORY.md` 存放 agent 笔记（架构约束、安全模式、踩坑记录，≤ 2200 字符）
 2. 在项目根目录创建 `.kilo/memory/USER.md` 存放用户偏好和项目约定（≤ 1375 字符）
-3. coderAgent 在任务启动时自动检测并加载为冻结快照
+3. `memory.enabled` 为 `true` 时，coderAgent 在任务启动时自动检测并加载为冻结快照；为 `false` 时跳过 L1/L2 记忆注入和强制回溯，不影响 L3 代码图谱和 L4 外部记忆
 
 详见 `.kilo/instructions/workflow-reference.md`「程序化记忆」章节。
 

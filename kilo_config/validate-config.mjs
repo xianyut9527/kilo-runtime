@@ -2,21 +2,20 @@
 // validate-config.mjs
 // kilo_config 配置自检脚本（Node ESM，跨平台）
 // 校验项：
-//   [1/13] kilo.json JSON 合法性
-//   [2/13] agent 名单一致性
-//   [3/13] skills 分类一致性
-//   [4/13] agent 文件 frontmatter 合规性（含 color / hidden）
-//   [5/13] kilo.json prompt 中引用的文档路径存在性
-//   [6/13] README.md 目录树一致性
-//   [7/13] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
-//   [8/13] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
-//   [9/13] coderAgent prompt 锚点关键词校验（防 compaction 误删）
-//   [10/13] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
-//   [11/13] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
-//   [12/13] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
-//   [13/13] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
-//   [12/13] Hermes 产物存在性（SOUL.md + config.yaml + .hermes.md + memories + skills + delegate-templates）
-//   [13/13] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
+//   [1/14] kilo.json JSON 合法性
+//   [2/14] agent 名单一致性
+//   [3/14] skills 分类一致性
+//   [4/14] agent 文件 frontmatter 合规性（含 color / hidden）
+//   [5/14] kilo.json prompt 中引用的文档路径存在性
+//   [6/14] README.md 目录树一致性
+//   [7/14] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
+//   [8/14] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
+//   [9/14] coderAgent prompt 锚点关键词校验（防 compaction 误删）
+//   [10/14] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
+//   [11/14] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
+//   [12/14] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
+//   [13/14] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
+//   [14/14] kilo.json memory.enabled 字段存在性与类型
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -67,7 +66,7 @@ function check1KiloJson() {
 function check2Agents(config) {
   const name = 'agent 名单一致性';
   if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/11]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/14]）' };
   }
   const declared = new Set(Object.keys(config.agent));
   const agentDir = path.resolve(ROOT, 'agent');
@@ -375,10 +374,10 @@ function expandBraces(s) {
 function check5PromptPaths(config) {
   const name = 'kilo.json prompt 引用文档存在性';
   if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/11]）' };
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/14]）' };
   }
   if (!config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/11]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/14]）' };
   }
 
   // 匹配 `agent/<...>.md` 与 `.kilo/instructions/<...>.md`。
@@ -686,10 +685,10 @@ function jaccardSimilarity(a, b) {
 function check8PromptOverlap(config) {
   const name = 'prompt 与 agent.md 过度文本重复检测';
   if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/11]）' };
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/14]）' };
   }
   if (!config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/11]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/14]）' };
   }
 
   const SIMILARITY_THRESHOLD = 0.30; // > 30% 视为过度重复
@@ -785,7 +784,7 @@ const CODER_AGENT_ANCHORS = [
 function check9CoderAgentAnchors(config) {
   const name = 'coderAgent prompt 锚点关键词校验';
   if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/11]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/14]）' };
   }
   const coderAgent = config.agent.coderAgent;
   if (!coderAgent || typeof coderAgent !== 'object' || typeof coderAgent.prompt !== 'string') {
@@ -1057,6 +1056,28 @@ function check13HermesInstallExcludeSync() {
   }
   return { name, pass: false, detail: errors.join('; ') };
 }
+// ---------- Check 14: kilo.json memory.enabled 字段存在性与类型 ----------
+function check14MemoryEnabled(config) {
+  const name = 'kilo.json memory.enabled 字段存在性与类型';
+  if (!config || typeof config !== 'object') {
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/14]）' };
+  }
+  if (!('memory' in config)) {
+    return { name, pass: false, detail: '缺少 memory 字段' };
+  }
+  const mem = config.memory;
+  if (typeof mem !== 'object' || mem === null || Array.isArray(mem)) {
+    return { name, pass: false, detail: 'memory 不是对象' };
+  }
+  if (!('enabled' in mem)) {
+    return { name, pass: false, detail: 'memory.enabled 字段缺失' };
+  }
+  if (typeof mem.enabled !== 'boolean') {
+    return { name, pass: false, detail: `memory.enabled 类型错误: ${typeof mem.enabled}（应为 boolean）` };
+  }
+  return { name, pass: true, detail: `memory.enabled = ${mem.enabled}` };
+}
+
 const kiloBuf = (() => {
   try {
     return fs.readFileSync(path.resolve(ROOT, 'kilo.json'));
@@ -1086,7 +1107,8 @@ const r10 = check10SkillFrontmatter();
 const r11 = check11InstallExcludeSync();
 const r12 = check12HermesArtifacts();
 const r13 = check13HermesInstallExcludeSync();
-const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13];
+const r14 = check14MemoryEnabled(config);
+const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14];
 
 // ---------- 输出 ----------
 const out = [];
