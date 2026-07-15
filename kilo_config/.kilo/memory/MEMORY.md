@@ -14,9 +14,9 @@ metadata:
 
 > 本文件是 agent 维护的项目级冻结记忆。每个条目都必须经 reviewer 验证。
 > 字符限制：**≤ 2200 字符**（约 500–700 tokens）。
-> 加载机制：`.kilo/memory/` 存在有效记忆文件时，coderAgent 在任务启动时（意图判定完成后）自动注入系统提示。目录为空或不存在时跳过注入，文件保留，不报错。
+> 加载机制：由 `.kilo/memory/memory-strategy.md` 统一调度，按 **[tag]** 按需注入，未命中当前任务标签的条目不注入，文件保留，不报错。
 
-## 系统级约束
+## 系统级约束 [tag:config]
 
 > 触发条件：跨 2 次以上任务重复出现 / reviewer 确认为系统级 / 修复不收敛时
 > 入选条目：M-001（其余条目因不满足触发条件或与 SKILL 重复已清理）
@@ -29,10 +29,9 @@ metadata:
 
 > 本节当前为空。T2 / T3 任务结束后，命中触发条件的经验由 reviewer 评估是否追加。
 > 单次发生的任务瑕疵、本次任务具体细节，不写入本节（归入 SKILL 的反思笔记或本任务 commit message）。
-
 > 触发条件与写入权限见 `.kilo/instructions/workflow-reference.md`「程序化记忆触发条件」章节。
 
-## 归档协议
+## 归档协议 [tag:general]
 
 超过 2200 字符时，由 coderAgent 触发压缩：
 - 将最旧的低频条目迁移到 `archive/YYYY-MM/` 子目录

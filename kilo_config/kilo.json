@@ -143,7 +143,6 @@
         "kimi-k2.6": {
           "name": "kimi-k2.6",
           "reasoning": true,
-          "attachment": true,
           "modalities": {
             "input": ["text", "image"],
             "output": ["text"]
@@ -156,7 +155,6 @@
         "kimi-k2.7-code": {
           "name": "kimi-k2.7-code",
           "reasoning": true,
-          "attachment": true,
           "modalities": {
             "input": ["text", "image"],
             "output": ["text"]
