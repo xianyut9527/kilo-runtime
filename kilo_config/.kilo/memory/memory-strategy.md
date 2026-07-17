@@ -1,64 +1,123 @@
-# Memory Strategy（默认：标签按需注入）
+# Memory Strategy（默认：sqlite 优先 + md 兜底）
 
-> 本文件定义 `.kilo/memory/` 目录下记忆文件的注入策略。
+> 本文件定义 `.kilo/memory/` 目录下记忆系统的注入策略。
 > **可插拔**：在 `AGENTS.md` 第8条中通过 `strategy: "memory-strategy.md"` 引用；更换文件名即可切换策略。
 > 不引用本文件时，记忆系统不生效（等效全量关闭）。
 
 ## 策略标识
 
-- **名称**：`tag-based-selective-injection`
-- **版本**：`1.0`
-- **适用文件**：`MEMORY.md`、`USER.md`（支持扩展更多记忆文件）
+- **名称**：`sqlite-first-md-fallback`
+- **版本**：`2.0`
+- **适用文件**：`MEMORY.md`、`USER.md`（md 兜底）
+- **适用数据库**：`.kilo/memory/memory.db`（sqlite 优先）
 
-## 注入规则
+## 核心原则
 
-### 1. 标签匹配（Tag Matching）
+1. **sqlite 优先**：所有结构化记忆（fact、failure、dispatch、project_context、calibration）优先查询 sqlite。
+2. **md 兜底**：用户偏好、安全约束、通用约定等低频变更内容保留在 MEMORY.md / USER.md。
+3. **写入即持久**：任务过程中产生的经验、失败模式必须写入 sqlite，不能留在 prompt 里丢失。
 
-- 仅注入与当前任务语义相关的记忆条目。
-- 记忆条目或章节需标注 `[tag:xxx]`，如 `[tag:config]` `[tag:workflow]` `[tag:security]`。
-- 未命中任何标签的条目不注入，不报错。
+## 查询规则
 
-### 2. 优先级排序（Priority Ranking）
+### 1. 任务开始时（Context 构建阶段）
 
-命中后的条目按以下优先级排序注入：
+coderAgent 必须按以下顺序查询：
 
-1. **精确匹配**：任务关键词与标签完全一致（如任务涉及 `kilo.json` 修改，命中 `[tag:config]`）。
-2. **模糊匹配**：任务语义与标签属于同一领域（如任务涉及 API 设计，命中 `[tag:workflow]`）。
-3. **通用标签**：`[tag:general]` 作为兜底，优先级最低。
+```sql
+-- A. 项目上下文（最高优先级，≤5 条）
+SELECT title, content, priority FROM project_context
+WHERE category IN ('ARCHITECTURE', 'CONSTRAINT')
+ORDER BY priority ASC, updated_at DESC
+LIMIT 5;
 
-### 3. 上限控制（Token Budget）
+-- B. 相关经验教训（按 tag 匹配）
+SELECT trigger, condition, action, confidence FROM fact_store
+WHERE tags LIKE '%当前任务关键词%' AND archived = 0
+ORDER BY confidence DESC, hit_count DESC
+LIMIT 5;
 
-- 单次会话注入总量 **≤ 1500 tokens**（约 6000 字符）。
-- 超出时按优先级截断，低优先条目不注入。
-- 记忆文件自身声明的 `char_limit`（如 MEMORY.md ≤2200、USER.md ≤1375）不参与此上限计算，仅作为文件维护约束。
+-- C. 历史失败模式（按 tag 匹配）
+SELECT symptom, root_cause_level, fix_strategy FROM failure_db
+WHERE tags LIKE '%当前任务关键词%' AND resolved_at IS NOT NULL
+ORDER BY same_symptom_count DESC
+LIMIT 3;
 
-### 4. 回溯放宽（Backtrace Relaxation）
-
-- 方法层 / 需求层失败时触发跨会话根因回溯（`kilo_local_recall` + `gitnexus`）。
-- 此时放宽标签限制，允许注入更多上下文（放宽后上限翻倍至 3000 tokens）。
-
-## 文件发现机制
-
-1. **扫描目录**：`.kilo/memory/`
-2. **有效文件**：包含 YAML frontmatter 且 `metadata.category == "memory"` 的 `.md` 文件
-3. **加载顺序**：`USER.md` → `MEMORY.md`（用户偏好先于 agent 笔记）
-
-## 扩展方式
-
-如需新增记忆文件（如 `TEAM.md`、`PROJECT.md`）：
-1. 在 `.kilo/memory/` 下创建文件
-2. 在 frontmatter 中声明 `metadata.category: memory`
-3. 在章节或条目标注 `[tag:xxx]`
-4. 自动纳入本策略管理
-
-## 切换策略
-
-在 `AGENTS.md` 第8条中修改 `strategy` 字段指向新文件：
-
-```
-strategy: "memory-strategy-semantic.md"   # 语义向量检索
-strategy: "memory-strategy-keyword.md"    # 关键词匹配
-strategy: "memory-strategy-full.md"      # 全量注入（回退）
+-- D. 模型校准建议（当前 agent + 任务类型）
+SELECT compensation_prompt, success_rate FROM model_calibration
+WHERE agent_role = '当前agent角色' AND task_type LIKE '%当前任务类型%'
+ORDER BY sample_count DESC
+LIMIT 1;
 ```
 
-不声明 `strategy` 字段时，记忆系统不加载。
+**查询后必须**：将 sqlite 返回结果格式化为文本，注入当前上下文。
+
+### 2. 失败/回溯时（reflection.md 强制触发）
+
+当命中以下条件时，**必须**查询 sqlite 而非仅依赖 `kilo_local_recall`：
+
+```sql
+-- 查找同类失败
+SELECT symptom, fix_strategy, fix_location FROM failure_db
+WHERE symptom LIKE '%当前错误关键词%' AND verified = 1
+ORDER BY created_at DESC
+LIMIT 3;
+
+-- 查找相关反模式
+SELECT trigger, action FROM fact_store
+WHERE category = 'ANTIPATTERN' AND tags LIKE '%当前任务关键词%'
+ORDER BY confidence DESC
+LIMIT 3;
+```
+
+### 3. 任务结束时（经验沉淀阶段）
+
+T1+ 任务完成后，coderAgent 必须执行写入：
+
+```sql
+-- 记录 dispatch 日志
+INSERT INTO dispatch_log (dispatch_id, thread_id, agent, task_summary, tier, model, status, error_code, duration_ms, files_changed, findings_count, created_at)
+VALUES (...);
+
+-- 若 checker/reviewer 发现有效模式，写入 fact_store
+INSERT INTO fact_store (fact_id, category, trigger, condition, action, confidence, evidence, tags, created_at, updated_at)
+VALUES (...);
+
+-- 若任务失败或 fixer 多轮，写入 failure_db
+INSERT INTO failure_db (failure_id, dispatch_id, root_cause_level, symptom, fix_strategy, fix_location, verified, tags, created_at)
+VALUES (...);
+```
+
+**写入规则**：
+- fact_store.confidence 初始值为 0.5，经 3 次验证后上调至 0.8
+- failure_db.verified 必须在 fixer 修复且 checker 重新验证通过后设为 1
+- 同一 symptom 再次出现 → UPDATE same_symptom_count + 1
+
+## md 文件保留范围（仅以下场景）
+
+| 内容 | 存储位置 | 原因 |
+|------|----------|------|
+| 用户偏好 | USER.md | 用户直接编辑，不需要结构化查询 |
+| 安全约束 | USER.md | 静态规则，不需要版本追踪 |
+| 归档索引 | MEMORY.md | 指向 sqlite 或 archive/ 的索引 |
+| 通用约定 | MEMORY.md | 低频变更，md 可读性更好 |
+
+## Token Budget 调整
+
+- sqlite 查询结果注入总量 **≤ 2000 tokens**（约 8000 字符）
+- 超出时按优先级截断：project_context > fact_store > failure_db > model_calibration
+- md 文件注入仍保持 **≤ 1500 tokens**（作为兜底）
+
+## 初始化检查
+
+首次启动或 `.kilo/memory/memory.db` 不存在时：
+1. 通过 sqlite MCP 执行 `.kilo/memory/init.sql`
+2. 验证表存在：`SELECT name FROM sqlite_master WHERE type='table'`
+3. 初始化 model_calibration 基线数据（可选）
+
+## 版本升级说明
+
+v1.0 → v2.0：
+- 新增 sqlite 优先查询层
+- md 文件退化为兜底和静态规则
+- 引入 model_calibration 动态积累
+- 写入规则从"建议"升级为"强制"

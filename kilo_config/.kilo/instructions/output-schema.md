@@ -123,6 +123,41 @@ keywords: output-schema, deliverable, marker, verdict
 ## 根因回传（强制）
 ```
 
+## 输出自检规则（coderAgent 必须执行）
+
+agent 返回后、进入下游流程前，coderAgent 必须按以下规则自检：
+
+### JSON 输出自检（checker / reviewer / fixer）
+
+1. **语法检查**：尝试定位 JSON 代码块并解析。`JSON.parse` 失败 → `[MALFORMED_OUTPUT]`
+2. **必需字段检查**：
+   - checker：`verdict`, `findings`, `scope_check` 必须存在
+   - reviewer：`risk`, `perspectives`, `approval` 必须存在
+   - fixer：`strategy`, `root_cause` 必须存在
+3. **枚举值检查**：`verdict` 必须是 PASS/FAIL；`risk` 必须是 LOW/MEDIUM/HIGH
+4. **失败处理**：
+   - 第 1 次失败 → 要求 agent 用更严格格式重输出（明确提示"请用纯 JSON，不要额外解释"）
+   - 第 2 次失败 → `[MALFORMED_OUTPUT]` 升级 reviewer 人工处理
+
+### XML 输出自检（engineer）
+
+1. **标签检查**：输出必须包含 `<dispatch-result>`, `<status>`, `<files>`, `<changes>`
+2. **状态信号检查**：`<status>` 内容必须是 `DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED` 之一
+3. **失败处理**：同 JSON 自检（最多重试 1 次 → 升级）
+
+### 通用状态信号提取
+
+无论 agent 使用何种格式，coderAgent 必须能提取以下状态之一：
+- `DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED`
+- 提取失败 → `[MISSING_STATUS_SIGNAL]`
+
+### 自检失败标记
+
+| 标记 | 触发条件 | 处理 |
+|------|----------|------|
+| `[MALFORMED_OUTPUT]` | JSON/XML 格式错误，重试 1 次后仍失败 | 升级 reviewer |
+| `[MISSING_STATUS_SIGNAL]` | 无法提取 DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED | 要求 agent 显式输出状态 |
+
 ## 标记语言
 
 | 标记 | 含义 | 使用 agent |

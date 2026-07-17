@@ -135,6 +135,8 @@ architect 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验
 | Circuit Breaker | 连续 3 次无法收敛 → 停止 | `[CIRCUIT_BREAKER]` |
 | 验收映射表 | 每条标准 → 实现位置 → 验证方式 → 边界覆盖 → 状态 | `[MISSING_ACCEPTANCE_MAP]` |
 | 计划执行门禁 | 计划执行前必须 critical review；遇 blocker 立即停止不猜测 | `[PLAN_DEVIATION]` |
+| 结构化输出验证 | agent 返回必须经过 schema 自检（JSON.parse/XML 标签检查），失败 → 重试 | `[MALFORMED_OUTPUT]` |
+| sqlite 记忆写入 | T1+ 任务完成后必须写入 dispatch_log；发现有效模式必须写入 fact_store/failure_db | `[MISSING_MEMORY_WRITE]` |
 
 ### 异常路由表
 
@@ -163,7 +165,12 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
 
 1. **验证确认**：测试、构建、类型、Lint 通过；声明完成必须有本轮 fresh 证据，不得援引上一轮或他人结论（来源：superpowers/verification-before-completion）。
 2. **范围确认**：`git diff --` 确认改动范围，无 SCOPE_CREEP。
-3. **经验沉淀**：`.kilo/memory/` 目录存在时，可复用事实 → `MEMORY.md`；模式/反模式 → `.kilo/skills/`；架构约束 → `AGENTS.md`。`.kilo/memory/` 目录不存在时，跳过 MEMORY.md 回写（文件保留），skills 和 AGENTS.md 回写不受影响。
+3. **经验沉淀与自进化**（全局 sqlite 优先 + 项目 md 兜底）：
+   - **必须写入全局 sqlite**：T1+ 任务完成后，通过 sqlite MCP 写入 `dispatch_log`；若 checker/reviewer 发现有效模式，写入 `fact_store`；若任务失败或 fixer 多轮，写入 `failure_db`
+     - 写入规则详见 `.kilo/instructions/evolution.md`
+   - **Skill 升级检测**：当 `fact_store.confidence >= 0.8` 且 `hit_count >= 3` 时，按 `.kilo/instructions/skill-upgrade.md` 生成 Skill 升级提案
+   - **可选写入项目 md**：可复用事实 → `MEMORY.md`（仅作归档索引）；架构约束 → `AGENTS.md`
+   - **全局记忆系统未初始化**（`~/.config/kilo/memory/memory.db` 不存在）→ 运行 `bun ~/.config/kilo/memory/init-db.ts` 初始化，再写入
 
 ### 分支收尾协议（来源：superpowers/finishing-a-development-branch）
 

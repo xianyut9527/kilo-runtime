@@ -40,23 +40,69 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 ### Memory 探测
 
-记忆加载以 `.kilo/memory/` 目录存在性为准，不受 `kilo.json` 配置控制：
-- `.kilo/memory/MEMORY.md`：系统级约束
-- `.kilo/memory/USER.md`：用户偏好
-- `kilo_local_recall`：跨会话历史检索
+记忆系统采用 **全局 sqlite 优先 + 项目 md 兜底** 架构：
+
+**sqlite 层**（全局共享，`~/.config/kilo/memory/memory.db`，通过 `sqlite` MCP 访问）：
+- `fact_store`：结构化经验教训（PATTERN / ANTIPATTERN / RECIPE / WARNING）
+- `failure_db`：失败案例库（含根因、修复策略、复发次数）
+- `dispatch_log`：全链路任务日志
+- `project_context`：项目专属架构决策与约束
+- `model_calibration`：模型能力积累与偏差补偿
+
+**md 层**（项目级静态规则）：
+- `.kilo/memory/MEMORY.md`：系统级约束、归档索引
+- `.kilo/memory/USER.md`：用户偏好、安全约束
+
+**全局 Skill 层**（跨项目复用）：
+- `~/.config/kilo/skills/`：全局通用 Skill（如 React 状态管理、API 设计）
+- `.kilo/skills/`：项目专属 Skill（覆盖全局同名 Skill）
+
+**初始化检查**：`~/.config/kilo/memory/memory.db` 不存在时，运行 `bun ~/.config/kilo/memory/init-db.ts` 初始化全局数据库。
 
 `gitnexus_*`：代码图谱（调用链/影响面）—— 由 `kilo.json` `mcp.gitnexus.enabled` 独立控制。
 
 ## 自进化触发点
 
-`.kilo/memory/` 目录存在且包含有效记忆文件时，以下条件命中后**强制**执行 `kilo_local_recall` 并贴出结果，再决定修复策略：
+`.kilo/memory/` 目录存在时，以下条件命中后**强制**执行回溯查询，再决定修复策略：
 
 1. checker/reviewer FAIL 且错误为方法层/需求层
 2. fixer 连续 2 轮同症状
 3. 用户反馈"还是有问题/不对/遗漏"
 4. Circuit Breaker 触发（连续 3 次无法收敛）
 
-`.kilo/memory/` 目录不存在或为空时，跳过本章节强制回溯（`kilo_local_recall` 仍可作为独立工具手动调用）。
+### 强制回溯查询（优先级顺序）
+
+**第一步：sqlite 查询（必须）**
+```sql
+-- 查同类失败
+SELECT symptom, root_cause_level, fix_strategy, fix_location 
+FROM failure_db 
+WHERE symptom LIKE '%关键词%' AND verified = 1 
+ORDER BY created_at DESC LIMIT 3;
+
+-- 查相关反模式
+SELECT trigger, condition, action, confidence 
+FROM fact_store 
+WHERE category = 'ANTIPATTERN' AND tags LIKE '%关键词%' 
+ORDER BY confidence DESC LIMIT 3;
+
+-- 查模型校准
+SELECT compensation_prompt, success_rate 
+FROM model_calibration 
+WHERE agent_role = '当前角色' AND task_type LIKE '%当前类型%' 
+ORDER BY sample_count DESC LIMIT 1;
+```
+
+**第二步：kilo_local_recall（补充）**
+- 搜索历史同类问题
+- 对比历史修复方案
+
+**第三步：gitnexus 验证（影响面确认）**
+- `gitnexus_*` 验证修改影响面
+
+**未执行 sqlite 查询 → `[MISSING_RECALL]`，不得进入修复阶段。**
+
+`.kilo/memory/` 目录不存在时，跳过 sqlite 查询，`kilo_local_recall` 仍可作为独立工具手动调用。
 
 ## 验证与安全
 
