@@ -17,7 +17,75 @@ keywords: output-schema, deliverable, marker, verdict
 | **证据片段** | 命令输出、代码路径、测试结果 | 紧跟所属字段 | `\| 证据:` 前缀，≤200 字符 |
 | **覆盖矩阵** | 验收标准映射表 | engineer 强制 | `验收标准 \| 实现位置 \| 验证方式 \| 边界覆盖 \| 状态` |
 
-## 各 agent 最小骨架
+## 结构化输出格式（强制）
+
+为提高解析稳定性，coderAgent 必须按以下格式解析各 agent 输出。格式错误 → 标记 `[MALFORMED_OUTPUT]` 要求重试。
+
+### engineer 输出格式（XML）
+```xml
+<dispatch-result>
+  <status>DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED</status>
+  <files>
+    <file path="src/foo.ts" action="modified">变更摘要</file>
+  </files>
+  <changes>
+    <change file="src/foo.ts" lines="10-25">具体修改说明</change>
+  </changes>
+  <test-result>PASS|FAIL|SKIPPED</test-result>
+  <concerns>如有 DONE_WITH_CONCERNS，列出风险点</concerns>
+</dispatch-result>
+```
+
+### checker 输出格式（JSON）
+```json
+{
+  "verdict": "PASS|FAIL",
+  "findings": [
+    {
+      "severity": "ERROR|WARNING|INFO",
+      "file": "src/foo.ts",
+      "line": 10,
+      "message": "问题描述",
+      "suggestion": "修复建议",
+      "confidence": "HIGH|MEDIUM|LOW"
+    }
+  ],
+  "scope_check": {
+    "expected_files": ["src/foo.ts"],
+    "actual_files": ["src/foo.ts", "src/bar.ts"],
+    "scope_creep": false
+  }
+}
+```
+
+### reviewer 输出格式（JSON）
+```json
+{
+  "risk": "LOW|MEDIUM|HIGH",
+  "perspectives": {
+    "security": "通过|问题",
+    "architecture": "通过|问题",
+    "simplification": "通过|问题"
+  },
+  "approval": "APPROVE|REQUEST_CHANGES",
+  "comments": []
+}
+```
+
+### fixer 输出格式（JSON）
+```json
+{
+  "strategy": "修复策略摘要",
+  "files_changed": ["src/foo.ts"],
+  "root_cause": {
+    "layer": "执行层|方法层|需求层",
+    "same_symptom": false,
+    "fix_location": "src/foo.ts:10"
+  }
+}
+```
+
+## 各 agent 最小骨架（与结构化格式并行，不替代）
 
 ### engineer
 ```

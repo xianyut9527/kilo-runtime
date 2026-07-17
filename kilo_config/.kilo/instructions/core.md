@@ -107,6 +107,21 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 4. **已读取文件清单**：列出实际读取的调用方文件、同类点来源文件、复用实现文件。checker 反向核对；虚假路径 → `[FAKE_CONTEXT]`。
 5. **清理交付**：任务结束前清理临时文件。
 
+## Context Engine 自动查询规则
+
+以下场景必须**自动**调用对应工具（不得省略）：
+
+| 场景 | 强制工具 | 说明 |
+|------|----------|------|
+| 修改 ≥3 个文件 | `gitnexus_impact` | 影响面分析 |
+| 修改 API/Router/Handler | `gitnexus_route_map` 或 `gitnexus_api_impact` | 接口消费方检查 |
+| 修改数据库表/字段 | `gitnexus_data_impact` | 上下游数据流分析 |
+| 修改核心工具/配置 | `gitnexus_query` | 架构约束检索 |
+| 使用陌生第三方库 | `context7_query-docs` | 文档查询 |
+| 修复失败/报错 | `kilo_local_recall` | 历史同类问题回溯 |
+
+未执行 → `[MISSING_CONTEXT_QUERY]`
+
 ## 编码前强制检查点
 
 编码前必须显式输出确认，不可跳过：
@@ -114,7 +129,8 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 1. **规则确认**：已读取通用安全约束、资源约束、生命周期基线。
 2. **等级确认**：已确认任务等级（T0/T1/T2/T3），非 T0 绝不跳过 checker。
 3. **搜索确认**：已搜索现有实现和同类模式，确认可复用点。
-4. **清理确认**：已确认临时文件存放位置（$env:TEMP / /tmp/）。
+4. **Context 确认**：已按「Context Engine 自动查询规则」调用必要工具，确认影响面。
+5. **清理确认**：已确认临时文件存放位置（$env:TEMP / /tmp/）。
 
 未执行 → `[CHECKPOINT_MISSED]`，暂停编码。
 

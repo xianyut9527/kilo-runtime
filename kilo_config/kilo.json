@@ -6,9 +6,9 @@
   "snapshot": true,
   "compaction": {
     "auto": true,
-    "threshold_percent": 70,
-    "tail_turns": 20,
-    "preserve_recent_tokens": 80000,
+    "threshold_percent": 65,
+    "tail_turns": 25,
+    "preserve_recent_tokens": 120000,
     "prune": false
   },
   "commit_message": {
@@ -18,44 +18,44 @@
     "coderAgent": {
       "mode": "primary",
       "model": "hx/kimi-k2.6",
-      "temperature": 0.1,
+      "temperature": 0,
       "prompt": "coderAgent（主控 agent）。锚点：意图判定、定级、pre-checker、engineer、checker、fixer、reviewer、compaction。T0/T1 任务跳过 ensemble，直接用 single engineer。"
     },
     "engineer": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
       "temperature": 0,
-      "prompt": "engineer"
+      "prompt": "参见 .kilo/agent/engineer.md"
     },
     "architect": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
-      "temperature": 0.1,
-      "prompt": "architect"
+      "temperature": 0,
+      "prompt": "参见 .kilo/agent/architect.md"
     },
     "checker": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
       "temperature": 0,
-      "prompt": "checker"
+      "prompt": "参见 .kilo/agent/checker.md"
     },
     "pre-checker": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
       "temperature": 0,
-      "prompt": "pre-checker"
+      "prompt": "参见 .kilo/agent/pre-checker.md"
     },
     "fixer": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
       "temperature": 0,
-      "prompt": "fixer"
+      "prompt": "参见 .kilo/agent/fixer.md"
     },
     "reviewer": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
       "temperature": 0,
-      "prompt": "reviewer"
+      "prompt": "参见 .kilo/agent/reviewer.md"
     },
     "executor-A": {
       "mode": "subagent",
@@ -78,7 +78,7 @@
     "synthesizer": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
-      "temperature": 0.2,
+      "temperature": 0,
       "prompt": "synthesizer"
     },
     "ensemble": {
@@ -104,8 +104,20 @@
     "playwright": {
       "type": "local",
       "command": ["npx", "@playwright/mcp"],
-      "enabled": false,
+      "enabled": true,
       "timeout": 120000
+    },
+    "ddg-search": {
+      "type": "remote",
+      "url": "https://mcp.duckduckgo.com/mcp",
+      "enabled": true,
+      "timeout": 15000
+    },
+    "sqlite": {
+      "type": "local",
+      "command": ["npx", "@modelcontextprotocol/server-sqlite"],
+      "enabled": true,
+      "timeout": 10000
     }
   },
   "provider": {

@@ -136,6 +136,27 @@ architect 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验
 | 验收映射表 | 每条标准 → 实现位置 → 验证方式 → 边界覆盖 → 状态 | `[MISSING_ACCEPTANCE_MAP]` |
 | 计划执行门禁 | 计划执行前必须 critical review；遇 blocker 立即停止不猜测 | `[PLAN_DEVIATION]` |
 
+### 异常路由表
+
+coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由处理：
+
+| 错误码 | 触发条件 | 路由策略 | 说明 |
+|--------|----------|----------|------|
+| `TIMEOUT` | 子 agent / MCP 调用超时 | 退避重试 3 次 → ESCALATE reviewer | 首次退避 5s，后续指数增长 |
+| `RATE_LIMIT` | 模型限流 | 指数退避 + 切备用模型 | 退避间隔 5s/10s/20s |
+| `CONTEXT_OVERFLOW` | 上下文超限 | 转 compaction 压缩后重试 1 次 | 压缩后仍超限 → 拆单元 |
+| `AUTH` | 鉴权失败 | **不重试**，立即升级人工 | 可能是密钥失效 |
+| `BAD_INPUT` | 委派包参数不合法 | **不重试**，回 coderAgent 修正 | 通常是 dispatch 生成错误 |
+| `TOOL_DENIED` | 工具被策略拒绝 | 转人机回路确认 | 可能命中安全策略 |
+| `CRASH` | 进程/MCP 崩溃 | 重试 1 次 → 切备用执行器 | 备用执行器指同任务其他模型 |
+| `AMBIGUOUS` | 输出无法解析/语义不清 | 重试 1 次（换严 schema）→ reviewer | 要求 agent 用更严格格式重输出 |
+| `MALFORMED_OUTPUT` | 结构化输出格式错误 | 要求重输出，连续 2 次 → reviewer | 见 `output-schema.md` |
+
+**路由原则**：
+- 可恢复错误（TIMEOUT/RATE_LIMIT/CONTEXT_OVERFLOW）→ 自动重试
+- 不可恢复错误（AUTH/BAD_INPUT）→ 立即停止，回传 coderAgent 或人工
+- 语义错误（AMBIGUOUS/MALFORMED_OUTPUT）→ 降级重试，仍失败升级 reviewer
+
 ## 交付
 
 ### 收尾三步
