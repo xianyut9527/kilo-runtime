@@ -134,14 +134,6 @@
           "limit": {
             "context": 200000,
             "output": 16384
-          },
-          "capabilities": {
-            "strengths": ["快速推理", "代码审查", "模式识别"],
-            "weaknesses": ["过度自信", "复杂架构设计", "长上下文保持"],
-            "best_for": ["checker", "fixer", "快速分析"],
-            "avoid_for": ["architect", "复杂根因分析", "多文件协调"],
-            "speed": "fast",
-            "cost": "low"
           }
         },
         "deepseek-v4-pro": {
@@ -150,14 +142,6 @@
           "limit": {
             "context": 200000,
             "output": 16384
-          },
-          "capabilities": {
-            "strengths": ["深度推理", "复杂逻辑", "数学/算法"],
-            "weaknesses": ["速度较慢", "输出冗长"],
-            "best_for": ["T3 根因分析", "算法实现", "安全审查"],
-            "avoid_for": ["快速迭代", "简单任务"],
-            "speed": "medium",
-            "cost": "medium"
           }
         },
         "glm-5.2": {
@@ -166,14 +150,6 @@
           "limit": {
             "context": 200000,
             "output": 16384
-          },
-          "capabilities": {
-            "strengths": ["结构化输出", "安全审查", "中文理解"],
-            "weaknesses": ["简化建议不足", "架构深度有限"],
-            "best_for": ["reviewer", "安全审查", "合规检查"],
-            "avoid_for": ["复杂重构", "创新设计"],
-            "speed": "medium",
-            "cost": "medium"
           }
         },
         "kimi-k2.6": {
@@ -186,14 +162,6 @@
           "limit": {
             "context": 200000,
             "output": 16384
-          },
-          "capabilities": {
-            "strengths": ["长上下文", "代码生成", "多文件协调", "图像理解"],
-            "weaknesses": ["极端复杂推理", "数学竞赛级问题"],
-            "best_for": ["coderAgent", "engineer", "synthesizer", "architect"],
-            "avoid_for": ["纯数学证明", "极端性能优化"],
-            "speed": "medium",
-            "cost": "medium"
           }
         },
         "kimi-k2.7-code": {
@@ -206,14 +174,6 @@
           "limit": {
             "context": 200000,
             "output": 16384
-          },
-          "capabilities": {
-            "strengths": ["顶级代码能力", "长上下文", "复杂重构", "图像理解"],
-            "weaknesses": ["资源消耗高", "速度较慢"],
-            "best_for": ["T3 核心逻辑", "复杂重构", "关键架构设计"],
-            "avoid_for": ["简单机械任务", "高并发短任务"],
-            "speed": "slow",
-            "cost": "high"
           }
         },
         "qwen3.7-max": {
@@ -222,14 +182,6 @@
           "limit": {
             "context": 200000,
             "output": 16384
-          },
-          "capabilities": {
-            "strengths": ["综合能力均衡", "中文理解强", "工具调用"],
-            "weaknesses": ["代码深度不如 kimi", "架构设计中等"],
-            "best_for": ["通用任务", "中文文档", "工具链集成"],
-            "avoid_for": ["极端复杂代码", "安全敏感核心逻辑"],
-            "speed": "medium",
-            "cost": "medium"
           }
         },
         "qwen3.7-plus": {
@@ -242,14 +194,6 @@
           "limit": {
             "context": 200000,
             "output": 16384
-          },
-          "capabilities": {
-            "strengths": ["图像理解", "多模态", "中文场景"],
-            "weaknesses": ["纯代码能力弱于 kimi", "长上下文保持一般"],
-            "best_for": ["UI 相关任务", "前端组件", "图文分析"],
-            "avoid_for": ["后端核心逻辑", "复杂算法"],
-            "speed": "medium",
-            "cost": "medium"
           }
         },
         "MiniMax-M3": {
@@ -262,14 +206,6 @@
           "limit": {
             "context": 200000,
             "output": 16384
-          },
-          "capabilities": {
-            "strengths": ["创意生成", "多模态", "对话流畅"],
-            "weaknesses": ["代码严谨性不足", "结构化输出不稳定"],
-            "best_for": ["executor-C（ensemble 多样性）", "创意探索", "文档起草"],
-            "avoid_for": ["checker", "fixer", "关键代码生成"],
-            "speed": "medium",
-            "cost": "medium"
           }
         },
         "MiniMax-M2.7-highspeed": {
@@ -282,14 +218,6 @@
           "limit": {
             "context": 200000,
             "output": 16384
-          },
-          "capabilities": {
-            "strengths": ["极速响应", "成本低", "简单任务"],
-            "weaknesses": ["复杂推理弱", "代码质量不稳定", "长上下文差"],
-            "best_for": ["small_model", "T0 机械任务", "搜索确认", "读取文件"],
-            "avoid_for": ["T2+", "checker", "fixer", "reviewer", "关键代码"],
-            "speed": "very_fast",
-            "cost": "very_low"
           }
         }
       }
