@@ -131,6 +131,59 @@ WHERE model = ? AND agent_role = ? AND task_type = ?;
 | P2 | 更新 model_calibration | 每次 dispatch 后 |
 | P3 | Skill 升级提案 | fact_store.confidence >= 0.8 且 hit_count >= 3 |
 
+## 观测数据闭环（任务结束后自动回写）
+
+每次任务交付后，coderAgent 必须根据实际结果更新 `model_calibration`，实现从「静态补偿」到「动态校准」的跃迁。
+
+### 回写触发时机
+
+- **正常交付**（status = DONE）：任务完成后立即回写
+- **降级交付**（status = DONE_WITH_CONCERNS）：任务完成后回写，success_rate 输入为 0.7（部分成功）
+- **失败交付**（status = FAILED / BLOCKED / TIMEOUT）：任务终止后回写，success_rate 输入为 0.0
+
+### 回写 SQL 模板
+
+```sql
+-- 1. 更新或插入 model_calibration
+INSERT INTO model_calibration (calibration_id, model, agent_role, task_type, success_rate, avg_findings, sample_count, last_evaluated_at)
+VALUES (
+  'cal-' || ? || '-' || ? || '-' || ?,
+  ?, ?, ?,
+  ?, -- success_rate: DONE=1.0, DONE_WITH_CONCERNS=0.7, FAILED=0.0
+  ?, -- avg_findings: checker findings_count
+  1,
+  datetime('now')
+)
+ON CONFLICT(calibration_id) DO UPDATE SET
+  success_rate = (model_calibration.success_rate * model_calibration.sample_count + excluded.success_rate) / (model_calibration.sample_count + 1),
+  avg_findings = (model_calibration.avg_findings * model_calibration.sample_count + excluded.avg_findings) / (model_calibration.sample_count + 1),
+  sample_count = model_calibration.sample_count + 1,
+  last_evaluated_at = datetime('now');
+```
+
+### 动态校准触发条件
+
+当某条 `model_calibration` 记录满足以下条件时，coderAgent 必须触发补偿 prompt 更新：
+
+```sql
+SELECT model, agent_role, task_type, success_rate, sample_count
+FROM model_calibration
+WHERE success_rate < 0.7 AND sample_count >= 5;
+```
+
+**触发后动作**：
+1. 查询该模型+角色+任务类型的历史失败模式
+2. 提取共同偏差（如「跳过依赖分析」「过度自信」）
+3. 生成新的 `compensation_prompt`
+4. 更新 `model_calibration.compensation_prompt`
+5. 在下次委派同类型任务时自动注入新补偿 prompt
+
+### 校准效果验证
+
+每次更新 `compensation_prompt` 后，必须连续跟踪 3 次同类型任务的成功率：
+- 3 次中 ≥2 次成功 → 校准有效，保留新 prompt
+- 3 次中 <2 次成功 → 校准无效，回退到上一个有效 prompt，并标记「该偏差模式需人工分析」
+
 ## 禁止事项
 
 - 不写入项目特定代码（如具体变量名、业务逻辑）

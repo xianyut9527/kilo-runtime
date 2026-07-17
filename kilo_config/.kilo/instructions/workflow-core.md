@@ -159,6 +159,26 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
 - 不可恢复错误（AUTH/BAD_INPUT）→ 立即停止，回传 coderAgent 或人工
 - 语义错误（AMBIGUOUS/MALFORMED_OUTPUT）→ 降级重试，仍失败升级 reviewer
 
+### 标记 → 硬动作映射（coderAgent 必须执行）
+
+以下标记由 coderAgent 在解析子 agent 输出时自动检测，检测后必须执行对应硬动作，不得跳过：
+
+| 标记 | 检测方式 | 硬动作 | 失败后果 |
+|------|----------|--------|----------|
+| `[MALFORMED_OUTPUT]` | JSON.parse 失败 / XML 标签缺失 / 必需字段缺失 | 1. 要求子 agent 用更严格格式重输出<br>2. 第 2 次仍失败 → 调用 reviewer | 流程中断，不得进入下游 |
+| `[MISSING_STATUS_SIGNAL]` | 无法提取 `DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED` | 1. 要求子 agent 显式输出状态<br>2. 仍失败 → 调用 reviewer | 流程中断，不得进入下游 |
+| `[MISSING_RECALL]` | 回溯阶段未执行 sqlite 查询 | 1. 立即执行 sqlite 查询<br>2. 查询完成前不得进入修复阶段 | 阻塞修复，直到查询完成 |
+| `[MISSING_MEMORY_WRITE]` | T1+ 任务结束未写入 `dispatch_log` | 1. 立即补写 `dispatch_log`<br>2. 写入完成前不得标记任务完成 | 阻塞交付，直到写入完成 |
+| `[MISSING_CONTEXT_QUERY]` | 编码前未按规则调用 Context Engine | 1. 立即补调必要工具<br>2. 完成后重新检查点 | 阻塞编码，直到查询完成 |
+| `[PROCESS_VIOLATION]` | 流程跳步 | 1. 标记违规<br>2. 暂停执行<br>3. 修正后从上一个检查点恢复 | 任务暂停 |
+| `[CIRCUIT_BREAKER]` | 连续 3 次无法收敛 | 1. 停止修复<br>2. 生成降级交付报告<br>3. 建议用户决策 | 任务终止 |
+| `[NEEDS_REVIEW]` | fixer 连续 2 轮同症状 | 1. 停止 fixer<br>2. 升级 reviewer<br>3. reviewer 结论作为最终状态 | fixer 终止 |
+
+**执行要求**：
+- 所有标记检测必须在子 agent 返回后 **10 秒内**完成
+- 标记触发后，coderAgent 必须在回复中显式输出「检测到 `[标记名]`，执行动作：...」
+- 任何标记未处理即进入下游 → `[PROCESS_VIOLATION]`
+
 ## 交付
 
 ### 收尾三步
