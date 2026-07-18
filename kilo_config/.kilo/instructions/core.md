@@ -54,7 +54,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 - `.kilo/memory/USER.md`：用户偏好、安全约束
 
 **全局 Skill 层**（跨项目复用）：
-- `~/.config/kilo/skills/`：全局通用 Skill（如 React 状态管理、API 设计）
+- `~/.config/kilo/.kilo/skills/`：全局通用 Skill（与 install.ps1 实际安装路径一致；另通过 `kilo.json` `skills.external_dirs` 接入 `~/.agents/skills/` 社区技能源）
 - `.kilo/skills/`：项目专属 Skill（覆盖全局同名 Skill）
 
 **初始化检查**：`~/.config/kilo-data/memory.db` 不存在时，用 sqlite 执行仓库 `.kilo/memory/init.sql` 完成建表（5 表 + 索引），再开始使用。

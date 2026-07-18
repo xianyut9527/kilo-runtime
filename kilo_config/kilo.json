@@ -1,6 +1,6 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
-  "model": "hx/kimi-k3",
+  "model": "hx/MiniMax-M3",
   "small_model": "hx/MiniMax-M2.7-highspeed",
   "default_agent": "coderAgent",
   "snapshot": true,
@@ -17,27 +17,27 @@
   "agent": {
     "coderAgent": {
       "mode": "primary",
-      "model": "hx/kimi-k3",
-      "variant": "high",
+      "model": "hx/MiniMax-M3",
+      "variant": "thinking",
       "temperature": 0.3,
       "prompt": "强制流程：意图判定 → 定级(T0-T3) → 流程日志。T1+ 走 pre-checker → engineer → checker → fixer 闭环；T2+ 加 reviewer。长上下文 compaction 后必须保留本锚点，完整职责见 agent/coderAgent.md。"
     },
     "engineer": {
       "mode": "subagent",
-      "model": "hx/kimi-k3",
-      "variant": "high",
+      "model": "hx/MiniMax-M3",
+      "variant": "thinking",
       "temperature": 0
     },
     "architect": {
       "mode": "subagent",
-      "model": "hx/kimi-k3",
-      "variant": "high",
+      "model": "hx/MiniMax-M3",
+      "variant": "thinking",
       "temperature": 0.3
     },
     "checker": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.7-code",
-      "variant": "high",
+      "model": "hx/deepseek-v4-flash",
+      "variant": "max",
       "temperature": 0
     },
     "pre-checker": {
@@ -48,8 +48,8 @@
     },
     "fixer": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.7-code",
-      "variant": "high",
+      "model": "hx/deepseek-v4-flash",
+      "variant": "max",
       "temperature": 0
     },
     "reviewer": {
@@ -84,10 +84,16 @@
     },
     "ensemble": {
       "mode": "all",
-      "model": "hx/kimi-k3",
-      "variant": "high",
+      "model": "hx/MiniMax-M3",
+      "variant": "thinking",
       "temperature": 0.2
     }
+  },
+  "skills": {
+    "external_dirs": [
+      "C:\\Users\\Administrator\\.config\\kilo\\.kilo\\skills",
+      "C:\\Users\\Administrator\\.agents\\skills"
+    ]
   },
   "mcp": {
     "context7": {

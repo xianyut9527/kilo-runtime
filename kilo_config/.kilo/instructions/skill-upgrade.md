@@ -48,7 +48,7 @@ WHERE same_symptom_count >= 3 AND verified = 1;
 ### 文件位置
 
 - 项目级 Skill：`.kilo/skills/{skill-name}/SKILL.md`
-- 全局 Skill（跨项目复用）：`~/.config/kilo/skills/{skill-name}/SKILL.md`
+- 全局 Skill（跨项目复用）：`~/.config/kilo/.kilo/skills/{skill-name}/SKILL.md`（与 install.ps1 实际安装路径一致）
 
 ### 文件模板
 
@@ -121,7 +121,7 @@ WHERE fact_id = ?;
 
 | 级别 | 路径 | 适用场景 | 复用范围 |
 |------|------|----------|----------|
-| 全局 | `~/.config/kilo/skills/` | 跨项目通用（如 React 状态管理、API 设计） | 所有项目 |
+| 全局 | `~/.config/kilo/.kilo/skills/` | 跨项目通用（如 React 状态管理、API 设计） | 所有项目 |
 | 项目 | `.kilo/skills/` | 项目专属（如特定业务规则、内部框架） | 当前项目 |
 
 ### 加载优先级

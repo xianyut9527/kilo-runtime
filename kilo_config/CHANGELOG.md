@@ -12,6 +12,7 @@
   - **agent frontmatter 补全**：executor-A/B/C、synthesizer、ensemble 补 color/hidden/steps/permission（执行器对齐 engineer 权限，synthesizer/ensemble 收敛只读）；coderAgent 补 `hidden: false`。
   - **skills 治理**：18 个 SKILL.md 裸字符串 keywords 批量转 flow 数组；`skills-lifecycle.md` 新增 30 个 skill 的分类总表（check3 声明源）。
   - **validate-config.mjs 校验维度变更**：check14 由「kilo.json memory.enabled 字段存在性」改为「.kilo/memory/ 策略与 schema 文件存在性 + 废弃 memory 字段检测」（对齐 CONFIG_CHANGE_CHECKLIST.md 第 54 条）；parseFrontmatter 新增 YAML flow 数组解析（`keywords: [a, b]` 与块式数组等效）；check12/check13 对齐 Hermes 实际布局（产物校验指向外层 `hermes_config/`，必检清单更新为 SOUL.md/config.yaml/.hermes.md/USER.md/skills/workflow；install-hermes 双脚本路径指向外层仓库根）。
+  - **skills 发现路径修复**：`kilo.json` 新增 `skills.external_dirs`（指向 install 实际安装路径 `~/.config/kilo/.kilo/skills` + 社区技能源 `~/.agents/skills`），修复 30 个全局 skills 无法被 skill 工具发现的断裂；`core.md` / `skill-upgrade.md` 全局 Skill 层路径统一为 `~/.config/kilo/.kilo/skills/`（原 `~/.config/kilo/skills/` 为错误口径）。
 
 - **2026-07-15**: 记忆系统可插拔化改造 —— L1/L2 硬编码注入与回溯规则全面条件化。
   - `kilo.json` 新增 `memory.enabled` 总控开关（默认 `true`，向后兼容）。为 `false` 时优雅降级：跳过 MEMORY.md/USER.md 自动注入、跳过 `kilo_local_recall` 强制回溯、跳过 skill-usage.log 追加，不删除文件、不报错。
