@@ -21,6 +21,9 @@
 -- ============================================================
 
 -- 防重复迁移：用 INSERT OR IGNORE 模式（fact_id 主键冲突则跳过）
+-- 注意：hit_count 初始值 = 2（非 0）。这些经验在 markdown 时代已被反复全文加载使用，
+--       与 confidence=1.0 语义一致；同时避免「hit<2 且过 14 天试用窗口 → 永久不可见」的
+--       冷启动陷阱（见 policy/query_strategy.md §注入门槛 v2.2）。
 INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action, confidence, evidence, tags, hit_count, created_at, updated_at) VALUES
 
 -- ============================================================
@@ -33,7 +36,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '检测并剥离 UTF-8 BOM (0xEF 0xBB 0xBF) 后再 JSON.parse；node -e 检测 BOM 后剥离',
  1.0, '["disp-20260624-001"]',
  '["encoding","bom","json","yaml","windows","edit"]',
- 0, '2026-06-24', '2026-06-24'),
+ 2, '2026-06-24', '2026-06-24'),
 
 ('AP-002', 'ANTIPATTERN',
  '核心规则放在 instructions/*.md 嵌套子条款里被淹没，规则存在但不被遵守',
@@ -41,7 +44,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '规则放平级位置 + "违反视为方法层错误" + 每违反 1 次 = 1 次反模式反馈',
  1.0, '["disp-20260624-001"]',
  '["process","soft-rule","hard-gate","instruction-depth"]',
- 0, '2026-06-24', '2026-06-24'),
+ 2, '2026-06-24', '2026-06-24'),
 
 ('AP-003', 'ANTIPATTERN',
  'pre-checker FAIL 修正后未再次调用 pre-checker 验证，直接进入 engineer 阶段',
@@ -49,7 +52,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '修正后必须再过 pre-checker 复验（PASS），流程日志必须显式记录复验节点',
  1.0, '["disp-20260624-001"]',
  '["process","skip-step","pre-checker","verification"]',
- 0, '2026-06-24', '2026-06-24'),
+ 2, '2026-06-24', '2026-06-24'),
 
 ('AP-004', 'ANTIPATTERN',
  '子智能体连续 2 次返回空 task_result 时，coderAgent 直接内联执行其职责',
@@ -57,7 +60,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '标记 [SUBAGENT_RETURNED_EMPTY] 并升级 ensemble / 拆细任务，禁止内联合并职责',
  1.0, '["disp-20260624-001"]',
  '["coordination","subagent","empty-result","escalation"]',
- 0, '2026-06-24', '2026-06-24'),
+ 2, '2026-06-24', '2026-06-24'),
 
 ('AP-005', 'ANTIPATTERN',
  'Windows 中文系统 PowerShell 5.1 默认输出 GBK/GB2312，shell 读 / 写中文乱码',
@@ -65,7 +68,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '$OutputEncoding / [Console]::OutputEncoding / InputEncoding 永久化为 UTF-8（已写入 install.ps1 $PROFILE）',
  1.0, '["disp-20260624-001"]',
  '["encoding","gbk","powershell-5.1","windows","utf-8"]',
- 0, '2026-06-24', '2026-06-24'),
+ 2, '2026-06-24', '2026-06-24'),
 
 ('AP-006', 'ANTIPATTERN',
  '改功能 A 只改最直观的一处，未搜索同步修改依赖 A 的 B/C/D',
@@ -73,7 +76,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '执行 4 项检查：调用方搜索 / 平行实现搜索 / 三层同步检查 / 配置复用检查；产出调用方摘要',
  1.0, '["disp-20260625-001"]',
  '["coordination","linkage","checklist","rework"]',
- 0, '2026-06-25', '2026-06-25'),
+ 2, '2026-06-25', '2026-06-25'),
 
 ('AP-007', 'ANTIPATTERN',
  '删除 agent 只清理 agent/*.md 和 kilo.json，未 grep 搜索其他文档中的执行主体引用',
@@ -81,7 +84,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '全仓 grep {name}（含中文别名、缩写、文件路径），同步更新 AGENTS.md / workflow-core.md / 其他 agent 引用',
  1.0, '["disp-20260630-001"]',
  '["coordination","agent-deletion","linkage-residue","break-link"]',
- 0, '2026-06-30', '2026-06-30'),
+ 2, '2026-06-30', '2026-06-30'),
 
 ('AP-008', 'ANTIPATTERN',
  'agent frontmatter permission.edit 与正文"写入职责"契约不一致',
@@ -89,7 +92,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '缩 frontmatter 权限到正文声明的实际写入范围；只读 agent 设为 edit: []',
  1.0, '["disp-20260630-001"]',
  '["contract","permission","frontmatter","overprivilege"]',
- 0, '2026-06-30', '2026-06-30'),
+ 2, '2026-06-30', '2026-06-30'),
 
 ('AP-009', 'ANTIPATTERN',
  'T2 多单元工作区中，checker 用 git diff HEAD~1 / git diff --stat 全量范围做 SCOPE_CREEP，把历史提交或前置单元合法变更误判',
@@ -97,7 +100,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '用 git status --short 确认实际改动 + git diff -- <本单元文件> 限定范围；全量 diff 仅用于总体验收',
  1.0, '["disp-20260703-001"]',
  '["process","scope-creep","multi-unit","git-diff"]',
- 0, '2026-07-03', '2026-07-03'),
+ 2, '2026-07-03', '2026-07-03'),
 
 ('AP-010', 'ANTIPATTERN',
  '仅凭"当前校验脚本未引用"就删除配置字段，忽略框架/TUI/CI 等外部消费者',
@@ -105,7 +108,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  'grep 字段名全仓（含 .gitignore / CHECKLIST / install / TUI）；无外部消费者时先加入校验再删除',
  1.0, '["disp-20260703-001"]',
  '["coordination","config-deletion","external-consumer"]',
- 0, '2026-07-03', '2026-07-03'),
+ 2, '2026-07-03', '2026-07-03'),
 
 ('AP-011', 'ANTIPATTERN',
  '看到校验脚本做占位符替换就反推运行时框架也支持任意模板变量',
@@ -113,7 +116,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '在 README / examples / 实际运行中验证框架是否支持目标占位符；不支持时直接删除字面句',
  1.0, '["disp-20260703-001"]',
  '["contract","placeholder","runtime-capability"]',
- 0, '2026-07-03', '2026-07-03'),
+ 2, '2026-07-03', '2026-07-03'),
 
 ('AP-012', 'ANTIPATTERN',
  '源文件多条规则"引用化"到目标文件时只检查部分条目重复就全文替换',
@@ -121,7 +124,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '逐条核对：重复的改引用，独有的保留；或先补缺失条目再引用化',
  1.0, '["disp-20260703-001"]',
  '["coordination","reference-extract","coverage-loss"]',
- 0, '2026-07-03', '2026-07-03'),
+ 2, '2026-07-03', '2026-07-03'),
 
 ('AP-013', 'ANTIPATTERN',
  '批量重命名函数（check4→check3 等）只改定义和主流程调用，漏改内部相互调用',
@@ -129,7 +132,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '全仓 grep 函数名（定义 / 调用 / 内部调用 / 注释），运行脚本验证',
  1.0, '["disp-20260703-001"]',
  '["coordination","rename","internal-call","refactor"]',
- 0, '2026-07-03', '2026-07-03'),
+ 2, '2026-07-03', '2026-07-03'),
 
 ('AP-014', 'ANTIPATTERN',
  '同一 UI/样式/行为问题在多个页面 / 组件出现时，engineer 不扫描全仓同类点也不创建共享抽象，直接把同一段代码复制到每个出现点',
@@ -137,7 +140,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  'grep 全量扫描同类点 → 根因分类 → 共享抽象（Layout / Component / Token）→ 反向验证（命中数=0，引用数=消费者数）',
  1.0, '["disp-20260719-001"]',
  '["process","copy-paste-fix","local-patch","component","repeat-pattern"]',
- 0, '2026-07-19', '2026-07-19'),
+ 2, '2026-07-19', '2026-07-19'),
 
 -- ============================================================
 -- 2 条 PAT-XXX 正向模式（迁移自 .kilo/skills/patterns/）
@@ -149,7 +152,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '执行 4 项检查：调用方搜索 / 平行实现搜索 / 三层同步检查 / 配置复用检查；产出调用方摘要',
  1.0, '["disp-20260625-001"]',
  '["linkage","checklist","T1","pattern"]',
- 0, '2026-06-25', '2026-06-25'),
+ 2, '2026-06-25', '2026-06-25'),
 
 ('PAT-002', 'PATTERN',
  'kilo.json agent.*.prompt 设计',
@@ -157,7 +160,7 @@ INSERT OR IGNORE INTO fact_store (fact_id, category, trigger, condition, action,
  '最小锚点关键词 + 运行时指令注入（findUp AGENTS.md → 注入 core/workflow-core/reflection）；删除"完整职责见 agent/X.md"重复字面句',
  1.0, '["disp-20260703-001"]',
  '["config-dedup","prompt-minimal","runtime-injection","pattern"]',
- 0, '2026-07-03', '2026-07-03');
+ 2, '2026-07-03', '2026-07-03');
 
 -- ============================================================
 -- 验证迁移结果

@@ -1,7 +1,7 @@
 -- kilo memory system schema（兼容指针）
 -- ============================================================
--- 实际 DDL 已迁移到 .kilo/memory/schema/init.sql（v2.0 模块边界）
--- 本文件保留作为向后兼容入口，新代码请直接引用 schema/init.sql
+-- 实际 DDL 已迁移到 .kilo/memory/schema/init.sql（v2.2 模块边界）
+-- 本文件保留作为向后兼容入口（仅占位），新代码请直接引用 schema/init.sql
 -- ============================================================
 --
 -- 模块架构: .kilo/memory/
@@ -11,10 +11,7 @@
 --   policy/*.md              ← 业务规则（7 个文件）
 --   contracts/health_check.sql ← 健康度 SQL
 --
--- 向后兼容说明：
---   旧脚本 `sqlite3 ${HOME}/.config/kilo-data/memory.db < .kilo/memory/init.sql`
---   仍可工作，但实际执行的内容在 schema/init.sql。请同步更新调用方引用。
---
+-- ⚠️ 本文件不含 DDL；执行本文件等于 0 张表。
 -- 推荐新调用：
 --   sqlite3 "${HOME}/.config/kilo-data/memory.db" < .kilo/memory/schema/init.sql
 -- 或通过 sqlite MCP 读 schema/init.sql 执行

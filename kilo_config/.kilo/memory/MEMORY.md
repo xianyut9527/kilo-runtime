@@ -5,7 +5,7 @@ license: MIT
 compatibility:
   - kilo >= 1.0
 metadata:
-  version: "2.0"
+  version: "2.2"
   char_limit: 2200
   category: memory
 ---
@@ -16,7 +16,7 @@ metadata:
 > 经验沉淀的主目标：全局 sqlite（`${HOME}/.config/kilo-data/memory.db`）中的 `dispatch_log`、`fact_store`、`failure_db`、`model_calibration`。
 > 本文件仅存放：用户偏好、安全约束、通用约定、指向 sqlite 或 `archive/` 的索引。
 > 字符限制：**≤ 2200 字符**（约 500–700 tokens）。
-> 加载机制：由 `.kilo/memory/AGENTS.md` 统一调度（v2.0 模块入口），按 **[tag]** 按需注入，未命中当前任务标签的条目不注入，文件保留，不报错。
+> 加载机制：由 `.kilo/memory/AGENTS.md` 统一调度（v2.2 模块入口），按 **[tag]** 按需注入，未命中当前任务标签的条目不注入，文件保留，不报错。
 >
 > 兼容路径：`.kilo/memory/memory-strategy.md` 保留为指针文件，AGENTS.md 中 `strategy: "memory-strategy.md"` 仍可命中。
 

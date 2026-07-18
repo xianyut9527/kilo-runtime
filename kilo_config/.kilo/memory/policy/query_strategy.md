@@ -10,16 +10,21 @@
 - 超出时按优先级截断：project_context > fact_store > failure_db > model_calibration
 - md 文件注入仍保持 **≤ 1500 tokens**（作为兜底）
 
-## 注入门槛（v2.0）
+## 注入门槛（v2.2）
 
 | 数据源 | 注入门槛 | 原因 |
 |---|---|---|
 | `project_context` | priority ≤ 5 | 高优先级架构决策优先 |
-| `fact_store` | `confidence >= 0.7 AND hit_count >= 2 AND archived = 0` | 过滤低质噪音；首次提取（confidence=0.5/hit=1）不注入 |
+| `fact_store`（正式） | `confidence >= 0.7 AND hit_count >= 2 AND archived = 0` | 过滤低质噪音 |
+| `fact_store`（试用期，v2.2） | `confidence >= 0.5 AND hit_count < 2 AND archived = 0 AND created_at >= datetime('now', '-14 days')`，每任务 ≤2 条，注入标记附加 `trial=1` | 新经验试用窗口：打破「未注入→无引用→hit 不增→永不注入」冷启动死锁 |
 | `failure_db` | `same_symptom_count >= 1 AND resolved_at IS NOT NULL` | 已解决的失败才注入；未解决的不污染上下文 |
 | `model_calibration` | `sample_count >= 3` | 样本不足的校准数据无统计意义 |
 
-> **早期项目 fallback**：若查询返回 0 条且仓库 commit < 10，放宽门槛至 confidence ≥ 0.5 / hit_count ≥ 1（首次提取），避免早期项目零注入。
+> **试用期机制（v2.2）**：新写入经验 14 天内为试用期。试用期条目命中任务关键词即可注入（上限 2 条），在 M6 自增后与正式条目同权竞争；14 天窗口后回归正式门槛。
+>
+> **M6 自增数据源扩展（v2.2）**：除 `[memory:fact_id=...]` 注入标记外，coderAgent 收尾时必须显式声明「本次实际参考但未注入的 fact_id」（来源：M4 去重查询命中、失败回溯命中、人工指定），对这些 fact_id 同样执行 hit_count+1 / confidence+0.02，确保经验价值随**真实使用**增长而非仅随注入增长。
+>
+> ~~早期项目 fallback（v2.0，已废弃）~~：原「仓库 commit < 10 放宽门槛」条款对「仓库成熟但数据稀疏」场景无效，由试用期机制替代。
 
 ---
 
@@ -37,7 +42,7 @@ LIMIT 5;
 -- B. 相关经验教训（按 tag 匹配 + 置信度门槛，带 ID + tags + evidence）
 SELECT fact_id, category, trigger, condition, action, confidence, hit_count, tags, evidence
 FROM fact_store
-WHERE tags LIKE '%,%当前任务关键词%,%'  -- 逗号分隔精确匹配，走 idx_fact_tags 索引
+WHERE tags LIKE '%,%当前任务关键词%,%'  -- 逗号分隔精确匹配（前导 % 为全表扫描，数据量小时可接受）
    OR trigger LIKE '%当前任务关键词%'    -- 兜底：trigger 字段模糊匹配
    OR action LIKE '%当前任务关键词%'     -- 兜底：action 字段模糊匹配
   AND archived = 0
@@ -45,6 +50,17 @@ WHERE tags LIKE '%,%当前任务关键词%,%'  -- 逗号分隔精确匹配，走
   AND hit_count >= 2
 ORDER BY confidence DESC, hit_count DESC
 LIMIT 5;
+
+-- B2. 试用期新经验（v2.2 冷启动窗口，≤2 条，注入标记附加 trial=1）
+SELECT fact_id, category, trigger, condition, action, confidence, hit_count, tags, evidence
+FROM fact_store
+WHERE archived = 0
+  AND confidence >= 0.5
+  AND hit_count < 2
+  AND created_at >= datetime('now', '-14 days')
+  AND (tags LIKE '%,%当前任务关键词%,%' OR trigger LIKE '%当前任务关键词%' OR action LIKE '%当前任务关键词%')
+ORDER BY created_at DESC
+LIMIT 2;
 
 -- C. 历史失败模式（按 tag 匹配 + 门槛，带 ID + same_symptom_count）
 SELECT failure_id, symptom, root_cause_level, fix_strategy, fix_location, same_symptom_count, tags
@@ -159,7 +175,15 @@ LIMIT 3;
 
 **触发**：每次 T1+ 任务收尾时，coderAgent 必须：
 
-1. 回顾本次任务中**实际引用过的 fact_id 列表**（通过 agent 输出中的 `[memory:fact_id=...]` 标记提取）
+1. 回顾本次任务中**实际引用过的 fact_id 列表**，来源有两个（v2.2 扩展）：
+   - **注入引用**：agent 输出中的 `[memory:fact_id=...]` 标记（含 `trial=1` 试用期条目）
+   - **显式声明**：coderAgent 收尾时声明「本次实际参考但未注入的 fact_id」（来源：M4 去重查询命中、失败回溯命中、人工指定），**必须使用结构化标记**（reviewer 可机械审计）：
+
+     ```markdown
+     [memory:referenced_fact_ids=AP-001,AP-005 not_injected=true]
+     ```
+
+     该标记与注入标记同级出现在 M6 节点日志「引用列表」列，与注入引用同等触发 hit_count 自增。
 2. 对每个 fact_id 执行 hit_count 自增：
 
 ```sql

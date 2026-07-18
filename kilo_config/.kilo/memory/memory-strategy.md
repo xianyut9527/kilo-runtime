@@ -5,13 +5,13 @@ keywords: memory-strategy, pointer, sqlite-first-md-fallback
 compatibility:
   - kilo >= 1.0
 metadata:
-  version: "2.0"
+  version: "2.2"
   category: memory
 ---
 
 # Memory Strategy（指针文件）
 
-> **本文档已迁移**：v2.0 完整策略（sqlite-first-md-fallback）已拆分到 `.kilo/memory/` 模块：
+> **本文档已迁移**：v2.2 完整策略（sqlite-first-md-fallback + 试用期 + M6 扩展）已拆分到 `.kilo/memory/` 模块：
 >
 > | 原章节 | 新位置 |
 > |---|---|

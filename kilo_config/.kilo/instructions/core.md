@@ -66,10 +66,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 `.kilo/memory/` 目录存在时，以下条件命中后**强制**执行回溯查询，再决定修复策略：
 
-1. checker/reviewer FAIL 且错误为方法层/需求层
-2. fixer 连续 2 轮同症状
-3. 用户反馈"还是有问题/不对/遗漏"
-4. Circuit Breaker 触发（连续 3 次无法收敛）
+> 4 个触发条件 + 强制回溯查询协议**单一源**在 `.kilo/instructions/reflection.md` §强制跨会话根因回溯，本节不重复。
 
 ### 强制回溯查询（优先级顺序）
 

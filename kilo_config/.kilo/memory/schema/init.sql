@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS fact_store (
     confidence REAL NOT NULL DEFAULT 0.5 CHECK(confidence >= 0 AND confidence <= 1),
     evidence TEXT,                   -- JSON 数组: [dispatch_id, ...]
     tags TEXT,                       -- JSON 数组: ["react", "api", ...]
-    hit_count INTEGER NOT NULL DEFAULT 0,  -- 命中次数（用于排序和衰减）
+    hit_count INTEGER NOT NULL DEFAULT 0,  -- 命中次数（用于排序；衰减由 policy 层 14 天试用窗口实现，见 policy/query_strategy.md）
     created_at TEXT NOT NULL,        -- ISO8601
     updated_at TEXT NOT NULL,        -- ISO8601
     archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0, 1))

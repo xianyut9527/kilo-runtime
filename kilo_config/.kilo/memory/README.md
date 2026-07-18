@@ -2,7 +2,7 @@
 
 > **模块位置**：`.kilo/memory/`（仓库内唯一记忆边界）
 > **职责**：跨项目持久化结构化经验 + 任务调度日志 + 模型校准 + 项目上下文
-> **状态**：v2.0（SQLite 优先 + md 兜底）
+> **状态**：v2.2（SQLite 优先 + md 兜底）
 > **作者**：coderAgent 自动维护 + 人工审核
 
 ## 模块架构（4 层）
@@ -72,7 +72,7 @@
 
 ---
 
-## 检索约定（v2.0）
+## 检索约定（v2.2）
 
 ### SELECT 必须带 ID
 
@@ -96,10 +96,13 @@
 
 | 数据源 | 门槛 |
 |---|---|
-| fact_store | confidence ≥ 0.7 AND hit_count ≥ 2 AND archived = 0 |
+| fact_store（正式） | confidence ≥ 0.7 AND hit_count ≥ 2 AND archived = 0 |
+| fact_store（试用期，v2.2） | confidence ≥ 0.5 AND hit_count < 2 AND created_at ≤ 14 天内，每任务 ≤2 条（标记 `trial=1`） |
 | failure_db | resolved_at IS NOT NULL AND same_symptom_count ≥ 1 |
 | project_context | priority ≤ 5 |
 | model_calibration | sample_count ≥ 3 |
+
+> v2.2 试用期机制 + M6 自增数据源扩展（显式声明未注入但实际参考的 fact_id）详见 `policy/query_strategy.md` §注入门槛 / §4。
 
 完整规则见 `policy/query_strategy.md` §注入门槛。
 
@@ -138,7 +141,8 @@
 | 阶段 | 内容 |
 |---|---|
 | v2.0 | 模块边界封装 + 4 层分离 + check17 健康度 |
-| **v2.1**（当前） | **14 条 AP + 2 条 PAT 从 SKILL.md 迁移到 fact_store（去 md 化）**；新增 `api/migrate_skill_to_fact_store.sql` |
+| v2.1 | 14 条 AP + 2 条 PAT 从 SKILL.md 迁移到 fact_store（去 md 化）；新增 `api/migrate_skill_to_fact_store.sql` |
+| **v2.2**（当前） | 4 个 archived sub-skill 文件 AP-XXX 全文彻底删除（仅留 frontmatter + 迁移指引）；新增 fact_store 试用期机制（conf ≥ 0.5 + hit < 2 + 14 天窗口 + trial=1 标记）；M6 自增数据源扩展（显式声明未注入但实际参考的 fact_id 同权 +hit+conf，结构化标记 `[memory:referenced_fact_ids=... not_injected=true]`）；check17 修复 ESM require 死代码并真实消费 health_check.sql 契约 + 迁移期望校验（期望值从迁移脚本解析） |
 | v3.0（未来） | 自定义 MCP server（api/ 层）+ tool 强制执行 + 删除 `[MISSING_MEMORY_WRITE]` 标记 |
 | v4.0（远期） | 跨会话语义检索（当前是 LIKE 模糊匹配）+ 跨项目共享 fact_store |
 

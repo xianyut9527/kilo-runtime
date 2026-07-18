@@ -16,13 +16,13 @@
 本文件只列锚点名称与规则来源，细则不重复写入。所有智能体必须遵守：
 
 1. **意图判定优先**：任何任务先按 `core.md` 判定「咨询类 / 执行类」。咨询类任务只分析、不改文件、不调用修改性工具；执行类任务才进入后续流程。
-2. **执行类两阶段定级**：意图判定 → 任务定级·预估（T0-T3，用于路由/模型/设计门深度）→ 强制流程日志（T0 = 2 节点；T1+ = 8 节点含阶段 B 校准）→ 然后才可调用修改性工具（来源：`workflow-core.md`）。
-3. **定级两阶段化**：执行类任务按 `workflow-core.md` 决策树估 T0-T3（阶段 A 预估）→ architect 设计门落地后**必须**做阶段 B 校准（基于实际 unit DAG 复核）→ 校准命中升级条件（文件数 ≥ 4 / 跨模块 / 安全敏感词）→ review_mode 由 lightweight 升至 full。
+2. **执行类两阶段定级**：阶段 A 预估（决策树估 T0-T3）→ architect 设计门 → 阶段 B 校准（实际 unit DAG 复核，命中升级条件则 review_mode lightweight→full）→ 强制流程日志（T0 = 2 节点；T1+ = 8 节点）→ 修改性工具（来源：`workflow-core.md`）。
+3. ~~定级两阶段化~~：已并入锚点 2。
 4. **单元闭环**：T1+ 任务拆为可验证小单元，每单元独立 engineer → checker → fixer 闭环（来源：`workflow-core.md`）。
 5. **验收必附映射表 + 已读取文件清单**：缺则 `[MISSING_ACCEPTANCE_MAP]` / `[FAKE_CONTEXT]` FAIL。
 6. **SCOPE_CREEP**：checker L2 反向核对 diff，命中即 FAIL。
 7. **自验无效**：智能体不得以自身验证替代 checker 客观验证。
-8. **memory / skills / 自进化合规**：`.kilo/memory/` 模块（v2.0）由该目录内 README.md / AGENTS.md / policy/*.md 统一管理，coderAgent **按模块入口按需注入**，不硬编码规则。
+8. **memory / skills / 自进化合规**：`.kilo/memory/` 模块（v2.2）由该目录内 README.md / AGENTS.md / policy/*.md 统一管理，coderAgent **按模块入口按需注入**，不硬编码规则。
    - 模块入口：`.kilo/memory/README.md`（公共 API 文档）
    - 模块对 agent 入口：`.kilo/memory/AGENTS.md`（运行时注入）
    - 兼容策略文件：`.kilo/memory/memory-strategy.md`（保留为指针文件，便于 `strategy: "memory-strategy.md"` 仍可命中）
