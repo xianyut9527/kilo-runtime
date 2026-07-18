@@ -50,7 +50,11 @@ CREATE TABLE IF NOT EXISTS dispatch_log (
     thread_id TEXT NOT NULL,         -- 会话标识
     agent TEXT NOT NULL,             -- 执行 agent 名
     task_summary TEXT NOT NULL,      -- 任务摘要（≤100 字）
-    tier TEXT CHECK(tier IN ('T0', 'T1', 'T2', 'T3')),
+    initial_tier TEXT CHECK(initial_tier IN ('T0', 'T1', 'T2', 'T3')),  -- 阶段 A 预估等级
+    final_tier TEXT CHECK(final_tier IN ('T0', 'T1', 'T2', 'T3')),      -- 阶段 B 校准等级
+    tier TEXT CHECK(tier IN ('T0', 'T1', 'T2', 'T3')),                  -- 兼容旧字段（=final_tier）
+    review_mode TEXT CHECK(review_mode IN ('none', 'lightweight', 'full')),  -- reviewer 工作模式（T0=none）
+    tier_deviation TEXT CHECK(tier_deviation IN ('maintain', 'upgrade', 'downgrade')),  -- 校准偏差方向
     model TEXT,                      -- 实际使用的模型
     status TEXT NOT NULL CHECK(status IN ('STARTED', 'DONE', 'DONE_WITH_CONCERNS', 'FAILED', 'BLOCKED', 'TIMEOUT')),
     error_code TEXT,                 -- 若失败，错误码
@@ -65,6 +69,9 @@ CREATE TABLE IF NOT EXISTS dispatch_log (
 CREATE INDEX IF NOT EXISTS idx_dispatch_thread ON dispatch_log(thread_id);
 CREATE INDEX IF NOT EXISTS idx_dispatch_agent ON dispatch_log(agent);
 CREATE INDEX IF NOT EXISTS idx_dispatch_status ON dispatch_log(status);
+CREATE INDEX IF NOT EXISTS idx_dispatch_final_tier ON dispatch_log(final_tier);
+CREATE INDEX IF NOT EXISTS idx_dispatch_review_mode ON dispatch_log(review_mode);
+CREATE INDEX IF NOT EXISTS idx_dispatch_tier_deviation ON dispatch_log(tier_deviation);
 
 -- 4. 项目专属上下文 (ProjectMemory)
 -- 架构决策、业务规则、技术栈约束

@@ -74,9 +74,44 @@ LIMIT 3;
 T1+ 任务完成后，coderAgent 必须执行写入：
 
 ```sql
--- 记录 dispatch 日志
-INSERT INTO dispatch_log (dispatch_id, thread_id, agent, task_summary, tier, model, status, error_code, duration_ms, files_changed, findings_count, created_at)
-VALUES (...);
+-- 记录 dispatch 日志（两阶段定级 + review_mode）
+INSERT INTO dispatch_log (
+    dispatch_id, thread_id, agent, task_summary,
+    initial_tier, final_tier, tier, review_mode, tier_deviation,
+    model, status, error_code, duration_ms,
+    input_tokens, output_tokens, files_changed, findings_count,
+    created_at
+)
+VALUES (
+    ?, ?, ?, ?,
+    ?, ?, ?, ?, ?,    -- initial_tier / final_tier / tier(=final_tier) / review_mode / tier_deviation
+    ?, ?, ?, ?,
+    ?, ?, ?, ?,
+    ?
+);
+
+-- 事后分析：tier 偏差分布（喂给 model_calibration）
+SELECT
+    initial_tier,
+    final_tier,
+    tier_deviation,
+    COUNT(*) as cnt,
+    AVG(duration_ms) as avg_duration
+FROM dispatch_log
+WHERE created_at > datetime('now', '-7 days')
+GROUP BY initial_tier, final_tier, tier_deviation
+ORDER BY cnt DESC;
+
+-- 事后分析：review_mode 命中分布（验证 lightweight 升级触发器是否合理）
+SELECT
+    final_tier,
+    review_mode,
+    COUNT(*) as cnt,
+    AVG(findings_count) as avg_findings
+FROM dispatch_log
+WHERE created_at > datetime('now', '-7 days')
+GROUP BY final_tier, review_mode
+ORDER BY cnt DESC;
 
 -- 若 checker/reviewer 发现有效模式，写入 fact_store
 INSERT INTO fact_store (fact_id, category, trigger, condition, action, confidence, evidence, tags, created_at, updated_at)
