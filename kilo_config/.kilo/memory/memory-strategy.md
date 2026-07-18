@@ -9,7 +9,7 @@
 - **名称**：`sqlite-first-md-fallback`
 - **版本**：`2.0`
 - **适用文件**：`MEMORY.md`、`USER.md`（md 兜底）
-- **适用数据库**：`~/.config/kilo-data/memory.db`（sqlite 优先；数据目录独立于配置目录，install 同步不会清除）
+- **适用数据库**：`${HOME}/.config/kilo-data/memory.db`（sqlite 优先；数据目录独立于配置目录，install 同步不会清除）
 
 ## 核心原则
 
@@ -144,10 +144,61 @@ VALUES (...);
 
 ## 初始化检查
 
-首次启动或 `~/.config/kilo-data/memory.db` 不存在时：
-1. 通过 sqlite MCP 执行 `.kilo/memory/init.sql`
-2. 验证表存在：`SELECT name FROM sqlite_master WHERE type='table'`
-3. 初始化 model_calibration 基线数据（可选）
+首次启动或 `${HOME}/.config/kilo-data/memory.db` 不存在时：
+
+### 1. 确保数据目录存在
+
+```bash
+# Linux / macOS
+mkdir -p "${HOME}/.config/kilo-data"
+
+# Windows (PowerShell)
+New-Item -ItemType Directory -Path "${env:USERPROFILE}\.config\kilo-data" -Force
+```
+
+> `mcp-sqlite` 不会自动创建不存在的父目录。目录缺失是导致 MCP 启动超时最常见的原因。
+
+### 2. 建表
+
+通过 sqlite MCP 执行仓库中的初始化脚本：
+
+```sql
+-- 方式 A：让 sqlite MCP 读取并执行仓库中的 init.sql
+.read ${KILO_CONFIG_DIR}/.kilo/memory/init.sql
+```
+
+或在命令行直接用 `sqlite3`：
+
+```bash
+sqlite3 "${HOME}/.config/kilo-data/memory.db" < ".kilo/memory/init.sql"
+```
+
+Windows 若无 `sqlite3` CLI，可通过 sqlite MCP 的交互式查询逐条执行 `init.sql` 中的 `CREATE TABLE` 语句。
+
+### 3. 验证表存在
+
+```sql
+SELECT name FROM sqlite_master WHERE type='table';
+```
+
+应至少返回：`fact_store`、`failure_db`、`dispatch_log`、`project_context`、`model_calibration`。
+
+### 4. 初始化 model_calibration 基线数据（可选）
+
+首次部署后，可插入各 agent 的初始占位记录，便于后续动态校准计算成功率。示例：
+
+```sql
+INSERT INTO model_calibration (
+    calibration_id, model, agent_role, task_type,
+    success_rate, avg_findings, sample_count, last_evaluated_at
+) VALUES (
+    'cal-glm-reviewer-config', 'hx/glm-5.2', 'reviewer', 'config-review',
+    1.0, 0, 1, datetime('now')
+)
+ON CONFLICT(calibration_id) DO NOTHING;
+```
+
+> 基线记录仅用于避免首次动态校准时 `sample_count = 0` 导致的除零或空值问题；真实成功率会随 `dispatch_log` 写入被覆盖。
 
 ## 版本升级说明
 

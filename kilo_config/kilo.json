@@ -126,7 +126,7 @@
         "npx",
         "-y",
         "mcp-sqlite",
-        "${KILO_DATA_DIR}/memory.db"
+        "${HOME}/.config/kilo-data/memory.db"
       ],
       "enabled": true,
       "timeout": 10000

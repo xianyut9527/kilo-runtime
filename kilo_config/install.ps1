@@ -154,7 +154,7 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     Write-Host "[SYNC] OK | files=$CopiedFiles dirs=$CopiedDirs | critical=$($CriticalFiles.Count)/$($CriticalFiles.Count) | target=$Target" -ForegroundColor Green
 
     # ============================================================
-    # kilo.json 路径占位符替换（保证 SQLite/skills 路径跨平台可移植）
+    # kilo.json 路径占位符替换（保证 skills.external_dirs 跨平台可移植）
     # ============================================================
     Write-Host ""
     Write-Host "Substituting kilo.json path placeholders..." -ForegroundColor Cyan
@@ -162,10 +162,9 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     if (Test-Path $KiloJsonPath) {
         $JsonContent = Get-Content -Path $KiloJsonPath -Raw -Encoding UTF8
         $JsonContent = $JsonContent -replace '\$\{KILO_CONFIG_DIR\}', ($Target -replace '\\', '\\')
-        $DataDir = "$env:USERPROFILE\.config\kilo-data"
-        $JsonContent = $JsonContent -replace '\$\{KILO_DATA_DIR\}', ($DataDir -replace '\\', '\\')
+        # 注意：sqlite MCP 路径使用 ${HOME}/.config/kilo-data/memory.db，由 Kilo 运行时解析，install 阶段不替换
         Set-Content -Path $KiloJsonPath -Value $JsonContent -Encoding UTF8 -NoNewline
-        Write-Host "[WRITE]  kilo.json path placeholders substituted (KILO_CONFIG_DIR=$Target, KILO_DATA_DIR=$DataDir)" -ForegroundColor Green
+        Write-Host "[WRITE]  kilo.json path placeholders substituted (KILO_CONFIG_DIR=$Target)" -ForegroundColor Green
     } else {
         Write-Host "[WARN]   kilo.json not found at $KiloJsonPath, skip substitution" -ForegroundColor Yellow
     }

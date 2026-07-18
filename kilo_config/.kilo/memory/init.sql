@@ -1,6 +1,16 @@
 -- kilo memory system schema
 -- 初始化命令: 通过 sqlite MCP 执行本文件的 CREATE TABLE 语句
--- 建议数据库路径: .kilo/memory/memory.db
+-- 全局数据库路径: ${HOME}/.config/kilo-data/memory.db
+--
+-- 初始化示例:
+--   Linux / macOS:
+--     mkdir -p "${HOME}/.config/kilo-data"
+--     sqlite3 "${HOME}/.config/kilo-data/memory.db" < .kilo/memory/init.sql
+--   Windows (PowerShell):
+--     New-Item -ItemType Directory -Path "${env:USERPROFILE}\.config\kilo-data" -Force
+--     # 若已安装 sqlite3 CLI:
+--     sqlite3 "$env:USERPROFILE\.config\kilo-data\memory.db" < .kilo\memory\init.sql
+--     # 否则通过 sqlite MCP 交互执行本文件中的 CREATE TABLE 语句
 
 -- 1. 经验教训库 (FactStore)
 -- 对应 brain-architecture L4: 结构化经验教训，语义检索

@@ -22,7 +22,7 @@
 | 新增/修改 `.kilo/instructions/*` | ① 同步 `README.md` 目录树；② 若新文件被 `kilo.json` agent.*.prompt 引用，必须同步更新 `validate-config.mjs` 的引用路径存在性校验；**重跑 `./install.ps1` 或 `./install.sh`**；**漏跑 install 会导致全局版落后于仓库版（已发生过 workflow-core.md 漂移），install 后可用 examples/install-check.md 的 diff 命令验证一致性** |
 | 修改 `agent/*.md` | 确认只包含该 agent 的职责差异和关键门禁；**重跑 `./install.ps1` 或 `./install.sh`** |
 | 修改 `kilo.json` | 同步 `README.md` 中模型、MCP 说明；**重跑 `./install.ps1` 或 `./install.sh`** |
-| 修改 `kilo.json` 中路径占位符（`${KILO_CONFIG_DIR}` / `${KILO_DATA_DIR}` / `${HOME}` 等） | ① 必须同步 install.ps1 与 install.sh 的占位符替换逻辑；② 修改后必须运行 `node validate-config.mjs` 通过校验（check16 会检查双脚本覆盖） |
+| 修改 `kilo.json` 中路径占位符（`${KILO_CONFIG_DIR}` / `${HOME}` 等） | ① 必须同步 install.ps1 与 install.sh 的占位符替换逻辑；② 修改后必须运行 `node validate-config.mjs` 通过校验（check16 会检查双脚本覆盖） |
 | 修改 `kilo.json` 中 `compaction` 字段 | ① 必须同步更新对应 `.kilo/instructions/*.md` 与 `agent/*.md` 的条件化规则描述；② 修改后必须运行 `node validate-config.mjs` 通过校验 |
 | 修改 `kilo.json` agent.*.prompt | ① agent prompt 已是极简锚点，完整职责在 agent/{name}.md，两者不重复职责，无需联动检查术语；coderAgent prompt 须保留意图判定/定级/pre-checker/engineer/checker/fixer/reviewer/compaction 锚点关键词；② 必须同步检查 `.kilo/instructions/*.md` 中引用的标记（`[MARKER]`）定义一致性，确保 prompt 中引用的 marker 在对应 instructions 文件中存在且语义未漂移；③ 修改后必须运行 `node validate-config.mjs` 通过校验 |
 | 新增/修改 `validate-config.mjs` | ① 同步 `README.md` 中对该脚本的说明（如存在）；② 同步 `CHANGELOG.md` 记录新增/变更的校验维度；③ 若新增校验维度涉及 frontmatter 字段或 prompt 引用规则，同步更新本文档对应修改检查项 |

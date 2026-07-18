@@ -1,34 +1,37 @@
 ---
 name: memory
-description: 项目级冻结记忆（agent 笔记）。由 coderAgent 在任务过程中追加，由 reviewer 评估是否属于系统级经验。经 reviewer 确认后保留，否则回退到 skills 分类。
+description: 项目级静态规则与归档索引兜底。存放用户偏好、安全约束、通用约定等低频变更内容，以及指向全局 sqlite 记忆的归档索引。经验沉淀的主目标仍是全局 sqlite（dispatch_log / fact_store / failure_db / model_calibration）。
 license: MIT
 compatibility:
   - kilo >= 1.0
 metadata:
-  version: "1.0"
+  version: "2.0"
   char_limit: 2200
   category: memory
 ---
 
-# MEMORY.md（agent 笔记）
+# MEMORY.md（静态规则 / 归档索引兜底）
 
-> 本文件是 agent 维护的项目级冻结记忆。每个条目都必须经 reviewer 验证。
+> 本文件是项目级静态规则与归档索引兜底，**不是**经验沉淀的主要载体。
+> 经验沉淀的主目标：全局 sqlite（`${HOME}/.config/kilo-data/memory.db`）中的 `dispatch_log`、`fact_store`、`failure_db`、`model_calibration`。
+> 本文件仅存放：用户偏好、安全约束、通用约定、指向 sqlite 或 `archive/` 的索引。
 > 字符限制：**≤ 2200 字符**（约 500–700 tokens）。
 > 加载机制：由 `.kilo/memory/memory-strategy.md` 统一调度，按 **[tag]** 按需注入，未命中当前任务标签的条目不注入，文件保留，不报错。
 
 ## 系统级约束 [tag:config]
 
 > 触发条件：跨 2 次以上任务重复出现 / reviewer 确认为系统级 / 修复不收敛时
-> 入选条目：M-001（其余条目因不满足触发条件或与 SKILL 重复已清理）
+> 入选条目：M-001
 
 ### M-001: kilo_config 全局配置运行约束
 - `kilo.json` 修改后必须 `node -e "JSON.parse(...)"` 严格解析（无 BOM 容忍）
 - 详见 skills/anti-patterns/SKILL.md#AP-001 / #AP-005
 
-## 已验证经验
+## 已验证静态规则
 
-> 本节当前为空。T2 / T3 任务结束后，命中触发条件的经验由 reviewer 评估是否追加。
-> 单次发生的任务瑕疵、本次任务具体细节，不写入本节（归入 SKILL 的反思笔记或本任务 commit message）。
+> 本节仅收录**不适合写入 sqlite 结构**的静态规则：用户偏好、安全约束、跨项目通用约定、指向 sqlite 具体记录的归档索引。
+> 可复用的模式/反模式、失败案例、模型校准数据应直接进入全局 sqlite（`fact_store` / `failure_db` / `model_calibration`），不在本节重复沉淀。
+> 单次发生的任务瑕疵、本次任务具体细节，不写入本节（归入本任务 commit message 或 SKILL 反思笔记）。
 > 触发条件与写入权限见 `.kilo/instructions/workflow-reference.md`「程序化记忆触发条件」章节。
 
 ## 归档协议 [tag:general]
