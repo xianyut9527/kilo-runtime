@@ -74,25 +74,13 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 ### 强制回溯查询（优先级顺序）
 
 **第一步：sqlite 查询（必须）**
-```sql
--- 查同类失败
-SELECT symptom, root_cause_level, fix_strategy, fix_location 
-FROM failure_db 
-WHERE symptom LIKE '%关键词%' AND verified = 1 
-ORDER BY created_at DESC LIMIT 3;
 
--- 查相关反模式
-SELECT trigger, condition, action, confidence 
-FROM fact_store 
-WHERE category = 'ANTIPATTERN' AND tags LIKE '%关键词%' 
-ORDER BY confidence DESC LIMIT 3;
+完整 SQL 模板见 `.kilo/memory/policy/query_strategy.md` §3（失败/回溯查询）。该文件是 SQL 唯一源，本节不再重复。
 
--- 查模型校准
-SELECT compensation_prompt, success_rate 
-FROM model_calibration 
-WHERE agent_role = '当前角色' AND task_type LIKE '%当前类型%' 
-ORDER BY sample_count DESC LIMIT 1;
-```
+**关键要求**（query_strategy.md §3 已强制）：
+- SELECT **必须带 ID 字段**（failure_id / fact_id）用于回溯
+- LIKE 必须走索引（`tags LIKE '%,%keyword%,%'` 逗号分隔精确匹配）
+- 注入门槛：fact_store confidence ≥ 0.7 + hit_count ≥ 2；failure_db resolved_at 非空
 
 **第二步：kilo_local_recall（补充）**
 - 搜索历史同类问题

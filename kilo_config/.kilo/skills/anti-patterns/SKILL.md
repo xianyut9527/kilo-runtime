@@ -1,55 +1,109 @@
 ---
 name: anti-patterns
-description: 反模式知识库索引。14 条 AP-XXX 按主题拆分到 4 个子 skill（encoding / process / coordination / contract），本文件提供总览与回写指引。
-keywords: [anti-patterns, index, encoding, process, coordination, contract, 索引]
+description: 反模式索引（v2.1 改为指向 fact_store）。14 条 AP-XXX 经验条目已迁移到全局 sqlite fact_store 表，本文件仅保留索引与查询 SQL。
+keywords: [anti-patterns, index, fact_store, sqlite, 索引]
 license: MIT
 compatibility:
   - kilo >= 1.0
 metadata:
-  version: "1.0"
+  version: "2.2"
   category: knowledge
+  migrated_to: fact_store
+  migration_evidence: .kilo/memory/api/migrate_skill_to_fact_store.sql
 ---
 
-# 反模式索引
+# 反模式索引（指向 fact_store）
 
-> 原 616 行 SKILL.md 按主题拆为 4 个子 skill，**保留全部 14 条 AP-XXX**。
-> 拆分目的：降低单文件长度，提升按主题检索效率，避免子 skill 加载无关内容。
-> 新增条目按主题写入对应子 skill，并在此索引登记。
+> ⚠️ **v2.1 重大变更**：14 条 AP-XXX 经验条目已于 2026-07-19 从本 skill 迁出，**全部进入全局 sqlite `fact_store` 表**。
+> 迁移脚本：`.kilo/memory/api/migrate_skill_to_fact_store.sql`
+> 详细说明：`.kilo/memory/README.md` §迁移记录
+>
+> **本文件仅作为索引保留**。agent 不再加载 4 个 sub-skill 全文，而是通过 sqlite MCP 按 tag 查询相关反模式。
 
-## 主题分类总表
+## 为什么迁移
 
-| 主题 | 子 skill 路径 | 条目数 | 覆盖范围 |
-|------|--------------|--------|----------|
-| encoding | `.kilo/skills/anti-patterns-encoding/SKILL.md` | 2 | Windows 编码 / BOM 污染 |
-| process | `.kilo/skills/anti-patterns-process/SKILL.md` | 4 | 软约束 / 跳步 / SCOPE_CREEP / 逐页补丁 |
-| coordination | `.kilo/skills/anti-patterns-coordination/SKILL.md` | 6 | 关联遗漏 / 引用断链 / 子 agent 异常 |
-| contract | `.kilo/skills/anti-patterns-contract/SKILL.md` | 2 | 权限越界 / 运行时能力误判 |
+之前 14 条 AP-XXX 作为 markdown 存储在 4 个 sub-skill 文件（encoding/process/coordination/contract），每次相关任务都会**全量加载所有 markdown 全文**（1400-4200 tokens / 任务），且无法统计「这条反模式被命中过几次」「它的置信度真实是多少」。
 
-## 14 条 AP-XXX 反向链接
+迁移到 sqlite 后：
+- **token 节省 ~85%**：只 SELECT 相关 tag 的 5-10 行，不再加载全文
+- **hit_count 自增回路生效**：每次应用 fact，自动 `UPDATE fact_store SET hit_count = hit_count + 1`
+- **confidence 自动反映使用价值**：经 3 次命中后 confidence → 0.8，自动触发 skill-upgrade 检测
+- **跨项目共享**：sqlite 全局持久，其他项目也能查到
 
-| ID | 标题 | 主题 | 跳转 |
-|----|------|------|------|
-| AP-001 | Edit 工具 BOM 污染 | encoding | [anti-patterns-encoding](./anti-patterns-encoding/SKILL.md#ap-001) |
-| AP-002 | 软约束 vs 硬门禁 | process | [anti-patterns-process](./anti-patterns-process/SKILL.md#ap-002) |
-| AP-003 | pre-checker FAIL 修正后未复验 | process | [anti-patterns-process](./anti-patterns-process/SKILL.md#ap-003) |
-| AP-004 | 子智能体返回空结果未升级 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-004) |
-| AP-005 | PowerShell 5.1 GBK 编码根因 | encoding | [anti-patterns-encoding](./anti-patterns-encoding/SKILL.md#ap-005) |
-| AP-006 | 关联功能遗漏 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-006) |
-| AP-007 | Agent 删除遗漏执行主体引用 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-007) |
-| AP-008 | Agent Frontmatter 权限与职责不一致 | contract | [anti-patterns-contract](./anti-patterns-contract/SKILL.md#ap-008) |
-| AP-009 | 多单元工作区 SCOPE_CREEP 全量 diff 误判 | process | [anti-patterns-process](./anti-patterns-process/SKILL.md#ap-009) |
-| AP-010 | 删除配置字段前未确认外部消费者 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-010) |
-| AP-011 | 由校验代码反推运行时能力 | contract | [anti-patterns-contract](./anti-patterns-contract/SKILL.md#ap-011) |
-| AP-012 | 引用化前未确认目标文件覆盖完整性 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-012) |
-| AP-013 | 重命名函数时遗漏内部调用同步 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-013) |
-| AP-014 | 逐页补丁式修复（同类 UI/样式/行为问题复制粘贴） | process | [anti-patterns-process](./anti-patterns-process/SKILL.md#ap-014) |
+## 14 条 AP-XXX 索引（指向 fact_store）
 
-## 回写指引
+| ID | 标题 | tags | 迁移 confidence |
+|---|---|---|---|
+| AP-001 | Edit 工具 BOM 污染 | encoding, bom, json, yaml, windows | 1.0 |
+| AP-002 | 软约束 vs 硬门禁 | process, soft-rule, hard-gate | 1.0 |
+| AP-003 | pre-checker FAIL 修正后未复验 | process, skip-step, pre-checker | 1.0 |
+| AP-004 | 子智能体返回空结果未升级 | coordination, subagent, empty-result | 1.0 |
+| AP-005 | PowerShell 5.1 GBK 编码根因 | encoding, gbk, powershell-5.1 | 1.0 |
+| AP-006 | 关联功能遗漏 | coordination, linkage, rework | 1.0 |
+| AP-007 | Agent 删除遗漏执行主体引用 | coordination, agent-deletion | 1.0 |
+| AP-008 | Agent Frontmatter 权限与职责不一致 | contract, permission, overprivilege | 1.0 |
+| AP-009 | 多单元工作区 SCOPE_CREEP 全量 diff 误判 | process, scope-creep, multi-unit | 1.0 |
+| AP-010 | 删除配置字段前未确认外部消费者 | coordination, config-deletion | 1.0 |
+| AP-011 | 由校验代码反推运行时能力 | contract, placeholder, runtime-capability | 1.0 |
+| AP-012 | 引用化前未确认目标文件覆盖完整性 | coordination, reference-extract | 1.0 |
+| AP-013 | 重命名函数时遗漏内部调用同步 | coordination, rename, internal-call | 1.0 |
+| AP-014 | 逐页补丁式修复 | process, copy-paste-fix, component | 1.0 |
 
-新增条目流程（详见 `.kilo/instructions/skills-lifecycle.md`）：
+## 标准查询 SQL
 
-1. 确认经验已通过 checker/reviewer 验证。
-2. 根据主题选择对应子 skill（encoding / process / coordination / contract）。
-3. 按子 skill 末尾的"条目模板"追加。
-4. 在本索引的反向链接表新增一行。
-5. 更新对应子 skill 顶部的"主题条目表"。
+```sql
+-- 任务开始时按 tag 检索相关反模式（带 ID + tags + confidence + hit_count）
+SELECT fact_id, trigger, action, confidence, hit_count, tags
+FROM fact_store
+WHERE category='ANTIPATTERN'
+  AND archived = 0
+  AND confidence >= 0.7
+  AND hit_count >= 2
+  AND (
+    tags LIKE '%,%当前任务关键词%,%'
+    OR trigger LIKE '%当前任务关键词%'
+  )
+ORDER BY confidence DESC, hit_count DESC
+LIMIT 5;
+```
+
+```sql
+-- 按 fact_id 精确查询（用于在输出中引用某条具体反模式）
+SELECT fact_id, trigger, condition, action, confidence, hit_count, tags, evidence
+FROM fact_store
+WHERE fact_id IN ('AP-001', 'AP-005', 'AP-014');
+```
+
+```sql
+-- 失败回溯时查询同类反模式（reflection.md 强制触发）
+SELECT fact_id, trigger, action, confidence
+FROM fact_store
+WHERE category='ANTIPATTERN'
+  AND (tags LIKE '%,%错误关键词%,%' OR trigger LIKE '%错误关键词%')
+  AND archived = 0
+ORDER BY confidence DESC, hit_count DESC
+LIMIT 3;
+```
+
+## 回写流程（v2.1 起）
+
+新反模式不再写入 SKILL.md。完整流程见 `.kilo/memory/policy/fact_dedup.md`：
+
+1. 经验验证（checker/reviewer 通过）
+2. **先** `SELECT fact_id FROM fact_store WHERE trigger=? AND action=?` 去重查询
+3. 未命中 → `INSERT INTO fact_store`（category='ANTIPATTERN'）
+4. 命中 → `UPDATE fact_store SET hit_count=hit_count+1, confidence=?, updated_at=?`
+5. SKILL.md 保持纯索引状态
+
+## sub-skill 文件状态（v2.2：内容已清空）
+
+| 文件 | 状态 |
+|---|---|
+| `anti-patterns-encoding/SKILL.md` | 📦 **v2.2 内容已清空**（仅保留 frontmatter + 迁移指引） |
+| `anti-patterns-process/SKILL.md` | 📦 **v2.2 内容已清空** |
+| `anti-patterns-coordination/SKILL.md` | 📦 **v2.2 内容已清空** |
+| `anti-patterns-contract/SKILL.md` | 📦 **v2.2 内容已清空** |
+
+> **v2.2 关键变更**：4 个 sub-skill 文件不仅加 archived 警告，**AP-XXX 全文已彻底删除**，仅保留 frontmatter + 迁移指引。即使 agent 误加载归档文件，最大消耗 = 30 行（vs 之前 ~250 行/条目 × 14 条 = 3500+ 行）。
+>
+> **完全去 md 化**：14 条 AP 全文唯一权威源 = 全局 sqlite `fact_store` 表，无任何 md 副本。

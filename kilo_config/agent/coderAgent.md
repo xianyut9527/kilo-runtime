@@ -67,6 +67,50 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 
 > T0 仅需"意图判定 + 任务定级·预估"两节点；T1+ 必须包含全部 8 节点。阶段 B 校准在 architect 设计门落地后输出；reviewer 审查在所有单元通过后执行。
 
+## 记忆节点日志（M1-M8，与任务流对齐）
+
+`.kilo/memory/` 模块存在时，**记忆操作必须以 M1-M8 节点日志形式可视化输出**（与上方 8 节点任务流对齐，便于一眼看到记忆系统在做什么）。节点定义详见 `.kilo/memory/policy/query_strategy.md` §节点定义 M1-M8。
+
+### 模板（T1+ 任务必出）
+
+```markdown
+## 记忆节点日志（M1-M8）
+| 节点 | 触发时机 | 操作 | 结果 | 备注 |
+|------|----------|------|------|------|
+| M1: 任务上下文注入 | 任务开始 | 🔍 SELECT 4 表 | ✅ fact_store=N / failure_db=M / model_calibration=K | token=X/2000 |
+| M2: 失败回溯 | [触发条件] | 🔍 SELECT failure_db + fact_store | ✅ 命中 [id 列表] 或 ⏭️ 未触发 | 应用方案 |
+| M3: 经验引用 | 任务执行中 | 嵌入 `[memory:xxx_id=X]` | ✅ 引用 N 条 / ⏭️ 未引用 | 喂给 M6 |
+| M4: fact_store 去重 | [发现新模式] | 🔍 去重 + 📝 INSERT / 🔄 UPDATE | ✅ fact_id + action / ⏭️ 未触发 | AntiPattern conf=0.5 / Pattern conf=0.6 |
+| M5: failure_db 写入 | [失败/fixer 多轮] | 📝 INSERT failure_db | ✅ failure_id + root_cause / ⏭️ 未触发 | 同症状复发 +1 |
+| M6: hit_count 自增 | 任务收尾 | 🔄 UPDATE fact_store hit_count+1 | ✅ [id 列表] 命中数+1 | 提取自 M3 标记 |
+| M7: dispatch_log 写入 | 任务收尾 | 📝 INSERT dispatch_log | ✅ dispatch_id + tier + review_mode | T1+ 必走 |
+| M8: model_calibration 更新 | dispatch 后 | 🔄 UPDATE model_calibration | ✅ model + success_rate 变化 | DONE=1.0 / FAILED=0.0 |
+```
+
+### 输出示例（典型 T1 任务）
+
+```markdown
+## 记忆节点日志（M1-M8）
+| 节点 | 触发时机 | 操作 | 结果 | 备注 |
+|------|----------|------|------|------|
+| M1: 任务上下文注入 | 任务开始 | 🔍 SELECT 4 表 | ✅ fact_store=3 / failure_db=1 / model_calibration=1 | token=1450/2000 |
+| M2: 失败回溯 | ⏭️ 未触发 | — | — | checker 一次通过 |
+| M3: 经验引用 | 任务执行中 | 嵌入 [memory:fact_id=M-001] | ✅ 引用 2 条 | M-001, M-005 |
+| M4: fact_store 去重 | ⏭️ 未触发 | — | — | 无新模式 |
+| M5: failure_db 写入 | ⏭️ 未触发 | — | — | 任务未失败 |
+| M6: hit_count 自增 | 任务收尾 | 🔄 UPDATE fact_store | ✅ M-001 hit=5→6 conf=0.85→0.87; M-005 hit=2→3 conf=0.72→0.74 | 提取自 M3 |
+| M7: dispatch_log 写入 | 任务收尾 | 📝 INSERT dispatch_log | ✅ disp-20260719-001 | tier=T1 review_mode=lightweight |
+| M8: model_calibration 更新 | dispatch 后 | 🔄 UPDATE model_calibration | ✅ cal-M3-engineer success_rate 0.85→0.86 sample=5→6 | DONE 输入 |
+```
+
+### 输出规则
+
+- **必出节点**：M1（任务开始）+ M6/M7/M8（任务收尾 T1+），其他按需
+- **状态图标**：🔍 query / 📝 write / 🔄 update / ✅ success / ⚠️ partial / ❌ failure / ⏭️ skipped
+- **结果列必含 ID**：如 `fact_id=M-001` / `failure_id=F-003` / `dispatch_id=disp-xxx`
+- **T0 任务**：仅 M1 + ⏭️ 标记（其他节点跳过）
+- **memory.db 未初始化**：全部节点标 ⏭️，但仍输出「memory.db 未初始化」行（让用户知道模块存在）
+
 ## 异常处理
 
 - 发现跳步 → 标记 `[PROCESS_VIOLATION]`，暂停并修正。

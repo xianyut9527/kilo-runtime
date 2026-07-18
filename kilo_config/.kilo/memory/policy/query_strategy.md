@@ -2,7 +2,7 @@
 
 > **模块位置**：`.kilo/memory/policy/query_strategy.md`（业务规则唯一源）
 > **模块架构**：本文件由 `.kilo/memory/` 模块统一管理，schema 见 `../schema/init.sql`
-> **职责**：定义任务开始与失败回溯时的 sqlite 查询规则
+> **职责**：定义任务开始与失败回溯时的 sqlite 查询规则、注入格式、hit_count 自增回路
 
 ## Token Budget
 
@@ -10,59 +10,185 @@
 - 超出时按优先级截断：project_context > fact_store > failure_db > model_calibration
 - md 文件注入仍保持 **≤ 1500 tokens**（作为兜底）
 
+## 注入门槛（v2.0）
+
+| 数据源 | 注入门槛 | 原因 |
+|---|---|---|
+| `project_context` | priority ≤ 5 | 高优先级架构决策优先 |
+| `fact_store` | `confidence >= 0.7 AND hit_count >= 2 AND archived = 0` | 过滤低质噪音；首次提取（confidence=0.5/hit=1）不注入 |
+| `failure_db` | `same_symptom_count >= 1 AND resolved_at IS NOT NULL` | 已解决的失败才注入；未解决的不污染上下文 |
+| `model_calibration` | `sample_count >= 3` | 样本不足的校准数据无统计意义 |
+
+> **早期项目 fallback**：若查询返回 0 条且仓库 commit < 10，放宽门槛至 confidence ≥ 0.5 / hit_count ≥ 1（首次提取），避免早期项目零注入。
+
+---
+
 ## 1. 任务开始时（Context 构建阶段）
 
-coderAgent 必须按以下顺序查询：
+coderAgent 必须按以下顺序查询（每条 SELECT **必须带 ID 字段**用于回溯）：
 
 ```sql
--- A. 项目上下文（最高优先级，≤5 条）
-SELECT title, content, priority FROM project_context
-WHERE category IN ('ARCHITECTURE', 'CONSTRAINT')
+-- A. 项目上下文（最高优先级，≤5 条，带 ID）
+SELECT context_id, title, content, priority, tags FROM project_context
+WHERE category IN ('ARCHITECTURE', 'CONSTRAINT') AND priority <= 5
 ORDER BY priority ASC, updated_at DESC
 LIMIT 5;
 
--- B. 相关经验教训（按 tag 匹配）
-SELECT trigger, condition, action, confidence FROM fact_store
-WHERE tags LIKE '%当前任务关键词%' AND archived = 0
+-- B. 相关经验教训（按 tag 匹配 + 置信度门槛，带 ID + tags + evidence）
+SELECT fact_id, category, trigger, condition, action, confidence, hit_count, tags, evidence
+FROM fact_store
+WHERE tags LIKE '%,%当前任务关键词%,%'  -- 逗号分隔精确匹配，走 idx_fact_tags 索引
+   OR trigger LIKE '%当前任务关键词%'    -- 兜底：trigger 字段模糊匹配
+   OR action LIKE '%当前任务关键词%'     -- 兜底：action 字段模糊匹配
+  AND archived = 0
+  AND confidence >= 0.7
+  AND hit_count >= 2
 ORDER BY confidence DESC, hit_count DESC
 LIMIT 5;
 
--- C. 历史失败模式（按 tag 匹配）
-SELECT symptom, root_cause_level, fix_strategy FROM failure_db
-WHERE tags LIKE '%当前任务关键词%' AND resolved_at IS NOT NULL
+-- C. 历史失败模式（按 tag 匹配 + 门槛，带 ID + same_symptom_count）
+SELECT failure_id, symptom, root_cause_level, fix_strategy, fix_location, same_symptom_count, tags
+FROM failure_db
+WHERE (tags LIKE '%,%当前任务关键词%,%' OR symptom LIKE '%当前任务关键词%')
+  AND resolved_at IS NOT NULL
+  AND same_symptom_count >= 1
 ORDER BY same_symptom_count DESC
 LIMIT 3;
 
--- D. 模型校准建议（当前 agent + 任务类型）
-SELECT compensation_prompt, success_rate FROM model_calibration
-WHERE agent_role = '当前agent角色' AND task_type LIKE '%当前任务类型%'
+-- D. 模型校准建议（当前 agent + 任务类型 + 样本门槛）
+SELECT calibration_id, compensation_prompt, success_rate, sample_count
+FROM model_calibration
+WHERE agent_role = '当前agent角色'
+  AND task_type LIKE '%当前任务类型%'
+  AND sample_count >= 3
 ORDER BY sample_count DESC
 LIMIT 1;
 ```
 
-**查询后必须**：将 sqlite 返回结果格式化为文本，注入当前上下文。
+**查询后必须**：将 sqlite 返回结果按下方「标准注入格式」渲染后注入当前上下文。
 
-## 2. 失败/回溯时（reflection.md 强制触发）
+---
+
+## 2. 标准注入格式（P1-1 强制）
+
+所有 sqlite 检索结果必须按以下 markdown 模板渲染，**禁止自由格式**：
+
+### fact_store 行
+
+```markdown
+[memory:fact_id={fact_id} category={category} confidence={confidence} hit_count={hit_count} tags=[{tags}]]
+- **触发场景**: {trigger}
+- **触发条件**: {condition | "无"}
+- **推荐做法**: {action}
+- **证据**: {evidence}（JSON 数组，含 dispatch_id）
+```
+
+### failure_db 行
+
+```markdown
+[memory:failure_id={failure_id} root_cause={root_cause_level} recurrence={same_symptom_count} tags=[{tags}]]
+- **症状**: {symptom}
+- **修复策略**: {fix_strategy}
+- **修复位置**: {fix_location | "未记录"}
+```
+
+### project_context 行
+
+```markdown
+[memory:context_id={context_id} category={category} priority={priority}]
+- **{title}**: {content}
+- **来源**: {source_file | "未记录"}
+```
+
+### model_calibration 行
+
+```markdown
+[memory:calibration_id={calibration_id} model={model} success_rate={success_rate} samples={sample_count}]
+- **补偿 prompt**: {compensation_prompt | "无"}
+```
+
+### 注入示例
+
+```markdown
+[memory:fact_id=M-001 category=ANTIPATTERN confidence=0.85 hit_count=5 tags=[react,api,error-handling]]
+- **触发场景**: BFF 层缺错误边界
+- **触发条件**: 调用外部 API 时未捕获 reject
+- **推荐做法**: 用 Result<T, E> 替代 throw；统一在 BFF 层 try/catch 转 HTTP 5xx
+- **证据**: ["disp-thread-20260718-001", "disp-thread-20260715-003"]
+
+[memory:failure_id=F-003 root_cause=执行层 recurrence=2 tags=[encoding,bom]]
+- **症状**: kilo.json JSON.parse 失败
+- **修复策略**: 检测并剥离 UTF-8 BOM (0xEF 0xBB 0xBF)
+- **修复位置**: scripts/scan-encoding.mjs:14
+```
+
+**模型使用规则**：
+- 引用经验时**必须保留 `[memory:xxx_id=...]` 标记**在回答中（让 reviewer 可审计）
+- 同 dispatch 多次使用同一条 fact → 仅在第一次保留标记（避免冗余）
+
+---
+
+## 3. 失败/回溯时（reflection.md 强制触发）
 
 当命中以下条件时，**必须**查询 sqlite 而非仅依赖 `kilo_local_recall`：
 
 ```sql
--- 查找同类失败
-SELECT symptom, fix_strategy, fix_location FROM failure_db
-WHERE symptom LIKE '%当前错误关键词%' AND verified = 1
-ORDER BY created_at DESC
+-- 查找同类失败（带 ID + 位置）
+SELECT failure_id, symptom, fix_strategy, fix_location, same_symptom_count, tags
+FROM failure_db
+WHERE (symptom LIKE '%当前错误关键词%' OR tags LIKE '%,%当前错误关键词%,%')
+  AND verified = 1
+ORDER BY same_symptom_count DESC, created_at DESC
 LIMIT 3;
 
--- 查找相关反模式
-SELECT trigger, action FROM fact_store
-WHERE category = 'ANTIPATTERN' AND tags LIKE '%当前任务关键词%'
-ORDER BY confidence DESC
+-- 查找相关反模式（带 ID）
+SELECT fact_id, trigger, action, confidence, hit_count, tags
+FROM fact_store
+WHERE category = 'ANTIPATTERN'
+  AND (tags LIKE '%,%当前任务关键词%,%' OR trigger LIKE '%当前任务关键词%')
+  AND archived = 0
+ORDER BY confidence DESC, hit_count DESC
 LIMIT 3;
 ```
 
-## 3. 任务结束时（经验沉淀）
+---
+
+## 4. hit_count 自增回路（P1-3 强制）
+
+**目的**：解决「经验被反复使用但 hit_count 永远=1」的回路断裂问题。
+
+**触发**：每次 T1+ 任务收尾时，coderAgent 必须：
+
+1. 回顾本次任务中**实际引用过的 fact_id 列表**（通过 agent 输出中的 `[memory:fact_id=...]` 标记提取）
+2. 对每个 fact_id 执行 hit_count 自增：
+
+```sql
+UPDATE fact_store
+SET hit_count = hit_count + 1,
+    -- 累积提升 confidence（每次使用 +0.02，封顶 0.95）
+    confidence = MIN(0.95, confidence + 0.02),
+    updated_at = datetime('now')
+WHERE fact_id IN (?, ?, ?, ...);  -- 本次用到的 fact_id 列表
+```
+
+3. 对每个 failure_id 也执行复发计数（如果本次失败与历史同类）：
+
+```sql
+UPDATE failure_db
+SET same_symptom_count = same_symptom_count + 1,
+    resolved_at = COALESCE(resolved_at, datetime('now'))
+WHERE failure_id = ?;  -- 本次命中的失败记录
+```
+
+**列入收尾自检**：详见 `.kilo/instructions/workflow-core.md` §收尾自检 checklist。
+
+---
+
+## 5. 任务结束时（经验沉淀）
 
 详见 `dispatch_recorder.md` / `fact_dedup.md` / `failure_recorder.md` / `model_calibration.md`。
+
+---
 
 ## md 文件保留范围（仅以下场景）
 
@@ -70,8 +196,12 @@ LIMIT 3;
 |------|----------|------|
 | 用户偏好 | USER.md | 用户直接编辑，不需要结构化查询 |
 | 安全约束 | USER.md | 静态规则，不需要版本追踪 |
-| 归档索引 | MEMORY.md | 指向 sqlite 或 archive/ 的索引 |
+| 归档索引 | MEMORY.md | 指向 sqlite fact_id 的索引（不直接存储经验） |
 | 通用约定 | MEMORY.md | 低频变更，md 可读性更好 |
+
+> **MEMORY.md vs fact_store 边界**：MEMORY.md 不再存储经验条目，仅存储**指向 fact_id 的索引**（如 `[已归档] 详见 fact_store[M-001]`）。所有可复用的模式/反模式必须进入 fact_store。
+
+---
 
 ## 相关策略
 
@@ -79,3 +209,52 @@ LIMIT 3;
 - `fact_dedup.md` — fact_store 去重写入
 - `failure_recorder.md` — failure_db 写入
 - `model_calibration.md` — 模型校准更新
+- `../../instructions/workflow-core.md` §收尾自检 — hit_count 自增回路的硬门入口
+
+---
+
+## 节点定义 M1-M8（记忆节点日志）
+
+> **目的**：让记忆操作可视化，与任务 8 节点流程日志对齐输出。完整 markdown 模板见 `../../../agent/coderAgent.md` §记忆节点日志。
+
+| 节点 | 触发时机 | 操作类型 | 必填输出 |
+|---|---|---|---|
+| **M1** 任务上下文注入 | 任务开始 | 🔍 SELECT 4 表 | 注入条数（fact_store=N / failure_db=M / model_calibration=K）+ token 用量 |
+| **M2** 失败回溯 | `core.md` §自进化触发点 4 条件命中 | 🔍 SELECT failure_db + fact_store | 命中的 failure_id / fact_id 列表 |
+| **M3** 经验引用 | 任务执行中 | agent 输出嵌入 `[memory:fact_id=X]` 标记 | 引用列表（喂给 M6） |
+| **M4** fact_store 去重 | 发现可复用模式 | 🔍 去重 + 📝 INSERT / 🔄 UPDATE | fact_id + action（INSERT/UPDATE） |
+| **M5** failure_db 写入 | 失败 / fixer 多轮 / 用户反馈 | 📝 INSERT failure_db | failure_id + root_cause_level |
+| **M6** hit_count 自增 | 任务收尾 | 🔄 UPDATE fact_store hit_count+1, confidence+0.02 | 自增的 fact_id 列表 + 新 confidence |
+| **M7** dispatch_log 写入 | 任务收尾（T1+） | 📝 INSERT dispatch_log | dispatch_id + tier + review_mode |
+| **M8** model_calibration 更新 | dispatch 后 | 🔄 UPDATE model_calibration | model + agent_role + success_rate 变化 |
+
+### 节点触发顺序
+
+```
+任务开始
+  ↓ M1: 注入
+  ↓ 执行单元
+  ↓ 失败条件命中？→ 是 → M2: 回溯查询
+  ↓ 发现可复用模式？→ 是 → M4: 去重写入
+  ↓ 任务失败 / fixer 多轮？→ 是 → M5: 写入 failure_db
+  ↓ 任务收尾
+     ├─ M6: hit_count 自增（从 M3 收集引用列表）
+     ├─ M7: dispatch_log 写入
+     └─ M8: model_calibration 更新
+```
+
+### 状态图标
+
+| 图标 | 含义 |
+|---|---|
+| 🔍 | query（SELECT） |
+| 📝 | write（INSERT） |
+| 🔄 | update（UPDATE） |
+| ✅ | success |
+| ⚠️ | partial（部分命中 / 部分门槛未达） |
+| ❌ | failure（SQL 错误 / 必填缺失） |
+| ⏭️ | skipped（memory.db 未初始化 / T0 跳过） |
+
+### 输出格式示例
+
+完整 markdown 模板 + 典型 T1 任务输出示例见 `../../../agent/coderAgent.md` §记忆节点日志（本文件不重复维护）。

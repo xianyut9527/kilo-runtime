@@ -35,7 +35,7 @@ steps: 60
 - **流程合规**：核对 coderAgent 的强制流程日志是否完整。跳步 -> `[PROCESS_VIOLATION]`。
 - **状态信号合规**：核对 engineer/executor 输出是否包含 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`。缺失 -> `[MISSING_STATUS_SIGNAL]`。
 - **安全/性能检测**：按 `security-checklist.md` 执行 L1-L3 检测。
-- **BOM/乱码扫描（L1 默认项，来源：anti-patterns-encoding AP-001/AP-005）**：对 `git diff --name-only HEAD` 跑 `node scripts/scan-encoding.mjs`，检测 UTF-8 BOM / U+FFFD 替换字符 / GBK 残留字节流。FAIL -> `[ENCODING_VIOLATION]`。脚本路径相对仓库根；如脚本不存在标记 `[VERIFY_PENDING]`。
+- **BOM/乱码扫描（L1 默认项，[memory:fact_id=AP-001,AP-005]）**：对 `git diff --name-only HEAD` 跑 `node scripts/scan-encoding.mjs`，检测 UTF-8 BOM / U+FFFD 替换字符 / GBK 残留字节流。FAIL -> `[ENCODING_VIOLATION]`。脚本路径相对仓库根；如脚本不存在标记 `[VERIFY_PENDING]`。反模式来源已迁移到全局 sqlite `fact_store` 表（v2.1），不再读归档 sub-skill 全文。
 
 ## 分层验证
 

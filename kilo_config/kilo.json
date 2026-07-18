@@ -123,10 +123,9 @@
     "sqlite": {
       "type": "local",
       "command": [
-        "npx",
-        "-y",
-        "mcp-sqlite",
-        "${HOME}/.config/kilo-data/memory.db"
+        "node",
+        "C:\\PROGRA~1\\nodejs\\NODE_M~1\\MCP-SQ~1\\MCP-SQ~1.JS",
+        "C:\\Users\\Administrator\\.config\\kilo-data/memory.db"
       ],
       "enabled": true,
       "timeout": 10000

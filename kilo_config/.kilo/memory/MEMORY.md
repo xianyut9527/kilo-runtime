@@ -25,9 +25,11 @@ metadata:
 > 触发条件：跨 2 次以上任务重复出现 / reviewer 确认为系统级 / 修复不收敛时
 > 入选条目：M-001
 
-### M-001: kilo_config 全局配置运行约束
-- `kilo.json` 修改后必须 `node -e "JSON.parse(...)"` 严格解析（无 BOM 容忍）
-- 详见 skills/anti-patterns/SKILL.md#AP-001 / #AP-005
+### M-001: kilo_config 全局配置运行约束  [memory:fact_id=AP-001,AP-005]
+- `kilo.json` / `*.yaml` / `*.csv` 修改后必须 `node -e "JSON.parse(...)"` 严格解析（无 BOM 容忍）
+- 详细触发场景 / 推荐做法：`SELECT trigger, action FROM fact_store WHERE fact_id IN ('AP-001', 'AP-005');`
+- Windows + PowerShell 5.1 默认 GBK 编码 → install.ps1 已永久化 UTF-8
+- **v2.1 起**：本条目不再指向 `skills/anti-patterns/SKILL.md` 全文（避免 md 无限膨胀 + token 爆炸），改为指向 fact_id，agent 通过 sqlite MCP 按需查询
 
 ## 已验证静态规则
 

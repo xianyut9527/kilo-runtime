@@ -105,7 +105,7 @@ Step 5: 回写后验证
 ```
 错误：checker FAIL，"kilo.json 修改后 JSON.parse 失败"
 搜索词：BOM JSON.parse kilo.json
-→ 命中历史会话：AP-001 BOM 污染反模式
+→ 命中历史会话：fact_store[AP-001]（BOM 污染反模式）
 → 提取解决方案：检测并剥离 BOM
 → 直接应用，不重复诊断
 ```

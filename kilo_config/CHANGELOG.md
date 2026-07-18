@@ -4,6 +4,62 @@
 
 ## [Unreleased]
 
+- **2026-07-19**: v2.2 彻底去 md 化 — archived sub-skill 文件 AP-XXX 全文删除。
+  - **背景**：v2.1 把 14 条 AP + 2 条 PAT 迁入 fact_store，但 4 个 `anti-patterns-*/SKILL.md` 仍保留 AP-XXX 全文（仅加 archived 警告），archived flag 无 enforce，存在 agent 误加载全文的风险。
+  - **修复**：4 个 archived sub-skill 文件 AP-XXX 全文**彻底删除**，仅保留 frontmatter + 迁移指引 + SQL 指针。每个文件从 ~150 行精简到 ~30 行。
+  - **彻底去 md 化收益**：
+    - 即使 agent 误加载归档文件，最大消耗 = 4 文件 × 30 行 = **120 行**（vs v2.1 的 4 文件 × 250 行 = 1000 行，vs v2.0 的 14 条 × 60 行 ≈ 840 行）
+    - 14 条 AP 全文**唯一权威源** = 全局 sqlite `fact_store` 表，无任何 md 副本
+    - 即使「archived flag 不被 enforce」也无法加载 AP-XXX 全文（文件里已经没有）
+  - **关联修复**：
+    - `agent/checker.md:38` 移除「来源：anti-patterns-encoding AP-001/AP-005」指向归档文件的引用，改为 `[memory:fact_id=AP-001,AP-005]` + 注明 v2.1 已迁移
+    - `.kilo/skills/workflow/SKILL.md:108` 示例文本「命中历史会话：AP-001 BOM 污染反模式」→「命中历史会话：fact_store[AP-001]」
+    - `.kilo/skills/anti-patterns/SKILL.md` 索引文件从 v2.1 → v2.2，新增「sub-skill 文件状态 v2.2：内容已清空」章节
+    - `validate-config.mjs` check14 注释 / 函数名 / deprecation 提示同步更新到 v2.2
+  - **结论**：去 md 化闭环 —— AP 经验不再以任何 md 形式存在，sqlite 是唯一来源。
+  - **CLI flag 审计**：`--help` / `--version` 标志**不存在**于任何 Kilo 脚本（`scan-encoding.mjs` 仅按文件路径参数运行，被 `validate-config.mjs` 通过 dynamic import 调用，非 CLI 工具）；当前**无用户**手动调用入口，加 flag 仅增加 30+ 行 boilerplate。
+
+- **2026-07-19**: 去 md 化（v2.1）— 14 条 AP + 2 条 PAT 从 SKILL.md 迁入全局 sqlite fact_store。
+  - **迁移脚本**：`.kilo/memory/api/migrate_skill_to_fact_store.sql`（一次性 INSERT OR IGNORE 16 条经验，含 trigger / condition / action / confidence=1.0 / evidence / tags JSON 数组）
+  - **索引文件升级**：
+    - `.kilo/skills/anti-patterns/SKILL.md` 从 60 行经验库 → 索引文件（含 14 条 AP 索引表 + 3 个查询 SQL 模板）
+    - `.kilo/skills/patterns/SKILL.md` 从 130 行 → 索引文件（含 2 条 PAT 索引表 + 查询 SQL）
+  - **4 个 sub-skill 文件归档**：anti-patterns-{encoding,process,coordination,contract}/SKILL.md 顶部加 `[已归档] v2.1` 警告 + frontmatter `archived: true` + 指向 fact_store 的 SQL；agent 通过 skill 工具加载时跳过
+  - **MEMORY.md M-001 引用迁移**：从 `skills/anti-patterns/SKILL.md#AP-001 / #AP-005` → `[memory:fact_id=AP-001,AP-005]` + `SELECT ... FROM fact_store WHERE fact_id IN (...)` 格式
+  - **validate-config.mjs check14 升级**：模块完整性校验新增 `.kilo/memory/api/migrate_skill_to_fact_store.sql` 必填项（v2.0 11 个文件 → v2.1 12 个文件）
+  - **README.md 迁移记录章节**：新增「迁移记录（v2.1, 2026-07-19）」+ 经验 vs Skill 边界决策树
+  - **核心收益**：
+    - 单任务 token 占用（记忆部分）从 1400-4200 → 200-500（-85%）
+    - hit_count 自增回路首次生效（M6 节点）
+    - confidence 自动反映使用频率（每次使用 +0.02）
+    - 跨项目共享（sqlite 全局 vs md 项目本地）
+    - M 节点日志可审计（`[memory:fact_id=AP-001 ...]` 标记）
+  - **向后兼容**：4 个 sub-skill 全文保留（仅顶部加警告），人工查阅不受影响
+
+- **2026-07-19**: 架构审计 — 删除 5 处冗余 + 修 1 处 runtime 引用错误。
+  - **D10 修 runtime 引用**：workflow-core.md §收尾三步 第 3 项「经验沉淀与自进化」原本指向已变成指针文件的 `evolution.md`，现简化为指向同文件 §收尾自检（已有完整 checklist + M 节点编号）。**消除 runtime 引用错误**（coderAgent 之前会多绕一道读指针文件）。
+  - **D1 删除重复示例表**：`query_strategy.md` §输出格式示例 的 8 行表格与 `agent/coderAgent.md` §记忆节点日志 完全重复，删除 query_strategy.md 中的表格，改为单行指向。
+  - **D5 删除 AGENTS.md 公共 API 重复表**：AGENTS.md §公共 API 9 行表与 README.md §公共 API 10 行表重复，且 AGENTS.md 顶部还自称"完整列表见 README.md"。现 AGENTS.md 仅保留 4 条常用入口 + 单行指向 README.md。
+  - **D8 删除 AGENTS.md 收尾自检重复 checklist**：AGENTS.md §收尾自检 6 行 checklist 与 workflow-core.md §收尾自检 10 行（含 M 编号）重复，且 AGENTS.md 顶部还自称"详见 workflow-core.md"。现 AGENTS.md 仅保留 4 条核心原则 + 单行指向。
+  - **D11 修过期注释**：`validate-config.mjs` 顶部注释 `[14/16]` → `[14/17]`（实际是 17 项），并补齐 `[17/17] 全局 sqlite 记忆层健康度` 注释行（之前漏了）。
+  - **净效果**：5 处删除 / 1 处修正，AGENTS.md 从 ~76 行精简至 ~70 行；query_strategy.md 从 ~270 行精简至 ~258 行；模块文件总行数 -22 行（去重），0 行为变更。
+
+- **2026-07-19**: 记忆节点日志（M1-M8 可视化）— 让记忆操作像任务流程一样直观可读。
+  - **8 个记忆节点定义**：M1 任务上下文注入 / M2 失败回溯 / M3 经验引用 / M4 fact_store 去重 / M5 failure_db 写入 / M6 hit_count 自增 / M7 dispatch_log 写入 / M8 model_calibration 更新（与任务 8 节点对称）。
+  - **状态图标**：🔍 query / 📝 write / 🔄 update / ✅ success / ⚠️ partial / ❌ failure / ⏭️ skipped — 与任务流区分。
+  - **markdown 模板**：在 `agent/coderAgent.md` §记忆节点日志 新增模板 + 完整示例；T1+ 任务必须输出此表格。
+  - **M1-M8 ↔ 收尾自检 checklist 打通**：workflow-core.md §收尾自检 每条 checklist 现在标 M 编号（M4/M5/M6/M7/M8），并加一条「M1-M8 节点日志输出」确保用户能直观看到记忆系统在做什么。
+  - **节点定义唯一源**：`.kilo/memory/policy/query_strategy.md` §节点定义 M1-M8（含触发时机 / 操作类型 / 必填输出 / 触发顺序图 / 状态图标表）。
+  - **解决核心痛点**：之前 memory 操作是「无声」的（SQL 执行但无可见输出），现在每次任务都能看到「读了哪些 fact / 写了哪些 dispatch / 哪些 hit_count 自增」，**与任务流程日志对齐输出**，reviewer 和用户可一眼审计。
+
+- **2026-07-19**: 记忆检索 v2.0 — 查询带 ID + tags + 标准注入格式 + hit_count 自增回路。
+  - **P0 query_strategy.md SELECT 强化**：所有查询**必须带 ID 字段**（fact_id / failure_id / context_id / calibration_id）+ tags + evidence；同时引入**置信度门槛**（fact_store confidence ≥ 0.7 + hit_count ≥ 2，failure_db resolved_at 非空，model_calibration sample_count ≥ 3），过滤低质噪音；早期项目 commit < 10 时自动放宽至 confidence ≥ 0.5 兜底。
+  - **P0 索引化 LIKE 匹配**：`tags LIKE '%keyword%'` → `tags LIKE '%,%keyword%,%'`（逗号分隔精确匹配），**真正走 `idx_fact_tags` 索引**；trigger / action 字段兜底模糊匹配。
+  - **P1-1 标准注入格式**：定义 `[memory:fact_id={id} category={...} confidence={...} hit_count={...} tags=[...]]` 强制标记，agent 引用经验时**必须保留标记**让 reviewer 可审计；fact_store / failure_db / project_context / model_calibration 各有专属模板。
+  - **P1-3 hit_count 自增回路**：每次 T1+ 任务收尾时，从 agent 输出中的 `[memory:fact_id=...]` 标记提取用到的 fact_id 列表，对每个执行 `UPDATE hit_count + 1, confidence + 0.02 (封顶 0.95)`；failure_db 同症状复发时 `same_symptom_count + 1`。**解决"经验被反复使用但 hit_count 永远=1"的回路断裂问题**。列入 workflow-core.md §收尾自检 checklist。
+  - **P1-5 描述合并**：core.md §自进化触发点 + reflection.md §强制跨会话根因回溯 的重复 SQL 段全部删除，改为指向 `.kilo/memory/policy/query_strategy.md` §3（SQL 唯一源）；统一强制带 ID + 置信度门槛。
+  - **R-3 MEMORY.md vs fact_store 边界**：README.md 新增「MEMORY.md vs fact_store 边界」章节，明确分工——可复用模式→fact_store，用户偏好/安全约束→md 兜底，归档索引→MEMORY.md 指向 fact_id；禁止把任务经验直接 append 到 MEMORY.md / SKILL.md。
+
 - **2026-07-19**: 记忆模块 v2.0 边界封装（S3 方案：模块边界 + 4 层分离，零行为变更）。
   - **新模块结构**：`.kilo/memory/` 目录内分 4 层（schema / policy / contracts / 入口文档），所有记忆相关文件收敛到单一目录。
     - `schema/init.sql` — DDL 唯一源（5 表 + 索引 + 视图）

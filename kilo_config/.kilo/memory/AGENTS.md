@@ -19,38 +19,25 @@
 
 ## 公共 API（agent 唯一应访问的入口）
 
-完整列表见 `README.md` §公共 API。常用入口：
+**完整公共 API 清单**见同目录 `README.md` §公共 API（10 行表）。本节仅给 agent 提供 4 条**最常用**入口：
 
 | 场景 | 入口 |
 |---|---|
 | 任务开始注入 | `policy/query_strategy.md` §1 |
-| 失败回溯 | `policy/query_strategy.md` §2 |
+| 失败回溯 | `policy/query_strategy.md` §3 |
 | 任务结束 dispatch_log | `policy/dispatch_recorder.md` |
 | 发现可复用模式 | `policy/fact_dedup.md` |
-| fixer 多轮 / 失败 | `policy/failure_recorder.md` |
-| 模型校准 | `policy/model_calibration.md` |
-| skill 升级检测 | `policy/skill_upgrade.md` |
-| 首次部署 | `policy/init_check.md` |
+
+> 全部入口（fact_dedup / failure_recorder / model_calibration / skill_upgrade / init_check / contracts/health_check.sql）见 README.md。
 
 ## 必读规则
 
-### 收尾自检（硬门）
+**完整 checklist** 详见 `.kilo/instructions/workflow-core.md` §收尾自检（10 条硬门，含 M 节点编号）。本节仅给 agent 4 条**核心原则**：
 
-T1+ 任务「经验沉淀」执行前，必须按以下 checklist 全部勾选，任何一项未执行都不得标记任务完成。详见 `.kilo/instructions/workflow-core.md` §收尾自检。
-
-- [ ] dispatch_log INSERT
-- [ ] fact_store 去重 + INSERT/UPDATE
-- [ ] failure_db INSERT（如有失败）
-- [ ] model_calibration UPDATE
-- [ ] fixer error_code 回写（如触发 fixer）
-- [ ] skill 升级检测（仅记录，不自动落盘）
-
-未执行 → `[MISSING_MEMORY_WRITE]`，阻塞交付。
-
-### md 写入边界
-
-- `MEMORY.md` / `USER.md` 仅作归档索引 / 用户偏好 / 安全约束，**不接收新经验条目**
-- `SKILL.md` 仅在 `fact_store.confidence ≥ 0.8 && hit_count ≥ 3` 后由 `policy/skill_upgrade.md` 触发 `[AUTO_DRAFT]` 草稿，**人工审批后才落盘**
+1. **T1+ 必走收尾自检** — dispatch_log / fact_store / failure_db / model_calibration 全部必须执行，未执行 → `[MISSING_MEMORY_WRITE]` 阻塞交付
+2. **M 节点日志必出** — coderAgent 每次任务交付必须输出 M1-M8 节点日志（同任务 8 节点对齐），模板见 `agent/coderAgent.md` §记忆节点日志
+3. **md 不接收新经验** — `MEMORY.md` / `USER.md` / `SKILL.md` 仅作归档索引或人工 gate，**所有可复用模式/反模式必须先入 `fact_store`**
+4. **Skill 升级需人工 gate** — `fact_store.confidence ≥ 0.8 && hit_count ≥ 3` 才触发 `policy/skill_upgrade.md` `[AUTO_DRAFT]` 草稿，**不得直接 patch SKILL.md**
 
 ## Token Budget
 

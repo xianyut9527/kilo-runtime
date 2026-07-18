@@ -2,22 +2,23 @@
 // validate-config.mjs
 // kilo_config 配置自检脚本（Node ESM，跨平台）
 // 校验项：
-//   [1/16] kilo.json JSON 合法性
-//   [2/16] agent 名单一致性
-//   [3/16] skills 分类一致性
-//   [4/16] agent 文件 frontmatter 合规性（含 color / hidden）
-//   [5/16] kilo.json prompt 中引用的文档路径存在性
-//   [6/16] README.md 目录树一致性
-//   [7/16] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
-//   [8/16] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
-//   [9/16] coderAgent prompt 锚点关键词校验（防 compaction 误删）
-//   [10/16] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
-//   [11/16] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
-//   [12/16] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
-//   [13/16] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
-//   [14/16] 记忆系统文件存在性（.kilo/memory/ 策略与 schema；kilo.json memory 字段已废弃）
-//   [15/16] 全 repo 编码健康度扫描（BOM/U+FFFD/GBK，调用 scripts/scan-encoding.mjs）
-//   [16/16] kilo.json 占位符与 README 描述目录一致性（防双源漂移）
+//   [1/17] kilo.json JSON 合法性
+//   [2/17] agent 名单一致性
+//   [3/17] skills 分类一致性
+//   [4/17] agent 文件 frontmatter 合规性（含 color / hidden）
+//   [5/17] kilo.json prompt 中引用的文档路径存在性
+//   [6/17] README.md 目录树一致性
+//   [7/17] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
+//   [8/17] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
+//   [9/17] coderAgent prompt 锚点关键词校验（防 compaction 误删）
+//   [10/17] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
+//   [11/17] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
+//   [12/17] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
+//   [13/17] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
+//   [14/17] 记忆模块完整性（.kilo/memory/ v2.2 边界：README + AGENTS + schema + contracts + api + 7 个 policy）
+//   [15/17] 全 repo 编码健康度扫描（BOM/U+FFFD/GBK，调用 scripts/scan-encoding.mjs）
+//   [16/17] kilo.json 占位符与 README 描述目录一致性（防双源漂移）
+//   [17/17] 全局 sqlite 记忆层健康度（memory.db 表/索引/视图 + 行数，契约 .kilo/memory/contracts/health_check.sql）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -1060,15 +1061,16 @@ function check13HermesInstallExcludeSync() {
   }
   return { name, pass: false, detail: errors.join('; ') };
 }
-// ---------- Check 14: 记忆模块文件存在性（v2.0 模块边界：.kilo/memory/{README,AGENTS,schema,policy,contracts}） ----------
+// ---------- Check 14: 记忆模块文件存在性（v2.2 模块边界：.kilo/memory/{README,AGENTS,schema,policy,api,contracts}） ----------
 // 验证：模块入口文件 + DDL + 关键 policy 全部存在；模块根目录不可缺失
 function check14MemoryEnabled(config) {
-  const name = '记忆模块完整性（.kilo/memory/ v2.0 边界）';
+  const name = '记忆模块完整性（.kilo/memory/ v2.2 边界）';
   const required = [
     '.kilo/memory/README.md',
     '.kilo/memory/AGENTS.md',
     '.kilo/memory/schema/init.sql',
     '.kilo/memory/contracts/health_check.sql',
+    '.kilo/memory/api/migrate_skill_to_fact_store.sql',
     '.kilo/memory/policy/dispatch_recorder.md',
     '.kilo/memory/policy/fact_dedup.md',
     '.kilo/memory/policy/failure_recorder.md',
@@ -1083,9 +1085,9 @@ function check14MemoryEnabled(config) {
   }
   // 兼容旧字段检测
   if (config && typeof config === 'object' && 'memory' in config) {
-    return { name, pass: false, detail: 'kilo.json 存在已废弃的 memory 字段（v2.0 起记忆开关以 .kilo/memory/ 目录存在性为准，请删除该字段）' };
+    return { name, pass: false, detail: 'kilo.json 存在已废弃的 memory 字段（v2.2 起记忆开关以 .kilo/memory/ 目录存在性为准，请删除该字段）' };
   }
-  return { name, pass: true, detail: `记忆模块完整（${required.length} 个文件齐全：README + AGENTS + schema + contracts + 7 个 policy）` };
+  return { name, pass: true, detail: `记忆模块完整（${required.length} 个文件齐全：README + AGENTS + schema + contracts + api + 7 个 policy）` };
 }
 
 // ---------- Check 15: 全 repo 编码健康度扫描（BOM/U+FFFD/GBK） ----------
