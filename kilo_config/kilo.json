@@ -30,8 +30,8 @@
     },
     "architect": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
-      "variant": "thinking",
+      "model": "hx/kimi-k2.6",
+      "variant": "high",
       "temperature": 0.3
     },
     "checker": {
