@@ -22,12 +22,16 @@ keywords: workflow, reference, small_model, 程序化记忆, 需求扩散
 
 ## 程序化记忆
 
-记忆系统采用 **全局 sqlite 优先 + 项目 md 兜底** 架构，总开关为 `.kilo/memory/` 目录存在性（含 memory-strategy.md），kilo.json 不再设 memory 字段。
+记忆系统采用 **全局 sqlite 优先 + 项目 md 兜底** 架构，由 `.kilo/memory/` 模块统一管理。
 
-- **schema**：仓库 `.kilo/memory/init.sql`（5 表：fact_store / failure_db / dispatch_log / project_context / model_calibration）
-- **初始化**：`~/.config/kilo-data/memory.db` 不存在时，用 sqlite 执行 init.sql 建表
-- **查询/写入规则**：见 `.kilo/memory/memory-strategy.md`（任务开始注入 ≤2000 tokens、失败回溯必查、T1+ 结束强制写 dispatch_log）
-- **Skill 固化**：fact_store.confidence ≥ 0.8 且 hit_count ≥ 3 → 按 `skill-upgrade.md` 生成升级提案
+> **总入口**：`.kilo/memory/README.md`（公共 API 文档）
+> **对 agent 入口**：`.kilo/memory/AGENTS.md`（运行时注入）
+
+- **schema**：`${HOME}/.config/kilo-data/memory.db`（`.kilo/memory/schema/init.sql` 5 表：fact_store / failure_db / dispatch_log / project_context / model_calibration）
+- **初始化**：memory.db 不存在时，按 `.kilo/memory/policy/init_check.md` 4 步 SOP 建表
+- **查询/写入规则**：见 `.kilo/memory/policy/query_strategy.md`（任务开始注入 ≤2000 tokens、失败回溯必查）、`.kilo/memory/policy/dispatch_recorder.md`（T1+ 结束强制写 dispatch_log）、`.kilo/memory/policy/fact_dedup.md`（fact_store 去重写入）
+- **Skill 固化**：fact_store.confidence ≥ 0.8 且 hit_count ≥ 3 → 按 `.kilo/memory/policy/skill_upgrade.md` 生成升级提案
+- **健康度校验**：`node validate-config.mjs` check17 读 `.kilo/memory/contracts/health_check.sql` 标准化查询
 
 ## 需求扩散与同类点扫描
 

@@ -299,7 +299,7 @@ T1+ 任务「经验沉淀」执行前，coderAgent 必须按以下 checklist 全
 - [ ] **Skill 升级检测（仅记录，不自动落盘）**：`SELECT trigger, action, confidence, hit_count FROM fact_store WHERE category='ANTIPATTERN' AND confidence >= 0.8 AND hit_count >= 3 AND archived = 0`；命中 → 按 `skill-upgrade.md` 生成「`[AUTO_DRAFT]`」草稿标记，**不得直接 patch SKILL.md**，必须经人工确认（V1 阶段）
 - [ ] **md 兜底**（可选）：MEMORY.md / USER.md 仅作归档索引或用户偏好，不作为经验沉淀主路径
 
-> **路径口径**：sqlite 路径统一为 `${HOME}/.config/kilo-data/memory.db`，由 Kilo 运行时解析，install 阶段不替换。详见 `.kilo/memory/memory-strategy.md` 「初始化检查」章节。
+> **路径口径**：sqlite 路径统一为 `${HOME}/.config/kilo-data/memory.db`，由 Kilo 运行时解析，install 阶段不替换。详见 `.kilo/memory/policy/init_check.md`「4 步初始化 SOP」章节。
 
 未执行上述任何一项 → `[MISSING_MEMORY_WRITE]`，coderAgent 必须立即补写，不得进入「分支收尾协议」。
 
@@ -312,7 +312,7 @@ T1+ 任务「经验沉淀」执行前，coderAgent 必须按以下 checklist 全
      - 写入规则详见 `.kilo/instructions/evolution.md`
    - **Skill 升级检测**：当 `fact_store.confidence >= 0.8` 且 `hit_count >= 3` 时，按 `.kilo/instructions/skill-upgrade.md` 生成 Skill 升级提案（**先打 `[AUTO_DRAFT]` 草稿标记，人工审批后才落盘**，避免 LLM 自觉回写）
    - **可选写入项目 md**：可复用事实 → `MEMORY.md`（仅作归档索引）；架构约束 → `AGENTS.md`
-   - **全局记忆系统未初始化**（`${HOME}/.config/kilo-data/memory.db` 不存在）→ 用 sqlite 执行仓库 `.kilo/memory/init.sql` 完成建表（详见 `memory-strategy.md`），再写入
+   - **全局记忆系统未初始化**（`${HOME}/.config/kilo-data/memory.db` 不存在）→ 按 `.kilo/memory/policy/init_check.md` 完成建表（mkdir → 建表 → 验证 → model_calibration 基线），再写入
 
 ### 分支收尾协议（来源：superpowers/finishing-a-development-branch）
 

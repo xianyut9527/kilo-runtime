@@ -4,7 +4,13 @@ description: Skills 生命周期管理
 keywords: skills, lifecycle, 回写, frontmatter
 ---
 
-# Skills 生命周期管理
+# Skills Lifecycle Management
+
+> **回写流程已迁移**：去重查询 + fact_store 写入 + skill 升级检测 的完整逻辑已迁移到 `.kilo/memory/policy/fact_dedup.md` 与 `.kilo/memory/policy/skill_upgrade.md`。
+>
+> 本文件保留 **SKILL.md 分类表 + 回写触发条件 + SKILL.md 条目模板 + frontmatter 规范**（即 SKILL.md 文件层面的生命周期）；不再重复 sqlite fact_store 的写入规则。
+>
+> 模块入口：`.kilo/memory/README.md`（公共 API 文档）。
 
 ## Skills 分类表（与 `.kilo/skills/` 目录一一对应，新增/删除 skill 必须同步本表）
 
@@ -44,7 +50,7 @@ keywords: skills, lifecycle, 回写, frontmatter
 
 ## 回写触发条件
 
-以下场景触发 skills 回写：
+以下场景触发 skills 回写（实际写入 sqlite fact_store，详见 `.kilo/memory/policy/fact_dedup.md`）：
 
 1. 同类错误出现 2 次及以上
 2. 用户明确纠正
@@ -52,32 +58,7 @@ keywords: skills, lifecycle, 回写, frontmatter
 4. 未记录经验导致验证失败
 5. reviewer 标注 `[建议回写 skills]`
 
-## 回写流程
-
-> **核心原则**（v2.0 起）：**SKILL.md 不再是经验沉淀的主入口**。新发现的 pattern / anti-pattern 必须先进入全局 sqlite `fact_store` 表（带 confidence / hit_count / tags），经 3 次命中且 confidence ≥ 0.8 后，才由 `skill-upgrade.md` 触发「`[AUTO_DRAFT]`」草稿；草稿经人工审批后才落盘为 SKILL.md。这是 V1 阶段的人工 gate，防止 LLM 自觉回写导致 skill 膨胀。
-
-1. **识别**：确定经验类型（pattern / anti-pattern），并准备 trigger / action / tags 三元组
-2. **验证**：确认已通过 checker/reviewer 验证，且能在 SQL 上证明 ≥1 次复现（否则不应进入）
-3. **去重查询**（**必须**，跳过将导致 SKILL 膨胀）：
-   ```sql
-   SELECT fact_id, hit_count, confidence FROM fact_store
-   WHERE trigger = ? AND action = ? AND archived = 0;
-   ```
-   - 命中 → `UPDATE fact_store SET hit_count = hit_count + 1, confidence = ?, updated_at = datetime('now') WHERE fact_id = ?`，流程结束（不进入第 4 步）
-   - 未命中 → 继续第 4 步
-4. **写入 sqlite**（主路径，**不再 patch SKILL.md**）：
-   ```sql
-   INSERT INTO fact_store (fact_id, category, trigger, condition, action, confidence, evidence, tags, hit_count, created_at, updated_at)
-   VALUES (?, ?, ?, ?, ?, 0.5, '["dispatch_id"]', ?, 1, datetime('now'), datetime('now'));
-   ```
-   - AntiPattern 初始 confidence = 0.5，Pattern = 0.6
-   - 写入完成 → 流程结束
-   - 写入失败 → 检查 memory.db 路径与 MCP 状态，参见 `memory-strategy.md` 「初始化检查」
-5. **Skill 升级检测**（异步触发，不在主流程内阻塞）：
-   - 由 `skill-upgrade.md` 条件 A：`confidence >= 0.8 AND hit_count >= 3 AND archived = 0` 触发
-   - 满足时生成「`[AUTO_DRAFT]`」草稿（带 fact_id / trigger / action），由人工审批后才通过 `skill_manage(action='create'/'patch')` 落盘到 SKILL.md
-   - 落盘成功后 `UPDATE fact_store SET archived = 1 WHERE fact_id = ?`
-6. **链接**：在「相关条目」中建立交叉引用（仅对最终落盘的 SKILL.md 操作）
+**完整回写流程**（去重 SQL → fact_store INSERT/UPDATE → skill 升级检测）见 `.kilo/memory/policy/fact_dedup.md`。
 
 ## SKILL.md 条目模板
 

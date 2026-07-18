@@ -4,6 +4,34 @@
 
 ## [Unreleased]
 
+- **2026-07-19**: 记忆模块 v2.0 边界封装（S3 方案：模块边界 + 4 层分离，零行为变更）。
+  - **新模块结构**：`.kilo/memory/` 目录内分 4 层（schema / policy / contracts / 入口文档），所有记忆相关文件收敛到单一目录。
+    - `schema/init.sql` — DDL 唯一源（5 表 + 索引 + 视图）
+    - `policy/dispatch_recorder.md` — dispatch_log 写入规则
+    - `policy/fact_dedup.md` — fact_store 去重 + 写入规则
+    - `policy/failure_recorder.md` — failure_db 写入规则
+    - `policy/skill_upgrade.md` — fact_store 触发 skill 升级检测
+    - `policy/model_calibration.md` — model_calibration 更新规则
+    - `policy/query_strategy.md` — 任务开始 + 失败回溯查询规则
+    - `policy/init_check.md` — memory.db 4 步初始化 SOP
+    - `contracts/health_check.sql` — 标准化健康度 SQL（5 项检查）
+    - `README.md` — 公共 API 文档（外部模块唯一应看的入口）
+    - `AGENTS.md` — 模块对 agent 的指令入口（运行时注入）
+  - **旧文件改造为指针文件**（保留兼容路径，0 行为变更）：
+    - `evolution.md` 从 232 行精简为 60 行（指向 4 个 policy）
+    - `skills-lifecycle.md`「回写流程」段落删除（指向 fact_dedup.md）
+    - `skill-upgrade.md` 整文搬走，本文件保留为指针
+    - `memory-strategy.md` 整文搬走，本文件保留为指针
+    - `init.sql` 改为向后兼容指针（DDL 唯一源迁到 schema/init.sql）
+    - `MEMORY.md` / `USER.md` 加载机制引用更新到 AGENTS.md
+    - `core.md` / `workflow-core.md` / `workflow-reference.md` 路径引用同步
+    - 仓库根 `AGENTS.md` 第 8 条引用更新
+  - **check14 升级**：「记忆模块完整性」校验，验证 11 个核心文件全部存在（README + AGENTS + schema + contracts + 7 个 policy）；旧 `memory-strategy.md` + `init.sql` 改为兼容可选
+  - **check17 升级**：先校验 `contracts/health_check.sql` 契约文件存在；行为完全等价，仍是 5 项健康度（REQUIRED_TABLES / REQUIRED_INDEXES / REQUIRED_VIEWS / ROW_COUNTS / CHECK_CONSTRAINTS）
+  - **零行为变更**：runtime 行为、SQL 模板、agent prompt 锚点、schema 字段、enforcement 模型**完全不变**；纯文件搬迁 + 指针改造
+  - **diff 规模**：modified 12 文件 -594 / +154 行；新增 9 文件 ~36KB；总减少 ~600 行重复定义
+  - **未来演进路径**：v3.0 自定义 MCP server（api/ 层）+ tool 强制执行 + 删除 `[MISSING_MEMORY_WRITE]` 标记；v4.0 跨会话语义检索 + 跨项目 fact_store 共享
+
 - **2026-07-19**: 记忆飞轮 P0-P3 — 把「sqlite 优先」从文档层升级为 runtime 写入路径。
   - **P0 workflow-core.md「收尾自检」硬门**：T1+ 任务「经验沉淀」执行前必须按 checklist 勾选（dispatch_log INSERT → fact_store 去重查询 → failure_db 写入 → model_calibration 更新 → fixer error_code 回写 → skill 升级检测），缺任一项 → `[MISSING_MEMORY_WRITE]` 阻塞交付；路径口径统一为 `${HOME}/.config/kilo-data/memory.db`。
   - **P0 coderAgent.md「输出」段改写**：经验沉淀明确「T1+ 必走收尾自检硬门；md 写入仅作索引兜底；禁止直接 patch SKILL.md 承载新经验」。

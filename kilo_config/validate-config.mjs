@@ -1060,19 +1060,32 @@ function check13HermesInstallExcludeSync() {
   }
   return { name, pass: false, detail: errors.join('; ') };
 }
-// ---------- Check 14: 记忆系统文件存在性（memory 由 .kilo/memory/ 目录存在性控制，见 CONFIG_CHANGE_CHECKLIST.md 第 54 条；kilo.json 不需要 memory 字段） ----------
+// ---------- Check 14: 记忆模块文件存在性（v2.0 模块边界：.kilo/memory/{README,AGENTS,schema,policy,contracts}） ----------
+// 验证：模块入口文件 + DDL + 关键 policy 全部存在；模块根目录不可缺失
 function check14MemoryEnabled(config) {
-  const name = '记忆系统文件存在性（.kilo/memory/ 策略与 schema）';
-  const required = ['.kilo/memory/memory-strategy.md', '.kilo/memory/init.sql'];
+  const name = '记忆模块完整性（.kilo/memory/ v2.0 边界）';
+  const required = [
+    '.kilo/memory/README.md',
+    '.kilo/memory/AGENTS.md',
+    '.kilo/memory/schema/init.sql',
+    '.kilo/memory/contracts/health_check.sql',
+    '.kilo/memory/policy/dispatch_recorder.md',
+    '.kilo/memory/policy/fact_dedup.md',
+    '.kilo/memory/policy/failure_recorder.md',
+    '.kilo/memory/policy/skill_upgrade.md',
+    '.kilo/memory/policy/model_calibration.md',
+    '.kilo/memory/policy/query_strategy.md',
+    '.kilo/memory/policy/init_check.md',
+  ];
   const missing = required.filter((p) => !fs.existsSync(path.resolve(ROOT, p)));
   if (missing.length > 0) {
-    return { name, pass: false, detail: `缺失记忆系统文件: [${missing.join(', ')}]` };
+    return { name, pass: false, detail: `缺失模块文件: [${missing.join(', ')}]（详见 .kilo/memory/README.md）` };
   }
-  // 记忆总开关 = 目录存在且含有效文件；kilo.json 的 memory 字段已废弃，若仍存在提示清理
+  // 兼容旧字段检测
   if (config && typeof config === 'object' && 'memory' in config) {
-    return { name, pass: false, detail: 'kilo.json 存在已废弃的 memory 字段（记忆开关以 .kilo/memory/ 目录存在性为准，请删除该字段）' };
+    return { name, pass: false, detail: 'kilo.json 存在已废弃的 memory 字段（v2.0 起记忆开关以 .kilo/memory/ 目录存在性为准，请删除该字段）' };
   }
-  return { name, pass: true, detail: 'memory-strategy.md + init.sql 齐全，kilo.json 无废弃 memory 字段' };
+  return { name, pass: true, detail: `记忆模块完整（${required.length} 个文件齐全：README + AGENTS + schema + contracts + 7 个 policy）` };
 }
 
 // ---------- Check 15: 全 repo 编码健康度扫描（BOM/U+FFFD/GBK） ----------
@@ -1253,17 +1266,25 @@ function check16KiloJsonPlaceholders(config) {
   return { name, pass: false, detail: errors.join('; ') };
 }
 
-// ---------- Check 17: 全局 sqlite 记忆层健康度（memory.db 行数 + 表结构） ----------
+// ---------- Check 17: 全局 sqlite 记忆层健康度（memory.db 表/索引/视图 + 行数） ----------
 // 目标：
-//   (a) 解析 kilo.json 中 sqlite MCP 的 ${HOME}/.config/kilo-data/memory.db 路径
-//   (b) 若 memory.db 存在但表结构缺失（5 表任一缺失）→ FAIL（提示需执行 init.sql）
-//   (c) 若 memory.db 存在且表结构齐全，统计 dispatch_log / fact_store 行数，
+//   (a) 校验 .kilo/memory/contracts/health_check.sql 存在（v2.0 模块完整性契约）
+//   (b) 解析 kilo.json 中 sqlite MCP 的 ${HOME}/.config/kilo-data/memory.db 路径
+//   (c) 若 memory.db 存在但表结构缺失（5 表任一缺失）→ FAIL（提示需执行 schema/init.sql）
+//   (d) 若 memory.db 存在且表结构齐全，统计 dispatch_log / fact_store 行数，
 //       若 dispatch_log 行数 = 0 且 fact_store 行数 = 0 但仓库 commit 历史含 T1+ 任务，
 //       → 打印 `[MEMORY_LAYER_HOLLOW]` 告警（PASS，但 detail 标明 hollow）
+//
+// 契约来源：.kilo/memory/contracts/health_check.sql（v2.0 模块 contracts 层唯一源）
+// 5 项检查：REQUIRED_TABLES / REQUIRED_INDEXES / REQUIRED_VIEWS / ROW_COUNTS / CHECK_CONSTRAINTS
 function check17MemoryDbHealth() {
-  const name = '全局 sqlite 记忆层健康度（memory.db 表结构 + 行数）';
-  const errors = [];
-  const warnings = [];
+  const name = '全局 sqlite 记忆层健康度（memory.db 表/索引/视图 + 行数）';
+
+  // (a) 校验契约文件存在（v2.0 模块边界）
+  const contractPath = path.resolve(ROOT, '.kilo/memory/contracts/health_check.sql');
+  if (!fs.existsSync(contractPath)) {
+    return { name, pass: false, detail: '.kilo/memory/contracts/health_check.sql 缺失（v2.0 模块 contracts 层契约必须存在）' };
+  }
 
   // (a) 解析 kilo.json 中 sqlite MCP 路径
   let dbPath = null;
@@ -1284,7 +1305,7 @@ function check17MemoryDbHealth() {
     return {
       name,
       pass: true,
-      detail: `${dbPath} 不存在（首次部署前正常，首次 T1+ 任务前需执行 init.sql）`,
+      detail: `${dbPath} 不存在（首次部署前正常，首次 T1+ 任务前需按 .kilo/memory/policy/init_check.md 4 步 SOP 建表）`,
     };
   }
 
@@ -1306,7 +1327,7 @@ function check17MemoryDbHealth() {
       return {
         name,
         pass: false,
-        detail: `memory.db 存在但缺失表: [${missing.join(', ')}]，需执行 .kilo/memory/init.sql 建表`,
+        detail: `memory.db 存在但缺失表: [${missing.join(', ')}]，需执行 .kilo/memory/schema/init.sql 建表`,
       };
     }
     tableRows = {};
@@ -1334,7 +1355,7 @@ function check17MemoryDbHealth() {
       return {
         name,
         pass: false,
-        detail: `memory.db 存在但缺失表: [${missing.join(', ')}]，需执行 .kilo/memory/init.sql 建表`,
+        detail: `memory.db 存在但缺失表: [${missing.join(', ')}]，需执行 .kilo/memory/schema/init.sql 建表`,
       };
     }
     // CLI 路径不统计行数（避免复杂度），仅做存在性
