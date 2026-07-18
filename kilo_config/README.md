@@ -31,21 +31,8 @@ kilo_config/
 ├── kilo.json                     # 全局配置入口（Kilo 侧）
 ├── AGENTS.md                     # 全局骨架设计与长期参考文档
 ├── CONFIG_CHANGE_CHECKLIST.md    # 配置变更一致性检查清单
-├── hermes/                       # Hermes Agent 配置产物（C 档方案）
-│   ├── SOUL.md                   # 身份文件（从 coderAgent 迁移编排精华）
-│   ├── config.yaml               # Hermes 配置（provider/compression/mcp/delegation）
-│   ├── .hermes.md                # 项目上下文文件（从 AGENTS.md 迁移）
-│   ├── memories/                 # 记忆（与 Kilo .kilo/memory/ 兼容）
-│   │   ├── MEMORY.md             # agent 笔记（≤ 2200 字符）
-│   │   └── USER.md               # 用户档案（≤ 1375 字符）
-│   ├── skills/                   # 技能（与 Kilo .kilo/skills/ 共享，agentskills.io 标准）
-│   │   ├── anti-patterns/
-│   │   ├── patterns/
-│   │   ├── workflow/             # 自进化工作流
-│   │   └── hermes-migration/     # Kilo→Hermes 迁移工具包
-│   └── delegate-templates/       # delegate_task 委派模板（从 agent/*.md 迁移）
-├── install-hermes.ps1            # Hermes 配置安装脚本（Windows）
-├── install-hermes.sh             # Hermes 配置安装脚本（macOS/Linux）
+├── install-hermes.ps1            # Hermes 配置安装脚本（Windows；指向外层仓库）
+├── install-hermes.sh             # Hermes 配置安装脚本（macOS/Linux；指向外层仓库）
 ├── .kilo/                        # Kilo 配置（保留为编排规则 + 项目知识层）
 │   ├── instructions/
 │   │   ├── core.md                # 运行时核心规则

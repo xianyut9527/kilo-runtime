@@ -161,6 +161,21 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
 - 不可恢复错误（AUTH/BAD_INPUT）→ 立即停止，回传 coderAgent 或人工
 - 语义错误（AMBIGUOUS/MALFORMED_OUTPUT）→ 降级重试，仍失败升级 reviewer
 
+### ensemble 并发配额（T3 任务专用）
+
+多执行器并行投票模式必须遵守并发上限，防止触发 provider 限流或上下文爆炸：
+
+| 触发条件 | 行为 | 失败回退 |
+|----------|------|----------|
+| 单次 ensemble 触发 | ≤3 executor + 1 synthesizer = 4 并发硬上限 | 任一组件异常 → 串行化剩余 executor |
+| 任一组件触发 RATE_LIMIT | 自动串行化 executor（保 2 折并发，即 1+1+1 改为 1→1→1） | 3 次限流 → 降级为单 engineer 直办 + 标记 `[ENSEMBLE_DEGRADED]` |
+| 累计 3 次 ensemble 失败（含 rate-limit / crash） | 停止 ensemble 模式，降级为 single-engineer | 任务降级交付，标注 `[ENSEMBLE_ABANDONED]`，事后回写 failure_db |
+
+**执行要求**：
+- coderAgent 触发 ensemble 前必须先扫 `dispatch_log` 查过去 24h 内 `tier = 'T3'` 任务的失败率
+- 单次失败率 ≥ 30% → 跳过 ensemble 直接 single-engineer（节省 token + 避免雪崩）
+- 任一 executor 返回 `BLOCKED` / `NEEDS_CONTEXT` → 不等待其他 executor，立即停止整个 ensemble 上报 coderAgent
+
 ### 标记 → 硬动作映射（coderAgent 必须执行）
 
 以下标记由 coderAgent 在解析子 agent 输出时自动检测，检测后必须执行对应硬动作，不得跳过：

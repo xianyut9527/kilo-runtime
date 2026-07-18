@@ -175,6 +175,25 @@ fi
 echo ""
 echo "[SYNC] OK | files=${COPIED_FILES} dirs=${COPIED_DIRS} | critical=${#CRITICAL_FILES[@]}/${#CRITICAL_FILES[@]} | target=${TARGET_DIR}"
 echo ""
+
+# ============================================================
+# kilo.json 路径占位符替换（保证 SQLite/skills 路径跨平台可移植）
+# ============================================================
+echo "Substituting kilo.json path placeholders..."
+KILO_JSON_PATH="${TARGET_DIR}/kilo.json"
+if [ -f "${KILO_JSON_PATH}" ]; then
+    DATA_DIR="${HOME}/.config/kilo-data"
+    sed -i.bak \
+        -e "s|\${KILO_CONFIG_DIR}|${TARGET_DIR}|g" \
+        -e "s|\${KILO_DATA_DIR}|${DATA_DIR}|g" \
+        "${KILO_JSON_PATH}" \
+        && rm -f "${KILO_JSON_PATH}.bak"
+    echo "[WRITE] kilo.json path placeholders substituted (KILO_CONFIG_DIR=${TARGET_DIR}, KILO_DATA_DIR=${DATA_DIR})"
+else
+    echo "[WARN] kilo.json not found at ${KILO_JSON_PATH}, skip substitution"
+fi
+
+echo ""
 echo "Please restart Kilo in your projects for changes to take effect."
 echo ""
 exit 0

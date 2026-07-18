@@ -2,21 +2,22 @@
 // validate-config.mjs
 // kilo_config 配置自检脚本（Node ESM，跨平台）
 // 校验项：
-//   [1/15] kilo.json JSON 合法性
-//   [2/15] agent 名单一致性
-//   [3/15] skills 分类一致性
-//   [4/15] agent 文件 frontmatter 合规性（含 color / hidden）
-//   [5/15] kilo.json prompt 中引用的文档路径存在性
-//   [6/15] README.md 目录树一致性
-//   [7/15] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
-//   [8/15] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
-//   [9/15] coderAgent prompt 锚点关键词校验（防 compaction 误删）
-//   [10/15] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
-//   [11/15] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
-//   [12/15] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
-//   [13/15] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
-//   [14/15] 记忆系统文件存在性（.kilo/memory/ 策略与 schema；kilo.json memory 字段已废弃）
-//   [15/15] 全 repo 编码健康度扫描（BOM/U+FFFD/GBK，调用 scripts/scan-encoding.mjs）
+//   [1/16] kilo.json JSON 合法性
+//   [2/16] agent 名单一致性
+//   [3/16] skills 分类一致性
+//   [4/16] agent 文件 frontmatter 合规性（含 color / hidden）
+//   [5/16] kilo.json prompt 中引用的文档路径存在性
+//   [6/16] README.md 目录树一致性
+//   [7/16] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
+//   [8/16] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
+//   [9/16] coderAgent prompt 锚点关键词校验（防 compaction 误删）
+//   [10/16] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
+//   [11/16] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
+//   [12/16] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
+//   [13/16] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
+//   [14/16] 记忆系统文件存在性（.kilo/memory/ 策略与 schema；kilo.json memory 字段已废弃）
+//   [15/16] 全 repo 编码健康度扫描（BOM/U+FFFD/GBK，调用 scripts/scan-encoding.mjs）
+//   [16/16] kilo.json 占位符与 README 描述目录一致性（防双源漂移）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -1175,6 +1176,83 @@ async function check15EncodingScan() {
   };
 }
 
+// ---------- Check 16: kilo.json 占位符与 README 描述目录一致性 ----------
+// 目标：
+//   (a) kilo.json 中 `${KILO_CONFIG_DIR}` / `${KILO_DATA_DIR}` 占位符必须有 install 脚本替换逻辑支持
+//   (b) README.md §目录结构 中描述的子目录必须在仓库根目录下真实存在（防双源漂移）
+function check16KiloJsonPlaceholders(config) {
+  const name = 'kilo.json 占位符与 README 描述目录一致性';
+  const errors = [];
+
+  // (a) 占位符检查
+  const placeholders = ['${KILO_CONFIG_DIR}', '${KILO_DATA_DIR}'];
+  const jsonText = JSON.stringify(config || {});
+  const usedPlaceholders = placeholders.filter((p) => jsonText.includes(p));
+
+  if (usedPlaceholders.length > 0) {
+    // 校验 install 脚本是否包含替换逻辑
+    const ps1Path = path.resolve(ROOT, 'install.ps1');
+    const shPath = path.resolve(ROOT, 'install.sh');
+    let ps1Text = '';
+    let shText = '';
+    try { ps1Text = fs.readFileSync(ps1Path, 'utf8'); } catch { /* 缺失留给其他校验 */ }
+    try { shText = fs.readFileSync(shPath, 'utf8'); } catch { /* 缺失留给其他校验 */ }
+
+    for (const p of usedPlaceholders) {
+      const inPs1 = ps1Text.includes(p.replace(/\$/g, '\\$').replace(/\{/g, '\\{').replace(/\}/g, '\\}')) || ps1Text.includes('KILO_CONFIG_DIR') || ps1Text.includes('KILO_DATA_DIR');
+      const inSh = shText.includes('KILO_CONFIG_DIR') || shText.includes('KILO_DATA_DIR');
+      if (!inPs1 || !inSh) {
+        errors.push(`占位符 ${p} 在 kilo.json 中使用，但 install.${inPs1 ? 'sh' : 'ps1'} 缺少替换逻辑`);
+      }
+    }
+  }
+
+  // (b) README.md 目录描述一致性
+  // 仅校验 README.md 文本块中以 `├── ` / `└── ` / `│   ├── ` / `│   └── ` 开头的行，
+  // 提取形如 `xxx/` 的目录条目（去除前缀符号和说明文字），验证根目录下是否存在。
+  const readmePath = path.resolve(ROOT, 'README.md');
+  let readmeText = '';
+  try {
+    readmeText = fs.readFileSync(readmePath, 'utf8');
+  } catch {
+    return { name, pass: false, detail: 'README.md 读取失败' };
+  }
+
+  // 提取 ```text ... ``` 代码块（目录树只在这种块内）
+  const codeBlockMatch = readmeText.match(/```(?:text|bash)?\s*\n([\s\S]*?)```/);
+  if (!codeBlockMatch) {
+    return { name, pass: true, detail: 'README.md 中未发现目录树代码块，跳过一致性校验' };
+  }
+  const treeBlock = codeBlockMatch[1];
+
+  // 提取目录条目（以 `/` 结尾的非空行），去掉前缀 `├── ` / `└── ` / `│   ├── ` / `│   └── `
+  const lines = treeBlock.split(/\r?\n/);
+  const declaredDirs = new Set();
+  for (const raw of lines) {
+    const line = raw.replace(/^[\s│├└─]+/, '').trim();
+    const m = line.match(/^([A-Za-z0-9_.\-]+)\/$/);
+    if (m) declaredDirs.add(m[1]);
+  }
+
+  const missingDirs = [];
+  for (const dir of declaredDirs) {
+    if (!fs.existsSync(path.resolve(ROOT, dir))) {
+      missingDirs.push(dir);
+    }
+  }
+  if (missingDirs.length > 0) {
+    errors.push(`README.md §目录结构 声明但根目录缺失: [${missingDirs.join(', ')}]`);
+  }
+
+  if (errors.length === 0) {
+    const parts = [];
+    if (usedPlaceholders.length > 0) parts.push(`占位符 [${usedPlaceholders.join(', ')}] 已被双平台 install 覆盖`);
+    parts.push(`README.md 声明 ${declaredDirs.size} 个目录全部存在`);
+    return { name, pass: true, detail: parts.join('；') };
+  }
+  return { name, pass: false, detail: errors.join('; ') };
+}
+
 const kiloBuf = (() => {
   try {
     return fs.readFileSync(path.resolve(ROOT, 'kilo.json'));
@@ -1207,7 +1285,8 @@ const r13 = check13HermesInstallExcludeSync();
 const r14 = check14MemoryEnabled(config);
 // Check 15 是 async（dynamic import scan-encoding.mjs），需在顶层 await
 const r15 = await check15EncodingScan();
-const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15];
+const r16 = check16KiloJsonPlaceholders(config);
+const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16];
 
 // ---------- 输出 ----------
 const out = [];

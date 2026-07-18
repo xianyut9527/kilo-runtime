@@ -58,7 +58,10 @@ keywords: output-schema, deliverable, marker, verdict
 }
 ```
 
-### reviewer 输出格式（JSON）
+### reviewer 输出格式（markdown 主输出 + JSON 摘要同步）
+
+> reviewer 实际采用**双格式并行**：markdown 便于人工阅读，JSON 摘要便于 coderAgent 自动解析。
+> coderAgent 优先解析 JSON 摘要；JSON 缺失则回退解析 markdown。
 ```json
 {
   "risk": "LOW|MEDIUM|HIGH",
@@ -179,5 +182,8 @@ agent 返回后、进入下游流程前，coderAgent 必须按以下规则自检
 | `[BLOCKED]` | engineer/executor 遇阻塞需升级 | engineer/executor |
 | `[NEEDS_CONTEXT]` | engineer/executor 缺少上下文 | engineer/executor |
 | `[DONE_WITH_CONCERNS]` | 完成功能但有遗留风险 | engineer/executor |
+| `[MISSING_FIXER_WRITE]` | fixer 完成后未写 dispatch_log.error_code | coderAgent（evolution.md §1.5）|
+| `[ENSEMBLE_DEGRADED]` | ensemble 触发限流降级为单 executor | coderAgent（workflow-core.md ensemble 并发配额）|
+| `[ENSEMBLE_ABANDONED]` | ensemble 累计 3 次失败，放弃投票 | coderAgent（workflow-core.md ensemble 并发配额）|
 
 **写法规则**：全大写，下划线分隔；就近引用；路径格式 `文件:行号`；空值显式写 `无`。

@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+- **2026-07-18**: 闭环体检 + 6 项缺口修复。
+  - **P0 README 双源漂移修复**：`kilo_config/` 仓库内无 `hermes/` 子目录（原描述路径错误，实际产物在外层 `hermes_config/`），删除 README.md §目录结构 中错误的 hermes 子树。
+  - **P0 kilo.json 路径跨平台化**：`sqlite` MCP 路径 `C:\Users\Administrator\.config\kilo-data\memory.db` → `${KILO_DATA_DIR}/memory.db`；`skills.external_dirs` Windows 绝对路径 → `${KILO_CONFIG_DIR}/.kilo/skills` + `${HOME}/.agents/skills`；install.ps1/sh 末尾新增「kilo.json 占位符替换」步骤（sed/Set-Content 双平台实现），install 后路径才落地。
+  - **P1 ensemble 并发配额**：`workflow-core.md` 异常路由表后新增「ensemble 并发配额」章节，3 executor + 1 synthesizer 硬上限；触发 RATE_LIMIT 自动串行化；3 次失败 → 降级 single-engineer；新增 `[ENSEMBLE_DEGRADED]` / `[ENSEMBLE_ABANDONED]` 标记。
+  - **P1 fixer error_code 强制回写**：`evolution.md` 步骤 1.5 新增「fixer 修复后 error_code 强制回写」段（`FIXED_BY_FIXER_ROUND_N` 标记），即使单轮修复成功也必须 UPDATE dispatch_log，便于计算 fixer 单轮修复率；新增 `[MISSING_FIXER_WRITE]` 标记。
+  - **P1 reviewer 输出格式对齐**：`reviewer.md` 改为「markdown 主输出 + JSON 摘要同步」双格式；`output-schema.md` §reviewer 输出格式 增加说明「coderAgent 优先解析 JSON 摘要，缺失回退 markdown」。
+  - **P2 validate-config 新增 check16**：kilo.json 占位符校验（必须被 install 双脚本替换）+ README.md §目录结构 声明目录必须在仓库根目录存在（防双源漂移）；总校验项 15→16。
+  - **新增标记**：`[MISSING_FIXER_WRITE]` / `[ENSEMBLE_DEGRADED]` / `[ENSEMBLE_ABANDONED]`（写入 `output-schema.md` 标记语言表）。
+
 - **2026-07-18**: 记忆飞轮修复 + 引擎参数入配置 + 校验器漂移治理。
   - **记忆库迁出清空区**：sqlite 路径 `~/.config/kilo/memory/memory.db` → `~/.config/kilo-data/memory.db`（install.ps1 全量清空策略不再误删知识库）；`kilo.json` / `core.md` / `workflow-core.md` / `.kilo/memory/memory-strategy.md` 四处路径口径统一；删除不存在的 `init-db.ts` 幽灵引用，初始化统一为执行 `.kilo/memory/init.sql`。
   - **kilo.json 引擎分层**：顶层 model → `hx/kimi-k3`；agent 节新增 `variant` 字段（kimi 系 `high`、glm-5.2 `max`、MiniMax-M3 `thinking`）；checker/fixer 从 `deepseek-v4-flash` 升级 `kimi-k2.7-code`；温度分层（执行 0 / 主控 0.3 / 审查 0.2）；清除 11 处 `prompt` 误用（"参见 xxx"/单词），coderAgent 替换为含 8 个锚点关键词的真锚点 prompt；compaction `prune: true`、`preserve_recent_tokens` 120000→60000。

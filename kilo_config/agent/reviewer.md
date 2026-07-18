@@ -96,6 +96,10 @@ reviewer 对每个问题必须标注严重等级：
 
 ## 输出
 
+reviewer 输出采用 **markdown 为主 + JSON 摘要同步** 双格式（解决与 output-schema.md 的格式差异）：
+
+### 主输出（markdown，便于人工阅读）
+
 ```
 ## 审查结论
 [通过 / 有条件通过 / 不通过]
@@ -108,6 +112,32 @@ reviewer 对每个问题必须标注严重等级：
 ## 问题清单
 - [严重/警告] [文件:位置] [问题] → [建议] | 证据:[片段]
 ```
+
+### 同步 JSON 摘要（coderAgent 解析用，紧跟 markdown 末尾）
+
+```json
+{
+  "verdict": "通过|有条件通过|不通过",
+  "risk": "LOW|MEDIUM|HIGH",
+  "perspectives": {
+    "security": "通过|问题|未涉及",
+    "architecture": "通过|问题|未涉及",
+    "simplification": "通过|问题|未涉及"
+  },
+  "approval": "APPROVE|REQUEST_CHANGES",
+  "findings": [
+    {
+      "severity": "Critical|Important|Minor",
+      "file": "src/foo.ts",
+      "line": 10,
+      "message": "问题描述",
+      "suggestion": "修复建议"
+    }
+  ]
+}
+```
+
+> 解析失败由 coderAgent 按 output-schema.md §「JSON 输出自检」处理（第 1 次失败要求重输出，第 2 次升级 reviewer 人工处理）。
 
 ## skill 使用记录
 

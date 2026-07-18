@@ -33,6 +33,29 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'));
 - `status`: DONE / DONE_WITH_CONCERNS / FAILED / BLOCKED / TIMEOUT
 - `findings_count`: checker 发现的问题数（0 表示一次通过）
 
+### 步骤 1.5：fixer 修复后 error_code 强制回写（P1 强化）
+
+即使 fixer 1 轮修复成功（`verified = 1`），也必须把修复工作量写回 dispatch_log，便于事后统计 fixer 单轮修复率：
+
+```sql
+UPDATE dispatch_log 
+SET error_code = CASE
+  WHEN ? = 1 THEN 'FIXED_BY_FIXER_ROUND_1'
+  WHEN ? = 2 THEN 'FIXED_BY_FIXER_ROUND_2'
+  WHEN ? >= 3 THEN 'FIXED_BY_FIXER_ROUND_N_ESCALATED'
+END
+WHERE dispatch_id = ?;
+```
+
+**回写触发条件**（fixer 完成后**强制执行**，缺则 `[MISSING_FIXER_WRITE]`）：
+- fixer 返回 `DONE` 且后续 checker 验证通过 → 写入 `FIXED_BY_FIXER_ROUND_N`
+- fixer 连续 2 轮同症状升级 reviewer → 写入 `FIXED_BY_FIXER_ROUND_N_ESCALATED`
+- 不分失败成功，只要 fixer 被触发就必须写
+
+**统计价值**：
+- `dispatch_log` 按 `error_code LIKE 'FIXED_BY_FIXER%'` 过滤 → 计算 model_calibration 中的 fixer 单轮修复率
+- 单轮修复率 < 70% 的 model → 触发 compensation_prompt 更新（按步骤 4 模型校准联动）
+
 ## 步骤 2：Pattern 提取（fact_store）
 
 ### AntiPattern 提取条件（满足任一）
