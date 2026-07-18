@@ -2,20 +2,21 @@
 // validate-config.mjs
 // kilo_config 配置自检脚本（Node ESM，跨平台）
 // 校验项：
-//   [1/14] kilo.json JSON 合法性
-//   [2/14] agent 名单一致性
-//   [3/14] skills 分类一致性
-//   [4/14] agent 文件 frontmatter 合规性（含 color / hidden）
-//   [5/14] kilo.json prompt 中引用的文档路径存在性
-//   [6/14] README.md 目录树一致性
-//   [7/14] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
-//   [8/14] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
-//   [9/14] coderAgent prompt 锚点关键词校验（防 compaction 误删）
-//   [10/14] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
-//   [11/14] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
-//   [12/14] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
-//   [13/14] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
-//   [14/14] kilo.json memory.enabled 字段存在性与类型
+//   [1/15] kilo.json JSON 合法性
+//   [2/15] agent 名单一致性
+//   [3/15] skills 分类一致性
+//   [4/15] agent 文件 frontmatter 合规性（含 color / hidden）
+//   [5/15] kilo.json prompt 中引用的文档路径存在性
+//   [6/15] README.md 目录树一致性
+//   [7/15] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
+//   [8/15] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
+//   [9/15] coderAgent prompt 锚点关键词校验（防 compaction 误删）
+//   [10/15] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
+//   [11/15] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
+//   [12/15] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
+//   [13/15] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
+//   [14/15] kilo.json memory.enabled 字段存在性与类型
+//   [15/15] 全 repo 编码健康度扫描（BOM/U+FFFD/GBK，调用 scripts/scan-encoding.mjs）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -1060,7 +1061,7 @@ function check13HermesInstallExcludeSync() {
 function check14MemoryEnabled(config) {
   const name = 'kilo.json memory.enabled 字段存在性与类型';
   if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/14]）' };
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/15]）' };
   }
   if (!('memory' in config)) {
     return { name, pass: false, detail: '缺少 memory 字段' };
@@ -1076,6 +1077,107 @@ function check14MemoryEnabled(config) {
     return { name, pass: false, detail: `memory.enabled 类型错误: ${typeof mem.enabled}（应为 boolean）` };
   }
   return { name, pass: true, detail: `memory.enabled = ${mem.enabled}` };
+}
+
+// ---------- Check 15: 全 repo 编码健康度扫描（BOM/U+FFFD/GBK） ----------
+// 调用 scripts/scan-encoding.mjs 的 scanFile 函数，扫描 ROOT 下所有
+// .json / .md / .yaml / .yml / .csv / .mjs / .js / .ts / .sh / .ps1 文件（排除 node_modules / .git）。
+// 任一文件 FAIL -> 整体 FAIL。
+// 同时显式自检 scan-encoding.mjs 自身（防止检测器被 BOM 污染后成为盲区）。
+async function check15EncodingScan() {
+  const name = '全 repo 编码健康度扫描（BOM/U+FFFD/GBK）';
+  const scriptPath = path.resolve(ROOT, 'scripts/scan-encoding.mjs');
+  if (!fs.existsSync(scriptPath)) {
+    return { name, pass: false, detail: 'scripts/scan-encoding.mjs 不存在（应位于仓库根 scripts/ 目录）' };
+  }
+
+  // Dynamic import scan-encoding.mjs（被 import 时不会触发 main()）
+  let mod;
+  try {
+    // 用 pathToFileURL 规范化 Windows 路径（避免 file://C:/foo 不规范形式）
+    const { pathToFileURL } = await import('node:url');
+    const fileUrl = pathToFileURL(scriptPath).href;
+    mod = await import(fileUrl);
+  } catch (e) {
+    return { name, pass: false, detail: `import scan-encoding.mjs 失败: ${e.message}` };
+  }
+  if (typeof mod.scanFile !== 'function') {
+    return { name, pass: false, detail: 'scan-encoding.mjs 未导出 scanFile 函数' };
+  }
+
+  // 递归收集待扫描文件
+  const TARGET_EXTS = new Set(['.json', '.md', '.yaml', '.yml', '.csv', '.mjs', '.js', '.ts', '.sh', '.ps1']);
+  const EXCLUDE_DIRS = new Set(['node_modules', '.git']);
+  const files = [];
+  function walk(dir) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.isDirectory()) {
+        if (!EXCLUDE_DIRS.has(e.name)) walk(path.join(dir, e.name));
+      } else if (e.isFile()) {
+        const ext = path.extname(e.name).toLowerCase();
+        if (TARGET_EXTS.has(ext)) files.push(path.join(dir, e.name));
+      }
+    }
+  }
+  walk(ROOT);
+
+  // 显式自检 scan-encoding.mjs 自身（无论扩展名是否在 TARGET_EXTS 中）
+  // 防止检测器被 Edit 工具写入 BOM 后成为盲区（AP-001 反模式）
+  if (!files.includes(scriptPath)) {
+    files.push(scriptPath);
+  }
+
+  if (files.length === 0) {
+    return { name, pass: true, detail: '无待扫描文件' };
+  }
+
+  // 对每个文件调用 scanFile（含接口契约校验，防止结构变更后静默判 PASS）
+  const failures = [];
+  for (const f of files) {
+    let result;
+    try {
+      result = mod.scanFile(f);
+    } catch (e) {
+      failures.push({ file: path.relative(ROOT, f), reason: `scan error: ${e.message}` });
+      continue;
+    }
+    // 接口契约校验：scanFile 必须返回 { file, checks: Array<{ name, pass, detail }> }
+    // 若结构变更（如 checks 改为对象映射、pass 改为 ok），filter 返回空数组会静默判 PASS
+    if (!result || !Array.isArray(result.checks)) {
+      failures.push({ file: path.relative(ROOT, f), reason: 'scanFile 返回结构异常（checks 非数组）' });
+      continue;
+    }
+    const failedChecks = result.checks.filter(
+      (c) => c && typeof c === 'object' && 'pass' in c && !c.pass
+    );
+    if (failedChecks.length > 0) {
+      failures.push({
+        file: result.file,
+        reason: failedChecks.map((c) => `${c.name}: ${c.detail}`).join('; '),
+      });
+    }
+  }
+
+  if (failures.length === 0) {
+    return {
+      name,
+      pass: true,
+      detail: `扫描 ${files.length} 个文件全部 PASS（BOM/U+FFFD/GBK 三项检测，含检测器自检）`,
+    };
+  }
+  const sample = failures.slice(0, 5).map((f) => `${f.file} [${f.reason}]`).join('; ');
+  const truncated = failures.length > 5 ? `...（共 ${failures.length} 个，仅显示前 5）` : '';
+  return {
+    name,
+    pass: false,
+    detail: `${failures.length}/${files.length} 文件编码异常: ${sample}${truncated}`,
+  };
 }
 
 const kiloBuf = (() => {
@@ -1108,7 +1210,9 @@ const r11 = check11InstallExcludeSync();
 const r12 = check12HermesArtifacts();
 const r13 = check13HermesInstallExcludeSync();
 const r14 = check14MemoryEnabled(config);
-const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14];
+// Check 15 是 async（dynamic import scan-encoding.mjs），需在顶层 await
+const r15 = await check15EncodingScan();
+const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15];
 
 // ---------- 输出 ----------
 const out = [];

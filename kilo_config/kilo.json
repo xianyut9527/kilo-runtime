@@ -115,7 +115,12 @@
     },
     "sqlite": {
       "type": "local",
-      "command": ["npx", "-y", "mcp-sqlite", "C:\\Users\\hzhb\\.config\\kilo\\memory\\memory.db"],
+      "command": [
+        "npx",
+        "-y",
+        "mcp-sqlite",
+        "C:\\Users\\hzhb\\.config\\kilo\\memory\\memory.db"
+      ],
       "enabled": true,
       "timeout": 10000
     }
@@ -210,6 +215,18 @@
         },
         "MiniMax-M2.7-highspeed": {
           "name": "MiniMax-M2.7-highspeed",
+          "reasoning": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
+        },
+        "kimi-k3": {
+          "name": "kimi-k3",
           "reasoning": true,
           "modalities": {
             "input": ["text", "image"],

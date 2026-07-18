@@ -30,13 +30,14 @@ steps: 60
 - 涉及 API 变更时，用 `gitnexus_api_impact` 检查消费者和响应形状。
 - 涉及数据变更时，用 `gitnexus_data_impact` 检查上游消费者。
 - `[DESIGN_GATE_MISS]`（T1+ 编码前未过 architect 设计门）
-- **流程合规**：核对 coderAgent 的强制流程日志是否完整。跳步 → `[PROCESS_VIOLATION]`。
-- **状态信号合规**：核对 engineer/executor 输出是否包含 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`。缺失 → `[MISSING_STATUS_SIGNAL]`。
+- **流程合规**：核对 coderAgent 的强制流程日志是否完整。跳步 -> `[PROCESS_VIOLATION]`。
+- **状态信号合规**：核对 engineer/executor 输出是否包含 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`。缺失 -> `[MISSING_STATUS_SIGNAL]`。
 - **安全/性能检测**：按 `security-checklist.md` 执行 L1-L3 检测。
+- **BOM/乱码扫描（L1 默认项，来源：anti-patterns-encoding AP-001/AP-005）**：对 `git diff --name-only HEAD` 跑 `node scripts/scan-encoding.mjs`，检测 UTF-8 BOM / U+FFFD 替换字符 / GBK 残留字节流。FAIL -> `[ENCODING_VIOLATION]`。脚本路径相对仓库根；如脚本不存在标记 `[VERIFY_PENDING]`。
 
 ## 分层验证
 
-- **L1（语法/编译/格式）**：运行测试、构建、类型、Lint。
+- **L1（语法/编译/格式/编码）**：运行测试、构建、类型、Lint、编码扫描（`node scripts/scan-encoding.mjs`，详见必查清单）。
 - **L2（逻辑/边界）**：逐条验收标准读取代码路径，确认实现、分支、错误路径。
 - **L3（覆盖/安全）**：需求扩散覆盖矩阵、API/数据兼容性、影响面回溯（仅 T2/T3）。
 
@@ -94,8 +95,9 @@ L1 跑测试只是起点；最终判定必须逐条完成声明 → 证据比对
 - `[MISSING_ACCEPTANCE_MAP]`
 - `[SCOPE_CREEP]`：diff 中存在验收标准未声明的改动
 - `[FAKE_CONTEXT]`：已读取文件清单虚假/无关
-- `- `[DESIGN_GATE_MISS]`（T1+ 编码前未过 architect 设计门）
-[PROCESS_VIOLATION]` / `[PATH_DEVIATION]`
+- `[ENCODING_VIOLATION]`：`scan-encoding.mjs` 检测到 BOM / U+FFFD / GBK 残留
+- `[DESIGN_GATE_MISS]`（T1+ 编码前未过 architect 设计门）
+- `[PROCESS_VIOLATION]` / `[PATH_DEVIATION]`
 - 命中 `security-checklist.md` 任一检测项
 
 ## 输出

@@ -39,7 +39,7 @@ permission:
       - **绿**：写最小代码让测试通过，禁止一次性写过多实现。
       - **重构**：通过后再优化结构，保持测试绿。
       - 已有测试套件的项目必须走此模板；无测试套件的项目至少补一条针对本次改动的验证用例。
-4. **运行验证**：测试、构建、类型检查、Lint。
+4. **运行验证**：测试、构建、类型检查、Lint、编码扫描（`node scripts/scan-encoding.mjs`，详见自检清单）。
 5. **输出**：变更摘要、验收映射表、验证结果、遗留风险。
 
 ## skills 协作
@@ -98,6 +98,7 @@ stdout: 47 passed, 0 failed (2.3s)
 - [ ] 三件套是本轮 fresh 跑出来的（非上次结果）
 - [ ] 没有信任传递（未引用其他 agent 的"成功"）
 - [ ] 没有模糊措辞（"应该""大概""似乎""差不多"）
+- [ ] **编码健康度扫描通过**：对修改过的文件跑 `node scripts/scan-encoding.mjs <file1> <file2> ...`，exit code=0 且无 BOM/U+FFFD/GBK 残留。脚本不存在则跳过并标注（不影响其他项）。
 
 ## 状态信号（来源：superpowers/subagent-driven-development）
 
