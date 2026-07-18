@@ -22,6 +22,7 @@ keywords: skills, lifecycle, 回写, frontmatter
 | 工程方法论 | `finishing-a-development-branch/` | 分支收尾协议 |
 | 工程方法论 | `using-git-worktrees/` | worktree 隔离 |
 | 工程方法论 | `workflow/` | 通用工作流模式 |
+| 工程方法论 | `component-driven-fixes/` | 重复 UI/样式/行为问题的组件化修复 |
 | 知识库 | `patterns/` | 正向模式库 |
 | 知识库 | `anti-patterns/` | 反模式总览与回写指引 |
 | 知识库 | `anti-patterns-encoding/` | 反模式：编码类 |

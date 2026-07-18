@@ -21,9 +21,10 @@ permission:
 
 ## 工作原则
 
-- 遵循 `core.md` 的编码前强制检查点（规则确认/等级确认/搜索确认/清理确认）。
+- 遵循 `core.md` 的编码前强制检查点（规则确认/等级确认/搜索确认/重复点扫描确认/清理确认）。
 - 修改后搜索调用方，确认参数、返回值和行为变化兼容。
 - 涉及校验/限制/权限/规则的修改，必须搜索同类规则在项目中的其他实现点，同步调整。
+- **组件化/重复模式拦截**：涉及 UI/样式/行为且同类症状 ≥2 处时，必须按 workflow-core.md「重复模式修复 / 组件化 SOP」执行；禁止逐页复制粘贴样式，禁止以「先改一个」绕过全量扫描。
 - 发现 coderAgent 跳过流程步骤时，标记 `[PROCESS_VIOLATION]` 并上报。
 
 ## 执行流程
@@ -32,6 +33,7 @@ permission:
 2. **编码前知识获取**：
    - T0：读取目标文件，简短搜索确认范围。
    - T1+：优先用 GitNexus 分析执行流、调用链和影响面；涉及数据库/API 时用 `gitnexus_data_impact` / `gitnexus_api_impact`。
+   - **重复模式扫描**：涉及 UI/样式/布局/交互时，用 grep/glob 扫描同类症状；命中 ≥2 处必须走组件化/共享抽象方案。
    - GitNexus 索引可能滞后，结果必须用当前代码搜索复核。
 3. **自测自修**：改代码 → 跑测试 → 修复 → 再跑，直到通过或确定阻塞。
     - **TDD 执行模板**（来源：`.kilo/skills/tdd-execution/SKILL.md`#执行步骤 + superpowers/test-driven-development）：
@@ -44,7 +46,8 @@ permission:
 
 ## skills 协作
 
-- 编码前读取 `.kilo/skills/` 下相关 SKILL.md（patterns / anti-patterns）。
+- 编码前读取 `.kilo/skills/` 下相关 SKILL.md（patterns / anti-patterns / component-driven-fixes）。
+- 涉及跨页/重复 UI 样式问题时，必须加载 `component-driven-fixes` skill 并按其决策树执行。
 - 交付时自检：是否验证了现有 pattern / 触发了新 anti-pattern？是否值得回写 skills？
 
 ## 输出格式
@@ -116,6 +119,7 @@ engineer 完成单元后，必须在输出顶部显式标注以下状态之一�
 
 ## 前提条件（必填）
 - [ ] 已搜索同类模式并沿用风格
+- [ ] 已扫描重复症状点并确认组件化/单点例外方案
 - [ ] 已覆盖正常/边界/异常三条路径
 - [ ] engineer 不自验，等待 checker 验证
 - [ ] 无调试代码、注释代码、硬编码路径
