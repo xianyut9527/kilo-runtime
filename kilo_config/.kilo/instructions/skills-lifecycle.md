@@ -6,6 +6,41 @@ keywords: skills, lifecycle, 回写, frontmatter
 
 # Skills 生命周期管理
 
+## Skills 分类表（与 `.kilo/skills/` 目录一一对应，新增/删除 skill 必须同步本表）
+
+| 分类 | 目录 | 说明 |
+|------|------|------|
+| 工程方法论 | `brainstorming/` | 设计门硬门，编码前想法转规格 |
+| 工程方法论 | `plan-execution/` | 计划执行追踪与 critical review |
+| 工程方法论 | `subagent-driven-development/` | 顺序子代理开发流 |
+| 工程方法论 | `dispatching-parallel-agents/` | 独立问题域并行派发 |
+| 工程方法论 | `tdd-execution/` | 测试驱动执行 |
+| 工程方法论 | `systematic-debugging/` | 系统化调试方法 |
+| 工程方法论 | `verification-before-completion/` | 完成前验证底线 |
+| 工程方法论 | `receiving-code-review/` | 接收审查反馈 |
+| 工程方法论 | `requesting-code-review/` | 请求代码审查 |
+| 工程方法论 | `finishing-a-development-branch/` | 分支收尾协议 |
+| 工程方法论 | `using-git-worktrees/` | worktree 隔离 |
+| 工程方法论 | `workflow/` | 通用工作流模式 |
+| 知识库 | `patterns/` | 正向模式库 |
+| 知识库 | `anti-patterns/` | 反模式总览与回写指引 |
+| 知识库 | `anti-patterns-encoding/` | 反模式：编码类 |
+| 知识库 | `anti-patterns-process/` | 反模式：流程类 |
+| 知识库 | `anti-patterns-coordination/` | 反模式：协同类 |
+| 知识库 | `anti-patterns-contract/` | 反模式：契约类 |
+| 知识库 | `writing-skills/` | Skill 编写规范 |
+| 知识库 | `hermes-migration/` | Hermes 迁移工具包 |
+| UI 设计 | `design-system/` | 设计系统 |
+| UI 设计 | `ui-accessibility/` | 无障碍 |
+| UI 设计 | `ui-animation/` | 动效 |
+| UI 设计 | `ui-color/` | 色彩 |
+| UI 设计 | `ui-design-lab/` | 设计实验 |
+| UI 设计 | `ui-frontend/` | 前端实现 |
+| UI 设计 | `ui-polish/` | 打磨 |
+| UI 设计 | `ui-seo/` | SEO |
+| UI 设计 | `ui-shadcn/` | shadcn 组件 |
+| UI 设计 | `ui-vocabulary/` | 设计词汇 |
+
 ## 回写触发条件
 
 以下场景触发 skills 回写：

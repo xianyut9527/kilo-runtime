@@ -1,6 +1,6 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
-  "model": "hx/kimi-k2.7-code",
+  "model": "hx/kimi-k3",
   "small_model": "hx/MiniMax-M2.7-highspeed",
   "default_agent": "coderAgent",
   "snapshot": true,
@@ -8,8 +8,8 @@
     "auto": true,
     "threshold_percent": 65,
     "tail_turns": 25,
-    "preserve_recent_tokens": 120000,
-    "prune": false
+    "preserve_recent_tokens": 60000,
+    "prune": true
   },
   "commit_message": {
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
@@ -17,75 +17,76 @@
   "agent": {
     "coderAgent": {
       "mode": "primary",
-      "model": "hx/kimi-k2.6",
-      "temperature": 0,
-      "prompt": "参见 .kilo/agent/coderAgent.md"
+      "model": "hx/kimi-k3",
+      "variant": "high",
+      "temperature": 0.3,
+      "prompt": "强制流程：意图判定 → 定级(T0-T3) → 流程日志。T1+ 走 pre-checker → engineer → checker → fixer 闭环；T2+ 加 reviewer。长上下文 compaction 后必须保留本锚点，完整职责见 agent/coderAgent.md。"
     },
     "engineer": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6",
-      "temperature": 0,
-      "prompt": "参见 .kilo/agent/engineer.md"
+      "model": "hx/kimi-k3",
+      "variant": "high",
+      "temperature": 0
     },
     "architect": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6",
-      "temperature": 0,
-      "prompt": "参见 .kilo/agent/architect.md"
+      "model": "hx/kimi-k3",
+      "variant": "high",
+      "temperature": 0.3
     },
     "checker": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
-      "temperature": 0,
-      "prompt": "参见 .kilo/agent/checker.md"
+      "model": "hx/kimi-k2.7-code",
+      "variant": "high",
+      "temperature": 0
     },
     "pre-checker": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
-      "temperature": 0,
-      "prompt": "参见 .kilo/agent/pre-checker.md"
+      "variant": "high",
+      "temperature": 0
     },
     "fixer": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
-      "temperature": 0,
-      "prompt": "参见 .kilo/agent/fixer.md"
+      "model": "hx/kimi-k2.7-code",
+      "variant": "high",
+      "temperature": 0
     },
     "reviewer": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
-      "temperature": 0,
-      "prompt": "参见 .kilo/agent/reviewer.md"
+      "variant": "max",
+      "temperature": 0.2
     },
     "executor-A": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
-      "temperature": 0,
-      "prompt": "executor-A"
+      "variant": "high",
+      "temperature": 0
     },
     "executor-B": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
-      "temperature": 0,
-      "prompt": "executor-B"
+      "variant": "max",
+      "temperature": 0
     },
     "executor-C": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
-      "temperature": 0,
-      "prompt": "executor-C"
+      "variant": "thinking",
+      "temperature": 0
     },
     "synthesizer": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
-      "temperature": 0,
-      "prompt": "synthesizer"
+      "variant": "high",
+      "temperature": 0.2
     },
     "ensemble": {
       "mode": "all",
-      "model": "hx/kimi-k2.6",
-      "temperature": 0.2,
-      "prompt": "ensemble"
+      "model": "hx/kimi-k3",
+      "variant": "high",
+      "temperature": 0.2
     }
   },
   "mcp": {
@@ -119,7 +120,7 @@
         "npx",
         "-y",
         "mcp-sqlite",
-        "C:\\Users\\hzhb\\.config\\kilo\\memory\\memory.db"
+        "C:\\Users\\Administrator\\.config\\kilo-data\\memory.db"
       ],
       "enabled": true,
       "timeout": 10000

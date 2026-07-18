@@ -1,6 +1,15 @@
 ---
 description: 执行器 C。按委派包执行子任务，独立输出结果。
 mode: subagent
+hidden: true
+color: "#F59E0B"
+steps: 80
+permission:
+  bash: allow
+  read:
+    "**/*": allow
+  edit:
+    "**/*": allow
 ---
 
 # executor-C

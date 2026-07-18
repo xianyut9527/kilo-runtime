@@ -9,7 +9,7 @@
 - **名称**：`sqlite-first-md-fallback`
 - **版本**：`2.0`
 - **适用文件**：`MEMORY.md`、`USER.md`（md 兜底）
-- **适用数据库**：`.kilo/memory/memory.db`（sqlite 优先）
+- **适用数据库**：`~/.config/kilo-data/memory.db`（sqlite 优先；数据目录独立于配置目录，install 同步不会清除）
 
 ## 核心原则
 
@@ -109,7 +109,7 @@ VALUES (...);
 
 ## 初始化检查
 
-首次启动或 `.kilo/memory/memory.db` 不存在时：
+首次启动或 `~/.config/kilo-data/memory.db` 不存在时：
 1. 通过 sqlite MCP 执行 `.kilo/memory/init.sql`
 2. 验证表存在：`SELECT name FROM sqlite_master WHERE type='table'`
 3. 初始化 model_calibration 基线数据（可选）

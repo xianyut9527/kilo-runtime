@@ -1,7 +1,7 @@
 ---
 name: anti-patterns-process
 description: 流程类反模式（process 主题）。规则放置、跳步、SCOPE_CREEP 检测等流程执行相关的反复出现错误。
-keywords: process, soft-rule, skip-step, scope-creep, flow, 流程, 跳步, 软约束
+keywords: [process, soft-rule, skip-step, scope-creep, flow, 流程, 跳步, 软约束]
 license: MIT
 compatibility:
   - kilo >= 1.0

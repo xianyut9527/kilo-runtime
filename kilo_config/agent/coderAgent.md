@@ -1,6 +1,7 @@
 ---
 description: 主控 agent。意图判定、定级、路由、跟踪验证和交付。
 mode: primary
+hidden: false
 color: "#6366F1"
 steps: 120
 permission:

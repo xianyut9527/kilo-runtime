@@ -1,6 +1,15 @@
 ---
 description: 合成器。汇总多个 executor 输出，投票得出最终方案。
 mode: subagent
+hidden: true
+color: "#EC4899"
+steps: 40
+permission:
+  bash: deny
+  read:
+    "**/*": allow
+  edit:
+    "**/*": deny
 ---
 
 # synthesizer

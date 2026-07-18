@@ -5,7 +5,7 @@ description: >
   提供组件架构、响应式设计、可维护实现模式的最佳实践。
   每次编写/重构 UI 组件时激活，确保代码可扩展、可测试、易维护。
   若项目已有工程规范（如 React/Vue/Angular 团队规范），严格遵循。
-keywords: frontend, component, responsive, architecture, 前端, 组件, 响应式
+keywords: [frontend, component, responsive, architecture, 前端, 组件, 响应式]
 license: MIT
 compatibility:
   - kilo >= 1.0

@@ -54,6 +54,9 @@ kilo_config/
 │   │   ├── reflection.md          # 反思与错误恢复规则
 │   │   ├── security-checklist.md  # 安全/性能检查清单（由 checker 在 L3 调用）
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
+│   │   ├── evolution.md           # 自进化闭环（执行→反思→提炼→固化写入规则）
+│   │   ├── skill-upgrade.md       # Skill 升级提案生成（fact_store 置信度达标时触发）
+│   │   ├── skill-usage-tracking.md # skill 使用记录规范（skill-usage.log）
 │   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
 │   ├── skills/                   # 长期知识库（按项目实例化，兼容 agentskills.io 标准）
 │   │   ├── anti-patterns/

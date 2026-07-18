@@ -1,8 +1,15 @@
 ---
 description: 多执行器并行投票。同一任务给 3 个 executor 并行执行，synthesizer 汇总结论。
 mode: all
+hidden: true
 color: "#8B5CF6"
-steps: 80
+steps: 120
+permission:
+  bash: deny
+  read:
+    "**/*": allow
+  edit:
+    "**/*": deny
 ---
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。

@@ -1,6 +1,15 @@
 ---
 description: 执行器 B。按委派包执行子任务，独立输出结果。
 mode: subagent
+hidden: true
+color: "#D946EF"
+steps: 80
+permission:
+  bash: allow
+  read:
+    "**/*": allow
+  edit:
+    "**/*": allow
 ---
 
 # executor-B

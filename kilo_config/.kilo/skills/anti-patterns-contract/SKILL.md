@@ -1,7 +1,7 @@
 ---
 name: anti-patterns-contract
 description: 契约类反模式（contract 主题）。agent 权限、运行时能力边界相关的反复出现错误。
-keywords: contract, permission, capability, frontmatter, 权限, 越权, 契约
+keywords: [contract, permission, capability, frontmatter, 权限, 越权, 契约]
 license: MIT
 compatibility:
   - kilo >= 1.0

@@ -79,6 +79,8 @@ T0 直达 engineer，无需 pre-checker、checker、reviewer。
 
 > **设计门分级**（来源：superpowers/brainstorming）：T1 走"短设计门"（architect 输出 1-3 句方案+验收点即可放行 engineer）；T2 走"完整规划"（architect 输出任务 DAG+依赖+风险）。连 1 行配置变更也走短设计门--"太简单不需要设计"是反模式，简单任务正是未审视假设造成返工的高发区。
 
+> **T1 直办条款**：当 T1 任务单元数=1、纯执行性、验收标准逐条可命令验证时，coderAgent 可不拆委派直接执行，避免委派链切片上下文损耗；但短设计门（自审 1-3 句方案+验收点）与 checker 验证不得省略。直办仅限单模块改动，一旦发现跨模块扩散立即升级为委派链路。禁止以直办为由跳过任何验证门禁。
+
 ### 安全敏感模块识别
 
 命中以下关键词 → **最低 T2**：
@@ -179,6 +181,16 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
 - 标记触发后，coderAgent 必须在回复中显式输出「检测到 `[标记名]`，执行动作：...」
 - 任何标记未处理即进入下游 → `[PROCESS_VIOLATION]`
 
+## 规范统一 / 审计类任务 SOP
+
+触发条件：「统一 XX 规范」「全量审计」「批量整改」「全局替换」类任务。此类任务的失败模式高度一致（边改边发现、逐页补丁、无防复发），必须按以下五步执行，缺步即 `[PROCESS_VIOLATION]`：
+
+1. **全量扫描清单先行**：先用 grep/glob 产出完整命中清单（文件数 + 行数 + 分类），作为验收基准写入委派包；禁止边改边发现。
+2. **组件化优先**：重复 ≥3 处的模式必须提炼为共享组件 / design token / mixin，禁止逐页复制粘贴式修补。
+3. **注释溯源**：每处整改标注规范条目编号（如 `ui-spec §2 H1`），便于审计回归与后续反查。
+4. **防复发产物**：交付必须包含至少一项防复发机制（token 体系 / 共享组件 / lint 规则 / 文档硬约束条款），否则视为未完成。
+5. **反向验证**：交付前对「应清零项」做反向 grep（命中数=0），对「应统一引用项」做正向 grep（命中数=目标页面/模块数），两组数据写入验收映射表。
+
 ## 交付
 
 ### 收尾三步
@@ -190,7 +202,7 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
      - 写入规则详见 `.kilo/instructions/evolution.md`
    - **Skill 升级检测**：当 `fact_store.confidence >= 0.8` 且 `hit_count >= 3` 时，按 `.kilo/instructions/skill-upgrade.md` 生成 Skill 升级提案
    - **可选写入项目 md**：可复用事实 → `MEMORY.md`（仅作归档索引）；架构约束 → `AGENTS.md`
-   - **全局记忆系统未初始化**（`~/.config/kilo/memory/memory.db` 不存在）→ 运行 `bun ~/.config/kilo/memory/init-db.ts` 初始化，再写入
+    - **全局记忆系统未初始化**（`~/.config/kilo-data/memory.db` 不存在）→ 用 sqlite 执行仓库 `.kilo/memory/init.sql` 完成建表，再写入（数据目录独立于配置目录，install 同步不会清除）
 
 ### 分支收尾协议（来源：superpowers/finishing-a-development-branch）
 

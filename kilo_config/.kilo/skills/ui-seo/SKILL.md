@@ -5,7 +5,7 @@ description: >
   为每个页面提供系统化的 meta 标签、Open Graph、JSON-LD、性能信号检查。
   每次生成/修改页面、路由、组件时激活，确保页面可被搜索引擎正确索引。
   若项目已有 SEO 规范，严格遵循。
-keywords: seo, meta, og, json-ld, 元数据, 搜索引擎, 性能
+keywords: [seo, meta, og, json-ld, 元数据, 搜索引擎, 性能]
 license: MIT
 compatibility:
   - kilo >= 1.0

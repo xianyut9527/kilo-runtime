@@ -1,7 +1,7 @@
 ---
 name: anti-patterns
 description: 反模式知识库索引。13 条 AP-XXX 按主题拆分到 4 个子 skill（encoding / process / coordination / contract），本文件提供总览与回写指引。
-keywords: anti-patterns, index, encoding, process, coordination, contract, 索引
+keywords: [anti-patterns, index, encoding, process, coordination, contract, 索引]
 license: MIT
 compatibility:
   - kilo >= 1.0

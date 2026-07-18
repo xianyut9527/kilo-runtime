@@ -42,7 +42,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 记忆系统采用 **全局 sqlite 优先 + 项目 md 兜底** 架构：
 
-**sqlite 层**（全局共享，`~/.config/kilo/memory/memory.db`，通过 `sqlite` MCP 访问）：
+**sqlite 层**（全局共享，`~/.config/kilo-data/memory.db`，通过 `sqlite` MCP 访问；数据目录独立于配置目录，install 同步不会清除）：
 - `fact_store`：结构化经验教训（PATTERN / ANTIPATTERN / RECIPE / WARNING）
 - `failure_db`：失败案例库（含根因、修复策略、复发次数）
 - `dispatch_log`：全链路任务日志
@@ -57,7 +57,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 - `~/.config/kilo/skills/`：全局通用 Skill（如 React 状态管理、API 设计）
 - `.kilo/skills/`：项目专属 Skill（覆盖全局同名 Skill）
 
-**初始化检查**：`~/.config/kilo/memory/memory.db` 不存在时，运行 `bun ~/.config/kilo/memory/init-db.ts` 初始化全局数据库。
+**初始化检查**：`~/.config/kilo-data/memory.db` 不存在时，用 sqlite 执行仓库 `.kilo/memory/init.sql` 完成建表（5 表 + 索引），再开始使用。
 
 `gitnexus_*`：代码图谱（调用链/影响面）—— 由 `kilo.json` `mcp.gitnexus.enabled` 独立控制。
 

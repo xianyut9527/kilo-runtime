@@ -1,7 +1,7 @@
 ---
 name: anti-patterns-encoding
 description: 编码类反模式（encoding 主题）。Windows 环境下 UTF-8 / BOM / GBK 编码相关的反复出现错误。
-keywords: encoding, bom, utf-8, gbk, powershell-5.1, 编码, 乱码
+keywords: [encoding, bom, utf-8, gbk, powershell-5.1, 编码, 乱码]
 license: MIT
 compatibility:
   - kilo >= 1.0

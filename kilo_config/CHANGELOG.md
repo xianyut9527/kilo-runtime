@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+- **2026-07-18**: 记忆飞轮修复 + 引擎参数入配置 + 校验器漂移治理。
+  - **记忆库迁出清空区**：sqlite 路径 `~/.config/kilo/memory/memory.db` → `~/.config/kilo-data/memory.db`（install.ps1 全量清空策略不再误删知识库）；`kilo.json` / `core.md` / `workflow-core.md` / `.kilo/memory/memory-strategy.md` 四处路径口径统一；删除不存在的 `init-db.ts` 幽灵引用，初始化统一为执行 `.kilo/memory/init.sql`。
+  - **kilo.json 引擎分层**：顶层 model → `hx/kimi-k3`；agent 节新增 `variant` 字段（kimi 系 `high`、glm-5.2 `max`、MiniMax-M3 `thinking`）；checker/fixer 从 `deepseek-v4-flash` 升级 `kimi-k2.7-code`；温度分层（执行 0 / 主控 0.3 / 审查 0.2）；清除 11 处 `prompt` 误用（"参见 xxx"/单词），coderAgent 替换为含 8 个锚点关键词的真锚点 prompt；compaction `prune: true`、`preserve_recent_tokens` 120000→60000。
+  - **workflow-core.md**：新增「规范统一 / 审计类任务 SOP」五步（全量扫描→组件化→注释溯源→防复发→反向验证）与「T1 直办条款」。
+  - **workflow-reference.md 重建**：恢复被 README/清单引用但缺失的文件（small_model 触发规则 / 程序化记忆 / 需求扩散与同类点扫描）。
+  - **agent frontmatter 补全**：executor-A/B/C、synthesizer、ensemble 补 color/hidden/steps/permission（执行器对齐 engineer 权限，synthesizer/ensemble 收敛只读）；coderAgent 补 `hidden: false`。
+  - **skills 治理**：18 个 SKILL.md 裸字符串 keywords 批量转 flow 数组；`skills-lifecycle.md` 新增 30 个 skill 的分类总表（check3 声明源）。
+  - **validate-config.mjs 校验维度变更**：check14 由「kilo.json memory.enabled 字段存在性」改为「.kilo/memory/ 策略与 schema 文件存在性 + 废弃 memory 字段检测」（对齐 CONFIG_CHANGE_CHECKLIST.md 第 54 条）；parseFrontmatter 新增 YAML flow 数组解析（`keywords: [a, b]` 与块式数组等效）；check12/check13 对齐 Hermes 实际布局（产物校验指向外层 `hermes_config/`，必检清单更新为 SOUL.md/config.yaml/.hermes.md/USER.md/skills/workflow；install-hermes 双脚本路径指向外层仓库根）。
+
 - **2026-07-15**: 记忆系统可插拔化改造 —— L1/L2 硬编码注入与回溯规则全面条件化。
   - `kilo.json` 新增 `memory.enabled` 总控开关（默认 `true`，向后兼容）。为 `false` 时优雅降级：跳过 MEMORY.md/USER.md 自动注入、跳过 `kilo_local_recall` 强制回溯、跳过 skill-usage.log 追加，不删除文件、不报错。
   - `AGENTS.md` / `core.md` / `workflow-core.md` / `reflection.md` / `skill-usage-tracking.md` 中所有记忆相关规则改为条件执行。

@@ -1,7 +1,7 @@
 ---
 name: anti-patterns-coordination
 description: 协调类反模式（coordination 主题）。多组件、多 agent、跨文件引用一致性相关的反复出现错误。
-keywords: coordination, linkage, deletion-residue, rename, subagent, 关联遗漏, 引用断链
+keywords: [coordination, linkage, deletion-residue, rename, subagent, 关联遗漏, 引用断链]
 license: MIT
 compatibility:
   - kilo >= 1.0

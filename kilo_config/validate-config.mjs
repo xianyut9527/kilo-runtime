@@ -15,7 +15,7 @@
 //   [11/15] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
 //   [12/15] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
 //   [13/15] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
-//   [14/15] kilo.json memory.enabled 字段存在性与类型
+//   [14/15] 记忆系统文件存在性（.kilo/memory/ 策略与 schema；kilo.json memory 字段已废弃）
 //   [15/15] 全 repo 编码健康度扫描（BOM/U+FFFD/GBK，调用 scripts/scan-encoding.mjs）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
@@ -241,6 +241,10 @@ function parseFrontmatter(text) {
       const child = {};
       parent[key] = child;
       stack.push({ indent, container: child });
+    } else if (val.startsWith('[') && val.endsWith(']')) {
+      // 行内数组（flow style）：keywords: [a, b, c] —— 合法 YAML，与块式数组等效
+      const inner = val.slice(1, -1).trim();
+      parent[key] = inner === '' ? [] : inner.split(',').map((s) => parseScalar(s.trim()));
     } else {
       parent[key] = parseScalar(val);
     }
@@ -965,26 +969,24 @@ function check11InstallExcludeSync() {
 }
 
 // ---------- Check 12: Hermes 产物存在性 ----------
-// 校验 hermes/ 目录下的关键配置产物是否存在：
+// 校验外层仓库 hermes_config/ 目录下的关键配置产物是否存在：
 //   SOUL.md（身份文件）、config.yaml（配置）、.hermes.md（上下文文件）
-//   memories/MEMORY.md + USER.md（记忆，与 Kilo 兼容）
-//   skills/ 下至少有 workflow + hermes-migration 分类
+//   USER.md（用户档案）、skills/workflow（自进化工作流）
+// 注：Hermes 已迁移至外层仓库根目录的 hermes_config/（本目录为其安装源之一），
+//     memories/ 与 delegate-templates/ 布局已废弃，USER.md 上移至根。
 function check12HermesArtifacts() {
   const name = 'Hermes 产物存在性';
-  const hermesDir = path.resolve(ROOT, 'hermes');
+  const hermesDir = path.resolve(ROOT, '..', 'hermes_config');
   if (!fs.existsSync(hermesDir) || !fs.statSync(hermesDir).isDirectory()) {
-    return { name, pass: false, detail: 'hermes/ 目录不存在' };
+    return { name, pass: false, detail: 'hermes_config/ 目录不存在（应位于外层仓库根目录）' };
   }
 
   const required = [
     'SOUL.md',
     'config.yaml',
     '.hermes.md',
-    'memories/MEMORY.md',
-    'memories/USER.md',
+    'USER.md',
     'skills/workflow/SKILL.md',
-    'skills/hermes-migration/SKILL.md',
-    'delegate-templates/README.md',
   ];
 
   const missing = [];
@@ -996,7 +998,7 @@ function check12HermesArtifacts() {
   }
 
   if (missing.length === 0) {
-    return { name, pass: true, detail: `hermes/ 下 ${required.length} 个关键产物全部存在` };
+    return { name, pass: true, detail: `hermes_config/ 下 ${required.length} 个关键产物全部存在` };
   }
   return { name, pass: false, detail: `缺失: [${missing.join(', ')}]` };
 }
@@ -1004,8 +1006,8 @@ function check12HermesArtifacts() {
 // ---------- Check 13: install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性 ----------
 function check13HermesInstallExcludeSync() {
   const name = 'install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性';
-  const shPath = path.resolve(ROOT, 'install-hermes.sh');
-  const ps1Path = path.resolve(ROOT, 'install-hermes.ps1');
+  const shPath = path.resolve(ROOT, '..', 'install-hermes.sh');
+  const ps1Path = path.resolve(ROOT, '..', 'install-hermes.ps1');
 
   if (!fs.existsSync(shPath)) {
     return { name, pass: false, detail: 'install-hermes.sh 不存在' };
@@ -1057,26 +1059,19 @@ function check13HermesInstallExcludeSync() {
   }
   return { name, pass: false, detail: errors.join('; ') };
 }
-// ---------- Check 14: kilo.json memory.enabled 字段存在性与类型 ----------
+// ---------- Check 14: 记忆系统文件存在性（memory 由 .kilo/memory/ 目录存在性控制，见 CONFIG_CHANGE_CHECKLIST.md 第 54 条；kilo.json 不需要 memory 字段） ----------
 function check14MemoryEnabled(config) {
-  const name = 'kilo.json memory.enabled 字段存在性与类型';
-  if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/15]）' };
+  const name = '记忆系统文件存在性（.kilo/memory/ 策略与 schema）';
+  const required = ['.kilo/memory/memory-strategy.md', '.kilo/memory/init.sql'];
+  const missing = required.filter((p) => !fs.existsSync(path.resolve(ROOT, p)));
+  if (missing.length > 0) {
+    return { name, pass: false, detail: `缺失记忆系统文件: [${missing.join(', ')}]` };
   }
-  if (!('memory' in config)) {
-    return { name, pass: false, detail: '缺少 memory 字段' };
+  // 记忆总开关 = 目录存在且含有效文件；kilo.json 的 memory 字段已废弃，若仍存在提示清理
+  if (config && typeof config === 'object' && 'memory' in config) {
+    return { name, pass: false, detail: 'kilo.json 存在已废弃的 memory 字段（记忆开关以 .kilo/memory/ 目录存在性为准，请删除该字段）' };
   }
-  const mem = config.memory;
-  if (typeof mem !== 'object' || mem === null || Array.isArray(mem)) {
-    return { name, pass: false, detail: 'memory 不是对象' };
-  }
-  if (!('enabled' in mem)) {
-    return { name, pass: false, detail: 'memory.enabled 字段缺失' };
-  }
-  if (typeof mem.enabled !== 'boolean') {
-    return { name, pass: false, detail: `memory.enabled 类型错误: ${typeof mem.enabled}（应为 boolean）` };
-  }
-  return { name, pass: true, detail: `memory.enabled = ${mem.enabled}` };
+  return { name, pass: true, detail: 'memory-strategy.md + init.sql 齐全，kilo.json 无废弃 memory 字段' };
 }
 
 // ---------- Check 15: 全 repo 编码健康度扫描（BOM/U+FFFD/GBK） ----------
