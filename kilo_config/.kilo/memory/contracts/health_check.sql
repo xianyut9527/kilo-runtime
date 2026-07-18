@@ -28,8 +28,8 @@ FROM (
 -- 2. 索引存在性校验（核心索引）
 -- ============================================================
 SELECT 'REQUIRED_INDEXES_MISSING' AS check_name,
-       CASE WHEN COUNT(*) >= 15 THEN 'pass' ELSE 'fail' END AS status,
-       'required_count=15 actual_count=' || COUNT(*) AS detail
+       CASE WHEN COUNT(*) >= 16 THEN 'pass' ELSE 'fail' END AS status,
+       'required_count=16 actual_count=' || COUNT(*) AS detail
 FROM sqlite_master
 WHERE type='index' AND name LIKE 'idx_%';
 

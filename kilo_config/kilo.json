@@ -20,7 +20,7 @@
       "model": "hx/MiniMax-M3",
       "variant": "thinking",
       "temperature": 0.3,
-      "prompt": "强制流程：意图判定 → 定级(T0-T3) → 流程日志。T1+ 走 pre-checker → engineer → checker → fixer 闭环；T2+ 加 reviewer。长上下文 compaction 后必须保留本锚点，完整职责见 agent/coderAgent.md。"
+      "prompt": "锚点：意图判定→定级(T0-T3)→流程日志；T1+ pre-checker→engineer→checker→fixer 闭环；T2+ 加 reviewer；compaction 后保留锚点；M1-M8 记忆节点；SCOPE_CREEP 双向核对；[MISSING_MEMORY_WRITE] 阻塞；详见 agent/coderAgent.md。"
     },
     "engineer": {
       "mode": "subagent",
@@ -95,6 +95,9 @@
       "${HOME}/.agents/skills"
     ]
   },
+  "permission": {
+    "bash": "allow"
+  },
   "mcp": {
     "context7": {
       "type": "remote",
@@ -123,9 +126,10 @@
     "sqlite": {
       "type": "local",
       "command": [
-        "node",
-        "C:\\PROGRA~1\\nodejs\\NODE_M~1\\MCP-SQ~1\\MCP-SQ~1.JS",
-        "C:\\Users\\Administrator\\.config\\kilo-data/memory.db"
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-sqlite",
+        "${HOME}/.config/kilo-data/memory.db"
       ],
       "enabled": true,
       "timeout": 10000
@@ -141,14 +145,6 @@
       "models": {
         "deepseek-v4-flash": {
           "name": "deepseek-v4-flash",
-          "reasoning": true,
-          "limit": {
-            "context": 200000,
-            "output": 16384
-          }
-        },
-        "deepseek-v4-pro": {
-          "name": "deepseek-v4-pro",
           "reasoning": true,
           "limit": {
             "context": 200000,

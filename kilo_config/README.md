@@ -67,9 +67,6 @@ kilo_config/
 │   ├── executor-A.md
 │   ├── executor-B.md
 │   └── executor-C.md
-├── examples/                     # 运行示例与展示文档
-│   ├── runtime-progress.md       # 强制流程日志的运行时展示示例（含当前步骤高亮）
-│   └── install-check.md          # 全局配置同步验证示例（如何确认已正确安装）
 ├── install.ps1                   # Kilo 配置安装脚本（Windows）
 ├── install.sh                    # Kilo 配置安装脚本（macOS/Linux）
 └── README.md
@@ -208,3 +205,4 @@ diff -rq . ~/.config/kilo \
 - 大型系统优先建设项目级 context pack；全局配置只做骨架和兜底，不承担具体项目知识。
 - `.kilo/skills/` 写入路径约束：仅写入当前项目工作区的 `.kilo/skills/`，禁止回写全局配置目录（`~/.config/kilo/.kilo/skills/`）。install 脚本会清空全局目录后重新同步，项目级 skills 位于项目根目录，不受影响。
 - `.kilo/skills/` 兼容 [agentskills.io](https://agentskills.io/specification) 开放标准，可与 Hermes / Claude Code 等工具的技能目录互通。
+- **安全姿态声明**：`kilo.json` 顶层 `permission.bash: "allow"` 为全局 bash 免确认放行（与历史运行行为一致，v2.2 起纳入版本管理显式声明）。这放大了自动化执行面——所有项目的 bash 命令不再经 ask 门。如需收紧，改为 `"ask"` 或按 glob 细化（如 `"git *": "allow", "*": "ask"`）；各 agent frontmatter 的细粒度 permission 仍独立生效。

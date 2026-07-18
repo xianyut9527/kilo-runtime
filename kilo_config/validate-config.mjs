@@ -26,6 +26,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+// ESM 兼容：check17 可选依赖（better-sqlite3）与 node:child_process 通过 createRequire 加载；
+// 缺失时 createRequire 本身不抛错，仅在实际 require 不可用模块时进入 catch 降级路径
+const require = createRequire(import.meta.url);
 
 // 跨平台：从 import.meta.url 解析 __dirname，避免依赖 cwd
 const __filename = fileURLToPath(import.meta.url);
@@ -1223,8 +1228,9 @@ function check16KiloJsonPlaceholders(config) {
   }
 
   // (b) README.md 目录描述一致性
-  // 仅校验 README.md 文本块中以 `├── ` / `└── ` / `│   ├── ` / `│   └── ` 开头的行，
-  // 提取形如 `xxx/` 的目录条目（去除前缀符号和说明文字），验证根目录下是否存在。
+  // 解析 ```text 代码块中的目录树，按树形缩进层级还原相对路径（如 `.kilo/skills/anti-patterns/`），
+  // 验证各路径在仓库根目录下真实存在（防双源漂移）。树根行（如 `kilo_config/`）视为 ROOT 自身跳过；
+  // 文件条目（非 `/` 结尾）跳过；行尾 `#` 注释不影响目录名提取。
   const readmePath = path.resolve(ROOT, 'README.md');
   let readmeText = '';
   try {
@@ -1240,13 +1246,22 @@ function check16KiloJsonPlaceholders(config) {
   }
   const treeBlock = codeBlockMatch[1];
 
-  // 提取目录条目（以 `/` 结尾的非空行），去掉前缀 `├── ` / `└── ` / `│   ├── ` / `│   └── `
+  // 层级解析：深度 = ├──/└── 标记前的树形缩进组数（每组 4 字符）
   const lines = treeBlock.split(/\r?\n/);
   const declaredDirs = new Set();
+  const stack = [];
   for (const raw of lines) {
-    const line = raw.replace(/^[\s│├└─]+/, '').trim();
-    const m = line.match(/^([A-Za-z0-9_.\-]+)\/$/);
-    if (m) declaredDirs.add(m[1]);
+    if (!raw.trim()) continue;
+    const markerIdx = raw.search(/[├└]──/);
+    if (markerIdx < 0) continue; // 树根行（如 kilo_config/）= ROOT 自身，跳过
+    const depth = Math.floor(raw.slice(0, markerIdx).replace(/│/g, ' ').length / 4);
+    const rest = raw.slice(markerIdx).replace(/^[├└]──\s*/, '');
+    const m = rest.match(/^([A-Za-z0-9_.\-]+)\//); // 仅目录条目（`name/` 开头，注释不影响）
+    if (!m) continue;
+    if (depth > stack.length) continue; // 畸形树形（depth 跳跃缺中间层）跳过，防 undefined 路径段
+    stack[depth] = m[1];
+    stack.length = depth + 1;
+    declaredDirs.add(stack.slice(0, depth + 1).join('/'));
   }
 
   const missingDirs = [];
@@ -1281,6 +1296,7 @@ function check16KiloJsonPlaceholders(config) {
 // 5 项检查：REQUIRED_TABLES / REQUIRED_INDEXES / REQUIRED_VIEWS / ROW_COUNTS / CHECK_CONSTRAINTS
 function check17MemoryDbHealth() {
   const name = '全局 sqlite 记忆层健康度（memory.db 表/索引/视图 + 行数）';
+  const warnings = []; // 本函数局部告警收集，pass:true 时并入 detail 输出
 
   // (a) 校验契约文件存在（v2.0 模块边界）
   const contractPath = path.resolve(ROOT, '.kilo/memory/contracts/health_check.sql');
@@ -1288,7 +1304,7 @@ function check17MemoryDbHealth() {
     return { name, pass: false, detail: '.kilo/memory/contracts/health_check.sql 缺失（v2.0 模块 contracts 层契约必须存在）' };
   }
 
-  // (a) 解析 kilo.json 中 sqlite MCP 路径
+  // (b) 解析 kilo.json 中 sqlite MCP 路径
   let dbPath = null;
   const sqliteMcp = config && config.mcp && config.mcp.sqlite;
   if (sqliteMcp && Array.isArray(sqliteMcp.command)) {
@@ -1302,7 +1318,7 @@ function check17MemoryDbHealth() {
     return { name, pass: true, detail: 'kilo.json 未配置 sqlite MCP，跳过健康度校验' };
   }
 
-  // (b) 检查文件存在与表结构
+  // (c) 检查文件存在与表结构
   if (!fs.existsSync(dbPath)) {
     return {
       name,
@@ -1337,34 +1353,67 @@ function check17MemoryDbHealth() {
       const row = db.prepare(`SELECT COUNT(*) AS cnt FROM ${t}`).get();
       tableRows[t] = row.cnt;
     }
+    // v2.1 迁移期望：统计已迁移的 AP-*/PAT-* 经验行数
+    tableRows.__migratedFacts = db.prepare(
+      "SELECT COUNT(*) AS cnt FROM fact_store WHERE fact_id LIKE 'AP-%' OR fact_id LIKE 'PAT-%'"
+    ).get().cnt;
     db.close();
   } catch (e) {
-    // better-sqlite3 不可用 → 退化为 sqlite3 CLI
-    let stdout;
+    // better-sqlite3 不可用 → 退化为 sqlite3 CLI：执行 contracts/health_check.sql 契约，
+    // 解析行格式 <check_name>|<pass|fail>|<detail>（铁律 2：契约文件必须被实际消费）
     try {
       const { execFileSync } = require('node:child_process');
-      stdout = execFileSync('sqlite3', [dbPath, '.tables'], { encoding: 'utf8', timeout: 5000 });
-    } catch {
-      return {
-        name,
-        pass: true,
-        detail: `better-sqlite3 与 sqlite3 CLI 均不可用，跳过深度校验（仅确认文件存在: ${path.basename(dbPath)}）`,
-      };
-    }
-    const existing = new Set(stdout.split(/\s+/).filter(Boolean));
-    const missing = REQUIRED_TABLES.filter((t) => !existing.has(t));
-    if (missing.length > 0) {
+      const sqlText = fs.readFileSync(contractPath, 'utf8');
+      const out = execFileSync('sqlite3', [dbPath], { input: sqlText, encoding: 'utf8', timeout: 8000 });
+      const rows = out
+        .split(/\r?\n/)
+        .filter((l) => l.includes('|'))
+        .map((l) => l.split('|'));
+      const failed = rows.filter((r) => r[1] === 'fail');
+      if (failed.length > 0) {
+        return {
+          name,
+          pass: false,
+          detail: `health_check.sql 契约失败: ${failed.map((f) => `${f[0]}(${f[2]})`).join('; ')}，需执行 .kilo/memory/schema/init.sql 补齐表/索引/视图`,
+        };
+      }
+      const rowCounts = rows.find((r) => r[0] === 'ROW_COUNTS');
+      if (!rowCounts) {
+        tableRows = null; // 契约输出缺少行数段 → 走兜底
+      } else {
+        tableRows = {};
+        for (const kv of rowCounts[2].split(',')) {
+          const [k, v] = kv.split('=');
+          tableRows[k.trim()] = parseInt(v, 10) || 0;
+        }
+        // v2.1 迁移期望：AP-*/PAT-* 行数（CLI 补查，契约文件不含此项）
+        const mig = execFileSync(
+          'sqlite3',
+          [dbPath, "SELECT COUNT(*) FROM fact_store WHERE fact_id LIKE 'AP-%' OR fact_id LIKE 'PAT-%'"],
+          { encoding: 'utf8', timeout: 5000 }
+        );
+        tableRows.__migratedFacts = parseInt(mig.trim(), 10) || 0;
+      }
+    } catch (cliErr) {
+      // 细分降级原因：sqlite3 CLI 不存在（ENOENT）→ 跳过（pass:true）；
+      // CLI 存在但契约执行抛错 → 记忆层异常，FAIL（不再静默落入"均不可用"）
+      const isMissing = cliErr && (cliErr.code === 'ENOENT' || /not found|不是内部或外部命令/i.test(String(cliErr.message)));
+      if (isMissing) {
+        return {
+          name,
+          pass: true,
+          detail: `better-sqlite3 与 sqlite3 CLI 均不可用，跳过深度校验（仅确认文件存在: ${path.basename(dbPath)}）`,
+        };
+      }
       return {
         name,
         pass: false,
-        detail: `memory.db 存在但缺失表: [${missing.join(', ')}]，需执行 .kilo/memory/schema/init.sql 建表`,
+        detail: `sqlite3 CLI 执行 health_check.sql 契约失败: ${String(cliErr && cliErr.message).slice(0, 200)}`,
       };
     }
-    // CLI 路径不统计行数（避免复杂度），仅做存在性
-    tableRows = null;
   }
 
-  // (c) 行数健康度：dispatch_log=0 且 fact_store=0 提示 hollow
+  // (d) 行数健康度：dispatch_log=0 且 fact_store=0 提示 hollow
   if (tableRows) {
     const disp = tableRows.dispatch_log || 0;
     const fact = tableRows.fact_store || 0;
@@ -1397,10 +1446,27 @@ function check17MemoryDbHealth() {
         detail: `memory.db 表结构齐全但 dispatch_log/fact_store 均为空行${commitHint}`,
       };
     }
+    // (e) v2.1 迁移期望校验：迁移脚本存在 → AP/PAT 经验必须全部入库，防「纸面迁移」空心化
+    const migrateScript = path.resolve(ROOT, '.kilo/memory/api/migrate_skill_to_fact_store.sql');
+    if (fs.existsSync(migrateScript)) {
+      // 期望数从迁移脚本 INSERT 行解析（'AP-xxx'/'PAT-xxx' 字面值计数），避免硬编码阈值随脚本更新漂移
+      const migText = fs.readFileSync(migrateScript, 'utf8');
+      const expected = (migText.match(/\('(?:AP|PAT)-\d+'/g) || []).length;
+      const migrated = tableRows.__migratedFacts || 0;
+      if (expected > 0 && migrated < expected) {
+        warnings.push(`[MEMORY_MIGRATION_PENDING] AP/PAT fact=${migrated}/${expected}`);
+        return {
+          name,
+          pass: false,
+          detail: `migrate_skill_to_fact_store.sql 存在但 fact_store 中 AP-*/PAT-* 仅 ${migrated}/${expected} 条，迁移未执行或数据缺失。执行: sqlite3 memory.db < .kilo/memory/api/migrate_skill_to_fact_store.sql`,
+        };
+      }
+    }
+    const warnSuffix = warnings.length > 0 ? `；warnings=[${warnings.join(', ')}]` : '';
     return {
       name,
       pass: true,
-      detail: `memory.db 表结构齐全：dispatch_log=${tableRows.dispatch_log}, fact_store=${tableRows.fact_store}, failure_db=${tableRows.failure_db}, model_calibration=${tableRows.model_calibration}, project_context=${tableRows.project_context}`,
+      detail: `memory.db 表结构齐全：dispatch_log=${tableRows.dispatch_log}, fact_store=${tableRows.fact_store}, failure_db=${tableRows.failure_db}, model_calibration=${tableRows.model_calibration}, project_context=${tableRows.project_context}, AP/PAT=${tableRows.__migratedFacts ?? 'n/a'}${warnSuffix}`,
     };
   }
 
