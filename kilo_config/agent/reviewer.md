@@ -91,7 +91,16 @@ reviewer 对每个问题必须标注严重等级：
 3. 同类点覆盖矩阵：需求扩散每条是否有结论？
 4. memory/skills 合规（来源：superpowers/writing-skills）：
    - `.kilo/memory/` 目录存在且包含有效记忆文件时检查 MEMORY.md ≤2200 字符？为空或不存在时跳过此项。
-   - **是否值得回写 skill 判定**：本次是否出现可复用模式/反模式？命中"≥2 次跨任务复现"才回写，避免伪 skill 膨胀。
+   - **是否值得回写 sqlite fact_store 判定**（v2.0 起）：本次是否出现可复用模式/反模式？**先跑 SQL 查历史命中数**，再决定是否标 `[MISSING_MEMORY_WRITE]`：
+     ```sql
+     -- 查同类触发历史
+     SELECT fact_id, hit_count, confidence, archived FROM fact_store
+     WHERE trigger LIKE '%本次错误关键词%' AND archived = 0;
+     ```
+     - 命中且 hit_count ≥ 3 且 confidence < 0.8 → UPDATE confidence 至 0.8，提示已自动升级
+     - 命中但 confidence < 0.8 且 hit_count < 3 → 仅 UPDATE hit_count+1，提示后续会随命中继续积累
+     - 未命中 → INSERT 新记录（AntiPattern confidence=0.5，Pattern confidence=0.6），由 `skill-upgrade.md` 异步触发 skill 升级检测
+   - **SKILL.md 合规**：SKILL.md 仅作为 sqlite fact_store 的固化产物（`confidence ≥ 0.8 && hit_count ≥ 3` 后经 `[AUTO_DRAFT]` + 人工审批落盘）；不得直接 patch SKILL.md 承载新经验
    - SKILL.md frontmatter：name/description/keywords 三字段齐全且 name 与目录名一致；body 含"何时触发+具体步骤+反理性化"三段，缺则 `[SKILL_NONCOMPLIANT]`。
    - 经验回写是否经闭环验证（非主观断言）。
 

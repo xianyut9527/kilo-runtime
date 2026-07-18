@@ -21,17 +21,33 @@ T1+ 任务交付后，**必须**执行进化步骤。T0 可选。
 coderAgent 在任务结束时，通过 sqlite MCP 写入：
 
 ```sql
-INSERT INTO dispatch_log (dispatch_id, thread_id, agent, task_summary, tier, model, status, error_code, duration_ms, files_changed, findings_count, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'));
+INSERT INTO dispatch_log (
+    dispatch_id, thread_id, agent, task_summary,
+    initial_tier, final_tier, tier, review_mode, tier_deviation,
+    model, status, error_code, duration_ms,
+    input_tokens, output_tokens, files_changed, findings_count,
+    created_at
+)
+VALUES (
+    ?, ?, ?, ?,
+    ?, ?, ?, ?, ?,    -- initial_tier / final_tier / tier(=final_tier) / review_mode / tier_deviation
+    ?, ?, ?, ?,
+    ?, ?, ?, ?,
+    datetime('now')
+);
 ```
 
 **必填字段**：
 - `dispatch_id`: `disp-{thread_id}-{superstep}`
 - `task_summary`: ≤100 字，描述任务核心（如"React 状态管理重构"）
-- `tier`: T0/T1/T2/T3
+- `initial_tier` / `final_tier` / `tier`: T0/T1/T2/T3；`tier` 兼容旧字段，值 = `final_tier`
+- `review_mode`: `none` / `lightweight` / `full`（T0=none，其余按 review_mode 决策表确定）
+- `tier_deviation`: `maintain` / `upgrade` / `downgrade`（阶段 A→B 偏差方向）
 - `model`: 实际使用的模型名
 - `status`: DONE / DONE_WITH_CONCERNS / FAILED / BLOCKED / TIMEOUT
 - `findings_count`: checker 发现的问题数（0 表示一次通过）
+
+> 路径口径：sqlite 数据库统一为 `${HOME}/.config/kilo-data/memory.db`，由 Kilo 运行时解析 install 阶段不替换。
 
 ### 步骤 1.5：fixer 修复后 error_code 强制回写（P1 强化）
 

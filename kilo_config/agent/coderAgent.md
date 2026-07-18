@@ -79,7 +79,10 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 交付包含：
 1. 闭环确认（验收 → 实现位置 → 验证证据 → 状态）
 2. 变更回顾（改了什么 / 为什么改 / 影响范围 / 清理调试代码）
-3. 经验沉淀（memory / skills / AGENTS.md）
+3. **经验沉淀（sqlite 优先，md 仅作索引兜底）**：
+   - **T1+ 必走「收尾自检」硬门**（见 `workflow-core.md`）：dispatch_log / fact_store / failure_db / model_calibration 按 SQL 模板执行；未执行 → `[MISSING_MEMORY_WRITE]` 阻塞交付
+   - **md 写入仅作索引**：MEMORY.md 只放归档指针 / 用户偏好 / 安全约束；SKILL.md 不再是经验入口，新 pattern/anti-pattern 必须先入 `fact_store`，满足 `confidence ≥ 0.8 && hit_count ≥ 3` 触发 `skill-upgrade.md` 升级提案（V1 阶段需人工审批）
+   - **md 写入边界**：禁止把任务经验、失败案例、可复用模式直接 append 到 SKILL.md；只允许在 `[AUTO_DRAFT]` 草稿经审批后落盘，或对既有 SKILL.md 做 patch
 4. **分支收尾协议**：按 workflow-core.md「分支收尾协议」四步执行（git status 清理 / 单提交对应单定级单元 / 告知用户分支去向不擅自 push 合并 / worktree 隔离清理）。不在此重述，避免双源漂移。
 
 ## skill 使用记录

@@ -1253,6 +1253,137 @@ function check16KiloJsonPlaceholders(config) {
   return { name, pass: false, detail: errors.join('; ') };
 }
 
+// ---------- Check 17: 全局 sqlite 记忆层健康度（memory.db 行数 + 表结构） ----------
+// 目标：
+//   (a) 解析 kilo.json 中 sqlite MCP 的 ${HOME}/.config/kilo-data/memory.db 路径
+//   (b) 若 memory.db 存在但表结构缺失（5 表任一缺失）→ FAIL（提示需执行 init.sql）
+//   (c) 若 memory.db 存在且表结构齐全，统计 dispatch_log / fact_store 行数，
+//       若 dispatch_log 行数 = 0 且 fact_store 行数 = 0 但仓库 commit 历史含 T1+ 任务，
+//       → 打印 `[MEMORY_LAYER_HOLLOW]` 告警（PASS，但 detail 标明 hollow）
+function check17MemoryDbHealth() {
+  const name = '全局 sqlite 记忆层健康度（memory.db 表结构 + 行数）';
+  const errors = [];
+  const warnings = [];
+
+  // (a) 解析 kilo.json 中 sqlite MCP 路径
+  let dbPath = null;
+  const sqliteMcp = config && config.mcp && config.mcp.sqlite;
+  if (sqliteMcp && Array.isArray(sqliteMcp.command)) {
+    const arg = sqliteMcp.command.find((a) => typeof a === 'string' && /\.db$/.test(a));
+    if (arg) {
+      // 替换 ${HOME} 占位符（运行时解析）
+      dbPath = arg.replace(/\$\{HOME\}/g, process.env.HOME || process.env.USERPROFILE || '');
+    }
+  }
+  if (!dbPath) {
+    return { name, pass: true, detail: 'kilo.json 未配置 sqlite MCP，跳过健康度校验' };
+  }
+
+  // (b) 检查文件存在与表结构
+  if (!fs.existsSync(dbPath)) {
+    return {
+      name,
+      pass: true,
+      detail: `${dbPath} 不存在（首次部署前正常，首次 T1+ 任务前需执行 init.sql）`,
+    };
+  }
+
+  // 用 better-sqlite3 / sqlite3 CLI / 自实现轻量 header 检测 三选一
+  // 优先尝试 better-sqlite3（已在 node_modules 中），其次 sqlite3 CLI
+  const REQUIRED_TABLES = ['fact_store', 'failure_db', 'dispatch_log', 'project_context', 'model_calibration'];
+  let tableRows = null; // { table: count }
+
+  try {
+    // 尝试 better-sqlite3
+    const Database = require('better-sqlite3');
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    const existing = new Set(
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name)
+    );
+    const missing = REQUIRED_TABLES.filter((t) => !existing.has(t));
+    if (missing.length > 0) {
+      db.close();
+      return {
+        name,
+        pass: false,
+        detail: `memory.db 存在但缺失表: [${missing.join(', ')}]，需执行 .kilo/memory/init.sql 建表`,
+      };
+    }
+    tableRows = {};
+    for (const t of REQUIRED_TABLES) {
+      const row = db.prepare(`SELECT COUNT(*) AS cnt FROM ${t}`).get();
+      tableRows[t] = row.cnt;
+    }
+    db.close();
+  } catch (e) {
+    // better-sqlite3 不可用 → 退化为 sqlite3 CLI
+    let stdout;
+    try {
+      const { execFileSync } = require('node:child_process');
+      stdout = execFileSync('sqlite3', [dbPath, '.tables'], { encoding: 'utf8', timeout: 5000 });
+    } catch {
+      return {
+        name,
+        pass: true,
+        detail: `better-sqlite3 与 sqlite3 CLI 均不可用，跳过深度校验（仅确认文件存在: ${path.basename(dbPath)}）`,
+      };
+    }
+    const existing = new Set(stdout.split(/\s+/).filter(Boolean));
+    const missing = REQUIRED_TABLES.filter((t) => !existing.has(t));
+    if (missing.length > 0) {
+      return {
+        name,
+        pass: false,
+        detail: `memory.db 存在但缺失表: [${missing.join(', ')}]，需执行 .kilo/memory/init.sql 建表`,
+      };
+    }
+    // CLI 路径不统计行数（避免复杂度），仅做存在性
+    tableRows = null;
+  }
+
+  // (c) 行数健康度：dispatch_log=0 且 fact_store=0 提示 hollow
+  if (tableRows) {
+    const disp = tableRows.dispatch_log || 0;
+    const fact = tableRows.fact_store || 0;
+    if (disp === 0 && fact === 0) {
+      // 估算仓库 commit 数（heuristic）：仓库根目录 .git 存在时统计 commit
+      let commitHint = '';
+      const gitHead = path.resolve(ROOT, '.git/HEAD');
+      if (fs.existsSync(gitHead)) {
+        try {
+          const { execFileSync } = require('node:child_process');
+          const out = execFileSync('git', ['rev-list', '--count', 'HEAD'], {
+            encoding: 'utf8',
+            timeout: 5000,
+            cwd: ROOT,
+          }).trim();
+          const commits = parseInt(out, 10) || 0;
+          if (commits >= 20) {
+            commitHint = `（仓库已有 ${commits} 次 commit，强烈怀疑 [MEMORY_LAYER_HOLLOW]）`;
+            warnings.push(`[MEMORY_LAYER_HOLLOW] dispatch_log=0 且 fact_store=0`);
+          } else {
+            commitHint = `（仓库 ${commits} 次 commit，新项目属正常）`;
+          }
+        } catch {
+          /* 忽略 */
+        }
+      }
+      return {
+        name,
+        pass: true,
+        detail: `memory.db 表结构齐全但 dispatch_log/fact_store 均为空行${commitHint}`,
+      };
+    }
+    return {
+      name,
+      pass: true,
+      detail: `memory.db 表结构齐全：dispatch_log=${tableRows.dispatch_log}, fact_store=${tableRows.fact_store}, failure_db=${tableRows.failure_db}, model_calibration=${tableRows.model_calibration}, project_context=${tableRows.project_context}`,
+    };
+  }
+
+  return { name, pass: true, detail: `memory.db 表结构齐全（5 表存在，CLI 模式不统计行数）` };
+}
+
 const kiloBuf = (() => {
   try {
     return fs.readFileSync(path.resolve(ROOT, 'kilo.json'));
@@ -1286,7 +1417,8 @@ const r14 = check14MemoryEnabled(config);
 // Check 15 是 async（dynamic import scan-encoding.mjs），需在顶层 await
 const r15 = await check15EncodingScan();
 const r16 = check16KiloJsonPlaceholders(config);
-const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16];
+const r17 = check17MemoryDbHealth();
+const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17];
 
 // ---------- 输出 ----------
 const out = [];

@@ -35,16 +35,19 @@ metadata:
 > 不依赖 LLM 自觉回写（已证明无效），每一层都用真实工具驱动。
 > 兼容 [agentskills.io](https://agentskills.io/specification) 开放标准，可迁移到 Hermes / Claude Code。
 
-## 记忆三层架构
+## 记忆架构（sqlite 优先 + md 兜底 + git 历史）
 
-| 层 | 工具 | 存什么 | 检索方式 | 持久性 |
+| 层 | 工具 / 存储 | 存什么 | 检索方式 | 持久性 |
 |----|------|--------|----------|--------|
-| L1 冻结快照 | `MEMORY.md` / `USER.md` | 跨项目架构约束、用户偏好（≤2200/≤1375 字符） | coderAgent 任务启动时自动注入 | 手动维护 |
-| L2 跨会话历史 | `kilo_local_recall`（search 模式） | 历史对话中的错误模式、解决方案、踩坑记录 | 关键词搜索（每个词必须出现） | 本机持久 |
-| L3 代码图谱 | `gitnexus_context` / `gitnexus_impact` / `gitnexus_query` | 调用链、影响面、数据依赖、API 消费者 | Cypher 查询 + 自然语言检索 | git 索引持久 |
-| L4 持久经验 | `git log` / `git diff` | commit message 中的经验标注、SKILL.md 条目 | `git log --grep` / SKILL.md 全文 | git 永久 |
+| L1 全局结构化经验 | `sqlite fact_store` / `failure_db`（`${HOME}/.config/kilo-data/memory.db`） | PATTERN / ANTIPATTERN / RECIPE / WARNING + 置信度 + 命中数 + 复发数 | SQL 查询 + tags 过滤 | 全局持久（跨项目） |
+| L2 任务调度日志 | `sqlite dispatch_log` | 两阶段定级 + review_mode + status + findings_count | SQL 按 thread_id / tier / review_mode 查询 | 全局持久 |
+| L3 模型校准 | `sqlite model_calibration` | success_rate / avg_findings / compensation_prompt | SQL 按 model + agent_role 查询 | 全局持久 |
+| L4 冻结快照 / 归档索引 | `MEMORY.md` / `USER.md` | 用户偏好、安全约束、归档指针 | 标签按需注入 | 手动维护，≤2200/≤1375 字符 |
+| L5 跨会话历史 | `kilo_local_recall`（search 模式） | 历史对话中的错误模式、解决方案、踩坑记录 | 关键词搜索（每个词必须出现） | 本机持久 |
+| L6 代码图谱 | `gitnexus_context` / `gitnexus_impact` / `gitnexus_query` | 调用链、影响面、数据依赖、API 消费者 | Cypher 查询 + 自然语言检索 | git 索引持久 |
+| L7 持久经验 | `git log` / `git diff` | commit message 中的经验标注 | `git log --grep` | git 永久 |
 
-> **关键**：L2 是被前几轮配置忽略的真功能。`kilo_local_recall` 能跨会话搜索本机所有历史对话，等价于 Hermes `session_search` 的轻量版。配置层无需写代码，只需在 prompt 中规定"何时调用、怎么用"。
+> **关键（v2 起）**：L1-L3 是**经验沉淀的主目标**，由 `evolution.md` 步骤 1-4 + `skill-upgrade.md` 触发；MEMORY.md / SKILL.md 不再作为经验入口，仅作为 L4 索引与 L7 固化产物。
 
 ## 触发条件
 
@@ -61,7 +64,7 @@ metadata:
 ```
 触发条件命中
     ↓
-Step 1: 跨会话根因回溯（kilo_local_recall）
+Step 1: 跨会话根因回溯（kilo_local_recall + sqlite 失败库）
     ↓ 找到历史同类问题？
     ├─ 是 → 提取历史解决方案，直接应用，跳过 Step 2
     └─ 否 → 继续 Step 2
@@ -69,17 +72,19 @@ Step 2: 代码图谱验证（gitnexus）
     ↓ 确认修改的爆炸半径与调用方
 Step 3: 修复 + 验证（正常 engineer→checker 闭环）
     ↓ PASS
-Step 4: 经验回写评估
-    ├─ 跨会话价值 → 回写 MEMORY.md（coderAgent 执行，仅 `.kilo/memory/` 目录存在时）
-    │   └─ `.kilo/memory/` 目录存在时：是否值得写入？reviewer 判定，见 skills-lifecycle.md「程序化记忆触发条件」
-    │      ├─ 是 → MEMORY.md 追加经验条目
-    │      └─ 否 → 丢弃（不写入）
-    │   └─ `.kilo/memory/` 目录为空或不存在时：跳过 MEMORY.md 回写，文件保留
-    ├─ 项目特定 → 回写对应 SKILL.md（coderAgent 执行）
-    └─ 仅本次 → commit message 标注（git history 留痕）
+Step 4: 经验回写评估（**sqlite 优先**，md 仅作索引兜底）
+    ├─ **主路径：INSERT/UPDATE 全局 sqlite fact_store**（coderAgent 执行）
+    │   ├─ 先去重：`SELECT fact_id FROM fact_store WHERE trigger=? AND action=? AND archived=0`
+    │   │   ├─ 命中 → UPDATE hit_count+1, confidence, updated_at，结束
+    │   │   └─ 未命中 → INSERT（AntiPattern confidence=0.5，Pattern=0.6）
+    │   ├─ 触发失败/fixer 多轮 → 同时 INSERT failure_db
+    │   └─ MEMORY.md 不再接收新经验条目，仅保留归档索引 / 用户偏好 / 安全约束
+    ├─ **次路径：dispatch_log / model_calibration 写入**（T1+ 必走，见 workflow-core.md 收尾自检）
+    ├─ **Skill 升级检测**：当 fact_store.confidence ≥ 0.8 且 hit_count ≥ 3 时，按 skill-upgrade.md 生成 `[AUTO_DRAFT]` 草稿，人工审批后由 `skill_manage(action='create'/'patch')` 落盘
+    └─ **仅本次**：commit message 标注（git history 留痕）
     ↓
 Step 5: 回写后验证
-    ↓ `.kilo/memory/` 目录存在时，用 `kilo_local_recall` 搜索确认新经验可被未来会话检索到。为空或不存在时跳过验证。
+    ↓ 用 `SELECT * FROM fact_store WHERE fact_id = ?` 确认 sqlite 落地
 ```
 
 ### Step 1：跨会话根因回溯
@@ -119,13 +124,20 @@ Step 5: 回写后验证
 
 ### Step 4：经验回写规范
 
-**不写 JSONL**（已删除，从未消费）。用三层回写：
+**不写 JSONL**（已删除，从未消费）。用 sqlite + md 双层回写：
 
 | 经验类型 | 写入目标 | 触发条件 | 执行者 |
 |----------|----------|----------|--------|
-| 跨项目通用架构约束 | `MEMORY.md` | `.kilo/memory/` 目录存在时：reviewer 标注 `[建议写入 MEMORY.md]` + 跨 2 次任务复现 | coderAgent |
+| 可复用 pattern / anti-pattern | 全局 sqlite `fact_store`（**主路径**） | 命中 `skills-lifecycle.md` 「回写触发条件」任一条 | coderAgent |
+| 任务失败 / fixer 多轮 | 全局 sqlite `failure_db` | fixer 连续 2 轮同症状 / Circuit Breaker / 用户反馈 | coderAgent |
+| 任务调度 | 全局 sqlite `dispatch_log`（**T1+ 必走**） | 任何 T1+ 任务结束 | coderAgent |
+| 模型校准 | 全局 sqlite `model_calibration` | 每次 dispatch 后 | coderAgent |
+| 系统级约束 / 用户偏好 | `MEMORY.md`（仅归档索引） | 用户直接编辑 / reviewer 标 `[建议写入 MEMORY.md]` | 用户 / reviewer |
+| Skill 固化 | `SKILL.md`（**仅当 fact_store 触发升级**） | `confidence ≥ 0.8 && hit_count ≥ 3`，由 `skill-upgrade.md` 生成 `[AUTO_DRAFT]` 草稿，人工审批后落盘 | 人工审批 + `skill_manage(action='create'/'patch')` |
 
-**回写后验证**：`.kilo/memory/` 目录存在时，用 `kilo_local_recall` 搜索刚写入的经验关键词，确认未来会话能检索到。为空或不存在时跳过验证。
+**回写后验证**：
+- sqlite 主路径：`SELECT fact_id, hit_count, confidence FROM fact_store WHERE fact_id = ?` 确认落盘
+- md 兜底：仅在归档索引类条目时使用，且必须 ≤2200 字符总限
 
 ## 与 reflection.md 三层判定的关系
 

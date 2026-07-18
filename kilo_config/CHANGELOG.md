@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+- **2026-07-19**: 记忆飞轮 P0-P3 — 把「sqlite 优先」从文档层升级为 runtime 写入路径。
+  - **P0 workflow-core.md「收尾自检」硬门**：T1+ 任务「经验沉淀」执行前必须按 checklist 勾选（dispatch_log INSERT → fact_store 去重查询 → failure_db 写入 → model_calibration 更新 → fixer error_code 回写 → skill 升级检测），缺任一项 → `[MISSING_MEMORY_WRITE]` 阻塞交付；路径口径统一为 `${HOME}/.config/kilo-data/memory.db`。
+  - **P0 coderAgent.md「输出」段改写**：经验沉淀明确「T1+ 必走收尾自检硬门；md 写入仅作索引兜底；禁止直接 patch SKILL.md 承载新经验」。
+  - **P1 skills-lifecycle.md「回写流程」改写**：6 步改为「识别→验证→**去重 SQL 查询**→**INSERT sqlite fact_store 主路径**→异步 skill 升级检测→链接」，新增 V1 阶段人工审批 gate；SKILL.md 不再是经验入口。
+  - **P1 workflow/SKILL.md Step 4 改写**：主路径改为 `INSERT/UPDATE sqlite fact_store`，MEMORY.md 不再接收新经验条目；记忆架构表扩展为 L1-L7（新增 L1 经验 / L2 调度日志 / L3 模型校准三层 sqlite 主路径）。
+  - **P2 reviewer.md「是否值得回写 skill 判定」改为 SQL**：先 `SELECT fact_id, hit_count, confidence FROM fact_store` 查历史命中数，三分支判定（命中升级 / 命中仅累计 / 未命中 INSERT），主观判定 → 数据库查询。
+  - **P2 engineer.md「是否值得回写 skills」自检删除**：改为「INSERT sqlite fact_store（命中数自动累计，不再由人判）」+ 明确「禁止直接 patch SKILL.md 承载新经验」。
+  - **P3 validate-config.mjs 新增 check17**：memory.db 健康度校验（5 表结构存在性 + 行数统计 + `[MEMORY_LAYER_HOLLOW]` 告警），适配 better-sqlite3 / sqlite3 CLI 双后端；总校验项 16→17。
+  - **依赖收敛**：check17 通过 `require('better-sqlite3')` / sqlite3 CLI / 仅确认文件存在 三级 fallback，不引入硬依赖。
+  - **遗漏修补**：evolution.md §步骤 1 dispatch_log INSERT 模板补齐 `initial_tier / final_tier / review_mode / tier_deviation` 四字段（commit 8a71114 加的两阶段定级同步落库），否则 coderAgent 按旧模板执行时丢字段、下游模型校准失效；output-schema.md 标记语言表新增 `[MISSING_MEMORY_WRITE]` + `[MEMORY_LAYER_HOLLOW]` 两条标记。
+
 - **2026-07-19**: 组件化与重复模式治理强化。
   - **新增 skill**：`.kilo/skills/component-driven-fixes/SKILL.md`，给出跨页面/组件重复 UI/样式/行为问题的六步组件化修复决策树、典型示例、失败标记。
   - **核心规则升级**：`core.md` 新增「组件化优先 / 重复模式拦截」原则与编码前「重复点/同类模式扫描确认」；`workflow-core.md` 新增「重复模式修复 / 组件化 SOP」与质量门禁 `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` / `[MISSING_SCAN]` / `[MISSING_PREVENTION]`。

@@ -287,16 +287,32 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
 
 ## 交付
 
+### 收尾自检（硬门：T1+ 必走，缺则 `[MISSING_MEMORY_WRITE]` 阻塞交付）
+
+T1+ 任务「经验沉淀」执行前，coderAgent 必须按以下 checklist 全部勾选，任何一项未执行都不得标记任务完成。每条都对应一条具体 SQL / 工具调用，可被自动验证。
+
+- [ ] **dispatch_log 必写**：通过 sqlite MCP 执行 `INSERT INTO dispatch_log ...`（含 `dispatch_id` / `thread_id` / `agent` / `task_summary` / `initial_tier` / `final_tier` / `tier` / `review_mode` / `tier_deviation` / `model` / `status` / `duration_ms` / `files_changed` / `findings_count` / `created_at`），由 `evolution.md` 步骤 1 的 SQL 模板执行
+- [ ] **fact_store 去重与插入**：发现可复用 pattern / anti-pattern 时，先 `SELECT fact_id FROM fact_store WHERE trigger=? AND action=? AND archived=0`；命中则 `UPDATE hit_count+1, confidence, updated_at`，未命中则 `INSERT`（AntiPattern 初始 confidence=0.5 / Pattern=0.6）
+- [ ] **failure_db 写入**：fixer 连续 2 轮同症状 / Circuit Breaker 触发 / 用户反馈「还是不对」→ `INSERT INTO failure_db ...`，verified 由后续 checker 验证后置 1
+- [ ] **model_calibration 更新**：`success_rate = (success_rate*sample_count + ?) / (sample_count + 1)`，DONE=1.0 / DONE_WITH_CONCERNS=0.7 / FAILED=0.0
+- [ ] **fixer error_code 回写**：fixer 被触发过 → `UPDATE dispatch_log SET error_code='FIXED_BY_FIXER_ROUND_N' WHERE dispatch_id=?`，缺则 `[MISSING_FIXER_WRITE]`
+- [ ] **Skill 升级检测（仅记录，不自动落盘）**：`SELECT trigger, action, confidence, hit_count FROM fact_store WHERE category='ANTIPATTERN' AND confidence >= 0.8 AND hit_count >= 3 AND archived = 0`；命中 → 按 `skill-upgrade.md` 生成「`[AUTO_DRAFT]`」草稿标记，**不得直接 patch SKILL.md**，必须经人工确认（V1 阶段）
+- [ ] **md 兜底**（可选）：MEMORY.md / USER.md 仅作归档索引或用户偏好，不作为经验沉淀主路径
+
+> **路径口径**：sqlite 路径统一为 `${HOME}/.config/kilo-data/memory.db`，由 Kilo 运行时解析，install 阶段不替换。详见 `.kilo/memory/memory-strategy.md` 「初始化检查」章节。
+
+未执行上述任何一项 → `[MISSING_MEMORY_WRITE]`，coderAgent 必须立即补写，不得进入「分支收尾协议」。
+
 ### 收尾三步
 
 1. **验证确认**：测试、构建、类型、Lint 通过；声明完成必须有本轮 fresh 证据，不得援引上一轮或他人结论（来源：superpowers/verification-before-completion）。
 2. **范围确认**：`git diff --` 确认改动范围，无 SCOPE_CREEP。
-3. **经验沉淀与自进化**（全局 sqlite 优先 + 项目 md 兜底）：
+3. **经验沉淀与自进化**（执行顺序固定：先 dispatch_log → fact_store / failure_db → model_calibration → skill 升级检测；md 仅作索引兜底）：
    - **必须写入全局 sqlite**：T1+ 任务完成后，通过 sqlite MCP 写入 `dispatch_log`；若 checker/reviewer 发现有效模式，写入 `fact_store`；若任务失败或 fixer 多轮，写入 `failure_db`
      - 写入规则详见 `.kilo/instructions/evolution.md`
-   - **Skill 升级检测**：当 `fact_store.confidence >= 0.8` 且 `hit_count >= 3` 时，按 `.kilo/instructions/skill-upgrade.md` 生成 Skill 升级提案
+   - **Skill 升级检测**：当 `fact_store.confidence >= 0.8` 且 `hit_count >= 3` 时，按 `.kilo/instructions/skill-upgrade.md` 生成 Skill 升级提案（**先打 `[AUTO_DRAFT]` 草稿标记，人工审批后才落盘**，避免 LLM 自觉回写）
    - **可选写入项目 md**：可复用事实 → `MEMORY.md`（仅作归档索引）；架构约束 → `AGENTS.md`
-    - **全局记忆系统未初始化**（`~/.config/kilo-data/memory.db` 不存在）→ 用 sqlite 执行仓库 `.kilo/memory/init.sql` 完成建表，再写入（数据目录独立于配置目录，install 同步不会清除）
+   - **全局记忆系统未初始化**（`${HOME}/.config/kilo-data/memory.db` 不存在）→ 用 sqlite 执行仓库 `.kilo/memory/init.sql` 完成建表（详见 `memory-strategy.md`），再写入
 
 ### 分支收尾协议（来源：superpowers/finishing-a-development-branch）
 

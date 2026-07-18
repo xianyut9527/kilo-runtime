@@ -48,7 +48,10 @@ permission:
 
 - 编码前读取 `.kilo/skills/` 下相关 SKILL.md（patterns / anti-patterns / component-driven-fixes）。
 - 涉及跨页/重复 UI 样式问题时，必须加载 `component-driven-fixes` skill 并按其决策树执行。
-- 交付时自检：是否验证了现有 pattern / 触发了新 anti-pattern？是否值得回写 skills？
+- **交付时自检（v2.0 起）**：
+  - 是否验证了现有 pattern / 触发了新 anti-pattern？若是 → **INSERT sqlite fact_store**（命中数自动累计，不再由人判「是否值得回写」），参见 `skills-lifecycle.md` 「回写流程」步骤 3-4
+  - 失败案例（fixer 触发 / 同症状复发）→ INSERT sqlite failure_db
+  - **禁止直接 patch SKILL.md 承载新经验**：SKILL.md 仅在 `fact_store.confidence ≥ 0.8 && hit_count ≥ 3` 后由 `skill-upgrade.md` 触发 `[AUTO_DRAFT]` 草稿，经人工审批落盘
 
 ## 输出格式
 
