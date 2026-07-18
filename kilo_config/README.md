@@ -48,6 +48,7 @@ kilo_config/
 │   ├── skills/                   # 长期知识库（按项目实例化，兼容 agentskills.io 标准）
 │   │   ├── anti-patterns/
 │   │   ├── patterns/
+│   │   ├── component-driven-fixes/  # 重复 UI/样式/行为问题的组件化修复
 │   │   ├── workflow/             # 自进化工作流（记忆三层架构、根因回溯）
 │   │   └── hermes-migration/     # Kilo→Hermes 迁移工具包（C 档方案）
 │   └── memory/                   # 程序化记忆（参考 Hermes Agent）

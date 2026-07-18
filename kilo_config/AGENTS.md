@@ -25,3 +25,4 @@
 8. **memory / skills / 自进化合规**：`.kilo/memory/` 目录存在有效记忆文件时，coderAgent **按可插拔策略按需注入**，不硬编码规则。策略文件见 `.kilo/memory/memory-strategy.md`（默认：标签按需注入）。不声明 `strategy` 时，记忆系统不加载。skills 的加载由 `skill` 工具触发（按需），不受本条约束。AGENTS.md 回写与经验回写（经闭环验证）不受影响。
 9. **流程违规即停**：发现跳步立即标 `[PROCESS_VIOLATION]` 并暂停。
 10. **临时文件**：写入 `$env:TEMP` / `/tmp/`，禁止污染项目目录。
+11. **组件化与重复模式治理**：UI/样式/行为问题跨页面/组件出现时，按 `core.md` + `workflow-core.md` + `component-driven-fixes` skill 执行，禁止逐页复制粘贴式补丁。

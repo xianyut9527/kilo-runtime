@@ -38,6 +38,7 @@ metadata:
 | AP-007 | Agent 删除遗漏执行主体引用 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-007) |
 | AP-008 | Agent Frontmatter 权限与职责不一致 | contract | [anti-patterns-contract](./anti-patterns-contract/SKILL.md#ap-008) |
 | AP-009 | 多单元工作区 SCOPE_CREEP 全量 diff 误判 | process | [anti-patterns-process](./anti-patterns-process/SKILL.md#ap-009) |
+| AP-014 | 逐页补丁式修复（同类 UI/样式/行为问题复制粘贴） | process | [anti-patterns-process](./anti-patterns-process/SKILL.md#ap-014) |
 | AP-010 | 删除配置字段前未确认外部消费者 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-010) |
 | AP-011 | 由校验代码反推运行时能力 | contract | [anti-patterns-contract](./anti-patterns-contract/SKILL.md#ap-011) |
 | AP-012 | 引用化前未确认目标文件覆盖完整性 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-012) |
