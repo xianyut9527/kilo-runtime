@@ -46,7 +46,8 @@
 - fixer 轮次、升级阈值、Circuit Breaker：`.kilo/instructions/workflow-core.md`
 - 三层错误恢复：`.kilo/instructions/reflection.md`
 - 交付和验证底线：`.kilo/instructions/core.md` + `workflow-core.md`
-- 需求扩散、同类点扫描、局部补丁拦截：`.kilo/instructions/workflow-reference.md`
+- 需求扩散、同类点扫描：`.kilo/instructions/workflow-reference.md`
+- 局部补丁拦截、重复模式修复 / 组件化 SOP：`.kilo/instructions/workflow-core.md`
 - 修复方法论（全链路审计、完整阅读、验证剩余路径、推测与验证区分）：`.kilo/instructions/workflow-core.md` + `core.md` + `reflection.md`
 - pre-checker 预审、checker 分层、fixer 权限约束：`.kilo/instructions/workflow-core.md`
 - Skills 生命周期管理（触发条件、回写流程、分类规范）：`.kilo/instructions/skills-lifecycle.md`

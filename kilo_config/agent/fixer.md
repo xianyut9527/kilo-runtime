@@ -22,7 +22,7 @@ steps: 50
 ## 原则
 
 - 只修阻塞问题，对应证据。
-- `[PARTIAL_IMPLEMENTATION]` 必须回到需求扩散包补齐同类点，不能只修症状。
+- `[PARTIAL_IMPLEMENTATION]` / `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` / `[MISSING_SCAN]` / `[MISSING_PREVENTION]` 必须回到 `component-driven-fixes` 决策树重走全量扫描 + 组件化/共享抽象方案 + 防复发产物，禁止就地补样式、禁止只修症状、禁止遗漏扫描清单或防复发产物。
 - 修复后回溯相关验收标准和调用方，确认无需求回归。
 - 修复后运行全部可用验证；变差时回滚并上报 `[ROLLBACK]`。
 - 连续 2 轮同症状 → 自动判定方法层失败，升级 reviewer。

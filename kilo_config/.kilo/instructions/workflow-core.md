@@ -191,8 +191,9 @@ T2 / T3                         → full
 | 设计门（T1+）| T1 短设计门、T2 完整规划未过不得进 engineer；通过标记 `[DESIGN_GATE_PASS]`，未过/跳过标记 `[DESIGN_GATE_MISS]` | `[DESIGN_GATE_MISS]` |
 | 不自验 | engineer 不得自行验证 | `[PROCESS_VIOLATION]` |
 | 状态信号 | engineer 必须输出 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED` | `[MISSING_STATUS_SIGNAL]` |
-| 双重 checker | 正向（需求/语法/逻辑/边界）+ 反向（SCOPE_CREEP/调试残留/重复实现） | `[SCOPE_CREEP]` / `[MISSING_ACCEPTANCE_MAP]` |
+| 双重 checker | 正向（需求/语法/逻辑/边界）+ 反向（SCOPE_CREEP/调试残留/重复实现/局部补丁） | `[SCOPE_CREEP]` / `[MISSING_ACCEPTANCE_MAP]` / `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` |
 | 局部补丁拦截 | 重复模式未走组件化/共享抽象，逐页复制样式 | `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` |
+| 扫描与防复发交付门 | engineer 交付必须含全量同类点扫描清单 + 至少一项防复发产物 | `[MISSING_SCAN]` / `[MISSING_PREVENTION]` |
 | 同症状防空转 | 连续 2 轮 fixer 同症状 → 升级 reviewer | `[NEEDS_REVIEW]` |
 | Circuit Breaker | 连续 3 次无法收敛 → 停止 | `[CIRCUIT_BREAKER]` |
 | 验收映射表 | 每条标准 → 实现位置 → 验证方式 → 边界覆盖 → 状态 | `[MISSING_ACCEPTANCE_MAP]` |
@@ -280,7 +281,7 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
 5. **防复发产物**：交付必须包含至少一项防复发机制（design token、共享组件、lint 规则、文档条款、自动化测试、视觉回归测试），否则视为未完成。
 6. **反向验证**：交付前对旧模式做反向 grep（命中数=0），对新引用做正向 grep（命中数=预期消费者数），数据写入验收映射表。
 
-违反任意一步 → `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]`，checker 必须 FAIL。
+违反任意一步 → `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` / `[MISSING_SCAN]` / `[MISSING_PREVENTION]`，checker 必须 FAIL。
 
 > 命中「统一 XX 规范」「全量审计」「批量整改」「全局替换」类任务时，额外按上方「规范统一 / 审计类任务 SOP」五步执行。
 

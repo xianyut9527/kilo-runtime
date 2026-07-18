@@ -47,7 +47,8 @@ permission:
 
 > 不重复 checker 的 `[SCOPE_CREEP]` 检测。聚焦：
 
-- 重复实现：本可复用却新建；同类规则散落未上提。
+- 重复实现 / 局部补丁：本可复用却新建；同类 UI/样式/行为问题 ≥2 处却逐页复制粘贴 → `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]`（参见 `component-driven-fixes/SKILL.md`）。
+- 扫描与防复发缺失：未产出全量同类点扫描清单 → `[MISSING_SCAN]`；未交付防复发产物 → `[MISSING_PREVENTION]`。
 - 不必要抽象/依赖/配置：引入的中间层、工厂、配置项是否带来真实价值。
 - diff 噪声：格式化噪声、无关改名、调试代码残留。
 - 修得过窄：跨模块规则只改一个入口，漏掉同类点。

@@ -112,7 +112,7 @@ metadata:
 
 - `core.md`「组件化优先 / 重复模式拦截」：给出通用原则。
 - `workflow-core.md`「重复模式修复 / 组件化 SOP」：给出强制流程与失败标记。
-- `anti-patterns-process/SKILL.md#AP-014`：记录「逐页补丁式修复」反模式。
+- `anti-patterns-process/SKILL.md#ap-014`：记录「逐页补丁式修复」反模式。
 - `design-system/SKILL.md`：提供 design token、组件规范、布局原则。
 
 ## 失败标记

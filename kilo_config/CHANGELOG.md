@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+- **2026-07-19**: 组件化与重复模式治理强化。
+  - **新增 skill**：`.kilo/skills/component-driven-fixes/SKILL.md`，给出跨页面/组件重复 UI/样式/行为问题的六步组件化修复决策树、典型示例、失败标记。
+  - **核心规则升级**：`core.md` 新增「组件化优先 / 重复模式拦截」原则与编码前「重复点/同类模式扫描确认」；`workflow-core.md` 新增「重复模式修复 / 组件化 SOP」与质量门禁 `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` / `[MISSING_SCAN]` / `[MISSING_PREVENTION]`。
+  - **agent 执行链闭合**：`agent/coderAgent.md` 新增「重复模式硬门」；`agent/engineer.md` / `agent/architect.md` 写入全量扫描与组件化方案要求；`agent/checker.md` / `agent/reviewer.md` / `agent/fixer.md` / `agent/pre-checker.md` 补齐四个新失败标记的检测、审查、修复、预审路径。
+  - **反模式固化**：`anti-patterns-process/SKILL.md` 新增 AP-014「逐页补丁式修复」；`anti-patterns/SKILL.md` 索引更新为 14 条并重新排序。
+  - **清理冗余**：删除过时的 `.kilo/agent/` 目录，消除与 `agent/` 下权威 agent 定义的双源漂移；`CONFIG_CHANGE_CHECKLIST.md` 与 `workflow-reference.md` 同步权威源指针。
+
 - **2026-07-18**: 闭环体检 + 6 项缺口修复。
   - **P0 README 双源漂移修复**：`kilo_config/` 仓库内无 `hermes/` 子目录（原描述路径错误，实际产物在外层 `hermes_config/`），删除 README.md §目录结构 中错误的 hermes 子树。
   - **P0 kilo.json 路径跨平台化**：`sqlite` MCP 路径 `C:\Users\Administrator\.config\kilo-data\memory.db` → `${KILO_DATA_DIR}/memory.db`；`skills.external_dirs` Windows 绝对路径 → `${KILO_CONFIG_DIR}/.kilo/skills` + `${HOME}/.agents/skills`；install.ps1/sh 末尾新增「kilo.json 占位符替换」步骤（sed/Set-Content 双平台实现），install 后路径才落地。

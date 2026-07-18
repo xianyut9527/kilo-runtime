@@ -1,6 +1,6 @@
 ---
 name: anti-patterns
-description: 反模式知识库索引。13 条 AP-XXX 按主题拆分到 4 个子 skill（encoding / process / coordination / contract），本文件提供总览与回写指引。
+description: 反模式知识库索引。14 条 AP-XXX 按主题拆分到 4 个子 skill（encoding / process / coordination / contract），本文件提供总览与回写指引。
 keywords: [anti-patterns, index, encoding, process, coordination, contract, 索引]
 license: MIT
 compatibility:
@@ -12,7 +12,7 @@ metadata:
 
 # 反模式索引
 
-> 原 616 行 SKILL.md 按主题拆为 4 个子 skill，**保留全部 13 条 AP-XXX**。
+> 原 616 行 SKILL.md 按主题拆为 4 个子 skill，**保留全部 14 条 AP-XXX**。
 > 拆分目的：降低单文件长度，提升按主题检索效率，避免子 skill 加载无关内容。
 > 新增条目按主题写入对应子 skill，并在此索引登记。
 
@@ -21,11 +21,11 @@ metadata:
 | 主题 | 子 skill 路径 | 条目数 | 覆盖范围 |
 |------|--------------|--------|----------|
 | encoding | `.kilo/skills/anti-patterns-encoding/SKILL.md` | 2 | Windows 编码 / BOM 污染 |
-| process | `.kilo/skills/anti-patterns-process/SKILL.md` | 3 | 软约束 / 跳步 / SCOPE_CREEP |
+| process | `.kilo/skills/anti-patterns-process/SKILL.md` | 4 | 软约束 / 跳步 / SCOPE_CREEP / 逐页补丁 |
 | coordination | `.kilo/skills/anti-patterns-coordination/SKILL.md` | 6 | 关联遗漏 / 引用断链 / 子 agent 异常 |
 | contract | `.kilo/skills/anti-patterns-contract/SKILL.md` | 2 | 权限越界 / 运行时能力误判 |
 
-## 13 条 AP-XXX 反向链接
+## 14 条 AP-XXX 反向链接
 
 | ID | 标题 | 主题 | 跳转 |
 |----|------|------|------|
@@ -38,11 +38,11 @@ metadata:
 | AP-007 | Agent 删除遗漏执行主体引用 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-007) |
 | AP-008 | Agent Frontmatter 权限与职责不一致 | contract | [anti-patterns-contract](./anti-patterns-contract/SKILL.md#ap-008) |
 | AP-009 | 多单元工作区 SCOPE_CREEP 全量 diff 误判 | process | [anti-patterns-process](./anti-patterns-process/SKILL.md#ap-009) |
-| AP-014 | 逐页补丁式修复（同类 UI/样式/行为问题复制粘贴） | process | [anti-patterns-process](./anti-patterns-process/SKILL.md#ap-014) |
 | AP-010 | 删除配置字段前未确认外部消费者 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-010) |
 | AP-011 | 由校验代码反推运行时能力 | contract | [anti-patterns-contract](./anti-patterns-contract/SKILL.md#ap-011) |
 | AP-012 | 引用化前未确认目标文件覆盖完整性 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-012) |
 | AP-013 | 重命名函数时遗漏内部调用同步 | coordination | [anti-patterns-coordination](./anti-patterns-coordination/SKILL.md#ap-013) |
+| AP-014 | 逐页补丁式修复（同类 UI/样式/行为问题复制粘贴） | process | [anti-patterns-process](./anti-patterns-process/SKILL.md#ap-014) |
 
 ## 回写指引
 
