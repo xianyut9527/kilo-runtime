@@ -64,7 +64,7 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 | reviewer 审查 | ✅/🔄/⏳ | review_mode: none/lightweight/full |
 ```
 
-> T0 仅需"意图判定 + 任务定级·预估"两节点；T1+ 必须包含全部 8 节点。阶段 B 校准在 architect 设计门落地后、单元执行完成前输出；reviewer 审查紧跟校准。
+> T0 仅需"意图判定 + 任务定级·预估"两节点；T1+ 必须包含全部 8 节点。阶段 B 校准在 architect 设计门落地后输出；reviewer 审查在所有单元通过后执行。
 
 ## 异常处理
 

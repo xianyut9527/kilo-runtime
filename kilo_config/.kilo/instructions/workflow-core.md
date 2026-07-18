@@ -57,8 +57,8 @@ coderAgent 委派 agent 时，按任务复杂度选择模型：
 ### 偏差规则
 
 - **维持或上调**：默认放行
-- **下调**（如 T2 → T1）：必须显式标注 `[DOWNGRADE_AFTER_PLAN]` 并写明依据；禁止"已出 architect 完整规划 → 无理由跳过 reviewer 直接降级"
-- **拿不准就升档**（成本不对称）：阶段 A 判据不足以区分相邻等级时预估取高一级——高估仅多付流程开销，低估导致返工与质量逃逸。由此产生的阶段 B 下调属常态路径，凭证据标注 `[DOWNGRADE_AFTER_PLAN]` 即可，不构成流程违规
+- **拿不准就升档**（成本不对称）：阶段 A 判据不足以区分相邻等级时预估取高一级——高估仅多付流程开销，低估导致返工与质量逃逸
+- **下调**（如 T2 → T1）：必须同时满足以下全部硬条件：(1) 实际文件数 < 4；(2) 不跨模块；(3) 不命中安全敏感关键词；(4) architect 设计门已过 `[DESIGN_GATE_PASS]`。满足全部条件后，须显式标注 `[DOWNGRADE_AFTER_PLAN]` 并写明依据。任一条件不满足则不得下调
 
 > 性能注：阶段 B 不触发额外 architect 调用，仅在已有设计门产物基础上做复核；T0 不进阶段 B（极速通道豁免）。
 
@@ -110,7 +110,7 @@ T0 直达 engineer，无需 pre-checker、checker、reviewer。
 
 命中以下关键词 → **最低 T2**：
 
-`user / account / auth / login / password / token / jwt / session / payment / checkout / wallet / balance / fund / transfer`
+`user / account / auth / login / password / token / jwt / session / payment / checkout / wallet / balance / fund / transfer / admin / root / key / secret / credential / api_key / certificate / otp / mfa`
 
 ## 单元化编排
 
@@ -165,7 +165,7 @@ T2 / T3                         → full
 
 - **none**：跳过 reviewer。仅 T0（极速通道）适用。
 - **lightweight**：双视角审查（架构 + SCOPE_CREEP），跳过安全视角。reviewer 模型不变（`glm-5.2`），但产出 token 减约 1/3。
-- **full**：三视角审查（安全/架构/简化），T2+ 默认模式 + T1 命中升级条件后切换至此。
+- **full**：四视角审查（安全/架构/简化/SCOPE_CREEP），T2+ 默认模式 + T1 命中升级条件后切换至此。
 
 #### 升级触发器
 
