@@ -43,7 +43,7 @@ kilo_config/
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
 │   │   ├── evolution.md           # 自进化闭环（执行→反思→提炼→固化写入规则）
 │   │   ├── skill-upgrade.md       # Skill 升级提案生成（fact_store 置信度达标时触发）
-│   │   ├── skill-usage-tracking.md # skill 使用记录规范（skill-usage.log）
+│   │   ├── skill-usage-tracking.md # skill 使用记录规范（v2.5 起写入 SQLite skill_usage_events 表）
 │   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
 │   ├── skills/                   # 长期知识库（按项目实例化，兼容 agentskills.io 标准）
 │   │   ├── anti-patterns/

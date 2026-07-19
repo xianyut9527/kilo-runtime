@@ -1543,6 +1543,49 @@ function check17MemoryDbHealth() {
   return { name, pass: true, detail: `memory.db 表结构齐全（6 表存在，CLI 模式不统计行数）` };
 }
 
+// ---------- Check 18: agent.md ↔ instructions.md 跨文件漂移检测（v2.5.1） ----------
+// 防止 agent/*.md 的运行时规则与 .kilo/instructions/*.md 的真实规则双源漂移。
+// 当前覆盖：
+//   - 「向 .kilo/memory/skill-usage.log 追加」在 agent/*.md 中应为零命中
+//     （v2.5 起统一走 SQLite skill_usage_events 表，规则源在 .kilo/instructions/skill-usage-tracking.md）
+//   - install.sh / install.ps1 EXCLUDE 列表里 "skill-usage.log" 是历史残留（v2.5 起 .log 不再生成）
+// 命中即 FAIL 并给出漂移位置 + 修复指引。
+function check18AgentInstructionsDrift() {
+  const name = 'agent.md ↔ instructions.md 跨文件漂移检测（v2.5.1 防止 skill-usage.log 复活）';
+  const drifts = [];
+
+  // (1) agent/*.md 不应再指示"向 .kilo/memory/skill-usage.log 追加"
+  const agentsDir = path.resolve(ROOT, 'agent');
+  if (fs.existsSync(agentsDir)) {
+    for (const f of fs.readdirSync(agentsDir).filter((x) => x.endsWith('.md'))) {
+      const fp = path.join(agentsDir, f);
+      const content = fs.readFileSync(fp, 'utf8');
+      const lines = content.split('\n');
+      lines.forEach((line, i) => {
+        if (/skill-usage\.log.*追加|追加.*skill-usage\.log/.test(line)) {
+          drifts.push(`${f}:L${i + 1} 含 "向 .kilo/memory/skill-usage.log 追加" 旧指令，应改为 "通过 bash 调用 sqlite3 CLI 向 skill_usage_events 表 INSERT"`);
+        }
+      });
+    }
+  }
+
+  // (2) install.sh / install.ps1 EXCLUDE 列表不应再列 "skill-usage.log"（v2.5 起 .log 不再生成）
+  for (const inst of ['install.sh', 'install.ps1']) {
+    const fp = path.resolve(ROOT, inst);
+    if (fs.existsSync(fp)) {
+      const content = fs.readFileSync(fp, 'utf8');
+      if (/"skill-usage\.log"|'skill-usage\.log'/.test(content)) {
+        drifts.push(`${inst} EXCLUDE 列表残留 "skill-usage.log"（v2.5 起已废弃，应清理）`);
+      }
+    }
+  }
+
+  if (drifts.length > 0) {
+    return { name, pass: false, detail: `检测到 ${drifts.length} 处漂移：[\n  ${drifts.join('\n  ')}\n]\n修复指引：参考 .kilo/instructions/skill-usage-tracking.md（v2.5）` };
+  }
+  return { name, pass: true, detail: 'agent.md 与 instructions.md 规则一致（v2.5.1 漂移检测通过：6 agent.md + install.sh/ps1 均无 skill-usage.log 复活）' };
+}
+
 const kiloBuf = (() => {
   try {
     return fs.readFileSync(path.resolve(ROOT, 'kilo.json'));
@@ -1577,8 +1620,9 @@ const r14 = check14MemoryEnabled(config);
 const r15 = await check15EncodingScan();
 const r16 = check16KiloJsonPlaceholders(config);
 const r17 = check17MemoryDbHealth();
-const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17];
+const r18 = check18AgentInstructionsDrift();
 
+const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18];
 // ---------- 输出 ----------
 const out = [];
 out.push('== kilo_config 配置自检 ==');

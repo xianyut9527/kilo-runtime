@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+- **2026-07-20**: v2.5 记忆通道重构 — 删 sqlite+ddg MCP，主通道切 bash+sqlite3 CLI，备用 memory-mcp 预埋。
+  - **背景**：第三方 sqlite MCP（社区 node-sqlite3 实现）+ ddg-search MCP（Chromium 抓 HTML）长期挂起导致 Kilo 进程内存爆炸（≥2 GB），是 Windows 环境下最大的稳定性风险。
+  - **改造**：
+    - **删除**：`kilo.json`（项目 + 全局）移除 `mcp.sqlite` 与 `mcp.ddg-search` 配置块
+    - **主通道**（v2.5-过渡版）：通过 Kilo `bash` 工具调用 `sqlite3` CLI 读写 `~/.config/kilo-data/memory.db`，命令模板见 `.kilo/memory/policy/bash_sqlite_template.md`
+    - **备用通道**（v3.0 standby）：自建 `memory-mcp`（Node 22 内置 `node:sqlite` + `@modelcontextprotocol/sdk` 1.29），`kilo.json` 中 `enabled: false` 预埋不加载，启用前必须 `node test.js` + `node test:stability` 双绿
+    - **覆盖 21 处旧"sqlite MCP"指令性引用**（README / AGENTS / schema / seed / policy / agent 工作说明书 / install 脚本）
+  - **新增 check18**：validate-config.mjs 新增 `agent.md ↔ instructions.md 跨文件漂移检测`（v2.5.1 防止 skill-usage.log 复活），目前 18/18 PASS
+  - **配套修复**：
+    - 6 个 `agent/*.md` 旧"向 .kilo/memory/skill-usage.log 追加一行"统一改为"通过 bash 调用 sqlite3 CLI 向 skill_usage_events 表 INSERT"
+    - `README.md` / `CONFIG_CHANGE_CHECKLIST.md` 注释同步
+    - `install.sh` / `install.ps1` EXCLUDE 列表清理 `skill-usage.log`
+    - `memory-mcp` health_check 子项改走 `sqlite3` CLI 执行 contract（绕开 `node:sqlite` FTS5 模块缺失；14/14 PASS）
+    - FTS5 索引修复：`INSERT INTO fact_fts(fact_fts) VALUES('rebuild')` 重建后 MATCH 验证正常
+  - **不动的事实**：`archive/YYYY-MM/` md 归档协议仍废除（全部走 `fact_store.archived=1`），`MEMORY.md` 字符上限仍 ≤1500，schema 表结构冻结
+  - **memory-mcp 验证**：22/22 functional PASS（项目 + 全局副本），0.01 MB 增长 / 200 次稳定性
+
 - **2026-07-19**: v2.2 彻底去 md 化 — archived sub-skill 文件 AP-XXX 全文删除。
   - **背景**：v2.1 把 14 条 AP + 2 条 PAT 迁入 fact_store，但 4 个 `anti-patterns-*/SKILL.md` 仍保留 AP-XXX 全文（仅加 archived 警告），archived flag 无 enforce，存在 agent 误加载全文的风险。
   - **修复**：4 个 archived sub-skill 文件 AP-XXX 全文**彻底删除**，仅保留 frontmatter + 迁移指引 + SQL 指针。每个文件从 ~150 行精简到 ~30 行。

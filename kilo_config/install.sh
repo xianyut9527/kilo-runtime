@@ -27,7 +27,6 @@ RECURSIVE_EXCLUDE=(
     "bun.lock"
     "yarn.lock"
     "agent-manager.json"
-    "skill-usage.log"
 )
 
 COPIED_FILES=0

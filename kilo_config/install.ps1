@@ -13,8 +13,7 @@ $RecursiveExclude = @(
     ".git", ".gitignore",
     "node_modules",
     "package.json", "package-lock.json", "pnpm-lock.yaml", "bun.lock", "yarn.lock",
-    "agent-manager.json",
-    "skill-usage.log"
+    "agent-manager.json"
 )
 
 Write-Host "========================================" -ForegroundColor Cyan

@@ -7,6 +7,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { DatabaseSync } from 'node:sqlite';
+import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -444,50 +445,93 @@ export function healthCheck() {
   if (!fs.existsSync(CONTRACT_PATH)) {
     throw new Error(`health_check.sql not found at ${CONTRACT_PATH}`);
   }
-  const raw = fs.readFileSync(CONTRACT_PATH, 'utf8');
-  // Strip CLI directives (.mode, .headers, .separator) and comment lines
-  const lines = raw.split(/\r?\n/).filter(l => {
-    const t = l.trim();
-    if (t.startsWith('.')) return false;       // sqlite3 CLI directives
-    if (t.startsWith('--')) return false;      // comments
-    if (t.length === 0) return false;          // blank
-    return true;
-  });
-  // Re-join and split on semicolons
-  const text = lines.join('\n');
-  const statements = text.split(';').map(s => s.trim()).filter(s => s.length > 0);
 
-  const db = getDb();
+  // v3.0.1 修复：node:sqlite 内置不带 FTS5 模块（在 Windows / Node 22.14 上确认），
+  // 直接 db.prepare(...).all() 执行 ROW_COUNTS（包含 SELECT COUNT(*) FROM fact_fts）会抛
+  // "no such module: fts5"。改为通过 bash + sqlite3 CLI 执行整份 contract —
+  // 既符合 .kilo/memory/contracts/health_check.sql §使用方式（CLI）的文档约定，
+  // 又避免 node:sqlite FTS5 缺失问题（CLI 端是完整 FTS5 build）。
+  // Fallback: 若 sqlite3 CLI 不在 PATH，退回 node:sqlite 但跳过 FTS5 相关语句。
   const checks = [];
-  for (const stmt of statements) {
-    let name = 'UNKNOWN', status = 'fail', detail = '';
+  let useCli = true;
+  try {
+    execFileSync('sqlite3', ['--version'], { stdio: 'ignore' });
+  } catch {
+    useCli = false;
+  }
+
+  if (useCli) {
+    // 执行整份 contract，sqlite3 CLI 按 .headers/.mode/.separator 指令输出
+    // 行格式: <check_name>|<pass|fail>|<detail>
+    let stdout;
     try {
-      const rows = db.prepare(stmt).all();
-      if (rows.length === 0) {
-        checks.push({ name: 'EMPTY_RESULT', pass: false, detail: 'no rows' });
-        continue;
-      }
-      // The health_check contract SELECTs are guaranteed to be 3 columns:
-      // (check_name, status, detail). Pull by name if present, else by index.
-      const row = rows[0];
-      if ('check_name' in row) name = row.check_name;
-      else if (row[0]) name = String(row[0]);
-
-      if ('status' in row) status = String(row.status);
-      else status = String(row[1] || 'fail');
-
-      if ('detail' in row) detail = String(row.detail);
-      else detail = String(row[2] || '');
-
-      checks.push({ name, pass: status === 'pass', detail });
+      // .read 让 sqlite3 CLI 顺序执行整份 contract（含 .headers/.mode/.separator 指令）
+      stdout = execFileSync('sqlite3', [DB_PATH, `.read ${CONTRACT_PATH}`], {
+        encoding: 'utf8',
+        timeout: 10000,
+      });
     } catch (e) {
-      checks.push({ name, pass: false, detail: `query error: ${e.message}` });
+      throw new Error(`sqlite3 CLI 执行 health_check.sql 失败: ${e.message}`);
+    }
+
+    for (const rawLine of stdout.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('--') || line.startsWith('.')) continue;
+      // contract 输出格式: <check_name>|<pass|fail>|<detail>
+      const parts = line.split('|');
+      if (parts.length < 3) continue;
+      const [name, status, ...detailParts] = parts;
+      const detail = detailParts.join('|'); // detail 本身可能含 |（如 fact_store 列拼接）
+      checks.push({ name: name.trim(), pass: status.trim() === 'pass', detail: detail.trim() });
+    }
+  } else {
+    // Fallback: node:sqlite 路径，剥离 FTS5 相关语句以避免 "no such module: fts5"
+    const raw = fs.readFileSync(CONTRACT_PATH, 'utf8');
+    const statements = raw
+      .split(/\r?\n/)
+      .filter(l => {
+        const t = l.trim();
+        if (t.startsWith('.')) return false;
+        if (t.startsWith('--')) return false;
+        if (t.length === 0) return false;
+        return true;
+      })
+      .join('\n')
+      .split(';')
+      .map(s => s.trim())
+      .filter(s => s.length > 0)
+      .filter(s => !/FROM\s+fact_fts|FROM\s+failure_fts/i.test(s)); // 跳过 FTS5 语句
+
+    const db = getDb();
+    for (const stmt of statements) {
+      let name = 'UNKNOWN', status = 'fail', detail = '';
+      try {
+        const rows = db.prepare(stmt).all();
+        if (rows.length === 0) {
+          checks.push({ name: 'EMPTY_RESULT', pass: false, detail: 'no rows' });
+          continue;
+        }
+        const row = rows[0];
+        if ('check_name' in row) name = row.check_name;
+        else if (row[0]) name = String(row[0]);
+        if ('status' in row) status = String(row.status);
+        else status = String(row[1] || 'fail');
+        if ('detail' in row) detail = String(row.detail);
+        else detail = String(row[2] || '');
+        checks.push({ name, pass: status === 'pass', detail });
+      } catch (e) {
+        checks.push({ name, pass: false, detail: `query error: ${e.message}` });
+      }
     }
   }
 
   const passed = checks.filter(c => c.pass).length;
   const failed = checks.length - passed;
-  return { checks, summary: { total: checks.length, passed, failed } };
+  return {
+    checks,
+    summary: { total: checks.length, passed, failed },
+    _transport: useCli ? 'cli' : 'node:sqlite (FTS5 statements skipped)',
+  };
 }
 
 // ============================================================

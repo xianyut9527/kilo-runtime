@@ -124,10 +124,9 @@ L1 跑测试只是起点；最终判定必须逐条完成声明 → 证据比对
 
 ## skill 使用记录
 
-`.kilo/memory/` 目录存在且包含有效记忆文件时，完成任务或反思触发后，向 `.kilo/memory/skill-usage.log` 追加一行：
-`[ISO8601] [session_id] [skill_name] [trigger] [outcome]`
+`.kilo/memory/` 目录存在且包含有效记忆文件时，完成任务或反思触发后，通过 bash 调用 sqlite3 CLI 向 `skill_usage_events` 表 INSERT 一行（命令模板见 `.kilo/memory/policy/bash_sqlite_template.md`，业务规则详见 `.kilo/instructions/skill-usage-tracking.md`）。
 
-`.kilo/memory/` 目录为空或不存在时，跳过 skill-usage.log 追加，不报错、不删除规则。
+`.kilo/memory/` 目录为空或不存在时，跳过记录，不报错、不删除规则。
 
 ## 加载的 skills
 
