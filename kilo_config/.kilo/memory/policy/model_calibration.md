@@ -71,6 +71,58 @@ WHERE success_rate < 0.7 AND sample_count >= 5;
 - 3 次中 ≥2 次成功 → 校准有效，保留新 prompt
 - 3 次中 <2 次成功 → 校准无效，回退到上一个有效 prompt，并标记「该偏差模式需人工分析」
 
+### v2.3 消费追踪（#8）
+
+`compensation_prompt` 设置后需追踪是否被实际消费，否则会「设置一次永远应用」导致 prompt 失修。
+
+**写入时机**：每次更新 `compensation_prompt` 时同步设置：
+
+```sql
+UPDATE model_calibration
+SET compensation_prompt = ?,
+    compensation_prompt_set_at = datetime('now'),
+    compensation_prompt_consumed_count = 0  -- 新 prompt 重置消费计数
+WHERE calibration_id = ?;
+```
+
+**消费记录时机**：每次 M7 dispatch 收尾，若本次 dispatch 实际消费了 prompt：
+
+```sql
+-- dispatch_log 写入时：
+INSERT INTO dispatch_log (..., compensation_prompt_used, compensation_calibration_id)
+VALUES (..., 1, :calibration_id);
+
+-- 同步更新 model_calibration 消费计数：
+UPDATE model_calibration
+SET compensation_prompt_consumed_count = compensation_prompt_consumed_count + 1
+WHERE calibration_id = :calibration_id;
+```
+
+**过期检测**（check17 `COMPENSATION_PROMPT_STALE`）：
+
+```sql
+-- 任意一行满足「设置了 prompt + 30 天未消费」即触发告警
+SELECT * FROM model_calibration
+WHERE compensation_prompt IS NOT NULL
+  AND compensation_prompt_set_at IS NOT NULL
+  AND compensation_prompt_set_at < datetime('now', '-30 days')
+  AND compensation_prompt_consumed_count = 0;
+```
+
+check17 映射到 `warnings.push('[COMPENSATION_PROMPT_STALE] n=N')`，**不阻断交付**。
+
+**注入门槛调整**（`query_strategy.md` §注入门槛）：
+
+`model_calibration` 注入门槛新增过滤条件：
+
+```sql
+AND (compensation_prompt IS NULL
+     OR compensation_prompt_consumed_count > 0
+     OR compensation_prompt_set_at >= datetime('now', '-30 days'))
+```
+
+理由：30 天未消费的 prompt 失修概率高，不再注入避免误导 agent。
+
 ## 基线初始化（首次部署）
 
 首次部署后，可插入各 agent 的初始占位记录，避免首次动态校准时 `sample_count = 0` 导致的除零或空值问题：

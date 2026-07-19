@@ -130,6 +130,40 @@ keywords: output-schema, deliverable, marker, verdict
 
 agent 返回后、进入下游流程前，coderAgent 必须按以下规则自检：
 
+### v2.4 Preflight 校验（#10 — agent 输出前自检）
+
+> **核心思想**：把自检从"事后 parser"前移到"agent 输出前"。agent 必须在 prompt 内嵌 preflight 模板，输出前先自检 schema 合规性。这样比事后 parser 失败重试节省 1 个 roundtrip（稳定性 +++，token 节省 ~20-30%）。
+
+#### Preflight 模板（agent 在 prompt 内强制）
+
+```
+[PREFLIGHT_CHECK]
+- 状态信号: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED（必填）
+- 验收映射表: 5 列齐全（验收标准 | 实现位置 | 验证方式 | 边界覆盖 | 状态）
+- 已读取文件清单: 实际 read 的路径列表，禁止虚构
+- JSON/XML 标签: 全部闭合 + 必需字段存在
+- 标记语言: 全大写下划线分隔
+[/PREFLIGHT_CHECK]
+```
+
+#### Preflight 流程
+
+| 阶段 | 行为 | 失败处理 |
+|---|---|---|
+| 1. agent prompt 内嵌 preflight 模板 | 强制 agent 输出前自检 | 模板缺失 → coderAgent 在委派包补充 |
+| 2. agent 输出含 `[PREFLIGHT_CHECK]` 块 | 形式合规 | 缺失 → `[PREFLIGHT_MISSED]`，不阻断 |
+| 3. coderAgent 解析 preflight + schema | 双重校验 | preflight 通过但 schema 失败 → `[MALFORMED_OUTPUT]`（同 v2.3 行为） |
+| 4. happy path | preflight + schema 都通过 → 直接进入下游 | 节省 1 次重试 roundtrip |
+
+#### 与事后自检的关系
+
+| 机制 | 时机 | 价值 |
+|---|---|---|
+| v2.3 事后 parser（§JSON 输出自检） | agent 输出后 | 防 typo / schema 漂移 |
+| **v2.4 preflight（§Preflight 校验）** | agent 输出前 | 防 80% 已知错误；省 roundtrip |
+
+两者并存：preflight 是 1st defense；事后 parser 是 2nd defense。
+
 ### JSON 输出自检（checker / reviewer / fixer）
 
 1. **语法检查**：尝试定位 JSON 代码块并解析。`JSON.parse` 失败 → `[MALFORMED_OUTPUT]`
@@ -160,6 +194,7 @@ agent 返回后、进入下游流程前，coderAgent 必须按以下规则自检
 |------|----------|------|
 | `[MALFORMED_OUTPUT]` | JSON/XML 格式错误，重试 1 次后仍失败 | 升级 reviewer |
 | `[MISSING_STATUS_SIGNAL]` | 无法提取 DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED | 要求 agent 显式输出状态 |
+| `[PREFLIGHT_MISSED]` | v2.4 agent 输出未含 `[PREFLIGHT_CHECK]` 块 | 不阻断，仅记 warn；coderAgent 提示 agent 后续补 |
 
 ## 标记语言
 

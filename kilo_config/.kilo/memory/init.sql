@@ -1,15 +1,15 @@
 -- kilo memory system schema（兼容指针）
 -- ============================================================
--- 实际 DDL 已迁移到 .kilo/memory/schema/init.sql（v2.2 模块边界）
+-- 实际 DDL 已迁移到 .kilo/memory/schema/init.sql（v2.3 模块边界，6 表 + 19 索引 + 2 视图 + 8 条 project_context 自动种子）
 -- 本文件保留作为向后兼容入口（仅占位），新代码请直接引用 schema/init.sql
 -- ============================================================
 --
 -- 模块架构: .kilo/memory/
 --   README.md                ← 公共 API 文档
 --   AGENTS.md                ← 模块对 agent 的指令入口
---   schema/init.sql          ← DDL 唯一源（5 表 + 索引 + 视图）
---   policy/*.md              ← 业务规则（7 个文件）
---   contracts/health_check.sql ← 健康度 SQL
+--   schema/init.sql          ← DDL 唯一源（6 表 + 19 索引 + 2 视图 + 8 种子）
+--   policy/*.md              ← 业务规则（11 个文件）
+--   contracts/health_check.sql ← 健康度 SQL（11 项检查）
 --
 -- ⚠️ 本文件不含 DDL；执行本文件等于 0 张表。
 -- 推荐新调用：

@@ -1,21 +1,24 @@
 # Memory Module — AGENTS.md（agent 入口）
 
 > **模块位置**：`.kilo/memory/AGENTS.md`（模块对 agent 的唯一注入入口）
-> **注入时机**：当 `${HOME}/.config/kilo-data/memory.db` 存在且含 5 表时，由 coderAgent / engineer / reviewer 在任务开始时按需加载
+> **注入时机**：当 `${HOME}/.config/kilo-data/memory.db` 存在且含 6 表时，由 coderAgent / engineer / reviewer 在任务开始时按需加载
 > **禁用方式**：删除或清空 `${HOME}/.config/kilo-data/memory.db` 即可优雅降级（不报错、不删除规则）
+> **版本**：v2.3（含 FTS5 全文检索 / helpful_rate 反馈 / failure_db scope 隔离 / project_context use_count / M-001 动态 2AP+1PAT）
 
 ## 模块标识
 
 - **名称**：`memory-module`
-- **版本**：`2.0`
-- **策略**：`sqlite-first-md-fallback`
+- **版本**：`2.3`
+- **策略**：`sqlite-first-md-fallback + fts5-mirror + scope-isolation + helpful-rate-feedback`
 - **数据库路径**：`${HOME}/.config/kilo-data/memory.db`
 
 ## 核心原则
 
-1. **sqlite 优先**：所有结构化记忆（fact、failure、dispatch、project_context、calibration）优先查询 sqlite。
-2. **md 兜底**：用户偏好、安全约束、通用约定等低频变更内容保留在 `MEMORY.md` / `USER.md`。
-3. **写入即持久**：任务过程中产生的经验、失败模式必须写入 sqlite，不能留在 prompt 里丢失。
+1. **sqlite 唯一记忆**：所有结构化记忆（fact、failure、dispatch、project_context、calibration、skill_upgrade、skill_usage）优先查询 sqlite。**v2.5 起强制**：禁止 md 文件累积时序数据（`.kilo/memory/skill-usage.log` 已迁移至 `skill_usage_events` 表）；md 文件仅保留静态规则 / 模板 / 指针。
+2. **FTS5 镜像加速**：v2.3 起 fact_store / failure_db 维护 FTS5 虚表，query B 从 `LIKE` 改为 `MATCH`（效率 +++），详见 `policy/query_strategy.md` §1 query B。
+3. **helpful_rate 反馈**：v2.3 起 M6 节点可输出 `[memory:helpful=...]` / `[memory:misleading=...]` 标记，反向校准 confidence（质量 +++），详见 `policy/m6_validation.md` §3。
+4. **md 兜底（仅静态）**：用户偏好、安全约束等低频变更内容保留在 `MEMORY.md` / `USER.md`；**严禁** md 累积时序 / 经验 / 频次数据。
+5. **写入即持久**：任务过程中产生的经验、失败模式、skill 使用事件必须写入 sqlite，不能留在 prompt 里丢失。
 
 ## 公共 API（agent 唯一应访问的入口）
 

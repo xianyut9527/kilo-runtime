@@ -9,20 +9,27 @@
 - sqlite 查询结果注入总量 **≤ 2000 tokens**（约 8000 字符）
 - 超出时按优先级截断：project_context > fact_store > failure_db > model_calibration
 - md 文件注入仍保持 **≤ 1500 tokens**（作为兜底）
+- v2.4 起：FTS5 MATCH 替代 LIKE，单次 query 字符数预算更紧（命中更准，可适当放宽 LIMIT）
 
-## 注入门槛（v2.2）
+## 注入门槛（v2.4）
 
 | 数据源 | 注入门槛 | 原因 |
 |---|---|---|
-| `project_context` | priority ≤ 5 | 高优先级架构决策优先 |
-| `fact_store`（正式） | `confidence >= 0.7 AND hit_count >= 2 AND archived = 0` | 过滤低质噪音 |
-| `fact_store`（试用期，v2.2） | `confidence >= 0.5 AND hit_count < 2 AND archived = 0 AND created_at >= datetime('now', '-14 days')`，每任务 ≤2 条，注入标记附加 `trial=1` | 新经验试用窗口：打破「未注入→无引用→hit 不增→永不注入」冷启动死锁 |
-| `failure_db` | `same_symptom_count >= 1 AND resolved_at IS NOT NULL` | 已解决的失败才注入；未解决的不污染上下文 |
-| `model_calibration` | `sample_count >= 3` | 样本不足的校准数据无统计意义 |
+| `project_context` | priority ≤ 5（v2.4 / #2 加入 use_count DESC 排序维度） | 高优先级架构决策优先；高频复用 context 自动浮顶 |
+| `fact_store`（正式） | `confidence >= 0.7 AND hit_count >= 2 AND archived = 0 AND (scope = 'global' OR (scope = 'project' AND project_name = :current_project)) AND (helpful_rate IS NULL OR helpful_rate >= 0.5)` | 过滤低质噪音 + 跨项目隔离（v2.3 / #5）+ v2.4 反馈质量门（#13） |
+| `fact_store`（试用期，v2.2） | `confidence >= 0.5 AND hit_count < 2 AND archived = 0 AND created_at >= datetime('now', '-14 days') AND (scope = 'global' OR (scope = 'project' AND project_name = :current_project))`，每任务 ≤2 条，注入标记附加 `trial=1` | 新经验试用窗口：打破「未注入→无引用→hit 不增→永不注入」冷启动死锁 |
+| `failure_db` | `same_symptom_count >= 1 AND resolved_at IS NOT NULL AND (scope = 'global' OR (scope = 'project' AND project_name = :current_project))` | 已解决的失败才注入；未解决的不污染上下文；v2.4 / #15 scope 隔离 |
+| `model_calibration` | `sample_count >= 3 AND (compensation_prompt IS NULL OR compensation_prompt_consumed_count > 0 OR compensation_prompt_set_at >= datetime('now', '-30 days'))` | v2.3 / #8：补偿 prompt 30 天未消费不再注入 |
 
-> **试用期机制（v2.2）**：新写入经验 14 天内为试用期。试用期条目命中任务关键词即可注入（上限 2 条），在 M6 自增后与正式条目同权竞争；14 天窗口后回归正式门槛。
+> **FTS5 检索（v2.4 / #5）**：query B 由 `LIKE` 改为 `MATCH`（fact_fts 虚表），效率 +++。详见 §1 query B。
+>
+> **helpful_rate 门禁（v2.4 / #13）**：fact_store 注入门槛新增 `helpful_rate IS NULL OR helpful_rate >= 0.5`。低质 fact（多次反馈为 misleading）自动降权，避免反复注入误导。详见 §M6 helpful_rate 反馈流程。
+>
+> **跨项目 scope 隔离（v2.3 / #5）**：`:current_project` 由环境变量 `KILO_PROJECT_NAME` 解析；未设置时仅注入 `scope='global'` 行。详见 `policy/fact_dedup.md` §scope 写入规则。
 >
 > **M6 自增数据源扩展（v2.2）**：除 `[memory:fact_id=...]` 注入标记外，coderAgent 收尾时必须显式声明「本次实际参考但未注入的 fact_id」（来源：M4 去重查询命中、失败回溯命中、人工指定），对这些 fact_id 同样执行 hit_count+1 / confidence+0.02，确保经验价值随**真实使用**增长而非仅随注入增长。
+>
+> **M6 显式声明前置校验（v2.3 / #4）**：M6 UPDATE 前必须经 Stage 1 SELECT 校验（详见 `policy/m6_validation.md`），不存在或已 archived 的 fact_id 输出 `[M6_ORPHAN_REFERENCE]` 警告并从 UPDATE 列表移除。
 >
 > ~~早期项目 fallback（v2.0，已废弃）~~：原「仓库 commit < 10 放宽门槛」条款对「仓库成熟但数据稀疏」场景无效，由试用期机制替代。
 
@@ -33,32 +40,42 @@
 coderAgent 必须按以下顺序查询（每条 SELECT **必须带 ID 字段**用于回溯）：
 
 ```sql
--- A. 项目上下文（最高优先级，≤5 条，带 ID）
-SELECT context_id, title, content, priority, tags FROM project_context
+-- A. 项目上下文（最高优先级，≤5 条，带 ID；v2.4 / #2 加入 use_count 动态排序）
+SELECT context_id, title, content, priority, tags, use_count, last_used_at
+FROM project_context
 WHERE category IN ('ARCHITECTURE', 'CONSTRAINT') AND priority <= 5
-ORDER BY priority ASC, updated_at DESC
+ORDER BY priority ASC, use_count DESC, updated_at DESC
 LIMIT 5;
 
--- B. 相关经验教训（按 tag 匹配 + 置信度门槛，带 ID + tags + evidence）
-SELECT fact_id, category, trigger, condition, action, confidence, hit_count, tags, evidence
-FROM fact_store
-WHERE tags LIKE '%,%当前任务关键词%,%'  -- 逗号分隔精确匹配（前导 % 为全表扫描，数据量小时可接受）
-   OR trigger LIKE '%当前任务关键词%'    -- 兜底：trigger 字段模糊匹配
-   OR action LIKE '%当前任务关键词%'     -- 兜底：action 字段模糊匹配
-  AND archived = 0
-  AND confidence >= 0.7
-  AND hit_count >= 2
-ORDER BY confidence DESC, hit_count DESC
+-- A'. 同步更新 use_count + last_used_at（注入完成后立即 UPDATE）
+UPDATE project_context
+SET use_count = use_count + 1,
+    last_used_at = datetime('now')
+WHERE context_id IN (...);  -- 本次注入的 context_id 列表
+
+-- B. 相关经验教训（v2.4 / #5 FTS5 MATCH 替代 LIKE；scope 隔离 v2.3 / #5；helpful_rate 过滤 #13）
+SELECT f.fact_id, f.category, f.trigger, f.condition, f.action, f.confidence, f.hit_count, f.tags, f.evidence, f.helpful_rate,
+       bm25(fact_fts) AS rank_score
+FROM fact_fts
+JOIN fact_store f ON f.rowid = fact_fts.rowid
+WHERE fact_fts MATCH :query_keywords  -- FTS5 全文索引（MATCH 语法）
+  AND f.archived = 0
+  AND f.confidence >= 0.7
+  AND f.hit_count >= 2
+  AND (f.scope = 'global' OR (f.scope = 'project' AND f.project_name = :current_project))
+  AND (f.helpful_rate IS NULL OR f.helpful_rate >= 0.5)
+ORDER BY rank_score
 LIMIT 5;
 
--- B2. 试用期新经验（v2.2 冷启动窗口，≤2 条，注入标记附加 trial=1）
-SELECT fact_id, category, trigger, condition, action, confidence, hit_count, tags, evidence
+-- B2. 试用期新经验（v2.2 冷启动窗口，≤2 条，注入标记附加 trial=1，scope 隔离 v2.3 / #5）
+SELECT fact_id, category, trigger, condition, action, confidence, hit_count, tags, evidence, scope, project_name
 FROM fact_store
 WHERE archived = 0
   AND confidence >= 0.5
   AND hit_count < 2
   AND created_at >= datetime('now', '-14 days')
   AND (tags LIKE '%,%当前任务关键词%,%' OR trigger LIKE '%当前任务关键词%' OR action LIKE '%当前任务关键词%')
+  AND (scope = 'global' OR (scope = 'project' AND project_name = :current_project))
 ORDER BY created_at DESC
 LIMIT 2;
 
@@ -71,12 +88,15 @@ WHERE (tags LIKE '%,%当前任务关键词%,%' OR symptom LIKE '%当前任务关
 ORDER BY same_symptom_count DESC
 LIMIT 3;
 
--- D. 模型校准建议（当前 agent + 任务类型 + 样本门槛）
-SELECT calibration_id, compensation_prompt, success_rate, sample_count
+-- D. 模型校准建议（当前 agent + 任务类型 + 样本门槛；v2.3 / #8 增加补偿 prompt 消费过滤）
+SELECT calibration_id, compensation_prompt, compensation_prompt_set_at, compensation_prompt_consumed_count, success_rate, sample_count
 FROM model_calibration
 WHERE agent_role = '当前agent角色'
   AND task_type LIKE '%当前任务类型%'
   AND sample_count >= 3
+  AND (compensation_prompt IS NULL
+       OR compensation_prompt_consumed_count > 0
+       OR compensation_prompt_set_at >= datetime('now', '-30 days'))  -- 30 天未消费不再注入
 ORDER BY sample_count DESC
 LIMIT 1;
 ```
@@ -224,6 +244,111 @@ WHERE failure_id = ?;  -- 本次命中的失败记录
 | 通用约定 | MEMORY.md | 低频变更，md 可读性更好 |
 
 > **MEMORY.md vs fact_store 边界**：MEMORY.md 不再存储经验条目，仅存储**指向 fact_id 的索引**（如 `[已归档] 详见 fact_store[M-001]`）。所有可复用的模式/反模式必须进入 fact_store。
+
+---
+
+## M-001 动态注入规范（v2.4 扩展：2AP + 1PAT）
+
+> **变更历史**：v2.3 引入动态注入（M-001 取 top-2 ANTIPATTERN by hit_count）；v2.4 扩展为 **2 ANTIPATTERN + 1 PATTERN**（共 3 条），覆盖更全。
+
+### 选择规则
+
+```sql
+-- top-2 ANTIPATTERN（强警告）
+SELECT fact_id FROM fact_store
+WHERE category = 'ANTIPATTERN' AND archived = 0 AND confidence >= 0.8
+ORDER BY hit_count DESC, confidence DESC
+LIMIT 2;
+
+-- top-1 PATTERN（强推荐）
+SELECT fact_id FROM fact_store
+WHERE category = 'PATTERN' AND archived = 0 AND confidence >= 0.8
+ORDER BY hit_count DESC, confidence DESC
+LIMIT 1;
+```
+
+合并渲染：
+
+```markdown
+[memory:fact_id={ap1},{ap2},{pat1} mode=dynamic]
+- 强警告（v2.4）: {ap1.trigger} → {ap1.action}; {ap2.trigger} → {ap2.action}
+- 强推荐（v2.4）: {pat1.trigger} → {pat1.action}
+```
+
+### 边界 case
+
+| 场景 | 行为 |
+|---|---|
+| ANTIPATTERN 候选 < 2 | 取所有可用的 + 1 PATTERN（共 1-2 条） |
+| PATTERN 候选 = 0 | 仅注入 ANTIPATTERN（fallback 到 v2.3 行为） |
+| fact_store 全空 | 注入静态描述（同 v2.3 fallback） |
+| helpful_rate < 0.5 | 跳过（helpful_rate 门禁过滤） |
+
+详见 [MEMORY.md](../MEMORY.md) `<DYNAMIC_INJECT>` 占位符替换。
+
+---
+
+## M6 helpful_rate 反馈流程（v2.4 / #13）
+
+> **背景**：v2.3 的 hit_count 自增回路只看"用了多少次"，不区分"用了有没有用"。v2.4 增加 helpful_rate 反馈维度。
+
+### M6 反馈标记格式
+
+```
+[memory:helpful=A,B,C]      ← 本次 dispatch 中有价值的 fact
+[memory:misleading=X,Y]     ← 本次 dispatch 中误导/不适用的 fact
+```
+
+### M6 反馈处理流程
+
+```sql
+-- 1. 解析标记，UPDATE fact_store
+UPDATE fact_store
+SET helpful_count = helpful_count + 1,
+    helpful_rate = CAST(helpful_count + 1 AS REAL) / (helpful_count + 1 + misleading_count),
+    updated_at = datetime('now')
+WHERE fact_id IN (:helpful_fact_ids);
+
+UPDATE fact_store
+SET misleading_count = misleading_count + 1,
+    helpful_rate = CAST(helpful_count AS REAL) / (helpful_count + misleading_count + 1),
+    updated_at = datetime('now')
+WHERE fact_id IN (:misleading_fact_ids);
+
+-- 2. 写入 dispatch_log（结构化反馈记录）
+UPDATE dispatch_log
+SET helpful_fact_ids = :helpful_json,
+    misleading_fact_ids = :misleading_json
+WHERE dispatch_id = :dispatch_id;
+```
+
+### 与 hit_count 自增回路的关系
+
+- v2.3 hit_count +1：每次 fact 引用都 +1
+- v2.4 helpful_count / misleading_count：仅在 M6 显式反馈时 +1
+- `confidence` 在 v2.4 起同时受 hit_count 和 helpful_rate 影响（详见下面公式）
+
+### confidence 综合校准公式（v2.4）
+
+```
+new_confidence = MIN(0.95, confidence + 0.02 * helpful_factor - 0.05 * misleading_factor)
+```
+
+其中：
+- `helpful_factor = 1.0` 当 fact 在本次 dispatch 的 helpful 列表中
+- `misleading_factor = 1.0` 当 fact 在本次 dispatch 的 misleading 列表中
+- 未收到反馈的 fact 仍按 v2.3 规则 `confidence + 0.02`（hit_count 路径）
+
+### 低质 fact 自动降权（v2.4 / #13 注入门槛）
+
+注入门槛新增 `helpful_rate IS NULL OR helpful_rate >= 0.5`：
+
+- misleading 反馈 ≥ helpful 反馈 → helpful_rate < 0.5 → 自动从注入流降权
+- 但 fact_store 不立即 archived=1（保留作审计），仅在 `skill_upgrade` V2 中按 helpful_rate 升序晋升
+
+### 完整示例
+
+详见 `policy/m6_validation.md` §3 + `agent/coderAgent.md` §M6 输出模板。
 
 ---
 

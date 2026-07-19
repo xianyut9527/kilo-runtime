@@ -2,6 +2,7 @@
 
 > **模块位置**：`.kilo/memory/policy/failure_recorder.md`（业务规则唯一源）
 > **模块架构**：本文件由 `.kilo/memory/` 模块统一管理，schema 见 `../schema/init.sql`
+> **版本**：v2.4 增加 scope / project_name 列（与 fact_store 对齐，#15 跨项目隔离）；v2.3 起 failure_db 维护 FTS5 虚表
 > **职责**：定义 failure_db 的写入条件与模板
 
 ## 写入条件
@@ -59,8 +60,27 @@ SELECT * FROM v_failure_patterns WHERE occurrence >= 2;
 - 禁止写入项目特定代码（如具体变量名、业务逻辑）
 - 禁止写入敏感信息（API Key、密码、内部域名）
 
+## v2.4 跨项目 scope 写入规则（#15）
+
+`failure_db` 在 v2.4 起镜像 `fact_store` 的 scope 隔离机制（详见 `policy/fact_dedup.md` §v2.3 跨项目 scope 写入规则）。
+
+| scope 取值 | project_name 取值 | 注入条件 |
+|---|---|---|
+| `'global'`（默认） | NULL | 任意项目注入失败回溯 |
+| `'project'` | `:current_project` | 仅本项目注入 |
+
+**写入决策**：与 fact 一致 — 用户标记 `[scope=project]` / 经验含项目专属代码 → `'project'`，否则 `'global'`。
+
+## v2.3 FTS5 全文检索（#5 镜像）
+
+`failure_db` 与 `fact_store` 同步维护 FTS5 虚表（`failure_fts`）。M2 失败回溯 query 由 `LIKE` 改为 `MATCH`，效率 +++。
+
+详见 `policy/query_strategy.md` §3 失败/回溯查询 + `api/migrate_add_failure_scope_and_fts.sql`。
+
 ## 相关策略
 
 - `dispatch_recorder.md` — dispatch_log 写入（failure_db 的 dispatch_id 来源）
 - `model_calibration.md` — failure_db 数据喂给模型校准
 - `../../instructions/reflection.md` — 三层判定 + 强制跨会话根因回溯
+- `policy/fact_dedup.md` §v2.3 跨项目 scope 写入规则 — scope 取值判定（failure_db 镜像）
+- `policy/query_strategy.md` §3 — M2 失败回溯 FTS5 MATCH 语法

@@ -15,7 +15,7 @@
 //   [11/17] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
 //   [12/17] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
 //   [13/17] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
-//   [14/17] 记忆模块完整性（.kilo/memory/ v2.2 边界：README + AGENTS + schema + contracts + api + 7 个 policy）
+//   [14/17] 记忆模块完整性（.kilo/memory/ v2.4 边界：README + AGENTS + schema + contracts + api + 13 个 policy）
 //   [15/17] 全 repo 编码健康度扫描（BOM/U+FFFD/GBK，调用 scripts/scan-encoding.mjs）
 //   [16/17] kilo.json 占位符与 README 描述目录一致性（防双源漂移）
 //   [17/17] 全局 sqlite 记忆层健康度（memory.db 表/索引/视图 + 行数，契约 .kilo/memory/contracts/health_check.sql）
@@ -1066,16 +1066,29 @@ function check13HermesInstallExcludeSync() {
   }
   return { name, pass: false, detail: errors.join('; ') };
 }
-// ---------- Check 14: 记忆模块文件存在性（v2.2 模块边界：.kilo/memory/{README,AGENTS,schema,policy,api,contracts}） ----------
+// ---------- Check 14: 记忆模块文件存在性（v2.5 模块边界：.kilo/memory/{README,AGENTS,schema,policy,api,contracts}） ----------
 // 验证：模块入口文件 + DDL + 关键 policy 全部存在；模块根目录不可缺失
+// v2.5：sqlite 唯一记忆 — 禁止 .kilo/memory/skill-usage.log 存在（必须迁移至 skill_usage_events 表）
 function check14MemoryEnabled(config) {
-  const name = '记忆模块完整性（.kilo/memory/ v2.2 边界）';
+  const name = '记忆模块完整性（.kilo/memory/ v2.5 边界）';
   const required = [
     '.kilo/memory/README.md',
     '.kilo/memory/AGENTS.md',
     '.kilo/memory/schema/init.sql',
     '.kilo/memory/contracts/health_check.sql',
     '.kilo/memory/api/migrate_skill_to_fact_store.sql',
+    '.kilo/memory/api/seed_project_context.sql',
+    '.kilo/memory/api/trial_archive.sql',
+    '.kilo/memory/api/migrate_skill_upgrade_log.sql',
+    '.kilo/memory/api/migrate_add_scope_column.sql',
+    '.kilo/memory/api/migrate_compensation_columns.sql',
+    '.kilo/memory/api/migrate_dispatch_compensation_columns.sql',
+    '.kilo/memory/api/migrate_helpful_columns.sql',
+    '.kilo/memory/api/migrate_failure_scope_and_fts.sql',
+    '.kilo/memory/api/migrate_project_context_use.sql',
+    '.kilo/memory/api/migrate_dispatch_feedback_columns.sql',
+    '.kilo/memory/api/migrate_fact_fts.sql',
+    '.kilo/memory/api/migrate_skill_usage_log_to_sqlite.sql',
     '.kilo/memory/policy/dispatch_recorder.md',
     '.kilo/memory/policy/fact_dedup.md',
     '.kilo/memory/policy/failure_recorder.md',
@@ -1083,16 +1096,29 @@ function check14MemoryEnabled(config) {
     '.kilo/memory/policy/model_calibration.md',
     '.kilo/memory/policy/query_strategy.md',
     '.kilo/memory/policy/init_check.md',
+    '.kilo/memory/policy/trial_archive.md',
+    '.kilo/memory/policy/project_context_seed.md',
+    '.kilo/memory/policy/m6_validation.md',
+    '.kilo/memory/policy/semantic_search.md',
   ];
   const missing = required.filter((p) => !fs.existsSync(path.resolve(ROOT, p)));
   if (missing.length > 0) {
     return { name, pass: false, detail: `缺失模块文件: [${missing.join(', ')}]（详见 .kilo/memory/README.md）` };
   }
+  // v2.5 强制：.kilo/memory/skill-usage.log 必须不存在（sqlite 唯一记忆原则）
+  const legacyLog = path.resolve(ROOT, '.kilo/memory/skill-usage.log');
+  if (fs.existsSync(legacyLog)) {
+    return {
+      name,
+      pass: false,
+      detail: 'v2.5 sqlite 唯一记忆原则：检测到 .kilo/memory/skill-usage.log 仍存在；执行 `api/migrate_skill_usage_log_to_sqlite.sql` 一次性迁移后删除该文件',
+    };
+  }
   // 兼容旧字段检测
   if (config && typeof config === 'object' && 'memory' in config) {
     return { name, pass: false, detail: 'kilo.json 存在已废弃的 memory 字段（v2.2 起记忆开关以 .kilo/memory/ 目录存在性为准，请删除该字段）' };
   }
-  return { name, pass: true, detail: `记忆模块完整（${required.length} 个文件齐全：README + AGENTS + schema + contracts + api + 7 个 policy）` };
+  return { name, pass: true, detail: `记忆模块完整（${required.length} 个文件齐全：README + AGENTS + schema + contracts + 13 个 api + 10 个 policy；skill-usage.log 已迁移）` };
 }
 
 // ---------- Check 15: 全 repo 编码健康度扫描（BOM/U+FFFD/GBK） ----------
@@ -1323,13 +1349,14 @@ function check17MemoryDbHealth() {
     return {
       name,
       pass: true,
-      detail: `${dbPath} 不存在（首次部署前正常，首次 T1+ 任务前需按 .kilo/memory/policy/init_check.md 4 步 SOP 建表）`,
+      detail: `${dbPath} 不存在（首次部署前正常，首次 T1+ 任务前需按 .kilo/memory/policy/init_check.md 6 步 SOP 建表，v2.3 升级为 6 步）`,
     };
   }
 
   // 用 better-sqlite3 / sqlite3 CLI / 自实现轻量 header 检测 三选一
   // 优先尝试 better-sqlite3（已在 node_modules 中），其次 sqlite3 CLI
-  const REQUIRED_TABLES = ['fact_store', 'failure_db', 'dispatch_log', 'project_context', 'model_calibration'];
+  // v2.5：7 表（fact_store / failure_db / dispatch_log / project_context / model_calibration / skill_upgrade_log / skill_usage_events）
+  const REQUIRED_TABLES = ['fact_store', 'failure_db', 'dispatch_log', 'project_context', 'model_calibration', 'skill_upgrade_log', 'skill_usage_events'];
   let tableRows = null; // { table: count }
 
   try {
@@ -1393,6 +1420,29 @@ function check17MemoryDbHealth() {
           { encoding: 'utf8', timeout: 5000 }
         );
         tableRows.__migratedFacts = parseInt(mig.trim(), 10) || 0;
+        // v2.3 soft-warn：消费契约文件中的 6 项新检查（PROJECT_CONTEXT_SEEDED / TRIAL_EXPIRED_PENDING /
+        //                FACT_ID_REFERENCED_INTACT / FACT_STORE_SCOPE_COLUMN_PRESENT /
+        //                COMPENSATION_PROMPT_STALE + PROJECT_CONTEXT_EMPTY 由 better-sqlite3 路径处理）
+        // v2.4 扩展：FTS5_VIRTUAL_TABLES_PRESENT / FACT_STORE_HELPFUL_COLUMNS_PRESENT /
+        //            PROJECT_CONTEXT_USE_COLUMNS_PRESENT
+        // v2.5 扩展：SKILL_USAGE_EVENTS_TABLE_PRESENT（替代 .log md 累积）
+        const softWarnChecks = [
+          'PROJECT_CONTEXT_SEEDED',
+          'TRIAL_EXPIRED_PENDING',
+          'FACT_ID_REFERENCED_INTACT',
+          'FACT_STORE_SCOPE_COLUMN_PRESENT',
+          'COMPENSATION_PROMPT_STALE',
+          'FTS5_VIRTUAL_TABLES_PRESENT',
+          'FACT_STORE_HELPFUL_COLUMNS_PRESENT',
+          'PROJECT_CONTEXT_USE_COLUMNS_PRESENT',
+          'SKILL_USAGE_EVENTS_TABLE_PRESENT',
+        ];
+        for (const name of softWarnChecks) {
+          const r = rows.find((row) => row[0] === name);
+          if (r && r[1] === 'fail') {
+            warnings.push(`[${name}] ${r[2]}`);
+          }
+        }
       }
     } catch (cliErr) {
       // 细分降级原因：sqlite3 CLI 不存在（ENOENT）→ 跳过（pass:true）；
@@ -1462,15 +1512,25 @@ function check17MemoryDbHealth() {
         };
       }
     }
+    // (f) v2.3 软告警：project_context 种子完整性（#1）
+    const pcCount = tableRows.project_context || 0;
+    if (pcCount < 5) {
+      warnings.push(`[PROJECT_CONTEXT_EMPTY] project_context=${pcCount}`);
+    }
+    // (g) v2.3 软告警：trial 过期未归档行（#2）
+    //       注：better-sqlite3 路径不直接统计 trial 过期行（健康度契约由 health_check.sql 标准化）；
+    //           此处仅在 CLI 模式（tableRows=null）下被跳过；better-sqlite3 路径下 trial 检查由
+    //           contracts/health_check.sql 的 TRIAL_EXPIRED_PENDING 行覆盖（消费方在 CLI fallback 路径处理）。
+    //       此处保留占位，便于未来在 better-sqlite3 路径下直接查询。
     const warnSuffix = warnings.length > 0 ? `；warnings=[${warnings.join(', ')}]` : '';
     return {
       name,
       pass: true,
-      detail: `memory.db 表结构齐全：dispatch_log=${tableRows.dispatch_log}, fact_store=${tableRows.fact_store}, failure_db=${tableRows.failure_db}, model_calibration=${tableRows.model_calibration}, project_context=${tableRows.project_context}, AP/PAT=${tableRows.__migratedFacts ?? 'n/a'}${warnSuffix}`,
+      detail: `memory.db 表结构齐全：dispatch_log=${tableRows.dispatch_log}, fact_store=${tableRows.fact_store}, failure_db=${tableRows.failure_db}, model_calibration=${tableRows.model_calibration}, project_context=${tableRows.project_context}, skill_upgrade_log=${tableRows.skill_upgrade_log || 0}, AP/PAT=${tableRows.__migratedFacts ?? 'n/a'}${warnSuffix}`,
     };
   }
 
-  return { name, pass: true, detail: `memory.db 表结构齐全（5 表存在，CLI 模式不统计行数）` };
+  return { name, pass: true, detail: `memory.db 表结构齐全（6 表存在，CLI 模式不统计行数）` };
 }
 
 const kiloBuf = (() => {

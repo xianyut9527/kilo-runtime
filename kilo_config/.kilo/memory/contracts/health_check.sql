@@ -8,39 +8,46 @@
 --
 -- 使用方式（编程）:
 --   better-sqlite3 等只需按行解析本文件输出（行格式: <check_name>|<pass|fail>|<detail>）
+--
+-- 版本：v2.5（在 v2.4 14 项基础上追加 2 项新检查 + 升级到 7 表）
+--   v2.5 新增：
+--     15. SKILL_USAGE_EVENTS_TABLE_PRESENT（#T1）：skill_usage_events 表存在（替代 .log md 累积）
+--     16. LEGACY_SKILL_USAGE_LOG_ABSENT（#T1）：.kilo/memory/skill-usage.log 已删除
+--     17. REQUIRED_TABLES_MISSING 检查升级到 7 表（+ skill_usage_events）
+-- 所有新检查均为 soft-warn（pass/fail 都映射到 check17 的 warnings[]，不阻断交付）
 
 .headers off
 .mode list
 .separator '|'
 
 -- ============================================================
--- 1. 5 表结构存在性校验
+-- 1. 7 表结构存在性校验（v2.5 / #T1 skill_usage_events）
 -- ============================================================
 SELECT 'REQUIRED_TABLES_MISSING' AS check_name,
-       CASE WHEN COUNT(*) = 5 THEN 'pass' ELSE 'fail' END AS status,
-       'required=[' || GROUP_CONCAT(name) || '] actual_count=' || COUNT(*) AS detail
+       CASE WHEN COUNT(*) >= 7 THEN 'pass' ELSE 'fail' END AS status,
+       'required_min=7 actual=' || COUNT(*) AS detail
 FROM (
     SELECT name FROM sqlite_master
-    WHERE type='table' AND name IN ('fact_store', 'failure_db', 'dispatch_log', 'project_context', 'model_calibration')
+    WHERE type='table' AND name IN ('fact_store', 'failure_db', 'dispatch_log', 'project_context', 'model_calibration', 'skill_upgrade_log', 'skill_usage_events')
 );
 
 -- ============================================================
 -- 2. 索引存在性校验（核心索引）
 -- ============================================================
 SELECT 'REQUIRED_INDEXES_MISSING' AS check_name,
-       CASE WHEN COUNT(*) >= 16 THEN 'pass' ELSE 'fail' END AS status,
-       'required_count=16 actual_count=' || COUNT(*) AS detail
+       CASE WHEN COUNT(*) >= 21 THEN 'pass' ELSE 'fail' END AS status,
+       'required_min=21 actual=' || COUNT(*) AS detail
 FROM sqlite_master
 WHERE type='index' AND name LIKE 'idx_%';
 
 -- ============================================================
--- 3. 视图存在性校验
+-- 3. 视图存在性校验（v2.4 含 4 个视图）
 -- ============================================================
 SELECT 'REQUIRED_VIEWS_MISSING' AS check_name,
-       CASE WHEN COUNT(*) = 2 THEN 'pass' ELSE 'fail' END AS status,
-       'required=[v_failure_patterns,v_high_confidence_facts] actual_count=' || COUNT(*) AS detail
+       CASE WHEN COUNT(*) = 4 THEN 'pass' ELSE 'fail' END AS status,
+       'required=[v_failure_patterns,v_high_confidence_facts,v_high_helpful_facts,v_active_project_context] actual=' || COUNT(*) AS detail
 FROM sqlite_master
-WHERE type='view' AND name IN ('v_failure_patterns', 'v_high_confidence_facts');
+WHERE type='view' AND name IN ('v_failure_patterns', 'v_high_confidence_facts', 'v_high_helpful_facts', 'v_active_project_context');
 
 -- ============================================================
 -- 4. 行数统计（agent / validate-config 用于 [MEMORY_LAYER_HOLLOW] 告警）
@@ -51,15 +58,121 @@ SELECT 'ROW_COUNTS' AS check_name,
        ',fact_store=' || (SELECT COUNT(*) FROM fact_store) ||
        ',failure_db=' || (SELECT COUNT(*) FROM failure_db) ||
        ',project_context=' || (SELECT COUNT(*) FROM project_context) ||
-       ',model_calibration=' || (SELECT COUNT(*) FROM model_calibration) AS detail;
+       ',model_calibration=' || (SELECT COUNT(*) FROM model_calibration) ||
+       ',skill_upgrade_log=' || (SELECT COUNT(*) FROM skill_upgrade_log) ||
+       ',skill_usage_events=' || (SELECT COUNT(*) FROM skill_usage_events) ||
+       ',fact_fts=' || (SELECT COUNT(*) FROM fact_fts) ||
+       ',failure_fts=' || (SELECT COUNT(*) FROM failure_fts) AS detail;
 
 -- ============================================================
--- 5. CHECK 约束健全性（5 表均应有至少 1 个 CHECK 约束）
+-- 5. CHECK 约束健全性（6 表均应有至少 1 个 CHECK 约束）
 -- ============================================================
 SELECT 'CHECK_CONSTRAINTS_MISSING' AS check_name,
-       CASE WHEN COUNT(*) >= 5 THEN 'pass' ELSE 'fail' END AS status,
-       'required_min=5 actual_count=' || COUNT(*) AS detail
+       CASE WHEN COUNT(*) >= 6 THEN 'pass' ELSE 'fail' END AS status,
+       'required_min=6 actual=' || COUNT(*) AS detail
 FROM sqlite_master
 WHERE type='table'
-  AND name IN ('fact_store', 'failure_db', 'dispatch_log', 'project_context', 'model_calibration')
+  AND name IN ('fact_store', 'failure_db', 'dispatch_log', 'project_context', 'model_calibration', 'skill_upgrade_log')
   AND sql LIKE '%CHECK%';
+
+-- ============================================================
+-- 6. project_context 种子完整性（v2.3 / #1）
+-- ============================================================
+SELECT 'PROJECT_CONTEXT_SEEDED' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM project_context) >= 5 THEN 'pass' ELSE 'fail' END AS status,
+       'required_min=5 actual=' || (SELECT COUNT(*) FROM project_context) AS detail;
+
+-- ============================================================
+-- 7. trial 过期归档检查（v2.3 / #2）
+-- ============================================================
+SELECT 'TRIAL_EXPIRED_PENDING' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM fact_store
+                  WHERE archived = 0
+                    AND confidence >= 0.5 AND confidence < 0.7
+                    AND hit_count < 2
+                    AND created_at < datetime('now', '-14 days')) = 0
+            THEN 'pass' ELSE 'fail' END AS status,
+       'expired_count=' || (SELECT COUNT(*) FROM fact_store
+                  WHERE archived = 0
+                    AND confidence >= 0.5 AND confidence < 0.7
+                    AND hit_count < 2
+                    AND created_at < datetime('now', '-14 days')) AS detail;
+
+-- ============================================================
+-- 8. 16 条 AP/PAT 迁移完整性（v2.3 / #4 — 防意外删除/归档 bootstrap facts）
+-- ============================================================
+SELECT 'FACT_ID_REFERENCED_INTACT' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM fact_store
+                  WHERE fact_id IN ('AP-001','AP-002','AP-003','AP-004','AP-005',
+                                    'AP-006','AP-007','AP-008','AP-009','AP-010',
+                                    'AP-011','AP-012','AP-013','AP-014',
+                                    'PAT-001','PAT-002')) = 16
+            THEN 'pass' ELSE 'fail' END AS status,
+       'expected=16 actual=' || (SELECT COUNT(*) FROM fact_store
+                                  WHERE fact_id IN ('AP-001','AP-002','AP-003','AP-004','AP-005',
+                                                    'AP-006','AP-007','AP-008','AP-009','AP-010',
+                                                    'AP-011','AP-012','AP-013','AP-014',
+                                                    'PAT-001','PAT-002')) AS detail;
+
+-- ============================================================
+-- 9. fact_store scope 列存在性（v2.3 / #5 — 跨项目隔离前置）
+-- ============================================================
+SELECT 'FACT_STORE_SCOPE_COLUMN_PRESENT' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM pragma_table_info('fact_store') WHERE name IN ('scope','project_name')) = 2
+            THEN 'pass' ELSE 'fail' END AS status,
+       'present_count=' || (SELECT COUNT(*) FROM pragma_table_info('fact_store') WHERE name IN ('scope','project_name')) || '/2' AS detail;
+
+-- ============================================================
+-- 10. 补偿 prompt 过期告警（v2.3 / #8）
+-- ============================================================
+SELECT 'COMPENSATION_PROMPT_STALE' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM model_calibration
+                  WHERE compensation_prompt IS NOT NULL
+                    AND compensation_prompt_set_at IS NOT NULL
+                    AND compensation_prompt_set_at < datetime('now', '-30 days')
+                    AND compensation_prompt_consumed_count = 0) = 0
+            THEN 'pass' ELSE 'fail' END AS status,
+       'stale_count=' || (SELECT COUNT(*) FROM model_calibration
+                  WHERE compensation_prompt IS NOT NULL
+                    AND compensation_prompt_set_at IS NOT NULL
+                    AND compensation_prompt_set_at < datetime('now', '-30 days')
+                    AND compensation_prompt_consumed_count = 0) AS detail;
+
+-- ============================================================
+-- 11. FTS5 虚表存在性（v2.4 / #5 — 全文检索效率 +++）
+-- ============================================================
+SELECT 'FTS5_VIRTUAL_TABLES_PRESENT' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM sqlite_master
+                  WHERE type='table' AND name IN ('fact_fts','failure_fts')) = 2
+            THEN 'pass' ELSE 'fail' END AS status,
+       'present_count=' || (SELECT COUNT(*) FROM sqlite_master
+                  WHERE type='table' AND name IN ('fact_fts','failure_fts')) || '/2' AS detail;
+
+-- ============================================================
+-- 12. fact_store helpful 列存在性（v2.4 / #13 — 反馈质量量化）
+-- ============================================================
+SELECT 'FACT_STORE_HELPFUL_COLUMNS_PRESENT' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM pragma_table_info('fact_store')
+                  WHERE name IN ('helpful_count','misleading_count','helpful_rate')) = 3
+            THEN 'pass' ELSE 'fail' END AS status,
+       'present_count=' || (SELECT COUNT(*) FROM pragma_table_info('fact_store')
+                  WHERE name IN ('helpful_count','misleading_count','helpful_rate')) || '/3' AS detail;
+
+-- ============================================================
+-- 13. project_context use_count 列存在性（v2.4 / #2 — 上下文动态化）
+-- ============================================================
+SELECT 'PROJECT_CONTEXT_USE_COLUMNS_PRESENT' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM pragma_table_info('project_context')
+                  WHERE name IN ('use_count','last_used_at')) = 2
+            THEN 'pass' ELSE 'fail' END AS status,
+       'present_count=' || (SELECT COUNT(*) FROM pragma_table_info('project_context')
+                  WHERE name IN ('use_count','last_used_at')) || '/2' AS detail;
+
+-- ============================================================
+-- 14. v2.5 / #T1 skill_usage_events 表存在性（sqlite 唯一记忆：替代 .log md 累积）
+-- ============================================================
+SELECT 'SKILL_USAGE_EVENTS_TABLE_PRESENT' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM sqlite_master
+                  WHERE type='table' AND name='skill_usage_events') = 1
+            THEN 'pass' ELSE 'fail' END AS status,
+       'present=' || (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_usage_events') || '/1' AS detail;

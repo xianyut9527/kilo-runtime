@@ -301,7 +301,7 @@ T1+ 任务「经验沉淀」执行前，coderAgent 必须按以下 checklist 全
 - [ ] **md 兜底**（可选）：MEMORY.md / USER.md 仅作归档索引或用户偏好，不作为经验沉淀主路径
 - [ ] **记忆节点日志输出（M1-M8）**：在交付前输出 markdown 表格（同任务 8 节点对齐），让用户直观看到记忆系统在做什么；模板见 `agent/coderAgent.md` §记忆节点日志
 
-> **路径口径**：sqlite 路径统一为 `${HOME}/.config/kilo-data/memory.db`，由 Kilo 运行时解析，install 阶段不替换。详见 `.kilo/memory/policy/init_check.md`「4 步初始化 SOP」章节。
+> **路径口径**：sqlite 路径统一为 `${HOME}/.config/kilo-data/memory.db`，由 Kilo 运行时解析，install 阶段不替换。详见 `.kilo/memory/policy/init_check.md`「6 步初始化 SOP」章节（v2.3 升级为 6 步：建目录 → 建表 → 验证 → model_calibration 基线 → project_context 自动 seed → v2.3 schema 迁移）。
 
 未执行上述任何一项 → `[MISSING_MEMORY_WRITE]`，coderAgent 必须立即补写，不得进入「分支收尾协议」。
 

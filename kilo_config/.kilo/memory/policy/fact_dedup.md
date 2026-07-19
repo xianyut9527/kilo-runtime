@@ -26,9 +26,12 @@
 ## 提取模板
 
 ```sql
-INSERT INTO fact_store (fact_id, category, trigger, condition, action, confidence, evidence, tags, hit_count, created_at, updated_at)
-VALUES (?, 'ANTIPATTERN', '触发场景', '触发条件', '推荐做法', 0.5, '["dispatch_id"]', '["tag1", "tag2"]', 1, datetime('now'), datetime('now'));
+INSERT INTO fact_store (fact_id, category, trigger, condition, action, confidence, evidence, tags, hit_count, helpful_count, misleading_count, scope, project_name, created_at, updated_at)
+VALUES (?, 'ANTIPATTERN', '触发场景', '触发条件', '推荐做法', 0.5, '["dispatch_id"]', '["tag1", "tag2"]', 1, 0, 0, COALESCE(?, 'global'), ?, datetime('now'), datetime('now'));
+-- 参数 1-9 同 v2.2；参数 10-11 = helpful_count / misleading_count（v2.4 默认 0/0，未收到反馈）；参数 12 = scope（默认 'global'）；参数 13 = project_name（scope='global' 时 NULL；scope='project' 时为 KILO_PROJECT_NAME）
 ```
+
+**v2.4 helpful_rate 初始化**：新 INSERT 行 `helpful_count = 0` / `misleading_count = 0`；`helpful_rate = NULL`（NULL 视为"暂无反馈"，满足 v2.4 注入门槛）。M6 Stage 3 收到反馈后自动 UPDATE（详见 `policy/m6_validation.md` §3）。
 
 **confidence 初始值**：
 - AntiPattern: 0.5（首次提取）
@@ -68,6 +71,28 @@ WHERE trigger = ? AND action = ? AND archived = 0;
 - 禁止编造未验证的经验（必须有 dispatch_id 作为 evidence）
 - 禁止重复写入相同 Pattern（先查后写）
 - 禁止写入敏感信息（API Key、密码、内部域名）
+
+## v2.3 跨项目 scope 写入规则（#5）
+
+`scope` 字段决定 fact 的可见性范围：
+
+| scope 取值 | project_name 取值 | 注入条件 | 典型场景 |
+|---|---|---|---|
+| `'global'`（默认） | NULL | 任意项目注入 | 跨项目通用经验（如 AP-001 Windows BOM / AP-005 PowerShell 5.1 编码） |
+| `'project'` | `:current_project`（= `KILO_PROJECT_NAME` env） | 仅 `project_name = :current_project` 时注入 | 项目专属经验（如某 BFF 路由约定 / 内部命名） |
+
+**写入决策**（agent 在提取经验时判定）：
+
+| 判定条件 | scope 值 |
+|---|---|
+| 用户标记 `[scope=project]` 提取元数据 | `'project'` + `project_name = KILO_PROJECT_NAME` |
+| 经验含项目专属代码 / 业务逻辑（如具体变量名、内部接口） | `'project'` + `project_name = KILO_PROJECT_NAME` |
+| 经验可跨项目复用（编码规范 / 工具使用 / 流程陷阱） | `'global'`（默认） |
+| 不确定 | `'global'`（保守默认） |
+
+**v2.3 历史数据兼容**：v2.2 迁移时所有 `fact_store` 行的 `scope` 自动设为 `'global'`（`ALTER TABLE ADD COLUMN ... DEFAULT 'global'`），无需回填。
+
+详见 `policy/query_strategy.md` §1 query B scope 过滤 + `api/migrate_add_scope_column.sql`。
 
 ## 相关策略
 
