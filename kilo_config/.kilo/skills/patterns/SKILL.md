@@ -23,7 +23,7 @@ metadata:
 > ⚠️ **v2.1 重大变更**：2 条 PAT 条目（PAT-001 / PAT-002）已于 2026-07-19 从本 skill 迁出，**全部进入全局 sqlite `fact_store` 表**（category='PATTERN'）。
 > 迁移脚本：`.kilo/memory/api/migrate_skill_to_fact_store.sql`
 >
-> **本文件仅作为索引保留**。agent 通过 sqlite MCP 按 tag 查询相关正向模式。
+> **本文件仅作为索引保留**。agent 通过 bash 调用 sqlite3 CLI 按 tag 查询相关正向模式（模板见 `.kilo/memory/policy/bash_sqlite_template.md`）。
 
 ## 为什么迁移
 

@@ -20,24 +20,24 @@ mkdir -p "${HOME}/.config/kilo-data"
 New-Item -ItemType Directory -Path "${env:USERPROFILE}\.config\kilo-data" -Force
 ```
 
-> `mcp-sqlite` 不会自动创建不存在的父目录。目录缺失是导致 MCP 启动超时最常见的原因。
+> sqlite3 CLI 不会自动创建不存在的父目录。目录缺失是导致首次执行失败最常见的原因。
 
 ### 2. 建表（执行 schema/init.sql）
 
-通过 sqlite MCP 执行仓库中的初始化脚本：
-
-```sql
--- 方式 A：让 sqlite MCP 读取并执行仓库中的 init.sql
-.read ${KILO_CONFIG_DIR}/.kilo/memory/schema/init.sql
-```
-
-或在命令行直接用 `sqlite3`：
+通过 bash 调用 sqlite3 CLI 执行仓库中的初始化脚本（v2.5-过渡版主通道）：
 
 ```bash
+# Linux / macOS
 sqlite3 "${HOME}/.config/kilo-data/memory.db" < ".kilo/memory/schema/init.sql"
+
+# Windows (PowerShell) — 方式 A：输入重定向
+sqlite3 "$env:USERPROFILE\.config\kilo-data\memory.db" ".read .kilo/memory/schema/init.sql"
+
+# Windows (PowerShell) — 方式 B：管道
+Get-Content ".kilo/memory/schema/init.sql" -Raw | sqlite3 "$env:USERPROFILE\.config\kilo-data\memory.db"
 ```
 
-Windows 若无 `sqlite3` CLI，可通过 sqlite MCP 的交互式查询逐条执行 `schema/init.sql` 中的 `CREATE TABLE` 语句。
+Windows 若无 `sqlite3` CLI，通过 `winget install SQLite.SQLite` 或 `choco install sqlite` 安装；临时降级可用 Node 22 内置 `node:sqlite` 写一次性执行脚本。
 
 ### 3. 验证表存在（执行 contracts/health_check.sql）
 
@@ -81,7 +81,8 @@ sqlite3 "${HOME}/.config/kilo-data/memory.db" < .kilo/memory/api/seed_project_co
 
 | 错误 | 原因 | 修复 |
 |---|---|---|
-| MCP 启动超时 | 目录不存在 | 执行步骤 1 |
+| `sqlite3: 命令未找到` / `不是内部或外部命令` | sqlite3 CLI 未安装 | `winget install SQLite.SQLite` 或 `choco install sqlite`；临时降级用 Node 22 `node:sqlite` 脚本 |
+| 首次执行报"无法打开数据库文件" | 目录不存在 | 执行步骤 1 |
 | `no such table: fact_store` | 未执行 schema | 执行步骤 2 |
 | 6 表任一缺失（v2.3） | init.sql 不完整 | 检查 `schema/init.sql`，重新执行 |
 | `sample_count = 0` 除零 | 未插基线 | 执行步骤 4 |

@@ -162,7 +162,7 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     if (Test-Path $KiloJsonPath) {
         $JsonContent = Get-Content -Path $KiloJsonPath -Raw -Encoding UTF8
         $JsonContent = $JsonContent -replace '\$\{KILO_CONFIG_DIR\}', ($Target -replace '\\', '\\')
-        # 注意：sqlite MCP 路径使用 ${HOME}/.config/kilo-data/memory.db，由 Kilo 运行时解析，install 阶段不替换
+        # 注意：memory.db 路径使用 ${HOME}/.config/kilo-data/memory.db，由 bash + sqlite3 CLI 直接访问（v2.5-过渡版主通道），install 阶段不替换
         # 写回必须无 BOM：PS 5.1 Set-Content -Encoding UTF8 会写入 BOM，导致严格 JSON.parse 失败（AP-001）
         [System.IO.File]::WriteAllText($KiloJsonPath, $JsonContent, (New-Object System.Text.UTF8Encoding($false)))
         Write-Host "[WRITE]  kilo.json path placeholders substituted (KILO_CONFIG_DIR=$Target)" -ForegroundColor Green

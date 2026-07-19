@@ -10,7 +10,23 @@ T1+ 任务交付后，**必须**执行 dispatch_log 写入。T0 可选（极速�
 
 ## 写入流程
 
-coderAgent 在任务结束时，通过 sqlite MCP 写入：
+coderAgent 在任务结束时，通过 bash 调用 sqlite3 CLI 写入（v2.5-过渡版主通道，PowerShell 示例）：
+
+```powershell
+# 简单 SQL 单行执行
+sqlite3 "$env:USERPROFILE\.config\kilo-data\memory.db" "INSERT INTO dispatch_log (...) VALUES (...);"
+
+# 复杂 SQL（含多层引号）推荐写入临时文件后 .read
+$sql = @"
+INSERT INTO dispatch_log (...) VALUES (...);
+"@
+$tmp = Join-Path $env:TEMP "disp_$(New-Guid).sql"
+$sql | Set-Content -Path $tmp -Encoding UTF8
+sqlite3 "$env:USERPROFILE\.config\kilo-data\memory.db" ".read $tmp"
+Remove-Item $tmp
+```
+
+SQL 模板（参数由 agent 替换占位符后拼入上述命令）：
 
 ```sql
 INSERT INTO dispatch_log (

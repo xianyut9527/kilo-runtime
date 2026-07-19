@@ -180,7 +180,7 @@ echo ""
 # kilo.json 路径占位符替换（保证 skills.external_dirs 跨平台可移植）
 # ============================================================
 echo "Substituting kilo.json path placeholders..."
-# 注意：sqlite MCP 路径使用 ${HOME}/.config/kilo-data/memory.db，由 Kilo 运行时解析，install 阶段不替换
+# 注意：memory.db 路径使用 ${HOME}/.config/kilo-data/memory.db，由 bash + sqlite3 CLI 直接访问（v2.5-过渡版主通道），install 阶段不替换
 KILO_JSON_PATH="${TARGET_DIR}/kilo.json"
 if [ -f "${KILO_JSON_PATH}" ]; then
     sed -i.bak \

@@ -107,32 +107,32 @@
     },
     "gitnexus": {
       "type": "local",
-      "command": ["npx", "gitnexus", "mcp"],
+      "command": [
+        "npx",
+        "gitnexus",
+        "mcp"
+      ],
       "enabled": true,
       "timeout": 30000
     },
     "playwright": {
       "type": "local",
-      "command": ["npx", "@playwright/mcp"],
+      "command": [
+        "npx",
+        "@playwright/mcp"
+      ],
       "enabled": true,
       "timeout": 120000
     },
-    "ddg-search": {
-      "type": "remote",
-      "url": "https://mcp.duckduckgo.com/mcp",
-      "enabled": true,
-      "timeout": 15000
-    },
-    "sqlite": {
+    "memory": {
       "type": "local",
       "command": [
-        "npx",
-        "-y",
-        "@modelcontextprotocol/server-sqlite",
-        "${HOME}/.config/kilo-data/memory.db"
+        "node",
+        "${KILO_CONFIG_DIR}/.kilo/memory/api/mcp/memory-mcp.js"
       ],
-      "enabled": true,
-      "timeout": 10000
+      "enabled": false,
+      "timeout": 8000,
+      "_comment": "v3.0 standby channel: 自建 memory-mcp，bash + sqlite3 CLI 为主通道（v2.5-过渡版），此 MCP 仅备用。当前 enabled=false 不加载，启用前必须 node test.js + test:stability 双绿。"
     }
   },
   "provider": {
@@ -163,8 +163,13 @@
           "name": "kimi-k2.6",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -175,8 +180,13 @@
           "name": "kimi-k2.7-code",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -195,8 +205,13 @@
           "name": "qwen3.7-plus",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -207,8 +222,13 @@
           "name": "MiniMax-M3",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -219,8 +239,13 @@
           "name": "MiniMax-M2.7-highspeed",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -231,8 +256,13 @@
           "name": "kimi-k3",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,

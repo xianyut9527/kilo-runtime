@@ -72,7 +72,7 @@
 
 ### 铁律 1：**唯一入口**
 
-> **其他模块只能通过 sqlite MCP 工具与记忆交互**。
+> **其他模块通过 bash 调用 sqlite3 CLI 与记忆交互**（v2.5-过渡版主通道；v3.0 起可选自建 memory-mcp，默认 `enabled:false`）。
 >
 > - ✅ 引用 `.kilo/memory/policy/*.md` 查找业务规则
 > - ✅ 引用 `.kilo/memory/schema/init.sql` 了解表结构
@@ -163,7 +163,7 @@
 | `.kilo/skills/` | skill 是 sqlite fact_store 的固化产物（`policy/skill_upgrade.md`） |
 | `agent/*.md` | agent prompt 不直接引用 SQL；引用 policy 文件 |
 | `validate-config.mjs` | check17 通过 contracts/health_check.sql 校验模块 |
-| `kilo.json` | `mcp.sqlite` 配置指向 `~/.config/kilo-data/memory.db` |
+| `kilo.json` | 记忆主通道 = bash + sqlite3 CLI（v2.5-过渡版）；可选 `mcp.memory` 自建 MCP（v3.0，默认 `enabled:false`）；数据库文件 `~/.config/kilo-data/memory.db` |
 
 ## 升级路径
 

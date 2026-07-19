@@ -1,6 +1,6 @@
 -- kilo memory system schema
 -- 模块位置：.kilo/memory/schema/init.sql（DDL 唯一源）
--- 初始化命令: 通过 sqlite MCP 执行本文件的 CREATE TABLE 语句
+-- 初始化命令: 通过 bash 调用 sqlite3 CLI 执行本文件的 CREATE TABLE 语句（v2.5-过渡版主通道）
 -- 全局数据库路径: ${HOME}/.config/kilo-data/memory.db
 --
 -- 初始化示例:
@@ -11,7 +11,7 @@
 --     New-Item -ItemType Directory -Path "${env:USERPROFILE}\.config\kilo-data" -Force
 --     # 若已安装 sqlite3 CLI:
 --     sqlite3 "$env:USERPROFILE\.config\kilo-data\memory.db" < .kilo\memory\schema\init.sql
---     # 否则通过 sqlite MCP 交互执行本文件中的 CREATE TABLE 语句
+--     # 否则在 PowerShell 中: sqlite3 "$env:USERPROFILE\.config\kilo-data\memory.db" ".read .kilo/memory/schema/init.sql"
 --
 -- 模块架构：本文件由 .kilo/memory/contracts/health_check.sql 验证完整性
 --            业务规则由 .kilo/memory/policy/*.md 定义（不在此处重复）
@@ -309,12 +309,12 @@ INSERT OR IGNORE INTO project_context (context_id, category, title, content, sou
  '["architecture","seven-layer","brain","evolution"]', 0, NULL, '2026-07-19', '2026-07-19'),
 
 ('PC-002', 'TECH_STACK', '模型与 MCP 配置（kilo.json）',
- '主模型 hx/MiniMax-M3（coderAgent + engineer）；架构/审查 kimi-k2.6 + glm-5.2；checker/fixer deepseek-v4-flash。MCP：context7（文档）+ gitnexus（代码图谱）+ playwright + ddg-search + sqlite（memory.db）。compaction auto，threshold 65%，tail_turns 25，preserve_recent_tokens 60K。',
+ '主模型 hx/MiniMax-M3（coderAgent + engineer）；架构/审查 kimi-k2.6 + glm-5.2；checker/fixer deepseek-v4-flash。MCP：context7（文档）+ gitnexus（代码图谱）+ playwright（浏览器自动化，谨慎用）。记忆通道：bash + sqlite3 CLI 主通道（v2.5-过渡版）；可选 memory-mcp（v3.0，kilo.json enabled:false 默认关闭）。已移除 ddg-search / 第三方 sqlite MCP（内存爆炸风险）。compaction auto，threshold 65%，tail_turns 25，preserve_recent_tokens 60K。',
  'kilo.json', 3,
  '["config","model","mcp","compaction","kilo-json"]', 0, NULL, '2026-07-19', '2026-07-19'),
 
 ('PC-003', 'CONSTRAINT', '强制 sqlite 优先 + md 兜底',
- '记忆系统采用全局 sqlite 优先（~/.config/kilo-data/memory.db，6 表 + 19 索引 + 2 视图 + 2 FTS5 虚表）+ 项目 md 兜底（MEMORY.md ≤ 2200 字符 + USER.md ≤ 1375 字符）。其他模块只能通过 sqlite MCP 交互，禁止直接操作 memory.db。',
+ '记忆系统采用全局 sqlite 优先（~/.config/kilo-data/memory.db，6 表 + 19 索引 + 2 视图 + 2 FTS5 虚表）+ 项目 md 兜底（MEMORY.md ≤ 2200 字符 + USER.md ≤ 1375 字符）。其他模块通过 bash 调用 sqlite3 CLI 与记忆交互（v2.5-过渡版主通道），禁止直接操作 memory.db 文件。',
  '.kilo/memory/README.md', 1,
  '["memory","sqlite","md-fallback","invariant"]', 0, NULL, '2026-07-19', '2026-07-19'),
 

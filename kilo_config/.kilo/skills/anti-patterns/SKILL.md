@@ -18,7 +18,7 @@ metadata:
 > 迁移脚本：`.kilo/memory/api/migrate_skill_to_fact_store.sql`
 > 详细说明：`.kilo/memory/README.md` §迁移记录
 >
-> **本文件仅作为索引保留**。agent 不再加载 4 个 sub-skill 全文，而是通过 sqlite MCP 按 tag 查询相关反模式。
+> **本文件仅作为索引保留**。agent 不再加载 4 个 sub-skill 全文，而是通过 bash 调用 sqlite3 CLI 按 tag 查询相关反模式（模板见 `.kilo/memory/policy/bash_sqlite_template.md`）。
 
 ## 为什么迁移
 

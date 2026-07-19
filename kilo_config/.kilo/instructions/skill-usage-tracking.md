@@ -50,7 +50,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'));
 ### 写入路径
 
 - **写入位置**：`.kilo/memory/` 模块的 `skill_usage_events` 表（全局共享，跨项目）
-- **方式**：通过 sqlite MCP 执行 INSERT；不允许用 append 文件
+- **方式**：通过 bash 调用 sqlite3 CLI 执行 INSERT（命令模板见 `.kilo/memory/policy/bash_sqlite_template.md`）；不允许用 append 文件
 - **隐私**：禁止记录 prompt 正文、密钥、用户隐私
 
 ## 4. 反作弊与最小化

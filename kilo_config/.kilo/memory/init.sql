@@ -14,6 +14,6 @@
 -- ⚠️ 本文件不含 DDL；执行本文件等于 0 张表。
 -- 推荐新调用：
 --   sqlite3 "${HOME}/.config/kilo-data/memory.db" < .kilo/memory/schema/init.sql
--- 或通过 sqlite MCP 读 schema/init.sql 执行
+-- 或通过 bash: sqlite3 "$env:USERPROFILE\.config\kilo-data\memory.db" ".read .kilo/memory/schema/init.sql"
 
 -- 本文件本身不再包含 DDL（避免双源漂移）；DDL 全部在 schema/init.sql

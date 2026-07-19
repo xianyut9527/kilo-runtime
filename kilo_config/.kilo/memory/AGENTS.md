@@ -8,13 +8,14 @@
 ## 模块标识
 
 - **名称**：`memory-module`
-- **版本**：`2.3`
-- **策略**：`sqlite-first-md-fallback + fts5-mirror + scope-isolation + helpful-rate-feedback`
+- **版本**：`2.5`
+- **策略**：`sqlite-first-md-fallback + bash-cli-channel + fts5-mirror + scope-isolation + helpful-rate-feedback`
 - **数据库路径**：`${HOME}/.config/kilo-data/memory.db`
+- **访问通道**：主通道 = bash + sqlite3 CLI（v2.5-过渡版，模板见 `policy/bash_sqlite_template.md`）；备用通道 = 自建 memory-mcp（v3.0，`kilo.json` 中 `enabled:false` 默认关闭）
 
 ## 核心原则
 
-1. **sqlite 唯一记忆**：所有结构化记忆（fact、failure、dispatch、project_context、calibration、skill_upgrade、skill_usage）优先查询 sqlite。**v2.5 起强制**：禁止 md 文件累积时序数据（`.kilo/memory/skill-usage.log` 已迁移至 `skill_usage_events` 表）；md 文件仅保留静态规则 / 模板 / 指针。
+1. **sqlite 唯一记忆**：所有结构化记忆（fact、failure、dispatch、project_context、calibration、skill_upgrade、skill_usage）优先查询 sqlite。**v2.5 起强制**：禁止 md 文件累积时序数据（`.kilo/memory/skill-usage.log` 已迁移至 `skill_usage_events` 表）；md 文件仅保留静态规则 / 模板 / 指针。**访问方式**：通过 Kilo `bash` 工具调用 `sqlite3` CLI 读写 `~/.config/kilo-data/memory.db`（命令模板见 `policy/bash_sqlite_template.md`）。
 2. **FTS5 镜像加速**：v2.3 起 fact_store / failure_db 维护 FTS5 虚表，query B 从 `LIKE` 改为 `MATCH`（效率 +++），详见 `policy/query_strategy.md` §1 query B。
 3. **helpful_rate 反馈**：v2.3 起 M6 节点可输出 `[memory:helpful=...]` / `[memory:misleading=...]` 标记，反向校准 confidence（质量 +++），详见 `policy/m6_validation.md` §3。
 4. **md 兜底（仅静态）**：用户偏好、安全约束等低频变更内容保留在 `MEMORY.md` / `USER.md`；**严禁** md 累积时序 / 经验 / 频次数据。

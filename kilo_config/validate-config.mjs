@@ -1312,7 +1312,7 @@ function check16KiloJsonPlaceholders(config) {
 // ---------- Check 17: 全局 sqlite 记忆层健康度（memory.db 表/索引/视图 + 行数） ----------
 // 目标：
 //   (a) 校验 .kilo/memory/contracts/health_check.sql 存在（v2.0 模块完整性契约）
-//   (b) 解析 kilo.json 中 sqlite MCP 的 ${HOME}/.config/kilo-data/memory.db 路径
+//   (b) 确定 memory.db 路径（优先兼容旧 kilo.json `mcp.sqlite` 配置；v2.5-过渡版起兜底使用默认路径 ~/.config/kilo-data/memory.db）
 //   (c) 若 memory.db 存在但表结构缺失（5 表任一缺失）→ FAIL（提示需执行 schema/init.sql）
 //   (d) 若 memory.db 存在且表结构齐全，统计 dispatch_log / fact_store 行数，
 //       若 dispatch_log 行数 = 0 且 fact_store 行数 = 0 但仓库 commit 历史含 T1+ 任务，
@@ -1330,8 +1330,9 @@ function check17MemoryDbHealth() {
     return { name, pass: false, detail: '.kilo/memory/contracts/health_check.sql 缺失（v2.0 模块 contracts 层契约必须存在）' };
   }
 
-  // (b) 解析 kilo.json 中 sqlite MCP 路径
+  // (b) 确定 memory.db 路径
   let dbPath = null;
+  // 兼容旧配置：若 kilo.json 仍配置 mcp.sqlite，优先从其 command 数组解析 .db 路径
   const sqliteMcp = config && config.mcp && config.mcp.sqlite;
   if (sqliteMcp && Array.isArray(sqliteMcp.command)) {
     const arg = sqliteMcp.command.find((a) => typeof a === 'string' && /\.db$/.test(a));
@@ -1340,8 +1341,17 @@ function check17MemoryDbHealth() {
       dbPath = arg.replace(/\$\{HOME\}/g, process.env.HOME || process.env.USERPROFILE || '');
     }
   }
+  // v2.5-过渡版：sqlite MCP 已移除（第三方实现内存爆炸），改用默认路径兜底
+  // 主通道 = bash + sqlite3 CLI；check17 仍需独立校验 memory.db 健康度
   if (!dbPath) {
-    return { name, pass: true, detail: 'kilo.json 未配置 sqlite MCP，跳过健康度校验' };
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    if (home) {
+      dbPath = path.join(home, '.config', 'kilo-data', 'memory.db');
+    }
+  }
+  // 极端环境：HOME/USERPROFILE 均无法确定时才跳过
+  if (!dbPath) {
+    return { name, pass: true, detail: '无法确定 HOME/USERPROFILE 目录，跳过健康度校验' };
   }
 
   // (c) 检查文件存在与表结构
