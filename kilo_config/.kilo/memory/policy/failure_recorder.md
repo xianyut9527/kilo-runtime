@@ -2,15 +2,21 @@
 
 > **模块位置**：`.kilo/memory/policy/failure_recorder.md`（业务规则唯一源）
 > **模块架构**：本文件由 `.kilo/memory/` 模块统一管理，schema 见 `../schema/init.sql`
-> **版本**：v2.4 增加 scope / project_name 列（与 fact_store 对齐，#15 跨项目隔离）；v2.3 起 failure_db 维护 FTS5 虚表
+> **版本**：v2.6 降低写入门槛（checker 首轮 FAIL 即记录）；v2.4 增加 scope / project_name 列（与 fact_store 对齐，#15 跨项目隔离）+ failure_fts FTS5 虚表（v2.6 分词器 trigram）
 > **职责**：定义 failure_db 的写入条件与模板
 
 ## 写入条件
 
 满足任一：
+- **checker 任意轮 FAIL（findings_count ≥ 1）**（v2.6 新增，降门槛：v2.4/v2.5 期间 failure_db 恒为 0 行，
+  失败模式从未沉淀。轻量记录 verified=0；fixer/checker 复验通过后按 §状态更新 置 verified=1 + resolved_at）
 - fixer 连续 2 轮同症状
 - Circuit Breaker 触发
 - 用户反馈"还是有问题/不对/遗漏"
+
+> v2.6 降门槛说明：原条件（fixer ≥2 轮 / Circuit Breaker / 用户返工）过于靠后，导致大量「checker 首轮 FAIL
+> 即被 engineer 直修」的真实失败模式流失。首轮 FAIL 即记录可使 failure_db 成为 M2 回溯的真实数据源；
+> 仍禁止写入项目特定代码与敏感信息（见 §禁止事项）。
 
 ## 写入模板
 
@@ -71,11 +77,11 @@ SELECT * FROM v_failure_patterns WHERE occurrence >= 2;
 
 **写入决策**：与 fact 一致 — 用户标记 `[scope=project]` / 经验含项目专属代码 → `'project'`，否则 `'global'`。
 
-## v2.3 FTS5 全文检索（#5 镜像）
+## FTS5 全文检索（#5 镜像；v2.6 trigram 分词）
 
-`failure_db` 与 `fact_store` 同步维护 FTS5 虚表（`failure_fts`）。M2 失败回溯 query 由 `LIKE` 改为 `MATCH`，效率 +++。
+`failure_db` 与 `fact_store` 同步维护 FTS5 虚表（`failure_fts`）。M2 失败回溯 query 由 `LIKE` 改为 `MATCH`，效率 +++。v2.6 起分词器为 trigram（中文 ≥3 字符子串可 MATCH；2 字中文词需扩展为 ≥3 字词组或退化 LIKE）。
 
-详见 `policy/query_strategy.md` §3 失败/回溯查询 + `api/migrate_add_failure_scope_and_fts.sql`。
+详见 `policy/query_strategy.md` §3 失败/回溯查询 + `api/migrate_failure_scope_and_fts.sql`（v2.4 列+虚表迁移）+ `api/migrate_fts_trigram.sql`（v2.6 分词器重建）。
 
 ## 相关策略
 

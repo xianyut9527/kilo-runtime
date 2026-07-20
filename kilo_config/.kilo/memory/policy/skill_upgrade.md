@@ -143,6 +143,29 @@ WHERE fact_id = ?;
 >
 > **V2 阶段（opt-in）**：详见下方「V2 算法」章节。需要环境变量 `KILO_SKILL_UPGRADE_V2=true` 启用；不设置则行为完全等同 V1。
 
+## 人工审批决策规则（v2.6 成文，what/how 边界）
+
+条件 A/B/C 只负责「达到阈值」，审批必须额外执行**边界判定**（来源：`patterns/SKILL.md` §pattern vs skill 边界）：
+
+| 判定 | 含义 | 审批结论 | fact_store 处置 |
+|---|---|---|---|
+| **how 类**（步骤 / 流程 / 模板 / 方法论） | 程序性知识，适合固化为 SKILL.md | `MANUAL_PROMOTED` → 按 §Skill 文件生成规则落盘 | `archived=1`，evidence 追加 `promoted-to-skill:<name>-<date>` |
+| **what 类**（具体反模式 / 具体模式 / 环境陷阱） | 陈述性经验，skill 化会重造 v2.1 已废除的 md 双源 | `REJECTED`（附边界理由） | **保持 active**（archived=0），继续走 M1 注入 / M6 回路 |
+| **已被现有 skill 覆盖** | 内容已由某 SKILL.md 完整承载 | `MANUAL_PROMOTED`（指向既有 skill，不新建文件） | `archived=1`，evidence 指向既有 skill 名 |
+
+**v2.6 审批先例（2026-07-20，首批 4 条 DRAFT 终审）**：
+
+| fact_id | 结论 | 理由 |
+|---|---|---|
+| AP-014（逐页补丁式修复） | `MANUAL_PROMOTED` → 既有 skill `component-driven-fixes` | 内容已被该 skill + AGENTS.md 锚点 11 硬门全覆盖，无需新建文件 |
+| AP-001（Edit BOM 污染） | `REJECTED` | what 类环境陷阱，常驻 fact_store 走注入流 |
+| AP-005（PS 5.1 GBK 编码） | `REJECTED` | what 类环境陷阱，同上 |
+| PAT-001（关联功能检查清单） | `REJECTED` | what 类检查清单条目，同上 |
+
+> REJECTED 不删除 fact、不影响其 confidence/hit_count 累积；`skill_upgrade_log` 行保留作审计。
+> `api/migrate_skill_upgrade_log.sql` 的 DRAFT 回填以 `upgrade_id = fact_id + '-DRAFT'` 为主键幂等，
+> 已终审（REJECTED/PROMOTED）的 fact 不会因重跑迁移脚本而重新生成 DRAFT。
+
 ## V2 算法（v2.3 / #3，opt-in）
 
 ### 触发条件

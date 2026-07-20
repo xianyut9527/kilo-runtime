@@ -8,7 +8,7 @@
 
 首次启动或 `${HOME}/.config/kilo-data/memory.db` 不存在时。
 
-## 4 步初始化 SOP
+## 6 步初始化 SOP
 
 ### 1. 确保数据目录存在
 
@@ -46,7 +46,7 @@ Windows 若无 `sqlite3` CLI，通过 `winget install SQLite.SQLite` 或 `choco 
 SELECT name FROM sqlite_master WHERE type='table';
 ```
 
-应至少返回：`fact_store`、`failure_db`、`dispatch_log`、`project_context`、`model_calibration`。
+应至少返回 7 张表：`fact_store`、`failure_db`、`dispatch_log`、`project_context`、`model_calibration`、`skill_upgrade_log`、`skill_usage_events`（外加 2 张 FTS5 虚表 `fact_fts` / `failure_fts`）。
 
 ### 4. 初始化 model_calibration 基线数据（可选）
 
@@ -77,6 +77,18 @@ sqlite3 "${HOME}/.config/kilo-data/memory.db" < .kilo/memory/api/seed_project_co
 
 新部署（首次 `schema/init.sql`）已包含 v2.3 所有 DDL + 8 条种子，无需跑 6.x 迁移。
 
+### 7. v2.4/v2.5 → v2.6 FTS5 分词器迁移（升级场景）
+
+v2.6 将 `fact_fts` / `failure_fts` 分词器从 unicode61 更换为 trigram（修复中文 MATCH 0 命中缺陷）：
+
+| 步骤 | 迁移脚本 | 影响 |
+|---|---|---|
+| 7.1 | `api/migrate_fts_trigram.sql` | 重建 2 张 FTS5 虚表（trigram）+ 6 个触发器 + 全量 rebuild |
+
+新部署（首次 `schema/init.sql`）已直接创建 trigram 虚表，无需跑 7.1。迁移后验证：
+`SELECT COUNT(*) FROM fact_fts WHERE fact_fts MATCH '"解析失败"';` 应 ≥1（unicode61 下为 0）。
+注意：trigram 的 MATCH 查询词必须 ≥3 字符（详见 `query_strategy.md` §1 query B 注释）。
+
 ## 失败处理
 
 | 错误 | 原因 | 修复 |
@@ -84,13 +96,16 @@ sqlite3 "${HOME}/.config/kilo-data/memory.db" < .kilo/memory/api/seed_project_co
 | `sqlite3: 命令未找到` / `不是内部或外部命令` | sqlite3 CLI 未安装 | `winget install SQLite.SQLite` 或 `choco install sqlite`；临时降级用 Node 22 `node:sqlite` 脚本 |
 | 首次执行报"无法打开数据库文件" | 目录不存在 | 执行步骤 1 |
 | `no such table: fact_store` | 未执行 schema | 执行步骤 2 |
-| 6 表任一缺失（v2.3） | init.sql 不完整 | 检查 `schema/init.sql`，重新执行 |
+| 7 表任一缺失（v2.6） | init.sql 不完整 | 检查 `schema/init.sql`，重新执行 |
 | `sample_count = 0` 除零 | 未插基线 | 执行步骤 4 |
 | check17 `REQUIRED_TABLES_MISSING`（v2.3，actual=5） | v2.2 → v2.3 升级未跑 6.4 | 执行 `api/migrate_skill_upgrade_log.sql`（含 CREATE TABLE IF NOT EXISTS） |
 | check17 `FACT_STORE_SCOPE_COLUMN_PRESENT` fail | v2.2 → v2.3 升级未跑 6.1 | 执行 `api/migrate_add_scope_column.sql` |
 | check17 `PROJECT_CONTEXT_SEEDED` fail | 项目级 DB 首次部署但种子未应用 | 执行 `api/seed_project_context.sql` |
 | check17 `TRIAL_EXPIRED_PENDING` fail | 14 天过期 trial 未归档 | 执行 `api/trial_archive.sql` |
 | check17 `COMPENSATION_PROMPT_STALE` fail | model_calibration 设置补偿 prompt 后 30 天未消费 | 人工 review 失修 prompt；可考虑清除 |
+| check17 `FEEDBACK_LOOP_IDLE` warn（v2.6，soft） | dispatch ≥5 但全库 helpful/misleading 反馈 = 0 → M6 Stage 3 从未执行 | 确认 T1+ 收尾 M6 节点输出 `[memory:helpful=...]` 标记（无反馈显式 none），详见 `m6_validation.md` §3 Stage 3 |
+| check17 `CONTEXT_USE_COUNT_STALE` warn（v2.6，soft） | dispatch ≥5 但 project_context use_count 总和 = 0 → M1 query A' UPDATE 从未执行 | 确认 M1 注入后执行 query A' UPDATE，详见 `query_strategy.md` §1 A' 硬门 |
+| FTS5 中文 MATCH 恒 0 命中（v2.6 前部署） | 虚表为 unicode61 分词（连续 CJK 视为单 token） | 执行 `api/migrate_fts_trigram.sql` 重建为 trigram |
 
 ## 模块完整性
 

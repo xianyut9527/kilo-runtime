@@ -10,7 +10,8 @@
 -- 幂等性：CREATE VIRTUAL TABLE IF NOT EXISTS / CREATE TRIGGER IF NOT EXISTS 可重跑
 --
 -- 内容：
---   1. fact_fts 虚表（FTS5 全文索引；tokenize='unicode61'）
+--   1. fact_fts 虚表（FTS5 全文索引；v2.6 起 tokenize='trigram'，修复中文 MATCH；
+--      已部署 unicode61 的 DB 请改用 api/migrate_fts_trigram.sql 重建）
 --   2. 3 个触发器（ai / ad / au）维持虚表与源表同步
 --   3. 回填：INSERT 已有 fact 到 fact_fts（触发器只对新 INSERT 生效）
 -- 业务规则：policy/query_strategy.md §1 query B MATCH 语法
@@ -24,7 +25,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fact_fts USING fts5(
     condition,
     tags,
     content='fact_store',
-    tokenize='unicode61'
+    tokenize='trigram'
 );
 
 -- 2. FTS5 同步触发器

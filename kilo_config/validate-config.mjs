@@ -2,23 +2,24 @@
 // validate-config.mjs
 // kilo_config 配置自检脚本（Node ESM，跨平台）
 // 校验项：
-//   [1/17] kilo.json JSON 合法性
-//   [2/17] agent 名单一致性
-//   [3/17] skills 分类一致性
-//   [4/17] agent 文件 frontmatter 合规性（含 color / hidden）
-//   [5/17] kilo.json prompt 中引用的文档路径存在性
-//   [6/17] README.md 目录树一致性
-//   [7/17] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
-//   [8/17] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
-//   [9/17] coderAgent prompt 锚点关键词校验（防 compaction 误删）
-//   [10/17] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
-//   [11/17] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
-//   [12/17] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
-//   [13/17] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
-//   [14/17] 记忆模块完整性（.kilo/memory/ v2.4 边界：README + AGENTS + schema + contracts + api + 13 个 policy）
-//   [15/17] 全 repo 编码健康度扫描（BOM/U+FFFD/GBK，调用 scripts/scan-encoding.mjs）
-//   [16/17] kilo.json 占位符与 README 描述目录一致性（防双源漂移）
-//   [17/17] 全局 sqlite 记忆层健康度（memory.db 表/索引/视图 + 行数，契约 .kilo/memory/contracts/health_check.sql）
+//   [1/18] kilo.json JSON 合法性
+//   [2/18] agent 名单一致性
+//   [3/18] skills 分类一致性
+//   [4/18] agent 文件 frontmatter 合规性（含 color / hidden）
+//   [5/18] kilo.json prompt 中引用的文档路径存在性
+//   [6/18] README.md 目录树一致性
+//   [7/18] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
+//   [8/18] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
+//   [9/18] coderAgent prompt 锚点关键词校验（防 compaction 误删）
+//   [10/18] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
+//   [11/18] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
+//   [12/18] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
+//   [13/18] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
+//   [14/18] 记忆模块完整性（.kilo/memory/ v2.6 边界：README + AGENTS + schema + contracts + api + 11 个 policy）
+//   [15/18] 全 repo 编码健康度扫描（BOM/U+FFFD/GBK，调用 scripts/scan-encoding.mjs）
+//   [16/18] kilo.json 占位符与 README 描述目录一致性（防双源漂移）
+//   [17/18] 全局 sqlite 记忆层健康度（memory.db 表/索引/视图 + 行数，契约 .kilo/memory/contracts/health_check.sql）
+//   [18/18] agent.md ↔ instructions.md 跨文件漂移检测（v2.5.1）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -74,7 +75,7 @@ function check1KiloJson() {
 function check2Agents(config) {
   const name = 'agent 名单一致性';
   if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/14]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/18]）' };
   }
   const declared = new Set(Object.keys(config.agent));
   const agentDir = path.resolve(ROOT, 'agent');
@@ -386,10 +387,10 @@ function expandBraces(s) {
 function check5PromptPaths(config) {
   const name = 'kilo.json prompt 引用文档存在性';
   if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/14]）' };
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/18]）' };
   }
   if (!config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/14]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/18]）' };
   }
 
   // 匹配 `agent/<...>.md` 与 `.kilo/instructions/<...>.md`。
@@ -697,10 +698,10 @@ function jaccardSimilarity(a, b) {
 function check8PromptOverlap(config) {
   const name = 'prompt 与 agent.md 过度文本重复检测';
   if (!config || typeof config !== 'object') {
-    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/14]）' };
+    return { name, pass: false, detail: 'kilo.json 不可用（依赖 [1/18]）' };
   }
   if (!config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/14]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/18]）' };
   }
 
   const SIMILARITY_THRESHOLD = 0.30; // > 30% 视为过度重复
@@ -796,7 +797,7 @@ const CODER_AGENT_ANCHORS = [
 function check9CoderAgentAnchors(config) {
   const name = 'coderAgent prompt 锚点关键词校验';
   if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/14]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/18]）' };
   }
   const coderAgent = config.agent.coderAgent;
   if (!coderAgent || typeof coderAgent !== 'object' || typeof coderAgent.prompt !== 'string') {
@@ -1070,7 +1071,7 @@ function check13HermesInstallExcludeSync() {
 // 验证：模块入口文件 + DDL + 关键 policy 全部存在；模块根目录不可缺失
 // v2.5：sqlite 唯一记忆 — 禁止 .kilo/memory/skill-usage.log 存在（必须迁移至 skill_usage_events 表）
 function check14MemoryEnabled(config) {
-  const name = '记忆模块完整性（.kilo/memory/ v2.5 边界）';
+  const name = '记忆模块完整性（.kilo/memory/ v2.6 边界）';
   const required = [
     '.kilo/memory/README.md',
     '.kilo/memory/AGENTS.md',
@@ -1406,7 +1407,22 @@ function check17MemoryDbHealth() {
         .split(/\r?\n/)
         .filter((l) => l.includes('|'))
         .map((l) => l.split('|'));
-      const failed = rows.filter((r) => r[1] === 'fail');
+      // v2.3/v2.4/v2.5/v2.6 soft-warn 检查名单：fail 仅入 warnings[]，不阻断交付
+      // （必须先于 hard-fail 过滤声明，否则 soft-warn 会被误判为契约失败）
+      const softWarnChecks = [
+        'PROJECT_CONTEXT_SEEDED',
+        'TRIAL_EXPIRED_PENDING',
+        'FACT_ID_REFERENCED_INTACT',
+        'FACT_STORE_SCOPE_COLUMN_PRESENT',
+        'COMPENSATION_PROMPT_STALE',
+        'FTS5_VIRTUAL_TABLES_PRESENT',
+        'FACT_STORE_HELPFUL_COLUMNS_PRESENT',
+        'PROJECT_CONTEXT_USE_COLUMNS_PRESENT',
+        'SKILL_USAGE_EVENTS_TABLE_PRESENT',
+        'FEEDBACK_LOOP_IDLE',
+        'CONTEXT_USE_COUNT_STALE',
+      ];
+      const failed = rows.filter((r) => r[1] === 'fail' && !softWarnChecks.includes(r[0]));
       if (failed.length > 0) {
         return {
           name,
@@ -1430,23 +1446,10 @@ function check17MemoryDbHealth() {
           { encoding: 'utf8', timeout: 5000 }
         );
         tableRows.__migratedFacts = parseInt(mig.trim(), 10) || 0;
-        // v2.3 soft-warn：消费契约文件中的 6 项新检查（PROJECT_CONTEXT_SEEDED / TRIAL_EXPIRED_PENDING /
-        //                FACT_ID_REFERENCED_INTACT / FACT_STORE_SCOPE_COLUMN_PRESENT /
-        //                COMPENSATION_PROMPT_STALE + PROJECT_CONTEXT_EMPTY 由 better-sqlite3 路径处理）
-        // v2.4 扩展：FTS5_VIRTUAL_TABLES_PRESENT / FACT_STORE_HELPFUL_COLUMNS_PRESENT /
-        //            PROJECT_CONTEXT_USE_COLUMNS_PRESENT
-        // v2.5 扩展：SKILL_USAGE_EVENTS_TABLE_PRESENT（替代 .log md 累积）
-        const softWarnChecks = [
-          'PROJECT_CONTEXT_SEEDED',
-          'TRIAL_EXPIRED_PENDING',
-          'FACT_ID_REFERENCED_INTACT',
-          'FACT_STORE_SCOPE_COLUMN_PRESENT',
-          'COMPENSATION_PROMPT_STALE',
-          'FTS5_VIRTUAL_TABLES_PRESENT',
-          'FACT_STORE_HELPFUL_COLUMNS_PRESENT',
-          'PROJECT_CONTEXT_USE_COLUMNS_PRESENT',
-          'SKILL_USAGE_EVENTS_TABLE_PRESENT',
-        ];
+        // soft-warn：名单见上方 softWarnChecks 声明（v2.6 起提前至 hard-fail 过滤之前，
+        //            修复 soft-warn 被死代码误判为硬 FAIL 的问题）
+        // v2.6 扩展：FEEDBACK_LOOP_IDLE（M6 Stage 3 反馈回路空转）/
+        //            CONTEXT_USE_COUNT_STALE（M1 query A' use_count UPDATE 空转）
         for (const name of softWarnChecks) {
           const r = rows.find((row) => row[0] === name);
           if (r && r[1] === 'fail') {
@@ -1540,7 +1543,7 @@ function check17MemoryDbHealth() {
     };
   }
 
-  return { name, pass: true, detail: `memory.db 表结构齐全（6 表存在，CLI 模式不统计行数）` };
+  return { name, pass: true, detail: `memory.db 表结构齐全（7 表存在，CLI 模式不统计行数）` };
 }
 
 // ---------- Check 18: agent.md ↔ instructions.md 跨文件漂移检测（v2.5.1） ----------

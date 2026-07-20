@@ -30,7 +30,7 @@ INSERT OR IGNORE INTO project_context (context_id, category, title, content, sou
  '["config","model","mcp","compaction","kilo-json"]', 0, NULL, '2026-07-19', '2026-07-19'),
 
 ('PC-003', 'CONSTRAINT', '强制 sqlite 优先 + md 兜底',
- '记忆系统采用全局 sqlite 优先（~/.config/kilo-data/memory.db，6 表 + 19 索引 + 2 视图 + 2 FTS5 虚表）+ 项目 md 兜底（MEMORY.md ≤ 2200 字符 + USER.md ≤ 1375 字符）。其他模块通过 bash 调用 sqlite3 CLI 与记忆交互（v2.5-过渡版主通道），禁止直接操作 memory.db 文件。',
+ '记忆系统采用全局 sqlite 优先（~/.config/kilo-data/memory.db，7 表 + 26 索引 + 4 视图 + 2 FTS5 虚表（trigram 分词，v2.6））+ 项目 md 兜底（MEMORY.md ≤ 1500 字符 + USER.md ≤ 1375 字符）。其他模块通过 bash 调用 sqlite3 CLI 与记忆交互（v2.5-过渡版主通道），禁止直接操作 memory.db 文件。',
  '.kilo/memory/README.md', 1,
  '["memory","sqlite","md-fallback","invariant"]', 0, NULL, '2026-07-19', '2026-07-19'),
 

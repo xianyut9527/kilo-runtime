@@ -9,12 +9,16 @@
 -- 使用方式（编程）:
 --   better-sqlite3 等只需按行解析本文件输出（行格式: <check_name>|<pass|fail>|<detail>）
 --
--- 版本：v2.5（在 v2.4 14 项基础上追加 2 项新检查 + 升级到 7 表）
+-- 版本：v2.6（共 16 项检查）
+--   v2.4：13 项（表/索引/视图/行数/CHECK 约束/种子/trial/bootstrap 完整性/scope 列/补偿 prompt 过期）
 --   v2.5 新增：
---     15. SKILL_USAGE_EVENTS_TABLE_PRESENT（#T1）：skill_usage_events 表存在（替代 .log md 累积）
---     16. LEGACY_SKILL_USAGE_LOG_ABSENT（#T1）：.kilo/memory/skill-usage.log 已删除
---     17. REQUIRED_TABLES_MISSING 检查升级到 7 表（+ skill_usage_events）
--- 所有新检查均为 soft-warn（pass/fail 都映射到 check17 的 warnings[]，不阻断交付）
+--     14. SKILL_USAGE_EVENTS_TABLE_PRESENT（#T1）：skill_usage_events 表存在（替代 .log md 累积）
+--         （LEGACY_SKILL_USAGE_LOG_ABSENT 为文件系统检查，SQL 无法表达，由 validate-config.mjs check14 实施）
+--   v2.6 新增：
+--     15. FEEDBACK_LOOP_IDLE：dispatch ≥5 但 fact_store 反馈事件（helpful+misleading）=0 → M6 Stage 3 未激活
+--     16. CONTEXT_USE_COUNT_STALE：dispatch ≥5 但 project_context use_count 总和=0 → M1 query A' UPDATE 未执行
+-- soft-warn 语义：第 6-16 项 fail 映射到 check17 warnings[]，不阻断交付（依赖 validate-config.mjs
+-- softWarnChecks 名单；仅 1-5 项结构性检查 fail 为硬 FAIL）
 
 .headers off
 .mode list
@@ -176,3 +180,27 @@ SELECT 'SKILL_USAGE_EVENTS_TABLE_PRESENT' AS check_name,
                   WHERE type='table' AND name='skill_usage_events') = 1
             THEN 'pass' ELSE 'fail' END AS status,
        'present=' || (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_usage_events') || '/1' AS detail;
+
+-- ============================================================
+-- 15. v2.6 / R1：M6 helpful/misleading 反馈回路空转告警（soft-warn）
+--     dispatch_log ≥5（已有足够任务量）但反馈事件总数 = 0 → M6 Stage 3 从未执行
+-- ============================================================
+SELECT 'FEEDBACK_LOOP_IDLE' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM dispatch_log) < 5
+              OR (SELECT COALESCE(SUM(helpful_count),0) + COALESCE(SUM(misleading_count),0) FROM fact_store) > 0
+            THEN 'pass' ELSE 'fail' END AS status,
+       'dispatch_log=' || (SELECT COUNT(*) FROM dispatch_log) ||
+       ',feedback_events=' || (SELECT COALESCE(SUM(helpful_count),0) + COALESCE(SUM(misleading_count),0) FROM fact_store) ||
+       '（>0 或 dispatch<5 即 pass）' AS detail;
+
+-- ============================================================
+-- 16. v2.6 / R2：project_context use_count 回路空转告警（soft-warn）
+--     dispatch_log ≥5 但 use_count 总和 = 0 → M1 query A' UPDATE 从未执行
+-- ============================================================
+SELECT 'CONTEXT_USE_COUNT_STALE' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM dispatch_log) < 5
+              OR (SELECT COALESCE(SUM(use_count),0) FROM project_context) > 0
+            THEN 'pass' ELSE 'fail' END AS status,
+       'dispatch_log=' || (SELECT COUNT(*) FROM dispatch_log) ||
+       ',context_use_total=' || (SELECT COALESCE(SUM(use_count),0) FROM project_context) ||
+       '（>0 或 dispatch<5 即 pass）' AS detail;

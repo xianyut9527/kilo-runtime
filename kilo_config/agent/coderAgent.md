@@ -77,16 +77,16 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 ## 记忆节点日志（M1-M8）
 | 节点 | 触发时机 | 操作 | 结果 | 备注 |
 |------|----------|------|------|------|
-| M1: 任务上下文注入 | 任务开始 | 🔍 SELECT 4 表 | ✅ fact_store=N / failure_db=M / model_calibration=K / project_context=P | token=X/2000 |
+| M1: 任务上下文注入 | 任务开始 | 🔍 SELECT 4 表 + 🔄 UPDATE use_count（A'，v2.6 硬门） | ✅ fact_store=N / failure_db=M / model_calibration=K / project_context=P + A' UPDATE 证据 | token=X/2000 |
 | M2: 失败回溯 | [触发条件] | 🔍 SELECT failure_db + fact_store | ✅ 命中 [id 列表] 或 ⏭️ 未触发 | 应用方案 |
 | M3: 经验引用 | 任务执行中 | 嵌入 `[memory:xxx_id=X]` | ✅ 引用 N 条 / ⏭️ 未引用 | 喂给 M6 |
 | M4: fact_store 去重 | [发现新模式] | 🔍 去重 + 📝 INSERT / 🔄 UPDATE | ✅ fact_id + action / ⏭️ 未触发 | AntiPattern conf=0.5 / Pattern conf=0.6；v2.3 新增 scope / project_name 列 |
-| M5: failure_db 写入 | [失败/fixer 多轮] | 📝 INSERT failure_db | ✅ failure_id + root_cause / ⏭️ 未触发 | 同症状复发 +1 |
-| M6: hit_count 自增 | 任务收尾 | 🔄 UPDATE fact_store hit_count+1 | ✅ [id 列表] 命中数+1 | 提取自 M3 标记；v2.3 新增 Stage 1 校验（orphan 警告） |
+| M5: failure_db 写入 | [checker FAIL / 失败 / fixer 多轮] | 📝 INSERT failure_db | ✅ failure_id + root_cause / ⏭️ 未触发 | v2.6 降门槛：checker 首轮 FAIL 即记录；同症状复发 +1 |
+| M6: hit_count 自增 + helpful_rate 反馈 | 任务收尾 | 🔄 UPDATE fact_store（Stage 1/2/3） | ✅ [id 列表] 命中数+1 + helpful/misleading 标记 | 提取自 M3 标记；v2.6 Stage 3 强制（无反馈显式 `[memory:helpful=none]`） |
 | M7: dispatch_log 写入 | 任务收尾 | 📝 INSERT dispatch_log | ✅ dispatch_id + tier + review_mode | T1+ 必走；v2.3 新增 compensation_prompt_used / compensation_calibration_id 列 |
 | M8: model_calibration 更新 | dispatch 后 | 🔄 UPDATE model_calibration | ✅ model + success_rate 变化 | DONE=1.0 / FAILED=0.0；v2.3 新增 compensation_prompt_consumed_count 列 |
 
-**v2.3 M1 增强（#1 / #7）**：M1 阶段除注入 fact_store / failure_db / model_calibration 外，新增 `project_context` 注入（priority ≤ 5，按 priority ASC + updated_at DESC 排序，LIMIT 5）。同时 M1 阶段执行 M-001 动态注入（`policy/query_strategy.md` §M-001 动态注入规范）：从 fact_store 取 top-2 ANTIPATTERN by hit_count，渲染为 `[memory:fact_id={fact1},{fact2}]` 标记替换 MEMORY.md 中 `<DYNAMIC_INJECT>` 占位符。
+**v2.3 M1 增强（#1 / #7）**：M1 阶段除注入 fact_store / failure_db / model_calibration 外，新增 `project_context` 注入（priority ≤ 5，按 priority ASC + use_count DESC（v2.4）+ updated_at DESC 排序，LIMIT 5；v2.6 起 A' use_count UPDATE 为硬门）。同时 M1 阶段执行 M-001 动态注入（`policy/query_strategy.md` §M-001 动态注入规范）：从 fact_store 取 top-2 ANTIPATTERN by hit_count，渲染为 `[memory:fact_id={fact1},{fact2}]` 标记替换 MEMORY.md 中 `<DYNAMIC_INJECT>` 占位符。
 
 **v2.3 M6 增强（#4）**：M6 UPDATE 前必须执行 Stage 1 SELECT 校验（详见 `policy/m6_validation.md`）。orphan fact_id 输出 `[M6_ORPHAN_REFERENCE]` 警告并从 UPDATE 列表移除。
 
@@ -116,7 +116,8 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 
 ### 输出规则
 
-- **必出节点**：M1（任务开始）+ M6/M7/M8（任务收尾 T1+），其他按需
+- **必出节点**：M1（任务开始，含 A' UPDATE 证据）+ M6/M7/M8（任务收尾 T1+），其他按需
+- **M6 反馈强制（v2.6）**：T1+ 收尾 M6 必须输出 `[memory:helpful=...]` / `[memory:misleading=...]` 标记；无反馈显式输出 `[memory:helpful=none]`，禁止静默省略（缺失视为 M6 未完成 → `[MISSING_MEMORY_WRITE]`）
 - **状态图标**：🔍 query / 📝 write / 🔄 update / ✅ success / ⚠️ partial / ❌ failure / ⏭️ skipped
 - **结果列必含 ID**：如 `fact_id=M-001` / `failure_id=F-003` / `dispatch_id=disp-xxx`
 - **T0 任务**：仅 M1 + ⏭️ 标记（其他节点跳过）

@@ -21,13 +21,19 @@
 
 ## 2. 注入流
 
-`policy/query_strategy.md` §1 query A 注入：
+`policy/query_strategy.md` §1 query A 注入（v2.4 起含 use_count 动态排序；v2.6 起 A' UPDATE 为硬门）：
 
 ```sql
-SELECT context_id, title, content, priority, tags FROM project_context
+SELECT context_id, title, content, priority, tags, use_count, last_used_at
+FROM project_context
 WHERE category IN ('ARCHITECTURE', 'CONSTRAINT') AND priority <= 5
-ORDER BY priority ASC, updated_at DESC
+ORDER BY priority ASC, use_count DESC, updated_at DESC
 LIMIT 5;
+
+-- A'. 注入完成后立即 UPDATE（v2.6 硬门，禁止跳过）
+UPDATE project_context
+SET use_count = use_count + 1, last_used_at = datetime('now')
+WHERE context_id IN (...);
 ```
 
 priority ≤ 5 的项全部注入。8 条种子全部命中（priority 范围 1-4）。

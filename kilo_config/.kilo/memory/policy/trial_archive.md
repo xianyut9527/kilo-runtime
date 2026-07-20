@@ -67,7 +67,7 @@ Kilo 启动时调用 `api/trial_archive.sql`；建议加 24h 节流（同 1 天�
 
 ### 推荐路径 3：M7 dispatch 收尾 advisory
 
-`policy/dispatch_recorder.md` §5 推荐在 M7 INSERT 完成后调用 trial_archive SQL，**advisory（不阻塞）**。理由：每次任务收尾顺手清理，trial 行积累量始终很小。
+`policy/dispatch_recorder.md` §v2.3 trial 归档 advisory 推荐在 M7 INSERT 完成后调用 trial_archive SQL，**advisory（不阻塞）**。理由：每次任务收尾顺手清理，trial 行积累量始终很小。
 
 ## 4. check17 健康度
 

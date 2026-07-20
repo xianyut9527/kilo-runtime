@@ -22,9 +22,11 @@
 5. **验收必附映射表 + 已读取文件清单**：缺则 `[MISSING_ACCEPTANCE_MAP]` / `[FAKE_CONTEXT]` FAIL。
 6. **SCOPE_CREEP**：checker L2 反向核对 diff，命中即 FAIL。
 7. **自验无效**：智能体不得以自身验证替代 checker 客观验证。
-8. **memory / skills / 自进化合规**：`.kilo/memory/` 模块（v2.2）由该目录内 README.md / AGENTS.md / policy/*.md 统一管理，coderAgent **按模块入口按需注入**，不硬编码规则。
+8. **memory / skills / 自进化合规**：`.kilo/memory/` 模块（v2.6）由该目录内 README.md / AGENTS.md / policy/*.md 统一管理，coderAgent **按模块入口按需注入**，不硬编码规则。
    - 模块入口：`.kilo/memory/README.md`（公共 API 文档）
    - 模块对 agent 入口：`.kilo/memory/AGENTS.md`（运行时注入）
+   - 主通道：bash + `sqlite3` CLI 直连 `${HOME}/.config/kilo-data/memory.db`（命令模板见 `.kilo/memory/policy/bash_sqlite_template.md`）；备用通道 `memory-mcp`（v3.0）已在 kilo.json 预埋 `enabled:false`，启用前须 `node test.js` + `node test-stability.js` 双绿
+   - skill 使用频次写入 SQLite `skill_usage_events` 表，禁止 md append（v2.5 铁律）
    - 兼容策略文件：`.kilo/memory/memory-strategy.md`（保留为指针文件，便于 `strategy: "memory-strategy.md"` 仍可命中）
    - skills 的加载由 `skill` 工具触发（按需），不受本条约束。AGENTS.md 回写与经验回写（经闭环验证）不受影响。
 9. **流程违规即停**：发现跳步立即标 `[PROCESS_VIOLATION]` 并暂停。

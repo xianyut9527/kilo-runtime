@@ -1,8 +1,8 @@
-# M6 标记前置校验规范（v2.4 / #4 + #13）
+# M6 标记前置校验规范（v2.4 / #4 + #13；v2.6 Stage 3 强制化）
 
 > **模块位置**：`.kilo/memory/policy/m6_validation.md`
-> **职责**：定义 v2.2 `[memory:referenced_fact_ids=... not_injected=true]` 标记的前置校验（#4）+ v2.4 helpful/misleading 反馈流程（#13），防止 typo / fact_id 失效导致 hit_count 静默 no-op，并支持反向校准 confidence
-> **关联节点**：M6 hit_count 自增回路（`policy/query_strategy.md` §4）+ M6 helpful_rate 反馈（§M6 helpful_rate 反馈流程）
+> **职责**：定义 v2.2 `[memory:referenced_fact_ids=... not_injected=true]` 标记的前置校验（#4）+ v2.4 helpful/misleading 反馈流程（#13，v2.6 起 Stage 3 强制输出），防止 typo / fact_id 失效导致 hit_count 静默 no-op，并支持反向校准 confidence
+> **关联节点**：M6 hit_count 自增回路（`policy/query_strategy.md` §4）+ M6 helpful_rate 反馈（`policy/query_strategy.md` §M6 helpful_rate 反馈流程）
 
 ## 1. 背景
 
@@ -52,6 +52,52 @@ SET hit_count = hit_count + 1,
 WHERE fact_id IN (?, ?, ?, ...);  -- 仅含 Stage 1 命中项
 ```
 
+### Stage 3: helpful/misleading 反馈处理（v2.4 / #13；**v2.6 起强制**）
+
+> **v2.6 变更**：Stage 3 从「可输出」升级为「T1+ 任务必输出」。无反馈时必须显式输出
+> `[memory:helpful=none]`（禁止静默省略），否则视为 M6 未完成 → `[MISSING_MEMORY_WRITE]`。
+> 强制化理由：v2.4/v2.5 期间全库 helpful_count/misleading_count 恒为 0，helpful_rate 质量门形同虚设
+> （健康度证据：`contracts/health_check.sql` §15 FEEDBACK_LOOP_IDLE）。
+
+**反馈标记格式**：
+
+```
+[memory:helpful=A,B,C]      ← 本次 dispatch 中有价值的 fact
+[memory:misleading=X,Y]     ← 本次 dispatch 中误导/不适用的 fact
+[memory:helpful=none]       ← 无反馈时的显式空标记（v2.6 起强制兜底）
+```
+
+**反馈 id 校验**：helpful/misleading 列表中的 fact_id 与 Stage 1 共用同一次 SELECT 校验
+（`WHERE fact_id IN (...) AND archived = 0`）；orphan id 输出 `[M6_ORPHAN_REFERENCE]` 并从反馈 UPDATE 移除。
+
+**反馈 UPDATE**（含 v2.4 confidence 综合校准公式落地：helpful +0.02 / misleading −0.05）：
+
+```sql
+-- helpful：helpful_count+1，重算 helpful_rate，confidence +0.02（封顶 0.95）
+UPDATE fact_store
+SET helpful_count = helpful_count + 1,
+    helpful_rate = CAST(helpful_count + 1 AS REAL) / (helpful_count + 1 + misleading_count),
+    confidence = MIN(0.95, confidence + 0.02),
+    updated_at = datetime('now')
+WHERE fact_id IN (:helpful_fact_ids);
+
+-- misleading：misleading_count+1，重算 helpful_rate，confidence −0.05（保底 0.1）
+UPDATE fact_store
+SET misleading_count = misleading_count + 1,
+    helpful_rate = CAST(helpful_count AS REAL) / (helpful_count + misleading_count + 1),
+    confidence = MAX(0.1, confidence - 0.05),
+    updated_at = datetime('now')
+WHERE fact_id IN (:misleading_fact_ids);
+```
+
+**与 Stage 2 的叠加关系（设计意图）**：hit_count 自增（使用频次）与 helpful/misleading（质量反馈）是
+独立双通道，同一 fact 同轮可同时命中两者（如被引用且被标 helpful → confidence 合计 +0.04）。
+同一 fact 同轮同时出现在 helpful 与 misleading → 两条 UPDATE 依次生效（净 confidence −0.03），
+并在 M6 节点日志输出 ⚠️ 备注（语义矛盾，建议下次只标其一）。
+
+**结果落盘**：反馈的 fact_id 列表随 M7 写入 `dispatch_log.helpful_fact_ids / misleading_fact_ids`
+（详见 `policy/dispatch_recorder.md` §v2.4 M7 反馈字段写入规则）。
+
 ## 4. 边界场景
 
 | 场景 | 行为 |
@@ -91,7 +137,8 @@ M6 hit_count 自增 | 🔄 UPDATE fact_store
 
 该检查为被动防御（防误删），主动防御由 Stage 1 完成。
 
-v2.4 helpful_rate 反馈无对应硬检查（运行时聚合，仅在 M1 注入门槛处生效）。
+v2.6 起 helpful_rate 反馈有对应 soft-warn 检查：`contracts/health_check.sql` §15 `FEEDBACK_LOOP_IDLE`
+（dispatch_log ≥5 但全库反馈事件 = 0 → Stage 3 从未激活，映射 check17 warnings[]，不阻断交付）。
 
 ## 8. 相关文件
 

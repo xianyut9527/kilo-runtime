@@ -161,6 +161,11 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     if (Test-Path $KiloJsonPath) {
         $JsonContent = Get-Content -Path $KiloJsonPath -Raw -Encoding UTF8
         $JsonContent = $JsonContent -replace '\$\{KILO_CONFIG_DIR\}', ($Target -replace '\\', '\\')
+        # memory-mcp 全局部署路径修正：上方替换后 memory-mcp 路径指向 .config/kilo/.kilo/...，
+        # 但 install 排除 node_modules（缺 @modelcontextprotocol/sdk），启用即失败；
+        # 全局统一指向 kilo-data 完整副本（含依赖，独立维护，22/22 functional PASS）
+        $McpGlobalPath = ($env:USERPROFILE -replace '\\', '/') + '/.config/kilo-data/memory-mcp/memory-mcp.js'
+        $JsonContent = $JsonContent -replace [regex]::Escape(($Target -replace '\\', '\\') + '/.kilo/memory/api/mcp/memory-mcp.js'), $McpGlobalPath
         # 注意：memory.db 路径使用 ${HOME}/.config/kilo-data/memory.db，由 bash + sqlite3 CLI 直接访问（v2.5-过渡版主通道），install 阶段不替换
         # 写回必须无 BOM：PS 5.1 Set-Content -Encoding UTF8 会写入 BOM，导致严格 JSON.parse 失败（AP-001）
         [System.IO.File]::WriteAllText($KiloJsonPath, $JsonContent, (New-Object System.Text.UTF8Encoding($false)))

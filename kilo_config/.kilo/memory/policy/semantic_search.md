@@ -2,12 +2,12 @@
 
 > **模块位置**：`.kilo/memory/policy/semantic_search.md`
 > **状态**：v4.0 接口规范（实现延期；本文档锁定接口契约以避免 schema 漂移）
-> **当前实现**：`LIKE '%keyword%'` 字符串模糊匹配（`policy/query_strategy.md` §1 query B）
+> **当前实现**：FTS5 `MATCH` 全文检索（v2.4 引入；v2.6 起 trigram 分词，中文 ≥3 字符子串可命中），见 `policy/query_strategy.md` §1 query B
 > **远期目标**：向量检索 + 跨项目语义匹配
 
 ## 1. 背景与动机
 
-当前 `fact_store` / `failure_db` 检索使用 `tags LIKE '%,%keyword%,%'` + `trigger LIKE '%keyword%'` 字符串匹配，存在 3 类问题：
+v2.0-v2.3 期间 `fact_store` / `failure_db` 检索使用 `tags LIKE '%,%keyword%,%'` + `trigger LIKE '%keyword%'` 字符串匹配，存在 3 类问题（v2.4 FTS5 化后部分缓解，语义等价问题仍在）：
 
 1. **语义等价盲区**：`"react 表单错误处理"` 与 `"React form validation"` 字符串不等价但语义同义
 2. **跨语言盲区**：中文触发场景（如「Windows 下 Edit 工具改 UTF-8 文件」）与英文 description 互不匹配

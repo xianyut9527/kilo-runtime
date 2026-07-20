@@ -12,7 +12,8 @@
 -- 新增列语义：
 --   - scope TEXT（'global'/'project'）：镜像 fact_store，跨项目隔离
 --   - project_name TEXT：scope='global' 时 NULL
--- FTS5 虚表：failure_fts（与 fact_fts 同构，tokenize='unicode61'）
+-- FTS5 虚表：failure_fts（与 fact_fts 同构；v2.6 起 tokenize='trigram'，修复中文 MATCH；
+--           已部署 unicode61 的 DB 请改用 api/migrate_fts_trigram.sql 重建）
 -- 触发器：failure_fts_ai / ad / au（自动维护 FTS 索引）
 -- 业务规则：policy/failure_recorder.md §v2.4；policy/query_strategy.md §3 MATCH 语法
 -- ============================================================
@@ -31,7 +32,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS failure_fts USING fts5(
     fix_location,
     tags,
     content='failure_db',
-    tokenize='unicode61'
+    tokenize='trigram'
 );
 
 -- 3. FTS5 同步触发器

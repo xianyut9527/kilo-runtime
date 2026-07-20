@@ -16,11 +16,14 @@
 -- 模块架构：本文件由 .kilo/memory/contracts/health_check.sql 验证完整性
 --            业务规则由 .kilo/memory/policy/*.md 定义（不在此处重复）
 --
--- 版本：v2.5（在 v2.4 基础上新增 1 表 + 删除 skill-usage.log md 累积）
+-- 版本：v2.6（在 v2.5 基础上 FTS5 分词器 unicode61 → trigram，修复中文 MATCH）
 --   v2.4：FTS5 / helpful_rate / failure_db scope / project_context use_count
 --   v2.5（新增）：
 --     - skill_usage_events 表（替代 .kilo/memory/skill-usage.log md 累积）
 --     - 强制 sqlite 唯一记忆原则：禁止 md 文件累积经验/日志
+--   v2.6（新增）：
+--     - fact_fts / failure_fts 分词器 trigram（中文 ≥3 字符子串可 MATCH；
+--       既有 DB 升级执行 api/migrate_fts_trigram.sql）
 --   v2.3：
 --     - skill_upgrade_log 表（#3）
 --     - fact_store.scope / fact_store.project_name 列（#5 跨项目隔离）
@@ -62,9 +65,11 @@ CREATE INDEX IF NOT EXISTS idx_fact_confidence ON fact_store(confidence DESC);
 CREATE INDEX IF NOT EXISTS idx_fact_scope ON fact_store(scope, project_name);  -- v2.3（#5）
 CREATE INDEX IF NOT EXISTS idx_fact_helpful_rate ON fact_store(helpful_rate DESC);  -- v2.4（#13）
 
--- 1b. fact_store FTS5 镜像（v2.4 / #5 全文检索效率）
+-- 1b. fact_store FTS5 镜像（v2.4 / #5 全文检索效率；v2.6 分词器 trigram）
 -- content=fact_store 让 FTS5 与源表同步；外部内容表（contentless=1）也可以但需手动同步触发器
 -- triggers 在 fact_dedup.md INSERT/UPDATE 时同步；详见 policy/query_strategy.md §1 query B MATCH 语法
+-- v2.6：tokenize='trigram'（unicode61 把连续 CJK 当单 token，中文 MATCH 0 命中；
+--       trigram 支持 ≥3 字符任意子串；2 字中文词需扩展为 ≥3 字词组或退化 LIKE）
 CREATE VIRTUAL TABLE IF NOT EXISTS fact_fts USING fts5(
     fact_id UNINDEXED,
     trigger,
@@ -72,7 +77,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fact_fts USING fts5(
     condition,
     tags,
     content='fact_store',
-    tokenize='unicode61'
+    tokenize='trigram'
 );
 
 -- 2. 失败案例库 (FailureDatabase)
@@ -98,7 +103,7 @@ CREATE INDEX IF NOT EXISTS idx_failure_tags ON failure_db(tags);
 CREATE INDEX IF NOT EXISTS idx_failure_level ON failure_db(root_cause_level);
 CREATE INDEX IF NOT EXISTS idx_failure_scope ON failure_db(scope, project_name);  -- v2.4（#15）
 
--- 2b. failure_db FTS5 镜像（v2.4 / #15 全文检索效率）
+-- 2b. failure_db FTS5 镜像（v2.4 / #15 全文检索效率；v2.6 分词器 trigram，同 fact_fts 注释）
 CREATE VIRTUAL TABLE IF NOT EXISTS failure_fts USING fts5(
     failure_id UNINDEXED,
     symptom,
@@ -106,7 +111,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS failure_fts USING fts5(
     fix_location,
     tags,
     content='failure_db',
-    tokenize='unicode61'
+    tokenize='trigram'
 );
 
 -- 3. 任务调度日志 (OrchestrationJournal)
@@ -163,9 +168,6 @@ CREATE TABLE IF NOT EXISTS project_context (
 CREATE INDEX IF NOT EXISTS idx_project_category ON project_context(category);
 CREATE INDEX IF NOT EXISTS idx_project_priority ON project_context(priority);
 CREATE INDEX IF NOT EXISTS idx_project_use_count ON project_context(use_count DESC);  -- v2.4（#2）
-
-CREATE INDEX IF NOT EXISTS idx_project_category ON project_context(category);
-CREATE INDEX IF NOT EXISTS idx_project_priority ON project_context(priority);
 
 -- 5. 模型校准记录 (QualityCalibrator)
 -- 随使用积累，指导模型路由
@@ -314,7 +316,7 @@ INSERT OR IGNORE INTO project_context (context_id, category, title, content, sou
  '["config","model","mcp","compaction","kilo-json"]', 0, NULL, '2026-07-19', '2026-07-19'),
 
 ('PC-003', 'CONSTRAINT', '强制 sqlite 优先 + md 兜底',
- '记忆系统采用全局 sqlite 优先（~/.config/kilo-data/memory.db，6 表 + 19 索引 + 2 视图 + 2 FTS5 虚表）+ 项目 md 兜底（MEMORY.md ≤ 2200 字符 + USER.md ≤ 1375 字符）。其他模块通过 bash 调用 sqlite3 CLI 与记忆交互（v2.5-过渡版主通道），禁止直接操作 memory.db 文件。',
+ '记忆系统采用全局 sqlite 优先（~/.config/kilo-data/memory.db，7 表 + 26 索引 + 4 视图 + 2 FTS5 虚表（trigram 分词，v2.6））+ 项目 md 兜底（MEMORY.md ≤ 1500 字符 + USER.md ≤ 1375 字符）。其他模块通过 bash 调用 sqlite3 CLI 与记忆交互（v2.5-过渡版主通道），禁止直接操作 memory.db 文件。',
  '.kilo/memory/README.md', 1,
  '["memory","sqlite","md-fallback","invariant"]', 0, NULL, '2026-07-19', '2026-07-19'),
 

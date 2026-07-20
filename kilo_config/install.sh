@@ -182,8 +182,11 @@ echo "Substituting kilo.json path placeholders..."
 # 注意：memory.db 路径使用 ${HOME}/.config/kilo-data/memory.db，由 bash + sqlite3 CLI 直接访问（v2.5-过渡版主通道），install 阶段不替换
 KILO_JSON_PATH="${TARGET_DIR}/kilo.json"
 if [ -f "${KILO_JSON_PATH}" ]; then
+    # memory-mcp 全局部署路径修正（同 install.ps1）：install 排除 node_modules，
+    # 替换后的 .config/kilo/.kilo/... 路径缺 SDK 依赖，统一指向 kilo-data 完整副本
     sed -i.bak \
         -e "s|\${KILO_CONFIG_DIR}|${TARGET_DIR}|g" \
+        -e "s|${TARGET_DIR}/.kilo/memory/api/mcp/memory-mcp.js|${HOME}/.config/kilo-data/memory-mcp/memory-mcp.js|g" \
         "${KILO_JSON_PATH}" \
         && rm -f "${KILO_JSON_PATH}.bak"
     echo "[WRITE] kilo.json path placeholders substituted (KILO_CONFIG_DIR=${TARGET_DIR})"

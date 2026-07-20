@@ -47,7 +47,7 @@ metadata:
 | AP-011 | 由校验代码反推运行时能力 | contract, placeholder, runtime-capability | 1.0 |
 | AP-012 | 引用化前未确认目标文件覆盖完整性 | coordination, reference-extract | 1.0 |
 | AP-013 | 重命名函数时遗漏内部调用同步 | coordination, rename, internal-call | 1.0 |
-| AP-014 | 逐页补丁式修复 | process, copy-paste-fix, component | 1.0 |
+| AP-014 | 逐页补丁式修复（v2.6 已固化 → skill `component-driven-fixes`，fact_store 行 archived=1） | process, copy-paste-fix, component | 1.0 |
 
 ## 标准查询 SQL
 

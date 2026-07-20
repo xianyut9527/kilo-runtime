@@ -203,7 +203,7 @@ INSERT INTO dispatch_log (
 **门禁**：3 个字段必须填 `[]`（空数组）或实际 JSON 数组；NULL 视为缺失 → `[MISSING_MEMORY_WRITE]`。
 
 **与 fact_store 的联动**（在 M6 Stage 3 完成，本节为 M7 持久化）：
-- helpful/misleading 的 fact_store UPDATE（helpful_count / misleading_count / helpful_rate）由 M6 Stage 3 执行，详见 `policy/m6_validation.md` §3
+- helpful/misleading 的 fact_store UPDATE（helpful_count / misleading_count / helpful_rate / confidence±）由 M6 Stage 3 执行，详见 `policy/m6_validation.md` §3 Stage 3（v2.6 起强制，无反馈显式 `[memory:helpful=none]`）
 - M7 仅负责把 M6 已处理的结果**结构化记录**到 dispatch_log（用于事后分析 / 校准 / 统计）
 
 **事后分析查询**（v2.4 新增）：

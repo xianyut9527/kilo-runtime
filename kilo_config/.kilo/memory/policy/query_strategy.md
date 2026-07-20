@@ -10,6 +10,8 @@
 - 超出时按优先级截断：project_context > fact_store > failure_db > model_calibration
 - md 文件注入仍保持 **≤ 1500 tokens**（作为兜底）
 - v2.4 起：FTS5 MATCH 替代 LIKE，单次 query 字符数预算更紧（命中更准，可适当放宽 LIMIT）
+- v2.6 起：FTS5 分词器 trigram（中文 ≥3 字符子串可 MATCH）；**MATCH 查询词必须 ≥3 字符**，
+  2 字中文关键词需扩展为 ≥3 字词组（如「编码」→「编码问题」）或退化 LIKE 查询
 
 ## 注入门槛（v2.4）
 
@@ -19,7 +21,7 @@
 | `fact_store`（正式） | `confidence >= 0.7 AND hit_count >= 2 AND archived = 0 AND (scope = 'global' OR (scope = 'project' AND project_name = :current_project)) AND (helpful_rate IS NULL OR helpful_rate >= 0.5)` | 过滤低质噪音 + 跨项目隔离（v2.3 / #5）+ v2.4 反馈质量门（#13） |
 | `fact_store`（试用期，v2.2） | `confidence >= 0.5 AND hit_count < 2 AND archived = 0 AND created_at >= datetime('now', '-14 days') AND (scope = 'global' OR (scope = 'project' AND project_name = :current_project))`，每任务 ≤2 条，注入标记附加 `trial=1` | 新经验试用窗口：打破「未注入→无引用→hit 不增→永不注入」冷启动死锁 |
 | `failure_db` | `same_symptom_count >= 1 AND resolved_at IS NOT NULL AND (scope = 'global' OR (scope = 'project' AND project_name = :current_project))` | 已解决的失败才注入；未解决的不污染上下文；v2.4 / #15 scope 隔离 |
-| `model_calibration` | `sample_count >= 3 AND (compensation_prompt IS NULL OR compensation_prompt_consumed_count > 0 OR compensation_prompt_set_at >= datetime('now', '-30 days'))` | v2.3 / #8：补偿 prompt 30 天未消费不再注入 |
+| `model_calibration` | `sample_count >= 2 AND (compensation_prompt IS NULL OR compensation_prompt_consumed_count > 0 OR compensation_prompt_set_at >= datetime('now', '-30 days'))` | v2.6：注入样本门槛 3→2（样本稀疏期即可注入校准建议）；v2.3 / #8：补偿 prompt 30 天未消费不再注入；compensation prompt 生成门槛仍保持 `sample_count >= 5`（见 `policy/model_calibration.md`） |
 
 > **FTS5 检索（v2.4 / #5）**：query B 由 `LIKE` 改为 `MATCH`（fact_fts 虚表），效率 +++。详见 §1 query B。
 >
@@ -47,18 +49,27 @@ WHERE category IN ('ARCHITECTURE', 'CONSTRAINT') AND priority <= 5
 ORDER BY priority ASC, use_count DESC, updated_at DESC
 LIMIT 5;
 
--- A'. 同步更新 use_count + last_used_at（注入完成后立即 UPDATE）
+-- A'. 同步更新 use_count + last_used_at（v2.6 起硬门：注入完成后立即 UPDATE，禁止跳过）
 UPDATE project_context
 SET use_count = use_count + 1,
     last_used_at = datetime('now')
 WHERE context_id IN (...);  -- 本次注入的 context_id 列表
 
--- B. 相关经验教训（v2.4 / #5 FTS5 MATCH 替代 LIKE；scope 隔离 v2.3 / #5；helpful_rate 过滤 #13）
+-- A' 硬门（v2.6）：v2.4/v2.5 期间全库 use_count 恒为 0（UPDATE 步骤被系统性跳过），
+-- 动态排序维度失效。v2.6 起：M1 节点日志「结果」列必须输出 A' 证据
+-- （如 `A' UPDATE 5 rows: PC-001,PC-003,...`；query A 空结果时显式输出 `A' ⏭️ 无注入`）。
+-- 健康度兜底：contracts/health_check.sql §16 CONTEXT_USE_COUNT_STALE（soft-warn）。
+
+-- B. 相关经验教训（v2.4 / #5 FTS5 MATCH 替代 LIKE；v2.6 trigram 分词；scope 隔离 v2.3 / #5；helpful_rate 过滤 #13）
+-- :query_keywords 构造规则（v2.6 trigram）：
+--   1. 每个关键词 ≥3 字符（trigram 约束；2 字中文词扩展为 ≥3 字词组）
+--   2. 多关键词用 OR 连接（如 'GBK OR "解析失败" OR yaml'）
+--   3. 含空格/标点或中文词组用双引号包裹（如 '"默认编码"'）
 SELECT f.fact_id, f.category, f.trigger, f.condition, f.action, f.confidence, f.hit_count, f.tags, f.evidence, f.helpful_rate,
        bm25(fact_fts) AS rank_score
 FROM fact_fts
 JOIN fact_store f ON f.rowid = fact_fts.rowid
-WHERE fact_fts MATCH :query_keywords  -- FTS5 全文索引（MATCH 语法）
+WHERE fact_fts MATCH :query_keywords  -- FTS5 全文索引（MATCH 语法，trigram 分词）
   AND f.archived = 0
   AND f.confidence >= 0.7
   AND f.hit_count >= 2
@@ -93,7 +104,7 @@ SELECT calibration_id, compensation_prompt, compensation_prompt_set_at, compensa
 FROM model_calibration
 WHERE agent_role = '当前agent角色'
   AND task_type LIKE '%当前任务类型%'
-  AND sample_count >= 3
+  AND sample_count >= 2  -- v2.6：注入样本门槛 3→2
   AND (compensation_prompt IS NULL
        OR compensation_prompt_consumed_count > 0
        OR compensation_prompt_set_at >= datetime('now', '-30 days'))  -- 30 天未消费不再注入
@@ -288,34 +299,40 @@ LIMIT 1;
 
 ---
 
-## M6 helpful_rate 反馈流程（v2.4 / #13）
+## M6 helpful_rate 反馈流程（v2.4 / #13；**v2.6 起强制**）
 
 > **背景**：v2.3 的 hit_count 自增回路只看"用了多少次"，不区分"用了有没有用"。v2.4 增加 helpful_rate 反馈维度。
+> **v2.6 强制化**：v2.4/v2.5 期间全库反馈事件恒为 0，质量门形同虚设。v2.6 起 T1+ 任务 M6 必须输出反馈标记，
+> 无反馈显式输出 `[memory:helpful=none]`。完整处理流程（含 id 校验 / 叠加规则 / 空标记）见
+> `policy/m6_validation.md` §3 Stage 3；健康度兜底 `contracts/health_check.sql` §15 FEEDBACK_LOOP_IDLE。
 
 ### M6 反馈标记格式
 
 ```
 [memory:helpful=A,B,C]      ← 本次 dispatch 中有价值的 fact
 [memory:misleading=X,Y]     ← 本次 dispatch 中误导/不适用的 fact
+[memory:helpful=none]       ← 无反馈时的显式空标记（v2.6 起强制兜底）
 ```
 
 ### M6 反馈处理流程
 
 ```sql
--- 1. 解析标记，UPDATE fact_store
+-- 1. 解析标记，UPDATE fact_store（v2.6 起 SQL 落地 confidence 综合校准公式）
 UPDATE fact_store
 SET helpful_count = helpful_count + 1,
     helpful_rate = CAST(helpful_count + 1 AS REAL) / (helpful_count + 1 + misleading_count),
+    confidence = MIN(0.95, confidence + 0.02),
     updated_at = datetime('now')
 WHERE fact_id IN (:helpful_fact_ids);
 
 UPDATE fact_store
 SET misleading_count = misleading_count + 1,
     helpful_rate = CAST(helpful_count AS REAL) / (helpful_count + misleading_count + 1),
+    confidence = MAX(0.1, confidence - 0.05),
     updated_at = datetime('now')
 WHERE fact_id IN (:misleading_fact_ids);
 
--- 2. 写入 dispatch_log（结构化反馈记录）
+-- 2. 写入 dispatch_log（结构化反馈记录，随 M7 INSERT 一并写入）
 UPDATE dispatch_log
 SET helpful_fact_ids = :helpful_json,
     misleading_fact_ids = :misleading_json
@@ -368,12 +385,12 @@ new_confidence = MIN(0.95, confidence + 0.02 * helpful_factor - 0.05 * misleadin
 
 | 节点 | 触发时机 | 操作类型 | 必填输出 |
 |---|---|---|---|
-| **M1** 任务上下文注入 | 任务开始 | 🔍 SELECT 4 表 | 注入条数（fact_store=N / failure_db=M / model_calibration=K）+ token 用量 |
+| **M1** 任务上下文注入 | 任务开始 | 🔍 SELECT 4 表 + 🔄 UPDATE use_count（A'，v2.6 硬门） | 注入条数（fact_store=N / failure_db=M / model_calibration=K / project_context=P）+ A' UPDATE 证据 + token 用量 |
 | **M2** 失败回溯 | `core.md` §自进化触发点 4 条件命中 | 🔍 SELECT failure_db + fact_store | 命中的 failure_id / fact_id 列表 |
 | **M3** 经验引用 | 任务执行中 | agent 输出嵌入 `[memory:fact_id=X]` 标记 | 引用列表（喂给 M6） |
 | **M4** fact_store 去重 | 发现可复用模式 | 🔍 去重 + 📝 INSERT / 🔄 UPDATE | fact_id + action（INSERT/UPDATE） |
 | **M5** failure_db 写入 | 失败 / fixer 多轮 / 用户反馈 | 📝 INSERT failure_db | failure_id + root_cause_level |
-| **M6** hit_count 自增 | 任务收尾 | 🔄 UPDATE fact_store hit_count+1, confidence+0.02 | 自增的 fact_id 列表 + 新 confidence |
+| **M6** hit_count 自增 + helpful_rate 反馈 | 任务收尾 | 🔄 UPDATE fact_store hit_count+1, confidence±（Stage 1/2/3） | 自增的 fact_id 列表 + 新 confidence + helpful/misleading 标记（v2.6 强制，无反馈显式 none） |
 | **M7** dispatch_log 写入 | 任务收尾（T1+） | 📝 INSERT dispatch_log | dispatch_id + tier + review_mode |
 | **M8** model_calibration 更新 | dispatch 后 | 🔄 UPDATE model_calibration | model + agent_role + success_rate 变化 |
 
