@@ -9,7 +9,7 @@
 -- 使用方式（编程）:
 --   better-sqlite3 等只需按行解析本文件输出（行格式: <check_name>|<pass|fail>|<detail>）
 --
--- 版本：v2.6.1（共 17 项检查）
+-- 版本：v2.6.2（共 18 项检查）
 --   v2.4：13 项（表/索引/视图/行数/CHECK 约束/种子/trial/bootstrap 完整性/scope 列/补偿 prompt 过期）
 --   v2.5 新增：
 --     14. SKILL_USAGE_EVENTS_TABLE_PRESENT（#T1）：skill_usage_events 表存在（替代 .log md 累积）
@@ -20,7 +20,10 @@
 --   v2.6.1 新增：
 --     17. VIEWS_QUERYABLE_OK：4 视图不仅存在且可实际查询（存在性检查 #3 无法发现视图体内 SQL 语法损坏，
 --         如 v2.6 前 v_failure_patterns 的 GROUP_CONCAT DISTINCT 两参数缺陷）
--- soft-warn 语义：第 6-17 项 fail 映射到 check17 warnings[]，不阻断交付（依赖 validate-config.mjs
+--   v2.6.2 新增：
+--     18. FEEDBACK_RATE_LOW：dispatch ≥5 但反馈列（helpful/misleading_fact_ids）填充率 <50% → M6/M7 执行率低
+--         （补 #15 粒度盲区：#15 仅查反馈事件=0，3 次反馈即 pass，无法捕获 5/13 这类低执行率）
+-- soft-warn 语义：第 6-18 项 fail 映射到 check17 warnings[]，不阻断交付（依赖 validate-config.mjs
 -- softWarnChecks 名单；仅 1-5 项结构性检查 fail 为硬 FAIL）
 
 .headers off
@@ -222,3 +225,24 @@ SELECT 'VIEWS_QUERYABLE_OK' AS check_name,
        ',v_high_confidence_facts=' || (SELECT COUNT(*) FROM v_high_confidence_facts) ||
        ',v_high_helpful_facts=' || (SELECT COUNT(*) FROM v_high_helpful_facts) ||
        ',v_active_project_context=' || (SELECT COUNT(*) FROM v_active_project_context) AS detail;
+
+-- ============================================================
+-- 18. v2.6.2 / R3：M6/M7 反馈执行率告警（soft-warn）
+--     dispatch ≥5 但 dispatch_log 反馈列（helpful_fact_ids / misleading_fact_ids）
+--     填充率 <50% → M6 Stage 3 标记 / M7 反馈列写入执行率低
+--     （#15 FEEDBACK_LOOP_IDLE 粒度盲区补充：3 次反馈即 pass，无法捕获 5/13 低执行率）
+-- ============================================================
+SELECT 'FEEDBACK_RATE_LOW' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM dispatch_log) < 5
+              OR (SELECT COUNT(*) FROM dispatch_log
+                  WHERE helpful_fact_ids IS NOT NULL OR misleading_fact_ids IS NOT NULL) * 1.0
+                 / (SELECT COUNT(*) FROM dispatch_log) >= 0.5
+            THEN 'pass' ELSE 'fail' END AS status,
+       'dispatch=' || (SELECT COUNT(*) FROM dispatch_log) ||
+       ',feedback_filled=' || (SELECT COUNT(*) FROM dispatch_log
+                                WHERE helpful_fact_ids IS NOT NULL OR misleading_fact_ids IS NOT NULL) ||
+       ',rate>=' || printf('%.2f',
+             (SELECT COUNT(*) FROM dispatch_log
+              WHERE helpful_fact_ids IS NOT NULL OR misleading_fact_ids IS NOT NULL) * 1.0
+             / MAX((SELECT COUNT(*) FROM dispatch_log), 1)) ||
+       '（rate≥0.5 或 dispatch<5 即 pass）' AS detail;

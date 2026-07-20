@@ -1071,7 +1071,7 @@ function check13HermesInstallExcludeSync() {
 // 验证：模块入口文件 + DDL + 关键 policy 全部存在；模块根目录不可缺失
 // v2.5：sqlite 唯一记忆 — 禁止 .kilo/memory/skill-usage.log 存在（必须迁移至 skill_usage_events 表）
 function check14MemoryEnabled(config) {
-  const name = '记忆模块完整性（.kilo/memory/ v2.6.1 边界）';
+  const name = '记忆模块完整性（.kilo/memory/ v2.6.2 边界）';
   const required = [
     '.kilo/memory/README.md',
     '.kilo/memory/AGENTS.md',
@@ -1407,7 +1407,7 @@ function check17MemoryDbHealth() {
         .split(/\r?\n/)
         .filter((l) => l.includes('|'))
         .map((l) => l.split('|'));
-      // v2.3/v2.4/v2.5/v2.6 soft-warn 检查名单：fail 仅入 warnings[]，不阻断交付
+      // v2.3/v2.4/v2.5/v2.6/v2.6.2 soft-warn 检查名单：fail 仅入 warnings[]，不阻断交付
       // （必须先于 hard-fail 过滤声明，否则 soft-warn 会被误判为契约失败）
       const softWarnChecks = [
         'PROJECT_CONTEXT_SEEDED',
@@ -1422,6 +1422,7 @@ function check17MemoryDbHealth() {
         'FEEDBACK_LOOP_IDLE',
         'CONTEXT_USE_COUNT_STALE',
         'VIEWS_QUERYABLE_OK',
+        'FEEDBACK_RATE_LOW',
       ];
       const failed = rows.filter((r) => r[1] === 'fail' && !softWarnChecks.includes(r[0]));
       if (failed.length > 0) {

@@ -1,7 +1,7 @@
 # Memory Module 说明文档（MODULE_GUIDE）
 
 > **模块位置**：`.kilo/memory/`（仓库内唯一记忆边界）
-> **版本**：v2.6.1
+> **版本**：v2.6.2
 > **数据库**：`${HOME}/.config/kilo-data/memory.db`（全局单库，跨项目共享 + scope 隔离）
 > **策略标识**：`sqlite-first-md-fallback + bash-cli-channel + fts5-trigram + scope-isolation + helpful-rate-mandatory-feedback`
 > **本文档职责**：模块简介 + 存储表说明。公共 API 与业务规则以 `README.md` / `policy/*.md` 为准，本文不重复定义规则。
@@ -133,7 +133,7 @@ DDL 唯一源：`schema/init.sql`。schema 变更必须三文件同步（init.sq
 | source_file | TEXT | 来源文件（如 AGENTS.md） |
 | priority | INTEGER | 1–10，1 最高；priority ≤ 5 进注入流 |
 | tags | TEXT | JSON 数组 |
-| use_count / last_used_at | — | v2.4 动态排序维度；v2.6 起 M1 注入后 UPDATE 为硬门 |
+| use_count / last_used_at | — | v2.4 动态排序维度；v2.6.2 起并入 M1 原子化 `UPDATE...RETURNING`（杜绝只注入不 UPDATE） |
 | created_at / updated_at | TEXT | ISO8601 |
 
 首次部署自动 seed 8 条（PC-001–PC-008，INSERT OR IGNORE 幂等）。
@@ -244,7 +244,7 @@ SQLite 方案在**科学性**（结构化 schema + 量化置信度 + 反馈闭�
 
 | 节点 | 时机 | 操作 | 硬门 |
 |---|---|---|---|
-| M1 上下文注入 | 任务开始 | SELECT 4 表 + UPDATE use_count（A'） | v2.6 起 A' 必执行，recall 提示须含证据 |
+| M1 上下文注入 | 任务开始 | **单条 `UPDATE...RETURNING` 原子化 SQL**（v2.6.2：选中注入集 + use_count+1 + 返回内容一步完成） | RETURNING 新值即 A' 证据，recall 提示直接引用 |
 | M2 失败回溯 | 失败条件命中 | SELECT failure_fts MATCH + ANTIPATTERN | — |
 | M3 经验引用 | 执行中 | 输出 `[memory:fact_id=X]` 标记 | 保留标记供审计 |
 | M4 fact 去重写入 | 发现可复用模式 | 去重 + INSERT/UPDATE fact_store | — |

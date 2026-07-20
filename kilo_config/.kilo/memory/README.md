@@ -2,7 +2,7 @@
 
 > **模块位置**：`.kilo/memory/`（仓库内唯一记忆边界）
 > **职责**：跨项目持久化结构化经验 + 任务调度日志 + 模型校准 + 项目上下文 + 反馈质量量化
-> **状态**：v2.6.1（**SQLite 唯一记忆** + md 静态规则兜底 + FTS5 trigram + helpful_rate 强制反馈 + scope 隔离 + 回路空转告警 + 视图可查询性校验）
+> **状态**：v2.6.2（**SQLite 唯一记忆** + md 静态规则兜底 + FTS5 trigram + helpful_rate 强制反馈 + scope 隔离 + 回路空转告警 + 视图可查询性校验 + A' 原子化 UPDATE...RETURNING + 反馈执行率告警）
 > **作者**：coderAgent 自动维护 + 人工审核
 
 ## 模块架构（4 层）
@@ -43,7 +43,7 @@
 │   ├── migrate_fix_v_failure_patterns.sql      ← v2.6.1 v_failure_patterns 视图语法修复
 │   └── migrate_skill_usage_log_to_sqlite.sql   ← v2.5 / #T1 .log → skill_usage_events 迁移
 └── contracts/           ← 第 4 层：接口契约
-    └── health_check.sql ← 标准化健康度查询（v2.6.1 17 项；被 validate-config.mjs check17 调用）
+    └── health_check.sql ← 标准化健康度查询（v2.6.2 18 项；被 validate-config.mjs check17 调用）
 ```
 
 ## 公共 API（外部模块唯一应访问的入口）
@@ -69,7 +69,7 @@
 | `api/migrate_add_scope_column.sql` | v2.2 → v2.3 升级 | fact_store scope 列 |
 | `api/migrate_compensation_columns.sql` | v2.2 → v2.3 升级 | model_calibration 补偿列 |
 | `api/migrate_dispatch_compensation_columns.sql` | v2.2 → v2.3 升级 | dispatch_log 补偿列 |
-| `contracts/health_check.sql` | validate-config.mjs check17 | 17 项健康度查询（v2.6.1 新增视图可查询性 soft-warn） |
+| `contracts/health_check.sql` | validate-config.mjs check17 | 18 项健康度查询（v2.6.2 新增反馈执行率 soft-warn） |
 | `api/migrate_fts_trigram.sql` | v2.4/v2.5 → v2.6 升级 | FTS5 分词器 trigram 重建（含触发器 + rebuild） |
 | `api/migrate_fix_v_failure_patterns.sql` | v2.6 → v2.6.1 升级 | v_failure_patterns 视图重建（GROUP_CONCAT DISTINCT 修复） |
 
@@ -181,7 +181,8 @@
 | **v2.4** | (1) FTS5 全文索引（fact_fts / failure_fts + 触发器 + bm25 排序）效率 +++ (#5)；(2) project_context `use_count` / `last_used_at` 动态排序 (#2)；(3) fact_store `helpful_count` / `misleading_count` / `helpful_rate` 反馈质量量化 (#13)；(4) M-001 动态注入 2AP + 1PAT (#7 扩展)；(5) failure_db `scope` / `project_name` 列镜像 (#15)；(6) dispatch_log `trigger_fact_ids` / `helpful_fact_ids` / `misleading_fact_ids` 结构化反馈 (#13)；(7) output-schema preflight 自检（输出前 1st defense）稳定性 +++ (#10) |
 | **v2.5** | (1) **SQLite 唯一记忆原则**：禁止 md 文件累积时序数据（`.kilo/memory/skill-usage.log` 已迁移至 `skill_usage_events` 表）(#T1)；(2) `MEMORY.md` 字符上限收紧至 ≤1500，纯指针化（无 prose）；(3) `archive/YYYY-MM/` md 归档协议废除（全部走 SQLite `archived=1`） |
 | **v2.6** | (1) FTS5 分词器 unicode61 → **trigram**（修复中文 MATCH 0 命中缺陷；MATCH 查询词需 ≥3 字符）；(2) M6 helpful/misleading **强制化**（Stage 3 补入 m6_validation；无反馈显式 `[memory:helpful=none]`；SQL 落地 confidence ±公式）；(3) M1 query A' use_count UPDATE 升级为**硬门**；(4) health_check 新增 2 项回路空转 soft-warn（FEEDBACK_LOOP_IDLE / CONTEXT_USE_COUNT_STALE）+ 修复 validate-config.mjs soft-warn 死代码误判硬 FAIL；(5) failure_db 写入降门槛（checker 首轮 FAIL 即记录）；(6) model_calibration 注入门槛 sample≥3→≥2；(7) skill_upgrade 首批 4 条 DRAFT 终审 + what/how 边界规则成文（AP-014→MANUAL_PROMOTED 归档；AP-001/AP-005/PAT-001→REJECTED 常驻 fact_store）；(8) 数据治理：清理 TEST-MCP 残留 12 行 + 删除无文档死表 audit_log |
-| **v2.6.1**（当前） | (1) **修复 v_failure_patterns 视图 GROUP_CONCAT DISTINCT 两参数非法**（schema + 生产库 + `api/migrate_fix_v_failure_patterns.sql` 三同步）；(2) health_check 新增 #17 VIEWS_QUERYABLE_OK（视图可查询性 soft-warn，存在性检查的盲区补漏）；(3) failure_db 查询全面 FTS5 化（query_strategy §1C/§3 LIKE→failure_fts MATCH，消除与 failure_recorder 的表述冲突）；(4) init_check 补齐 v2.3→v2.4 / v2.4→v2.5 / v2.6→v2.6.1 迁移段；(5) skill_upgrade V2 加 what/how 边界约束（启用前先人工终审 DRAFT）；(6) **test.js 改造为 temp DB 隔离**（memory-mcp.js 支持 `KILO_MEMORY_DB_PATH` env 覆盖，杜绝 TEST-MCP 类生产污染）；(7) 数据治理：删除零引用死表 mcp_config；(8) 文档一致性批（policy 12 个文件计数 / 索引 ≥21 / 段编号重排 / 断链修复） |
+| **v2.6.1** | (1) **修复 v_failure_patterns 视图 GROUP_CONCAT DISTINCT 两参数非法**（schema + 生产库 + `api/migrate_fix_v_failure_patterns.sql` 三同步）；(2) health_check 新增 #17 VIEWS_QUERYABLE_OK（视图可查询性 soft-warn，存在性检查的盲区补漏）；(3) failure_db 查询全面 FTS5 化（query_strategy §1C/§3 LIKE→failure_fts MATCH，消除与 failure_recorder 的表述冲突）；(4) init_check 补齐 v2.3→v2.4 / v2.4→v2.5 / v2.6→v2.6.1 迁移段；(5) skill_upgrade V2 加 what/how 边界约束（启用前先人工终审 DRAFT）；(6) **test.js 改造为 temp DB 隔离**（memory-mcp.js 支持 `KILO_MEMORY_DB_PATH` env 覆盖，杜绝 TEST-MCP 类生产污染）；(7) 数据治理：删除零引用死表 mcp_config；(8) 文档一致性批（policy 12 个文件计数 / 索引 ≥21 / 段编号重排 / 断链修复） |
+| **v2.6.2**（当前） | (1) **M1 query A+A' 原子化**：两条独立 SQL（SELECT + UPDATE）合并为单条 `UPDATE...RETURNING`（sqlite3 ≥3.35），物理上杜绝「只注入不 UPDATE」的 A' 系统性空转（v2.4–v2.6 根因；实测 check16 CONTEXT_USE_COUNT_STALE 由 fail 转 pass）；(2) health_check 新增 #18 FEEDBACK_RATE_LOW（dispatch 反馈列填充率 <50% soft-warn，补 #15「反馈事件=0 才告警」的粒度盲区；上线即精准捕获 5/14≈36% 低执行率）；(3) 版本同步批（AGENTS/README/MODULE_GUIDE/MEMORY/memory-strategy/validate-config.mjs check14 命名 + softWarnChecks 名单） |
 | v3.0（未来） | 自定义 MCP server（api/ 层）+ tool 强制执行 + 删除 `[MISSING_MEMORY_WRITE]` 标记 |
 | v4.0（远期） | 跨会话语义检索（接口规范见 `policy/semantic_search.md`）+ 跨项目共享 fact_store（v2.3 scope 列已就位，仅替换检索后端） |
 

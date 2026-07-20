@@ -139,7 +139,7 @@ diff -rq . ~/.config/kilo \
 
 ### 使用程序化记忆
 
-记忆系统（v2.6.1）采用 **SQLite 唯一记忆 + md 静态兜底** 架构，由 `.kilo/memory/` 模块统一管理，通过 `${HOME}/.config/kilo-data/memory.db` 的存在性自动启停，无需 `kilo.json` 配置：
+记忆系统（v2.6.2）采用 **SQLite 唯一记忆 + md 静态兜底** 架构，由 `.kilo/memory/` 模块统一管理，通过 `${HOME}/.config/kilo-data/memory.db` 的存在性自动启停，无需 `kilo.json` 配置：
 
 1. **结构化记忆全部入全局 sqlite**（7 表 + 2 FTS5 trigram 虚表 + 4 视图）：经验教训 `fact_store`、失败案例 `failure_db`、调度日志 `dispatch_log`、项目上下文 `project_context`、模型校准 `model_calibration`、skill 升级审计 `skill_upgrade_log`、skill 使用时序 `skill_usage_events`
 2. **md 文件仅作静态兜底**：`.kilo/memory/MEMORY.md`（≤ 1500 字符，纯指针 + M-001 动态注入占位）、`.kilo/memory/USER.md`（≤ 1375 字符，用户偏好/安全约束）；**禁止** md 累积经验/日志/时序数据

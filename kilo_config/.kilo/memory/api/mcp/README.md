@@ -28,7 +28,7 @@ Kilo 之前依赖第三方 sqlite MCP server，但社区实现存在严重内存
 | `insert_fact` | M4 写入 | 去重 INSERT/UPDATE fact_store（事务内临时禁用 FTS5 触发器） |
 | `log_dispatch` | M7 写入 | INSERT OR REPLACE dispatch_log |
 | `update_calibration` | M8 写入 | UPSERT model_calibration（rolling-average success_rate） |
-| `health_check` | 守门员 | 执行 `.kilo/memory/contracts/health_check.sql` 17 项检查（v2.6.1） |
+| `health_check` | 守门员 | 执行 `.kilo/memory/contracts/health_check.sql` 18 项检查（v2.6.2） |
 
 ## 启用步骤
 

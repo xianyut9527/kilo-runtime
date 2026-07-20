@@ -1,11 +1,11 @@
 ---
 name: memory
-description: 静态指针兜底（v2.6.1 sqlite 唯一记忆）。本文件仅作 M-001 动态注入占位 + 静态指针；所有经验/日志/时序数据入 SQLite。
+description: 静态指针兜底（v2.6.2 sqlite 唯一记忆）。本文件仅作 M-001 动态注入占位 + 静态指针；所有经验/日志/时序数据入 SQLite。
 license: MIT
 compatibility:
   - kilo >= 1.0
 metadata:
-  version: "2.6.1"
+  version: "2.6.2"
   char_limit: 1500
   category: memory
 ---

@@ -42,22 +42,23 @@
 coderAgent 必须按以下顺序查询（每条 SELECT **必须带 ID 字段**用于回溯）：
 
 ```sql
--- A. 项目上下文（最高优先级，≤5 条，带 ID；v2.4 / #2 加入 use_count 动态排序）
-SELECT context_id, title, content, priority, tags, use_count, last_used_at
-FROM project_context
-WHERE category IN ('ARCHITECTURE', 'CONSTRAINT') AND priority <= 5
-ORDER BY priority ASC, use_count DESC, updated_at DESC
-LIMIT 5;
-
--- A'. 同步更新 use_count + last_used_at（v2.6 起硬门：注入完成后立即 UPDATE，禁止跳过）
+-- A+A'. 项目上下文原子化注入（最高优先级，≤5 条，带 ID；v2.6.2 起 UPDATE...RETURNING 单 SQL）
+-- 一条 SQL 同时完成：① 按门槛选中注入集 ② use_count+1 / last_used_at 更新（A' 硬门）③ RETURNING 返回注入内容
+-- 物理上杜绝「只跑 SELECT 跳过 UPDATE」的系统性空转（v2.4–v2.6 根因：A/A' 两条独立 SQL，A' 被遗漏）
+-- 前置：sqlite3 ≥ 3.35（UPDATE...RETURNING 支持；当前生产 3.45.3 实测通过）
 UPDATE project_context
 SET use_count = use_count + 1,
     last_used_at = datetime('now')
-WHERE context_id IN (...);  -- 本次注入的 context_id 列表
+WHERE context_id IN (
+    SELECT context_id FROM project_context
+    WHERE category IN ('ARCHITECTURE', 'CONSTRAINT') AND priority <= 5
+    ORDER BY priority ASC, use_count DESC, updated_at DESC
+    LIMIT 5
+)
+RETURNING context_id, title, content, priority, tags, use_count, last_used_at;
 
--- A' 硬门（v2.6）：v2.4/v2.5 期间全库 use_count 恒为 0（UPDATE 步骤被系统性跳过），
--- 动态排序维度失效。v2.6 起：`[memory:recall]` 提示必须含 A' 证据
--- （如 `A' UPDATE 5 rows: PC-001,PC-003,...`；query A 空结果时显式输出 `A' ⏭️ 无注入`）。
+-- A' 硬门（v2.6.2 原子化）：RETURNING 返回的 use_count 新值即 A' 执行证据，
+-- `[memory:recall]` 提示直接引用（如 `A' ✅ PC-001 use_count=3`；RETURNING 空结果时显式输出 `A' ⏭️ 无注入`）。
 -- 健康度兜底：contracts/health_check.sql §16 CONTEXT_USE_COUNT_STALE（soft-warn）。
 
 -- B. 相关经验教训（v2.4 / #5 FTS5 MATCH 替代 LIKE；v2.6 trigram 分词；scope 隔离 v2.3 / #5；helpful_rate 过滤 #13）
