@@ -42,7 +42,7 @@ metadata:
 | L1 全局结构化经验 | `sqlite fact_store` / `failure_db`（`${HOME}/.config/kilo-data/memory.db`） | PATTERN / ANTIPATTERN / RECIPE / WARNING + 置信度 + 命中数 + 复发数 | SQL 查询 + tags 过滤 | 全局持久（跨项目） |
 | L2 任务调度日志 | `sqlite dispatch_log` | 两阶段定级 + review_mode + status + findings_count | SQL 按 thread_id / tier / review_mode 查询 | 全局持久 |
 | L3 模型校准 | `sqlite model_calibration` | success_rate / avg_findings / compensation_prompt | SQL 按 model + agent_role 查询 | 全局持久 |
-| L4 冻结快照 / 归档索引 | `MEMORY.md` / `USER.md` | 用户偏好、安全约束、归档指针 | 标签按需注入 | 手动维护，≤2200/≤1375 字符 |
+| L4 冻结快照 / 归档索引 | `MEMORY.md` / `USER.md` | 用户偏好、安全约束、归档指针 | 标签按需注入 | 手动维护，≤1500/≤1375 字符 |
 | L5 跨会话历史 | `kilo_local_recall`（search 模式） | 历史对话中的错误模式、解决方案、踩坑记录 | 关键词搜索（每个词必须出现） | 本机持久 |
 | L6 代码图谱 | `gitnexus_context` / `gitnexus_impact` / `gitnexus_query` | 调用链、影响面、数据依赖、API 消费者 | Cypher 查询 + 自然语言检索 | git 索引持久 |
 | L7 持久经验 | `git log` / `git diff` | commit message 中的经验标注 | `git log --grep` | git 永久 |
@@ -137,7 +137,7 @@ Step 5: 回写后验证
 
 **回写后验证**：
 - sqlite 主路径：`SELECT fact_id, hit_count, confidence FROM fact_store WHERE fact_id = ?` 确认落盘
-- md 兜底：仅在归档索引类条目时使用，且必须 ≤2200 字符总限
+- md 兜底：仅在归档索引类条目时使用，且必须 ≤1500 字符总限
 
 ## 与 reflection.md 三层判定的关系
 

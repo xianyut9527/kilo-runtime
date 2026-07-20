@@ -18,7 +18,7 @@
 1. **sqlite 唯一记忆**：所有结构化记忆（fact、failure、dispatch、project_context、calibration、skill_upgrade、skill_usage）优先查询 sqlite。**v2.5 起强制**：禁止 md 文件累积时序数据（`.kilo/memory/skill-usage.log` 已迁移至 `skill_usage_events` 表）；md 文件仅保留静态规则 / 模板 / 指针。**访问方式**：通过 Kilo `bash` 工具调用 `sqlite3` CLI 读写 `~/.config/kilo-data/memory.db`（命令模板见 `policy/bash_sqlite_template.md`）。
 2. **FTS5 镜像加速**：v2.4 起 fact_store / failure_db 维护 FTS5 虚表，query B 从 `LIKE` 改为 `MATCH`（效率 +++）；v2.6 起分词器 trigram（中文 ≥3 字符子串可命中），详见 `policy/query_strategy.md` §1 query B。
 3. **helpful_rate 反馈（v2.6 强制）**：M6 节点**必须**输出 `[memory:helpful=...]` / `[memory:misleading=...]` 标记（无反馈显式 `[memory:helpful=none]`，禁止静默省略），反向校准 confidence（质量 +++），详见 `policy/m6_validation.md` §3 Stage 3。
-3b. **A' use_count 硬门（v2.6）**：M1 注入 project_context 后必须立即执行 query A' UPDATE（use_count+1 / last_used_at），M1 节点日志须含 A' 证据，详见 `policy/query_strategy.md` §1。
+3b. **A' use_count 硬门（v2.6）**：M1 注入 project_context 后必须立即执行 query A' UPDATE（use_count+1 / last_used_at），`[memory:recall]` 提示须含 A' 证据，详见 `policy/query_strategy.md` §1。
 4. **md 兜底（仅静态）**：用户偏好、安全约束等低频变更内容保留在 `MEMORY.md` / `USER.md`；**严禁** md 累积时序 / 经验 / 频次数据。
 5. **写入即持久**：任务过程中产生的经验、失败模式、skill 使用事件必须写入 sqlite，不能留在 prompt 里丢失。
 
@@ -40,7 +40,7 @@
 **完整 checklist** 详见 `.kilo/instructions/workflow-core.md` §收尾自检（10 条硬门，含 M 节点编号）。本节仅给 agent 4 条**核心原则**：
 
 1. **T1+ 必走收尾自检** — dispatch_log / fact_store / failure_db / model_calibration 全部必须执行，未执行 → `[MISSING_MEMORY_WRITE]` 阻塞交付
-2. **M 节点日志必出** — coderAgent 每次任务交付必须输出 M1-M8 节点日志（同任务 8 节点对齐），模板见 `agent/coderAgent.md` §记忆节点日志
+2. **记忆提示即时输出** — 记忆操作以即时单行提示可视化：召回时 `🧠 [memory:recall]`、写入时 `💾 [memory:write]`（含 ID，M6/M7/M8 可合并 1 行）；格式见 `agent/coderAgent.md` §记忆提示；禁止输出 M1-M8 大表格
 3. **md 不接收新经验** — `MEMORY.md` / `USER.md` / `SKILL.md` 仅作归档索引或人工 gate，**所有可复用模式/反模式必须先入 `fact_store`**
 4. **Skill 升级需人工 gate** — `fact_store.confidence ≥ 0.8 && hit_count ≥ 3` 才触发 `policy/skill_upgrade.md` `[AUTO_DRAFT]` 草稿，**不得直接 patch SKILL.md**
 

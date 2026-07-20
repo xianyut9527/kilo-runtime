@@ -56,7 +56,7 @@ SET use_count = use_count + 1,
 WHERE context_id IN (...);  -- 本次注入的 context_id 列表
 
 -- A' 硬门（v2.6）：v2.4/v2.5 期间全库 use_count 恒为 0（UPDATE 步骤被系统性跳过），
--- 动态排序维度失效。v2.6 起：M1 节点日志「结果」列必须输出 A' 证据
+-- 动态排序维度失效。v2.6 起：`[memory:recall]` 提示必须含 A' 证据
 -- （如 `A' UPDATE 5 rows: PC-001,PC-003,...`；query A 空结果时显式输出 `A' ⏭️ 无注入`）。
 -- 健康度兜底：contracts/health_check.sql §16 CONTEXT_USE_COUNT_STALE（soft-warn）。
 
@@ -222,7 +222,7 @@ LIMIT 3;
      [memory:referenced_fact_ids=AP-001,AP-005 not_injected=true]
      ```
 
-     该标记与注入标记同级出现在 M6 节点日志「引用列表」列，与注入引用同等触发 hit_count 自增。
+     该标记与注入标记同级出现在交付输出中（供 M6 收集），与注入引用同等触发 hit_count 自增。
 2. 对每个 fact_id 执行 hit_count 自增：
 
 ```sql
@@ -387,9 +387,10 @@ new_confidence = MIN(0.95, confidence + 0.02 * helpful_factor - 0.05 * misleadin
 
 ---
 
-## 节点定义 M1-M8（记忆节点日志）
+## 节点定义 M1-M8（执行标准）
 
-> **目的**：让记忆操作可视化，与任务 8 节点流程日志对齐输出。完整 markdown 模板见 `../../../agent/coderAgent.md` §记忆节点日志。
+> **定位**：M1-M8 是记忆操作的**执行标准**（何时查 / 写什么 / 硬门），不再要求输出大表格。
+> **输出形式（hermes 风格轻提示）**：召回时一条 `🧠 [memory:recall]`、写入时一条 `💾 [memory:write]`，在操作发生的当下即时输出（含 ID，可审计）。完整提示格式见 `../../../agent/coderAgent.md` §记忆提示。
 
 | 节点 | 触发时机 | 操作类型 | 必填输出 |
 |---|---|---|---|
@@ -429,6 +430,6 @@ new_confidence = MIN(0.95, confidence + 0.02 * helpful_factor - 0.05 * misleadin
 | ❌ | failure（SQL 错误 / 必填缺失） |
 | ⏭️ | skipped（memory.db 未初始化 / T0 跳过） |
 
-### 输出格式示例
+### 输出格式
 
-完整 markdown 模板 + 典型 T1 任务输出示例见 `../../../agent/coderAgent.md` §记忆节点日志（本文件不重复维护）。
+即时轻提示格式（`[memory:recall]` / `[memory:write]`）+ 审计行内标记规范见 `../../../agent/coderAgent.md` §记忆提示（本文件不重复维护）。

@@ -52,7 +52,20 @@ metadata:
 ## 标准查询 SQL
 
 ```sql
--- 任务开始时按 tag 检索相关反模式（带 ID + tags + confidence + hit_count）
+-- 任务开始时检索相关反模式（v2.6 主路径：FTS5 trigram MATCH + bm25 排序；查询词 ≥3 字符）
+SELECT f.fact_id, f.trigger, f.action, f.confidence, f.hit_count, f.tags,
+       bm25(fact_fts) AS rank_score
+FROM fact_fts
+JOIN fact_store f ON f.rowid = fact_fts.rowid
+WHERE fact_fts MATCH '当前任务关键词 OR 另一关键词'
+  AND f.category = 'ANTIPATTERN'
+  AND f.archived = 0
+  AND f.confidence >= 0.7
+  AND f.hit_count >= 2
+ORDER BY rank_score
+LIMIT 5;
+
+-- 2 字中文词等 <3 字符场景退化 LIKE（tags 逗号分隔精确匹配）
 SELECT fact_id, trigger, action, confidence, hit_count, tags
 FROM fact_store
 WHERE category='ANTIPATTERN'

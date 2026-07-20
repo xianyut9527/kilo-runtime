@@ -55,7 +55,7 @@ VALUES (
 - `initial_tier` / `final_tier` / `tier`: T0/T1/T2/T3；`tier` 兼容旧字段，值 = `final_tier`
 - `review_mode`: `none` / `lightweight` / `full`（T0=none，其余按 review_mode 决策表确定）
 - `compensation_prompt_used` / `compensation_calibration_id`：v2.3 / #8；本次 dispatch 是否消费补偿 prompt + 对应 calibration_id
-- **`trigger_fact_ids` / `helpful_fact_ids` / `misleading_fact_ids`**：v2.4 / #13 反馈结构化列；M7 写入时必须从 M3/M6 节点日志提取并 JSON 化（详见 §v2.4 M7 反馈字段写入规则）
+- **`trigger_fact_ids` / `helpful_fact_ids` / `misleading_fact_ids`**：v2.4 / #13 反馈结构化列；M7 写入时必须从 M3/M6 行内标记提取并 JSON 化（详见 §v2.4 M7 反馈字段写入规则）
 - `tier_deviation`: `maintain` / `upgrade` / `downgrade`（阶段 A→B 偏差方向）
 - `model`: 实际使用的模型名
 - `status`: DONE / DONE_WITH_CONCERNS / FAILED / BLOCKED / TIMEOUT
@@ -176,7 +176,7 @@ WHERE fact_id IN (
 
 ## v2.4 M7 反馈字段写入规则（#13）
 
-M7 dispatch_log INSERT 时必须从 M3 节点日志（注入引用）和 M6 节点日志（helpful/misleading 反馈）提取 fact_id 列表，**JSON 化后写入 3 个反馈列**：
+M7 dispatch_log INSERT 时必须从 M3 行内标记（注入引用）和 M6 反馈标记（helpful/misleading）提取 fact_id 列表，**JSON 化后写入 3 个反馈列**：
 
 ```sql
 -- M7 INSERT 时（典型 T1+ 任务）
@@ -186,7 +186,7 @@ INSERT INTO dispatch_log (
   ..., :trigger_fact_ids_json, :helpful_fact_ids_json, :misleading_fact_ids_json, ...
 );
 
--- JSON 化示例（agent 提取节点日志后调用）：
+-- JSON 化示例（agent 提取行内标记后调用）：
 -- trigger_fact_ids_json = '["AP-001","AP-005","PAT-001"]'（M3 注入引用收集）
 -- helpful_fact_ids_json = '["AP-001","PAT-001"]'（M6 [memory:helpful=...] 收集）
 -- misleading_fact_ids_json = '["AP-005"]'（M6 [memory:misleading=...] 收集）
@@ -196,9 +196,9 @@ INSERT INTO dispatch_log (
 
 | 字段 | 来源 | 写入时机 |
 |---|---|---|
-| `trigger_fact_ids` | M3 节点日志中的 `[memory:fact_id=...]` 标记 | M7 INSERT 时 |
-| `helpful_fact_ids` | M6 节点日志中的 `[memory:helpful=...]` 标记 | M7 INSERT 时（与 trigger 可重叠） |
-| `misleading_fact_ids` | M6 节点日志中的 `[memory:misleading=...]` 标记 | M7 INSERT 时 |
+| `trigger_fact_ids` | M3 行内标记 `[memory:fact_id=...]` | M7 INSERT 时 |
+| `helpful_fact_ids` | M6 反馈标记 `[memory:helpful=...]` | M7 INSERT 时（与 trigger 可重叠） |
+| `misleading_fact_ids` | M6 反馈标记 `[memory:misleading=...]` | M7 INSERT 时 |
 
 **门禁**：3 个字段必须填 `[]`（空数组）或实际 JSON 数组；NULL 视为缺失 → `[MISSING_MEMORY_WRITE]`。
 

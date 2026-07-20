@@ -210,7 +210,7 @@
 | hit_count 统计 | 不可能（md） | 自动（M6 回路） |
 | confidence 自动校准 | 不可能 | 自动（每次使用 +0.02，上限 0.95） |
 | 跨项目共享 | 不可能（md 项目本地） | 共享（sqlite 全局） |
-| M 节点日志输出 | 无 | M3 引用 [memory:fact_id=AP-001 ...] 标记可审计 |
+| M 节点日志输出 | 无 | M3 引用 [memory:fact_id=AP-001 ...] 标记可审计；召回/写入即时轻提示（`[memory:recall]` / `[memory:write]`） |
 
 ### 迁移执行
 

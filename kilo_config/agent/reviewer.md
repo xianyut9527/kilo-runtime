@@ -90,7 +90,7 @@ reviewer 对每个问题必须标注严重等级：
 2. 流程日志完整性：强制流程日志是否覆盖全生命周期？
 3. 同类点覆盖矩阵：需求扩散每条是否有结论？
 4. memory/skills 合规（来源：superpowers/writing-skills）：
-   - `.kilo/memory/` 目录存在且包含有效记忆文件时检查 MEMORY.md ≤2200 字符？为空或不存在时跳过此项。
+   - `.kilo/memory/` 目录存在且包含有效记忆文件时检查 MEMORY.md ≤1500 字符？为空或不存在时跳过此项。
    - **是否值得回写 sqlite fact_store 判定**（v2.0 起）：本次是否出现可复用模式/反模式？**先跑 SQL 查历史命中数**，再决定是否标 `[MISSING_MEMORY_WRITE]`：
      ```sql
      -- 查同类触发历史

@@ -49,7 +49,7 @@ metadata:
 | `agent/engineer.md` / `checker.md` / `reviewer.md` 等 subagent | Hermes `delegate_task` 委派模板（每次委派传 goal+context+toolsets） | 13 个 agent 文件 → 委派模板片段 |
 | `kilo.json` provider 配置 | Hermes `config.yaml` custom endpoint（OpenAI 兼容） | base_url + api_key 迁移 |
 | `.kilo/skills/patterns` + `anti-patterns` + `workflow` | `~/.hermes/skills/`（与 Hermes 内置技能同级） | 直接复制，frontmatter 已对齐 agentskills.io |
-| `.kilo/memory/MEMORY.md` + `USER.md` | Hermes 原生 `MEMORY.md` + `USER.md`（完全兼容，2200/1375 字符限制一致） | 直接复用 |
+| `.kilo/memory/MEMORY.md` + `USER.md` | Hermes 原生 `MEMORY.md` + `USER.md`（v2.5 起 kilo 侧收紧为 1500/1375 字符纯指针；Hermes 源文件 2200 字符需先裁剪至 ≤1500） | 裁剪后复用 |
 | `kilo.json` compaction 配置 | Hermes `config.yaml` compression（threshold/target_ratio/protect_last_n） | 参数迁移，算法更强 |
 | GitNexus MCP | Hermes MCP 集成（stdio/HTTP） | `mcp_servers` 配置迁移 |
 | T0-T3 定级 + 7 节点流程日志 | SOUL.md 中的编排规则 + skills 中的工作流规则 | **核心编排哲学完整保留** |

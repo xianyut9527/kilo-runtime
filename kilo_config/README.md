@@ -52,7 +52,7 @@ kilo_config/
 │   │   ├── workflow/             # 自进化工作流（记忆三层架构、根因回溯）
 │   │   └── hermes-migration/     # Kilo→Hermes 迁移工具包（C 档方案）
 │   └── memory/                   # 程序化记忆（参考 Hermes Agent）
-│       ├── MEMORY.md             # agent 笔记（≤ 2200 字符）
+│       ├── MEMORY.md             # 静态指针 + M-001 占位（≤ 1500 字符）
 │       └── USER.md               # 用户档案（≤ 1375 字符）
 ├── agent/                        # Kilo 智能体定义（全局可用）
 │   ├── coderAgent.md
@@ -139,14 +139,14 @@ diff -rq . ~/.config/kilo \
 
 ### 使用程序化记忆
 
-借鉴 Hermes Agent 的 MEMORY.md / USER.md 双轨设计，kilo 支持项目级程序化记忆，通过 `.kilo/memory/` 目录的存在性自动启停，无需 `kilo.json` 配置：
+记忆系统（v2.6.1）采用 **SQLite 唯一记忆 + md 静态兜底** 架构，由 `.kilo/memory/` 模块统一管理，通过 `${HOME}/.config/kilo-data/memory.db` 的存在性自动启停，无需 `kilo.json` 配置：
 
-1. 在项目根目录创建 `.kilo/memory/MEMORY.md` 存放 agent 笔记（架构约束、安全模式、踩坑记录，≤ 2200 字符）
-2. 在项目根目录创建 `.kilo/memory/USER.md` 存放用户偏好和项目约定（≤ 1375 字符）
-3. `.kilo/memory/` 目录存在且包含有效记忆文件时，coderAgent 在任务启动时自动检测并加载为冻结快照；目录为空或不存在时跳过 L1/L2 记忆注入和强制回溯，不影响 L3 代码图谱和 L4 外部记忆
-4. **禁用记忆**：删除或清空 `.kilo/memory/` 目录即可，无需修改 `kilo.json`
+1. **结构化记忆全部入全局 sqlite**（7 表 + 2 FTS5 trigram 虚表 + 4 视图）：经验教训 `fact_store`、失败案例 `failure_db`、调度日志 `dispatch_log`、项目上下文 `project_context`、模型校准 `model_calibration`、skill 升级审计 `skill_upgrade_log`、skill 使用时序 `skill_usage_events`
+2. **md 文件仅作静态兜底**：`.kilo/memory/MEMORY.md`（≤ 1500 字符，纯指针 + M-001 动态注入占位）、`.kilo/memory/USER.md`（≤ 1375 字符，用户偏好/安全约束）；**禁止** md 累积经验/日志/时序数据
+3. **访问通道**：agent 通过 bash 调用 `sqlite3` CLI 读写（模板见 `.kilo/memory/policy/bash_sqlite_template.md`）；备用 memory-mcp 在 `kilo.json` 预埋 `enabled:false`
+4. **禁用记忆**：删除或清空 `${HOME}/.config/kilo-data/memory.db` 即可优雅降级，不报错、不删除规则
 
-详见 `.kilo/instructions/workflow-reference.md`「程序化记忆」章节。
+模块文档：`.kilo/memory/README.md`（公共 API）、`.kilo/memory/MODULE_GUIDE.md`（模块简介与表说明）、`.kilo/memory/AGENTS.md`（agent 注入指令）、`.kilo/instructions/workflow-reference.md`「程序化记忆」章节。
 
 ### 给真实项目接入项目级 context pack
 

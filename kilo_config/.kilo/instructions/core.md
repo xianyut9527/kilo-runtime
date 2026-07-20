@@ -43,7 +43,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 记忆系统采用 **全局 sqlite 优先 + 项目 md 兜底** 架构：
 
-**sqlite 层**（全局共享，`~/.config/kilo-data/memory.db`，通过 `sqlite` MCP 访问；数据目录独立于配置目录，install 同步不会清除）：
+**sqlite 层**（全局共享，`~/.config/kilo-data/memory.db`，通过 **bash + `sqlite3` CLI** 访问（v2.5 起主通道，模板见 `.kilo/memory/policy/bash_sqlite_template.md`）；备用 memory-mcp 在 `kilo.json` 预埋 `enabled:false`；数据目录独立于配置目录，install 同步不会清除）：
 - `fact_store`：结构化经验教训（PATTERN / ANTIPATTERN / RECIPE / WARNING）
 - `failure_db`：失败案例库（含根因、修复策略、复发次数）
 - `dispatch_log`：全链路任务日志
@@ -76,7 +76,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 **关键要求**（query_strategy.md §3 已强制）：
 - SELECT **必须带 ID 字段**（failure_id / fact_id）用于回溯
-- LIKE 必须走索引（`tags LIKE '%,%keyword%,%'` 逗号分隔精确匹配）
+- 检索主路径：FTS5 trigram `MATCH`（`fact_fts` / `failure_fts`，中文需 ≥3 字符）；LIKE 仅用于试用期/ANTIPATTERN 精确类别过滤等保留场景（`tags LIKE '%,%keyword%,%'` 逗号分隔精确匹配）
 - 注入门槛：fact_store confidence ≥ 0.7 + hit_count ≥ 2；failure_db resolved_at 非空
 
 **第二步：kilo_local_recall（补充）**

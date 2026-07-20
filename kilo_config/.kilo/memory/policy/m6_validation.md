@@ -37,8 +37,8 @@ SELECT fact_id FROM fact_store WHERE fact_id IN (?, ?, ?, ...) AND archived = 0;
 | 查询结果 | 处理 |
 |---|---|
 | 全部命中 | 进入 Stage 2 |
-| 部分命中，部分不存在或已 archived | 仅对命中项进入 Stage 2；对不存在的项**生成 `[M6_ORPHAN_REFERENCE]` 警告**并写入 M6 节点日志（warn 而非 fail） |
-| 全部不存在 | 跳过 Stage 2；M6 节点日志输出 `[M6_ALL_ORPHAN]` 警告；任务可继续交付 |
+| 部分命中，部分不存在或已 archived | 仅对命中项进入 Stage 2；对不存在的项**生成 `[M6_ORPHAN_REFERENCE]` 警告**并在 `[memory:write]` 提示中输出（warn 而非 fail） |
+| 全部不存在 | 跳过 Stage 2；`[memory:write]` 提示输出 `[M6_ALL_ORPHAN]` 警告；任务可继续交付 |
 
 ### Stage 2: Update（hit_count 自增）
 
@@ -93,7 +93,7 @@ WHERE fact_id IN (:misleading_fact_ids);
 **与 Stage 2 的叠加关系（设计意图）**：hit_count 自增（使用频次）与 helpful/misleading（质量反馈）是
 独立双通道，同一 fact 同轮可同时命中两者（如被引用且被标 helpful → confidence 合计 +0.04）。
 同一 fact 同轮同时出现在 helpful 与 misleading → 两条 UPDATE 依次生效（净 confidence −0.03），
-并在 M6 节点日志输出 ⚠️ 备注（语义矛盾，建议下次只标其一）。
+并在 `[memory:write]` 提示输出 ⚠️ 备注（语义矛盾，建议下次只标其一）。
 
 **结果落盘**：反馈的 fact_id 列表随 M7 写入 `dispatch_log.helpful_fact_ids / misleading_fact_ids`
 （详见 `policy/dispatch_recorder.md` §v2.4 M7 反馈字段写入规则）。
@@ -102,7 +102,7 @@ WHERE fact_id IN (:misleading_fact_ids);
 
 | 场景 | 行为 |
 |---|---|
-| `referenced_fact_ids` 为空字符串（如 `[memory:referenced_fact_ids= not_injected=true]`） | M6 跳过 UPDATE；节点日志记录 `M6 marker present but empty list` |
+| `referenced_fact_ids` 为空字符串（如 `[memory:referenced_fact_ids= not_injected=true]`） | M6 跳过 UPDATE；`[memory:write]` 提示记录 `M6 marker present but empty list` |
 | fact_id 含小写字母（如 `ap-001`） | 视为 typo，Stage 1 失败，记录 orphan；不修正大小写 |
 | fact_id 跨项目 scope 隔离（v2.3 / #5） | Stage 1 SELECT 加 `AND (scope = 'global' OR (scope = 'project' AND project_name = :current_project))` |
 | fact 已 archived 但仍被引用 | Stage 1 视为 orphan（archived=0 过滤）；输出 `[M6_REFERENCED_ARCHIVED]` 警告，提示「该 fact 已被归档，建议从 referenced_fact_ids 移除」 |
@@ -118,9 +118,9 @@ M3 注入引用（`[memory:fact_id=X]` 在 agent 输出中出现）和 M6 显式
 
 Stage 1 仅对 M6 显式声明执行；M3 注入引用因上游 SELECT 已保证存在，无需重复校验。
 
-## 6. M6 节点日志模板
+## 6. M6 提示格式
 
-完整 markdown 模板见 `agent/coderAgent.md` §记忆节点日志 / M6。Stage 1 警告格式：
+即时轻提示格式见 `agent/coderAgent.md` §记忆提示（`💾 [memory:write]` 行内合并输出 M6 结果）。Stage 1 警告格式：
 
 ```
 M6 hit_count 自增 | 🔄 UPDATE fact_store
@@ -149,7 +149,7 @@ v2.6 起 helpful_rate 反馈有对应 soft-warn 检查：`contracts/health_check
 - `policy/query_strategy.md` §4 hit_count 自增回路 — M6 主流程
 - `policy/query_strategy.md` §M6 helpful_rate 反馈流程 — v2.4 / #13 Stage 3
 - `policy/query_strategy.md` §M-001 动态注入 — v2.4 2AP+1PAT 规范
-- `agent/coderAgent.md` §记忆节点日志 — M6 输出格式
+- `agent/coderAgent.md` §记忆提示 — M6 输出格式（`[memory:write]` + helpful/misleading 标记）
 - `contracts/health_check.sql` `FACT_ID_REFERENCED_INTACT` — 被动防御
 - `api/migrate_skill_to_fact_store.sql` — bootstrap 16 条 fact 的来源
 - `api/migrate_helpful_columns.sql` — v2.4 列迁移

@@ -67,61 +67,40 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 
 > T0 仅需"意图判定 + 任务定级·预估"两节点；T1+ 必须包含全部 8 节点。阶段 B 校准在 architect 设计门落地后输出；reviewer 审查在所有单元通过后执行。
 
-## 记忆节点日志（M1-M8，与任务流对齐）
+## 记忆提示（轻量即时，hermes 风格）
 
-`.kilo/memory/` 模块存在时，**记忆操作必须以 M1-M8 节点日志形式可视化输出**（与上方 8 节点任务流对齐，便于一眼看到记忆系统在做什么）。节点定义详见 `.kilo/memory/policy/query_strategy.md` §节点定义 M1-M8。
+`.kilo/memory/` 模块存在时，记忆操作以**即时单行提示**可视化（不打断主流程、不输出大表格）：**召回时一条 `[memory:recall]`，写入时一条 `[memory:write]`**，让用户在操作发生的当下就知道记忆在起作用。节点执行标准（何时查 / 写什么 / 硬门）详见 `.kilo/memory/policy/query_strategy.md` §节点定义 M1-M8。
 
-### 模板（T1+ 任务必出）
+### 提示格式
+
+**召回提示（M1 注入 / M2 回溯的当下输出）**：
 
 ```markdown
-## 记忆节点日志（M1-M8）
-| 节点 | 触发时机 | 操作 | 结果 | 备注 |
-|------|----------|------|------|------|
-| M1: 任务上下文注入 | 任务开始 | 🔍 SELECT 4 表 + 🔄 UPDATE use_count（A'，v2.6 硬门） | ✅ fact_store=N / failure_db=M / model_calibration=K / project_context=P + A' UPDATE 证据 | token=X/2000 |
-| M2: 失败回溯 | [触发条件] | 🔍 SELECT failure_db + fact_store | ✅ 命中 [id 列表] 或 ⏭️ 未触发 | 应用方案 |
-| M3: 经验引用 | 任务执行中 | 嵌入 `[memory:xxx_id=X]` | ✅ 引用 N 条 / ⏭️ 未引用 | 喂给 M6 |
-| M4: fact_store 去重 | [发现新模式] | 🔍 去重 + 📝 INSERT / 🔄 UPDATE | ✅ fact_id + action / ⏭️ 未触发 | AntiPattern conf=0.5 / Pattern conf=0.6；v2.3 新增 scope / project_name 列 |
-| M5: failure_db 写入 | [checker FAIL / 失败 / fixer 多轮] | 📝 INSERT failure_db | ✅ failure_id + root_cause / ⏭️ 未触发 | v2.6 降门槛：checker 首轮 FAIL 即记录；同症状复发 +1 |
-| M6: hit_count 自增 + helpful_rate 反馈 | 任务收尾 | 🔄 UPDATE fact_store（Stage 1/2/3） | ✅ [id 列表] 命中数+1 + helpful/misleading 标记 | 提取自 M3 标记；v2.6 Stage 3 强制（无反馈显式 `[memory:helpful=none]`） |
-| M7: dispatch_log 写入 | 任务收尾 | 📝 INSERT dispatch_log | ✅ dispatch_id + tier + review_mode | T1+ 必走；v2.3 新增 compensation_prompt_used / compensation_calibration_id 列 |
-| M8: model_calibration 更新 | dispatch 后 | 🔄 UPDATE model_calibration | ✅ model + success_rate 变化 | DONE=1.0 / FAILED=0.0；v2.3 新增 compensation_prompt_consumed_count 列 |
-
-**v2.3 M1 增强（#1 / #7）**：M1 阶段除注入 fact_store / failure_db / model_calibration 外，新增 `project_context` 注入（priority ≤ 5，按 priority ASC + use_count DESC（v2.4）+ updated_at DESC 排序，LIMIT 5；v2.6 起 A' use_count UPDATE 为硬门）。同时 M1 阶段执行 M-001 动态注入（`policy/query_strategy.md` §M-001 动态注入规范）：从 fact_store 取 top-2 ANTIPATTERN by hit_count，渲染为 `[memory:fact_id={fact1},{fact2}]` 标记替换 MEMORY.md 中 `<DYNAMIC_INJECT>` 占位符。
-
-**v2.3 M6 增强（#4）**：M6 UPDATE 前必须执行 Stage 1 SELECT 校验（详见 `policy/m6_validation.md`）。orphan fact_id 输出 `[M6_ORPHAN_REFERENCE]` 警告并从 UPDATE 列表移除。
-
-**v2.3 M7 advisory（#2）**：M7 INSERT 完成后 advisory 触发 `api/trial_archive.sql`（24h 节流），清理 14 天过期 trial 行。
-
-**v2.3 M7 opt-in（#3）**：当 `KILO_SKILL_UPGRADE_V2=true` 时，M7 INSERT 后跑 `policy/dispatch_recorder.md` §v2.3 skill_upgrade V2 自增 SQL 块（连续 3 次 DONE 自动 AUTO_PROMOTED）。V1 阶段（默认）行为不变。
-
-**v2.3 M8 增强（#8）**：M8 UPSERT 时同步设置 `compensation_prompt_set_at = now()`；dispatch 实际消费时 `compensation_prompt_consumed_count += 1`。
+🧠 [memory:recall] 注入 fact=2 (AP-006,PAT-001) + context=3 (PC-001,PC-003,PC-004) + cal=1 (cal-kimi-k3) | A' use_count+3 | ~1.2k/2k tokens
+🧠 [memory:recall] 失败回溯命中 failure=F-003 + fact=AP-005 — 应用历史修复方案
+🧠 [memory:recall] 无匹配命中 — 跳过注入（⏭️）
 ```
 
-### 输出示例（典型 T1 任务）
+**写入提示（M4/M5/M6/M7/M8 执行的当下输出）**：
 
 ```markdown
-## 记忆节点日志（M1-M8）
-| 节点 | 触发时机 | 操作 | 结果 | 备注 |
-|------|----------|------|------|------|
-| M1: 任务上下文注入 | 任务开始 | 🔍 SELECT 4 表 + FTS5 | ✅ fact_store=3 / failure_db=1 / model_calibration=1 / project_context=5 | token=1450/2000；FTS5 MATCH 替代 LIKE（v2.4 / #5） |
-| M2: 失败回溯 | ⏭️ 未触发 | — | — | checker 一次通过 |
-| M3: 经验引用 | 任务执行中 | 嵌入 [memory:fact_id=AP-001,AP-005] | ✅ 引用 2 条 | AP-001, AP-005；trigger_fact_ids 收集 |
-| M4: fact_store 去重 | ⏭️ 未触发 | — | — | 无新模式 |
-| M5: failure_db 写入 | ⏭️ 未触发 | — | — | 任务未失败 |
-| M6: hit_count 自增 | 任务收尾 | 🔄 UPDATE fact_store | ✅ AP-001 hit=5→6 conf=0.85→0.87; AP-005 hit=2→3 conf=0.72→0.74 | 提取自 M3；v2.4 Stage 1 校验通过 |
-| M6: helpful_rate 反馈（v2.4 / #13） | 任务收尾 | 🔄 UPDATE fact_store + 📝 UPDATE dispatch_log | ✅ helpful=AP-001,PAT-001 +1 each; misleading=AP-005 -0.05 conf | Stage 3 helpful/misleading；helpful_rate 自动计算 |
-| M7: dispatch_log 写入 | 任务收尾 | 📝 INSERT dispatch_log | ✅ disp-20260719-001 | tier=T1 review_mode=lightweight；v2.4 trigger_fact_ids/hit_ids 必填 |
-| M8: model_calibration 更新 | dispatch 后 | 🔄 UPDATE model_calibration | ✅ cal-M3-engineer success_rate 0.85→0.86 sample=5→6 | DONE 输入 |
+💾 [memory:write] fact_store AP-006 hit 3→4 conf→0.95 helpful+1 | dispatch_log +1 (disp-20260720-001, T1/lightweight) | calibration cal-xxx sample 2→3 — 经验已沉淀
+💾 [memory:write] failure_db +1 (F-20260720-001, 执行层) — 失败案例已沉淀
+💾 [memory:write] fact_store +1 (AP-015, ANTIPATTERN, conf=0.5 试用期) — 新经验已入库
 ```
 
 ### 输出规则
 
-- **必出节点**：M1（任务开始，含 A' UPDATE 证据）+ M6/M7/M8（任务收尾 T1+），其他按需
-- **M6 反馈强制（v2.6）**：T1+ 收尾 M6 必须输出 `[memory:helpful=...]` / `[memory:misleading=...]` 标记；无反馈显式输出 `[memory:helpful=none]`，禁止静默省略（缺失视为 M6 未完成 → `[MISSING_MEMORY_WRITE]`）
-- **状态图标**：🔍 query / 📝 write / 🔄 update / ✅ success / ⚠️ partial / ❌ failure / ⏭️ skipped
-- **结果列必含 ID**：如 `fact_id=M-001` / `failure_id=F-003` / `dispatch_id=disp-xxx`
-- **T0 任务**：仅 M1 + ⏭️ 标记（其他节点跳过）
-- **memory.db 未初始化**：全部节点标 ⏭️，但仍输出「memory.db 未初始化」行（让用户知道模块存在）
+- **即时性**：提示在记忆操作发生的当下输出（召回时、每次写入时），不攒到收尾
+- **合并原则**：收尾 M6/M7/M8 的多次 UPDATE/INSERT 可合并为 1 条 `[memory:write]` 行（总计 ≤3 行）
+- **ID 必带**：提示中 fact_id / failure_id / dispatch_id / calibration_id 不可省略（reviewer 可机械审计）
+- **审计标记保留**（硬门，不因轻量化省略）：
+  - `[memory:fact_id=X]` — M3 经验引用（喂给 M6）
+  - `[memory:helpful=...]` / `[memory:misleading=...]` / `[memory:helpful=none]` — M6 Stage 3（v2.6 强制，缺失 → `[MISSING_MEMORY_WRITE]`）
+  - `[memory:referenced_fact_ids=... not_injected=true]` — M6 显式声明
+- **T0 任务**：有注入输出 1 条 `[memory:recall]`；无注入可省略；无写入节点
+- **memory.db 未初始化**：首次发现时输出 1 条 `🧠 [memory:recall] memory.db 未初始化 — 记忆降级跳过`，之后静默
+- **禁止**：不再输出 M1-M8 大表格；v2.3+ 增强逻辑（M-001 动态注入 / M6 Stage 1 校验 / M7 advisory 等）仍在 policy 层照常执行，仅不打印
 
 ## 异常处理
 

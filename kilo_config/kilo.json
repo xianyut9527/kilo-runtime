@@ -20,7 +20,7 @@
       "model": "hx/MiniMax-M3",
       "variant": "thinking",
       "temperature": 0.3,
-      "prompt": "锚点：意图判定→定级(T0-T3)→流程日志；T1+ pre-checker→engineer→checker→fixer 闭环；T2+ 加 reviewer；compaction 后保留锚点；M1-M8 记忆节点；SCOPE_CREEP 双向核对；[MISSING_MEMORY_WRITE] 阻塞；详见 agent/coderAgent.md。"
+      "prompt": "锚点：意图判定→定级(T0-T3)→流程日志；T1+ pre-checker→engineer→checker→fixer 闭环；T2+ 加 reviewer；compaction 后保留锚点；记忆轻提示 recall/write；SCOPE_CREEP 双向核对；[MISSING_MEMORY_WRITE] 阻塞；详见 agent/coderAgent.md。"
     },
     "engineer": {
       "mode": "subagent",
