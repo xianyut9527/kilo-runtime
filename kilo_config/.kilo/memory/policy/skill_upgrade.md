@@ -172,6 +172,11 @@ WHERE fact_id = ?;
 
 每个满足 `fact_store.confidence >= 0.8 AND hit_count >= 3 AND archived = 0` 的 fact_id，在 `skill_upgrade_log` 表创建 DRAFT 行（由 `api/migrate_skill_upgrade_log.sql` 一次性回填）。
 
+> **v2.6.1 边界约束**：V2 自动晋升（AUTO_PROMOTED → archived=1）**不经过人工审批的 what/how 边界判定**。
+> 启用 V2 前必须确认：候选 fact 均为 how 类（程序性知识）。what 类 fact（具体反模式 / 环境陷阱）即使
+> 达到阈值也应常驻 fact_store（见 §人工审批决策规则）。建议做法：启用 V2 前先按 §人工审批决策规则
+> 对全部 DRAFT 行做一轮人工终审（what 类置 REJECTED），REJECTED 行不参与 V2 计数与晋升。
+
 ### 计数器自增（每次 M7 dispatch 后）
 
 ```sql

@@ -9,7 +9,7 @@
 -- 使用方式（编程）:
 --   better-sqlite3 等只需按行解析本文件输出（行格式: <check_name>|<pass|fail>|<detail>）
 --
--- 版本：v2.6（共 16 项检查）
+-- 版本：v2.6.1（共 17 项检查）
 --   v2.4：13 项（表/索引/视图/行数/CHECK 约束/种子/trial/bootstrap 完整性/scope 列/补偿 prompt 过期）
 --   v2.5 新增：
 --     14. SKILL_USAGE_EVENTS_TABLE_PRESENT（#T1）：skill_usage_events 表存在（替代 .log md 累积）
@@ -17,7 +17,10 @@
 --   v2.6 新增：
 --     15. FEEDBACK_LOOP_IDLE：dispatch ≥5 但 fact_store 反馈事件（helpful+misleading）=0 → M6 Stage 3 未激活
 --     16. CONTEXT_USE_COUNT_STALE：dispatch ≥5 但 project_context use_count 总和=0 → M1 query A' UPDATE 未执行
--- soft-warn 语义：第 6-16 项 fail 映射到 check17 warnings[]，不阻断交付（依赖 validate-config.mjs
+--   v2.6.1 新增：
+--     17. VIEWS_QUERYABLE_OK：4 视图不仅存在且可实际查询（存在性检查 #3 无法发现视图体内 SQL 语法损坏，
+--         如 v2.6 前 v_failure_patterns 的 GROUP_CONCAT DISTINCT 两参数缺陷）
+-- soft-warn 语义：第 6-17 项 fail 映射到 check17 warnings[]，不阻断交付（依赖 validate-config.mjs
 -- softWarnChecks 名单；仅 1-5 项结构性检查 fail 为硬 FAIL）
 
 .headers off
@@ -204,3 +207,18 @@ SELECT 'CONTEXT_USE_COUNT_STALE' AS check_name,
        'dispatch_log=' || (SELECT COUNT(*) FROM dispatch_log) ||
        ',context_use_total=' || (SELECT COALESCE(SUM(use_count),0) FROM project_context) ||
        '（>0 或 dispatch<5 即 pass）' AS detail;
+
+-- ============================================================
+-- 17. v2.6.1：4 视图可查询性（soft-warn）
+--     检查 #3 仅验证视图名存在；本项实际执行 SELECT，捕捉视图体内 SQL 损坏
+-- ============================================================
+SELECT 'VIEWS_QUERYABLE_OK' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM v_failure_patterns) >= 0
+             AND (SELECT COUNT(*) FROM v_high_confidence_facts) >= 0
+             AND (SELECT COUNT(*) FROM v_high_helpful_facts) >= 0
+             AND (SELECT COUNT(*) FROM v_active_project_context) >= 0
+            THEN 'pass' ELSE 'fail' END AS status,
+       'v_failure_patterns=' || (SELECT COUNT(*) FROM v_failure_patterns) ||
+       ',v_high_confidence_facts=' || (SELECT COUNT(*) FROM v_high_confidence_facts) ||
+       ',v_high_helpful_facts=' || (SELECT COUNT(*) FROM v_high_helpful_facts) ||
+       ',v_active_project_context=' || (SELECT COUNT(*) FROM v_active_project_context) AS detail;

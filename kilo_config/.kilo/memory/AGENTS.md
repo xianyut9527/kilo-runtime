@@ -3,12 +3,12 @@
 > **模块位置**：`.kilo/memory/AGENTS.md`（模块对 agent 的唯一注入入口）
 > **注入时机**：当 `${HOME}/.config/kilo-data/memory.db` 存在且含 7 表时，由 coderAgent / engineer / reviewer 在任务开始时按需加载
 > **禁用方式**：删除或清空 `${HOME}/.config/kilo-data/memory.db` 即可优雅降级（不报错、不删除规则）
-> **版本**：v2.6（含 FTS5 trigram 全文检索 / helpful_rate 强制反馈 / failure_db scope 隔离 / project_context use_count 硬门 / M-001 动态 2AP+1PAT）
+> **版本**：v2.6.1（含 FTS5 trigram 全文检索 / helpful_rate 强制反馈 / failure_db scope 隔离 / project_context use_count 硬门 / M-001 动态 2AP+1PAT / 视图可查询性校验）
 
 ## 模块标识
 
 - **名称**：`memory-module`
-- **版本**：`2.6`
+- **版本**：`2.6.1`
 - **策略**：`sqlite-first-md-fallback + bash-cli-channel + fts5-trigram + scope-isolation + helpful-rate-mandatory-feedback`
 - **数据库路径**：`${HOME}/.config/kilo-data/memory.db`
 - **访问通道**：主通道 = bash + sqlite3 CLI（v2.5-过渡版，模板见 `policy/bash_sqlite_template.md`）；备用通道 = 自建 memory-mcp（v3.0，`kilo.json` 中 `enabled:false` 默认关闭）
@@ -24,7 +24,7 @@
 
 ## 公共 API（agent 唯一应访问的入口）
 
-**完整公共 API 清单**见同目录 `README.md` §公共 API（10 行表）。本节仅给 agent 提供 4 条**最常用**入口：
+**完整公共 API 清单**见同目录 `README.md` §公共 API（完整表）。本节仅给 agent 提供 4 条**最常用**入口：
 
 | 场景 | 入口 |
 |---|---|

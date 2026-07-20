@@ -238,6 +238,6 @@ ORDER BY day DESC;
 - `fact_dedup.md` — fact_store 写入（含 v2.4 helpful_rate 初始化）
 - `failure_recorder.md` — failure_db 写入
 - `model_calibration.md` — 模型校准更新
-- `m6_validation.md` §3 — M6 Stage 3 helpful/misleading 处理（前置）
+- `m6_validation.md` §3 Stage 3 — M6 helpful/misleading 处理（前置）
 - `query_strategy.md` §M6 helpful_rate 反馈流程 — 综合规范
 - `../../instructions/workflow-core.md` §收尾自检 — 硬门禁入口

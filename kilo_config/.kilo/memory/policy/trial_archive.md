@@ -97,6 +97,9 @@ sqlite3 memory.db "SELECT fact_id, archived, evidence FROM fact_store WHERE fact
 
 # 4. check17 应 PASS（warnings 数组不再含 TRIAL_EXPIRED_PENDING）
 node validate-config.mjs
+
+# 5. 清理测试行（防止 TEST-* 残留污染生产库，v2.6.1 起强制）
+sqlite3 memory.db "DELETE FROM fact_store WHERE fact_id='TEST-TRIAL-EXPIRED';"
 ```
 
 ## 7. 禁止事项
@@ -110,4 +113,4 @@ node validate-config.mjs
 - `api/trial_archive.sql` — 归档 SQL 脚本（事务 + UPDATE + 输出归档数）
 - `contracts/health_check.sql` `TRIAL_EXPIRED_PENDING` — 健康度校验
 - `policy/query_strategy.md` §注入门槛 — 试用期满后的状态描述
-- `policy/dispatch_recorder.md` §5 — advisory 触发位置
+- `policy/dispatch_recorder.md` §v2.3 trial 归档 advisory — advisory 触发位置

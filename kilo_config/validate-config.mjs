@@ -1071,7 +1071,7 @@ function check13HermesInstallExcludeSync() {
 // 验证：模块入口文件 + DDL + 关键 policy 全部存在；模块根目录不可缺失
 // v2.5：sqlite 唯一记忆 — 禁止 .kilo/memory/skill-usage.log 存在（必须迁移至 skill_usage_events 表）
 function check14MemoryEnabled(config) {
-  const name = '记忆模块完整性（.kilo/memory/ v2.6 边界）';
+  const name = '记忆模块完整性（.kilo/memory/ v2.6.1 边界）';
   const required = [
     '.kilo/memory/README.md',
     '.kilo/memory/AGENTS.md',
@@ -1421,6 +1421,7 @@ function check17MemoryDbHealth() {
         'SKILL_USAGE_EVENTS_TABLE_PRESENT',
         'FEEDBACK_LOOP_IDLE',
         'CONTEXT_USE_COUNT_STALE',
+        'VIEWS_QUERYABLE_OK',
       ];
       const failed = rows.filter((r) => r[1] === 'fail' && !softWarnChecks.includes(r[0]));
       if (failed.length > 0) {

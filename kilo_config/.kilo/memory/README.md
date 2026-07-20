@@ -2,7 +2,7 @@
 
 > **模块位置**：`.kilo/memory/`（仓库内唯一记忆边界）
 > **职责**：跨项目持久化结构化经验 + 任务调度日志 + 模型校准 + 项目上下文 + 反馈质量量化
-> **状态**：v2.6（**SQLite 唯一记忆** + md 静态规则兜底 + FTS5 trigram + helpful_rate 强制反馈 + scope 隔离 + 回路空转告警）
+> **状态**：v2.6.1（**SQLite 唯一记忆** + md 静态规则兜底 + FTS5 trigram + helpful_rate 强制反馈 + scope 隔离 + 回路空转告警 + 视图可查询性校验）
 > **作者**：coderAgent 自动维护 + 人工审核
 
 ## 模块架构（4 层）
@@ -13,18 +13,19 @@
 ├── AGENTS.md            ← 模块对 agent 的指令（自动注入）
 ├── schema/              ← 第 1 层：DDL 唯一源
 │   └── init.sql         ← 7 表 + 26 索引 + 4 视图 + 2 FTS5 虚表（trigram，v2.6）+ 8 条 project_context 自动种子（v2.5 +skill_usage_events）
-├── policy/              ← 第 2 层：业务规则决策树（11 个文件，v2.4 / v2.3 新增 4 个）
+├── policy/              ← 第 2 层：业务规则决策树（12 个文件，v2.4 / v2.3 新增 4 个）
 │   ├── dispatch_recorder.md     ← dispatch_log 写入（含 v2.4 helpful/misleading 列）
 │   ├── fact_dedup.md            ← fact_store 去重 + 写入（含 scope 规则 v2.3 / #5）
 │   ├── failure_recorder.md      ← failure_db 写入（含 v2.4 scope 镜像 + FTS5）
-│   ├── skill_upgrade.md         ← fact_store 触发 skill 升级（含 V2 算法 v2.3 / #3）
+│   ├── skill_upgrade.md         ← fact_store 触发 skill 升级（含 V2 算法 v2.3 / #3 + v2.6 审批边界）
 │   ├── model_calibration.md     ← 模型校准更新（含补偿 prompt 消费追踪 v2.3 / #8）
 │   ├── query_strategy.md        ← 任务开始 + 失败回溯查询（含 M6 前置校验 v2.3 / #4 + helpful_rate v2.4 / #13）
-│   ├── init_check.md            ← memory.db 首次部署 + v2.3/v2.4 升级 SOP（6 步）
+│   ├── init_check.md            ← memory.db 首次部署 + v2.2→v2.6.1 升级 SOP（6 步 + 6b/6c/6d/7 迁移段）
 │   ├── trial_archive.md         ← 14 天 trial 过期归档（v2.3 / #2）
 │   ├── project_context_seed.md  ← project_context 8 条种子维护规则（v2.3 / #1）
 │   ├── m6_validation.md         ← M6 标记 Stage 1 前置校验 + Stage 3 helpful/misleading（v2.3 / #4 + v2.4 / #13）
-│   └── semantic_search.md       ← 跨会话语义检索 v4.0 接口规范（v2.3 / #6）
+│   ├── semantic_search.md       ← 跨会话语义检索 v4.0 接口规范（v2.3 / #6）
+│   └── bash_sqlite_template.md  ← bash + sqlite3 CLI 主通道命令模板（v2.5）
 ├── api/                 ← 第 3 层：实现层（迁移脚本 + 未来 MCP server）
 │   ├── migrate_skill_to_fact_store.sql       ← v2.1 一次性迁移（14 AP + 2 PAT）
 │   ├── seed_project_context.sql             ← v2.3 / #1 project_context 8 条种子
@@ -39,9 +40,10 @@
 │   ├── migrate_dispatch_feedback_columns.sql  ← v2.4 / #13 dispatch_log 反馈列
 │   ├── migrate_fact_fts.sql                   ← v2.4 / #5 fact_store FTS5 虚表
 │   ├── migrate_fts_trigram.sql                 ← v2.6 FTS5 分词器 unicode61 → trigram 重建
+│   ├── migrate_fix_v_failure_patterns.sql      ← v2.6.1 v_failure_patterns 视图语法修复
 │   └── migrate_skill_usage_log_to_sqlite.sql   ← v2.5 / #T1 .log → skill_usage_events 迁移
 └── contracts/           ← 第 4 层：接口契约
-    └── health_check.sql ← 标准化健康度查询（v2.6 16 项；被 validate-config.mjs check17 调用）
+    └── health_check.sql ← 标准化健康度查询（v2.6.1 17 项；被 validate-config.mjs check17 调用）
 ```
 
 ## 公共 API（外部模块唯一应访问的入口）
@@ -67,8 +69,9 @@
 | `api/migrate_add_scope_column.sql` | v2.2 → v2.3 升级 | fact_store scope 列 |
 | `api/migrate_compensation_columns.sql` | v2.2 → v2.3 升级 | model_calibration 补偿列 |
 | `api/migrate_dispatch_compensation_columns.sql` | v2.2 → v2.3 升级 | dispatch_log 补偿列 |
-| `contracts/health_check.sql` | validate-config.mjs check17 | 16 项健康度查询（v2.6 新增 2 项回路空转 soft-warn） |
+| `contracts/health_check.sql` | validate-config.mjs check17 | 17 项健康度查询（v2.6.1 新增视图可查询性 soft-warn） |
 | `api/migrate_fts_trigram.sql` | v2.4/v2.5 → v2.6 升级 | FTS5 分词器 trigram 重建（含触发器 + rebuild） |
+| `api/migrate_fix_v_failure_patterns.sql` | v2.6 → v2.6.1 升级 | v_failure_patterns 视图重建（GROUP_CONCAT DISTINCT 修复） |
 
 ## 核心铁律（3 条）
 
@@ -86,10 +89,10 @@
 > 模块自身具备完整性检查能力（`contracts/health_check.sql`）。
 > check17 在每次 `node validate-config.mjs` 时执行，确保：
 > - 7 表结构齐全（v2.5 含 `skill_usage_events`）
-> - 核心索引存在（≥17，含 v2.3 新增 `idx_fact_scope` / `idx_upgrade_fact` / `idx_upgrade_status`）
-> - 视图存在
+> - 核心索引存在（≥21，含 v2.3 新增 `idx_fact_scope` / `idx_upgrade_fact` / `idx_upgrade_status`）
+> - 视图存在且可查询（v2.6.1 #17 VIEWS_QUERYABLE_OK）
 > - 行数统计可读
-> - v2.3 新增 6 项 soft-warn 检查（不阻断交付）
+> - 第 6-17 项为 soft-warn 检查（不阻断交付）
 
 ### 铁律 3：**演进路径**
 
@@ -177,7 +180,8 @@
 | **v2.3** | (1) project_context 8 条种子自动 fill (#1)；(2) trial 14 天过期归档 SOP (#2)；(3) skill_upgrade V2 opt-in 自动化 + `skill_upgrade_log` 表 (#3)；(4) M6 显式声明 Stage 1 前置校验 (#4)；(5) fact_store `scope` / `project_name` 列 + 跨项目隔离 (#5)；(6) semantic_search v4.0 接口规范文档化 (#6)；(7) MEMORY.md M-001 动态注入 (#7)；(8) model_calibration / dispatch_log 补偿 prompt 消费追踪 + 30 天过期告警 (#8) |
 | **v2.4** | (1) FTS5 全文索引（fact_fts / failure_fts + 触发器 + bm25 排序）效率 +++ (#5)；(2) project_context `use_count` / `last_used_at` 动态排序 (#2)；(3) fact_store `helpful_count` / `misleading_count` / `helpful_rate` 反馈质量量化 (#13)；(4) M-001 动态注入 2AP + 1PAT (#7 扩展)；(5) failure_db `scope` / `project_name` 列镜像 (#15)；(6) dispatch_log `trigger_fact_ids` / `helpful_fact_ids` / `misleading_fact_ids` 结构化反馈 (#13)；(7) output-schema preflight 自检（输出前 1st defense）稳定性 +++ (#10) |
 | **v2.5** | (1) **SQLite 唯一记忆原则**：禁止 md 文件累积时序数据（`.kilo/memory/skill-usage.log` 已迁移至 `skill_usage_events` 表）(#T1)；(2) `MEMORY.md` 字符上限收紧至 ≤1500，纯指针化（无 prose）；(3) `archive/YYYY-MM/` md 归档协议废除（全部走 SQLite `archived=1`） |
-| **v2.6**（当前） | (1) FTS5 分词器 unicode61 → **trigram**（修复中文 MATCH 0 命中缺陷；MATCH 查询词需 ≥3 字符）；(2) M6 helpful/misleading **强制化**（Stage 3 补入 m6_validation；无反馈显式 `[memory:helpful=none]`；SQL 落地 confidence ±公式）；(3) M1 query A' use_count UPDATE 升级为**硬门**；(4) health_check 新增 2 项回路空转 soft-warn（FEEDBACK_LOOP_IDLE / CONTEXT_USE_COUNT_STALE）+ 修复 validate-config.mjs soft-warn 死代码误判硬 FAIL；(5) failure_db 写入降门槛（checker 首轮 FAIL 即记录）；(6) model_calibration 注入门槛 sample≥3→≥2；(7) skill_upgrade 首批 4 条 DRAFT 终审 + what/how 边界规则成文（AP-014→MANUAL_PROMOTED 归档；AP-001/AP-005/PAT-001→REJECTED 常驻 fact_store）；(8) 数据治理：清理 TEST-MCP 残留 12 行 + 删除无文档死表 audit_log |
+| **v2.6** | (1) FTS5 分词器 unicode61 → **trigram**（修复中文 MATCH 0 命中缺陷；MATCH 查询词需 ≥3 字符）；(2) M6 helpful/misleading **强制化**（Stage 3 补入 m6_validation；无反馈显式 `[memory:helpful=none]`；SQL 落地 confidence ±公式）；(3) M1 query A' use_count UPDATE 升级为**硬门**；(4) health_check 新增 2 项回路空转 soft-warn（FEEDBACK_LOOP_IDLE / CONTEXT_USE_COUNT_STALE）+ 修复 validate-config.mjs soft-warn 死代码误判硬 FAIL；(5) failure_db 写入降门槛（checker 首轮 FAIL 即记录）；(6) model_calibration 注入门槛 sample≥3→≥2；(7) skill_upgrade 首批 4 条 DRAFT 终审 + what/how 边界规则成文（AP-014→MANUAL_PROMOTED 归档；AP-001/AP-005/PAT-001→REJECTED 常驻 fact_store）；(8) 数据治理：清理 TEST-MCP 残留 12 行 + 删除无文档死表 audit_log |
+| **v2.6.1**（当前） | (1) **修复 v_failure_patterns 视图 GROUP_CONCAT DISTINCT 两参数非法**（schema + 生产库 + `api/migrate_fix_v_failure_patterns.sql` 三同步）；(2) health_check 新增 #17 VIEWS_QUERYABLE_OK（视图可查询性 soft-warn，存在性检查的盲区补漏）；(3) failure_db 查询全面 FTS5 化（query_strategy §1C/§3 LIKE→failure_fts MATCH，消除与 failure_recorder 的表述冲突）；(4) init_check 补齐 v2.3→v2.4 / v2.4→v2.5 / v2.6→v2.6.1 迁移段；(5) skill_upgrade V2 加 what/how 边界约束（启用前先人工终审 DRAFT）；(6) **test.js 改造为 temp DB 隔离**（memory-mcp.js 支持 `KILO_MEMORY_DB_PATH` env 覆盖，杜绝 TEST-MCP 类生产污染）；(7) 数据治理：删除零引用死表 mcp_config；(8) 文档一致性批（policy 12 个文件计数 / 索引 ≥21 / 段编号重排 / 断链修复） |
 | v3.0（未来） | 自定义 MCP server（api/ 层）+ tool 强制执行 + 删除 `[MISSING_MEMORY_WRITE]` 标记 |
 | v4.0（远期） | 跨会话语义检索（接口规范见 `policy/semantic_search.md`）+ 跨项目共享 fact_store（v2.3 scope 列已就位，仅替换检索后端） |
 
@@ -246,7 +250,10 @@ sqlite3 "${HOME}/.config/kilo-data/memory.db" \
 | check17 `[COMPENSATION_PROMPT_STALE]` | v2.3 / #8：model_calibration 设置补偿 prompt 后 30 天未消费 → 人工 review 失修 prompt |
 | check17 `[FEEDBACK_LOOP_IDLE]` | v2.6：dispatch ≥5 但全库 helpful/misleading 反馈 = 0 → M6 Stage 3 未激活，按 `policy/m6_validation.md` §3 Stage 3 强制输出反馈标记 |
 | check17 `[CONTEXT_USE_COUNT_STALE]` | v2.6：dispatch ≥5 但 project_context use_count 总和 = 0 → M1 query A' UPDATE 未执行，按 `policy/query_strategy.md` §1 A' 硬门执行 |
+| check17 `[VIEWS_QUERYABLE_OK]` | v2.6.1：视图体内 SQL 损坏（如 v_failure_patterns 历史 GROUP_CONCAT DISTINCT 两参数缺陷）→ 执行 `api/migrate_fix_v_failure_patterns.sql` |
 | FTS5 中文 MATCH 恒 0 命中 | v2.6 前部署的 DB 虚表为 unicode61 分词 → 执行 `api/migrate_fts_trigram.sql` 重建 |
+| 生产库出现 `TEST-MCP-*` / `disp-mcp-test-*` / `cal-mcp-test-*` 行 | v2.6.1 前 test.js 直接读写生产库所致 → DELETE 清理；test.js 已改为 temp DB 隔离（v2.6.1） |
+| 生产库存在 `mcp_config` / `audit_log` 表 | 历史 memory-mcp 试运行遗留（无任何代码引用）→ 可安全 DROP（v2.6.1 已清理） |
 | v2.3 升级 `REQUIRED_TABLES_MISSING` actual=5 | `api/migrate_skill_upgrade_log.sql` 未跑（含 CREATE TABLE IF NOT EXISTS） |
 
 ## 扩展指南

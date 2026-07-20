@@ -1,11 +1,11 @@
 ---
 name: memory-strategy
-description: 记忆系统策略指针文件。完整内容已迁移到 .kilo/memory/ 模块（AGENTS.md + policy/*.md，v2.6 含 FTS5 trigram + helpful_rate 强制反馈 + scope 隔离）
+description: 记忆系统策略指针文件。完整内容已迁移到 .kilo/memory/ 模块（AGENTS.md + policy/*.md，v2.6.1 含 FTS5 trigram + helpful_rate 强制反馈 + scope 隔离）
 keywords: memory-strategy, pointer, sqlite-first-md-fallback
 compatibility:
   - kilo >= 1.0
 metadata:
-  version: "2.6"
+  version: "2.6.1"
   category: memory
 ---
 
@@ -28,5 +28,5 @@ metadata:
 **模块入口**：`.kilo/memory/README.md`（公共 API 文档）
 **模块对 agent 入口**：`.kilo/memory/AGENTS.md`
 **schema 唯一源**：`.kilo/memory/schema/init.sql`
-**业务规则**：`policy/*.md`（11 个文件）
+**业务规则**：`policy/*.md`（12 个文件）
 **健康度 SQL**：`contracts/health_check.sql`

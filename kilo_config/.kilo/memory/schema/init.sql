@@ -16,7 +16,8 @@
 -- 模块架构：本文件由 .kilo/memory/contracts/health_check.sql 验证完整性
 --            业务规则由 .kilo/memory/policy/*.md 定义（不在此处重复）
 --
--- 版本：v2.6（在 v2.5 基础上 FTS5 分词器 unicode61 → trigram，修复中文 MATCH）
+-- 版本：v2.6.1（在 v2.6 基础上修复 v_failure_patterns 视图 GROUP_CONCAT DISTINCT 语法错误 + 段编号重排）
+--   v2.6：FTS5 分词器 unicode61 → trigram，修复中文 MATCH
 --   v2.4：FTS5 / helpful_rate / failure_db scope / project_context use_count
 --   v2.5（新增）：
 --     - skill_usage_events 表（替代 .kilo/memory/skill-usage.log md 累积）
@@ -228,19 +229,26 @@ CREATE INDEX IF NOT EXISTS idx_skill_usage_session ON skill_usage_events(session
 CREATE INDEX IF NOT EXISTS idx_skill_usage_outcome ON skill_usage_events(outcome);
 CREATE INDEX IF NOT EXISTS idx_skill_usage_timestamp ON skill_usage_events(timestamp DESC);
 
--- 6. 查询辅助视图: 高频失败模式（v2.4 / #15 scope 隔离）
+-- 6. 查询辅助视图: 高频失败模式（v2.4 / #15 scope 隔离；v2.6.1 修复 GROUP_CONCAT DISTINCT 语法）
+--    注：SQLite 中 DISTINCT 聚合只接受 1 个参数，自定义分隔符与 DISTINCT 不可兼得
 CREATE VIEW IF NOT EXISTS v_failure_patterns AS
 SELECT
     symptom,
     root_cause_level,
     COUNT(*) as occurrence,
     AVG(same_symptom_count) as avg_recurrence,
-    GROUP_CONCAT(DISTINCT fix_strategy, ' | ') as strategies
+    GROUP_CONCAT(DISTINCT fix_strategy) as strategies
 FROM failure_db
 WHERE verified = 1
 GROUP BY symptom, root_cause_level
 HAVING occurrence >= 2
 ORDER BY occurrence DESC;
+
+-- 7. 查询辅助视图: 高置信度事实
+CREATE VIEW IF NOT EXISTS v_high_confidence_facts AS
+SELECT * FROM fact_store
+WHERE confidence >= 0.8 AND archived = 0
+ORDER BY confidence DESC, hit_count DESC;
 
 -- 8. v2.4 高 helpful_rate 视图（#13 反馈质量 — 优先注入高质 fact）
 CREATE VIEW IF NOT EXISTS v_high_helpful_facts AS
@@ -290,11 +298,12 @@ CREATE TRIGGER IF NOT EXISTS failure_fts_au AFTER UPDATE ON failure_db BEGIN
     VALUES (new.rowid, new.failure_id, new.symptom, new.fix_strategy, new.fix_location, new.tags);
 END;
 
--- 7. 查询辅助视图: 高置信度事实
-CREATE VIEW IF NOT EXISTS v_high_confidence_facts AS
-SELECT * FROM fact_store
-WHERE confidence >= 0.8 AND archived = 0
-ORDER BY confidence DESC, hit_count DESC;
+-- ============================================================
+-- 附注：mcp_config 表（v3.0 备用通道 memory-mcp 的运行时元数据）
+-- ============================================================
+-- mcp_config 不属于本 DDL（核心 7 表之外）。它由 api/mcp/memory-mcp.js 启用时按需自建
+-- （key/value 元数据：version / initialized_at / features）。v2.6.1 起健康度不检查该表；
+-- 未启用 memory-mcp 的部署中若存在历史遗留 mcp_config，可安全 DROP（无任何代码引用）。
 
 -- ============================================================
 -- v2.3 自动 seed（项目级架构上下文）

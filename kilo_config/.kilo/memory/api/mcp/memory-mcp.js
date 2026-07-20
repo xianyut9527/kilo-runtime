@@ -16,7 +16,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DB_PATH = path.join(os.homedir(), '.config', 'kilo-data', 'memory.db');
+// v2.6.1：支持 KILO_MEMORY_DB_PATH 环境变量覆盖（默认 = 生产库）。
+// 用途：test.js 单元测试指向 temp DB 副本，杜绝测试数据污染生产库（历史 TEST-MCP-* 残留来源）。
+const DB_PATH = process.env.KILO_MEMORY_DB_PATH || path.join(os.homedir(), '.config', 'kilo-data', 'memory.db');
 const CONTRACT_PATH = path.resolve(__dirname, '..', '..', 'contracts', 'health_check.sql');
 
 const SERVER_NAME = 'kilo-memory';

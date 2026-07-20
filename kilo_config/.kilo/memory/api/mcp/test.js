@@ -1,12 +1,21 @@
 #!/usr/bin/env node
 // test.js: unit tests for memory-mcp tool functions
 // Direct import (does NOT start MCP server; SDK only imported for Server class definition)
-import { queryFacts, queryFailures, insertFact, logDispatch, updateCalibration, healthCheck, closeDb } from './memory-mcp.js';
+// v2.6.1: 全程在 temp DB 副本上运行（KILO_MEMORY_DB_PATH），生产库零接触——
+//         杜绝历史 TEST-MCP-* / disp-mcp-test-* / cal-mcp-test-* 残留来源。
 import { DatabaseSync } from 'node:sqlite';
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs';
 
-const dbPath = path.join(os.homedir(), '.config', 'kilo-data', 'memory.db');
+const prodDb = path.join(os.homedir(), '.config', 'kilo-data', 'memory.db');
+const dbPath = path.join(os.tmpdir(), `memory-mcp-test-${process.pid}.db`);
+fs.copyFileSync(prodDb, dbPath);
+process.env.KILO_MEMORY_DB_PATH = dbPath;
+
+// 动态 import：必须等 env 设置后 memory-mcp.js 才读取 DB_PATH
+const { queryFacts, queryFailures, insertFact, logDispatch, updateCalibration, healthCheck, closeDb } = await import('./memory-mcp.js');
+
 const results = { passed: 0, failed: 0, errors: [] };
 
 function assert(condition, msg) {
@@ -176,61 +185,19 @@ try {
     }
   }
 
-  // ========== 清理测试数据 ==========
+  // ========== 清理（v2.6.1：temp DB 整体删除，生产库零接触，无需触发器手术） ==========
   section('cleanup');
   {
-    const db = new DatabaseSync(dbPath);
-    // node:sqlite 缺 FTS5 module；DELETE fact_store 会触发 fact_fts_ad → 抛错
-    // 临时禁用触发器，清理完成后重建（保证主通道的 FTS5 不受影响）
-    db.exec('BEGIN');
+    closeDb();
     try {
-      db.exec('DROP TRIGGER IF EXISTS fact_fts_ai');
-      db.exec('DROP TRIGGER IF EXISTS fact_fts_au');
-      db.exec('DROP TRIGGER IF EXISTS fact_fts_ad');
-      db.prepare('DELETE FROM fact_store WHERE fact_id = ?').run(testFactId);
-      db.prepare('DELETE FROM dispatch_log WHERE dispatch_id = ?').run(testDispatchId);
-      db.prepare('DELETE FROM model_calibration WHERE calibration_id = ?').run(testCalId);
-      db.exec(`CREATE TRIGGER IF NOT EXISTS fact_fts_ai AFTER INSERT ON fact_store BEGIN
-        INSERT INTO fact_fts (rowid, fact_id, trigger, action, condition, tags)
-        VALUES (new.rowid, new.fact_id, new.trigger, new.action, new.condition, new.tags);
-      END`);
-      db.exec(`CREATE TRIGGER IF NOT EXISTS fact_fts_ad AFTER DELETE ON fact_store BEGIN
-        INSERT INTO fact_fts (fact_fts, rowid, fact_id, trigger, action, condition, tags)
-        VALUES ('delete', old.rowid, old.fact_id, old.trigger, old.action, old.condition, old.tags);
-      END`);
-      db.exec(`CREATE TRIGGER IF NOT EXISTS fact_fts_au AFTER UPDATE ON fact_store BEGIN
-        INSERT INTO fact_fts (fact_fts, rowid, fact_id, trigger, action, condition, tags)
-        VALUES ('delete', old.rowid, old.fact_id, old.trigger, old.action, old.condition, old.tags);
-        INSERT INTO fact_fts (rowid, fact_id, trigger, action, condition, tags)
-        VALUES (new.rowid, new.fact_id, new.trigger, new.action, new.condition, new.tags);
-      END`);
-      db.exec('COMMIT');
-      console.log('  ✓ 测试数据已清理（FTS5 触发器已重建）');
-    } catch (e) {
-      try { db.exec('ROLLBACK'); } catch {}
-      console.log('  ⚠ 清理异常: ' + e.message);
-      // 强制重建触发器
-      try {
-        db.exec(`CREATE TRIGGER IF NOT EXISTS fact_fts_ai AFTER INSERT ON fact_store BEGIN
-          INSERT INTO fact_fts (rowid, fact_id, trigger, action, condition, tags)
-          VALUES (new.rowid, new.fact_id, new.trigger, new.action, new.condition, new.tags);
-        END`);
-        db.exec(`CREATE TRIGGER IF NOT EXISTS fact_fts_ad AFTER DELETE ON fact_store BEGIN
-          INSERT INTO fact_fts (fact_fts, rowid, fact_id, trigger, action, condition, tags)
-          VALUES ('delete', old.rowid, old.fact_id, old.trigger, old.action, old.condition, old.tags);
-        END`);
-        db.exec(`CREATE TRIGGER IF NOT EXISTS fact_fts_au AFTER UPDATE ON fact_store BEGIN
-          INSERT INTO fact_fts (fact_fts, rowid, fact_id, trigger, action, condition, tags)
-          VALUES ('delete', old.rowid, old.fact_id, old.trigger, old.action, old.condition, old.tags);
-          INSERT INTO fact_fts (rowid, fact_id, trigger, action, condition, tags)
-          VALUES (new.rowid, new.fact_id, new.trigger, new.action, new.condition, new.tags);
-        END`);
-        console.log('  ✓ 触发器已强制重建');
-      } catch (e2) {
-        console.log('  ✗ 触发器重建失败: ' + e2.message);
+      for (const suffix of ['', '-wal', '-shm']) {
+        const p = dbPath + suffix;
+        if (fs.existsSync(p)) fs.unlinkSync(p);
       }
+      console.log('  ✓ temp DB 已删除（生产库零接触）');
+    } catch (e) {
+      console.log('  ⚠ temp DB 删除失败: ' + e.message);
     }
-    db.close();
   }
 
 } catch (e) {

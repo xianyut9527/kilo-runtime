@@ -133,7 +133,11 @@ M6 hit_count 自增 | 🔄 UPDATE fact_store
 
 ## 7. check17 联动
 
-`contracts/health_check.sql` 中 `FACT_ID_REFERENCED_INTACT` 行扫描 16 条迁移 bootstrap facts（AP-001..AP-014 + PAT-001/002）是否被意外归档/删除。映射到 check17 的 `warnings.push('[FACT_ID_ORPHAN] actual=N')`，**不阻断交付**。
+`contracts/health_check.sql` 中 `FACT_ID_REFERENCED_INTACT` 行检查 16 条迁移 bootstrap facts（AP-001..AP-014 + PAT-001/002）的**存在性**（不过滤 archived，防意外删除）。映射到 check17 的 `warnings.push('[FACT_ID_ORPHAN] actual=N')`，**不阻断交付**。
+
+> 例外说明（v2.6.1）：AP-014 经 v2.6 人工审批 MANUAL_PROMOTED 后 `archived=1`（合法归档，已由
+> `component-driven-fixes` skill 固化覆盖），不影响本检查（计数仍 =16）。若未来再有审批归档，
+> 期望计数需同步下调并在此备注。
 
 该检查为被动防御（防误删），主动防御由 Stage 1 完成。
 

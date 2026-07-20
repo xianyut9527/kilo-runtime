@@ -77,6 +77,30 @@ sqlite3 "${HOME}/.config/kilo-data/memory.db" < .kilo/memory/api/seed_project_co
 
 新部署（首次 `schema/init.sql`）已包含 v2.3 所有 DDL + 8 条种子，无需跑 6.x 迁移。
 
+### 6b. v2.3 → v2.4 schema 迁移（升级场景）
+
+| 步骤 | 迁移脚本 | 影响 |
+|---|---|---|
+| 6b.1 | `api/migrate_helpful_columns.sql` | fact_store + helpful_count / misleading_count / helpful_rate 列 |
+| 6b.2 | `api/migrate_failure_scope_and_fts.sql` | failure_db + scope / project_name 列 + failure_fts 虚表 + 3 触发器 |
+| 6b.3 | `api/migrate_project_context_use.sql` | project_context + use_count / last_used_at 列 |
+| 6b.4 | `api/migrate_dispatch_feedback_columns.sql` | dispatch_log + trigger_fact_ids / helpful_fact_ids / misleading_fact_ids 列 |
+| 6b.5 | `api/migrate_fact_fts.sql` | fact_fts 虚表 + 3 触发器 + 全量回填 |
+
+### 6c. v2.4 → v2.5 迁移（升级场景）
+
+| 步骤 | 迁移脚本 | 影响 |
+|---|---|---|
+| 6c.1 | `api/migrate_skill_usage_log_to_sqlite.sql` | skill_usage_events 新表 + `.kilo/memory/skill-usage.log` 数据迁入后删除该 md |
+
+新部署（首次 `schema/init.sql`）已包含 v2.4/v2.5 全部 DDL，无需跑 6b/6c。
+
+### 6d. v2.6 → v2.6.1 视图修复（升级场景）
+
+| 步骤 | 迁移脚本 | 影响 |
+|---|---|---|
+| 6d.1 | `api/migrate_fix_v_failure_patterns.sql` | 重建 v_failure_patterns 视图（修复 GROUP_CONCAT DISTINCT 两参数非法；v2.4 起部署的 DB 必修） |
+
 ### 7. v2.4/v2.5 → v2.6 FTS5 分词器迁移（升级场景）
 
 v2.6 将 `fact_fts` / `failure_fts` 分词器从 unicode61 更换为 trigram（修复中文 MATCH 0 命中缺陷）：
@@ -106,6 +130,8 @@ v2.6 将 `fact_fts` / `failure_fts` 分词器从 unicode61 更换为 trigram（�
 | check17 `FEEDBACK_LOOP_IDLE` warn（v2.6，soft） | dispatch ≥5 但全库 helpful/misleading 反馈 = 0 → M6 Stage 3 从未执行 | 确认 T1+ 收尾 M6 节点输出 `[memory:helpful=...]` 标记（无反馈显式 none），详见 `m6_validation.md` §3 Stage 3 |
 | check17 `CONTEXT_USE_COUNT_STALE` warn（v2.6，soft） | dispatch ≥5 但 project_context use_count 总和 = 0 → M1 query A' UPDATE 从未执行 | 确认 M1 注入后执行 query A' UPDATE，详见 `query_strategy.md` §1 A' 硬门 |
 | FTS5 中文 MATCH 恒 0 命中（v2.6 前部署） | 虚表为 unicode61 分词（连续 CJK 视为单 token） | 执行 `api/migrate_fts_trigram.sql` 重建为 trigram |
+| check17 `VIEWS_QUERYABLE_OK` warn（v2.6.1，soft） | 视图体内 SQL 损坏（如 v2.6 前 v_failure_patterns 的 GROUP_CONCAT DISTINCT 两参数） | 执行 `api/migrate_fix_v_failure_patterns.sql` 重建视图 |
+| 查询 v_failure_patterns 报 `DISTINCT aggregates must have exactly one argument` | 同上（v2.4 部署的视图定义非法） | 执行 `api/migrate_fix_v_failure_patterns.sql` |
 
 ## 模块完整性
 

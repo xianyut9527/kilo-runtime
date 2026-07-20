@@ -90,13 +90,17 @@ WHERE archived = 0
 ORDER BY created_at DESC
 LIMIT 2;
 
--- C. 历史失败模式（按 tag 匹配 + 门槛，带 ID + same_symptom_count）
-SELECT failure_id, symptom, root_cause_level, fix_strategy, fix_location, same_symptom_count, tags
-FROM failure_db
-WHERE (tags LIKE '%,%当前任务关键词%,%' OR symptom LIKE '%当前任务关键词%')
-  AND resolved_at IS NOT NULL
-  AND same_symptom_count >= 1
-ORDER BY same_symptom_count DESC
+-- C. 历史失败模式（v2.6.1 起 failure_fts MATCH；带 ID + same_symptom_count；scope 隔离 v2.4 / #15）
+-- :failure_keywords 构造规则同 query B（trigram ≥3 字符；2 字词扩展或退化 LIKE）
+SELECT f.failure_id, f.symptom, f.root_cause_level, f.fix_strategy, f.fix_location, f.same_symptom_count, f.tags,
+       bm25(failure_fts) AS rank_score
+FROM failure_fts
+JOIN failure_db f ON f.rowid = failure_fts.rowid
+WHERE failure_fts MATCH :failure_keywords
+  AND f.resolved_at IS NOT NULL
+  AND f.same_symptom_count >= 1
+  AND (f.scope = 'global' OR (f.scope = 'project' AND f.project_name = :current_project))
+ORDER BY rank_score
 LIMIT 3;
 
 -- D. 模型校准建议（当前 agent + 任务类型 + 样本门槛；v2.3 / #8 增加补偿 prompt 消费过滤）
@@ -180,20 +184,24 @@ LIMIT 1;
 当命中以下条件时，**必须**查询 sqlite 而非仅依赖 `kilo_local_recall`：
 
 ```sql
--- 查找同类失败（带 ID + 位置）
-SELECT failure_id, symptom, fix_strategy, fix_location, same_symptom_count, tags
-FROM failure_db
-WHERE (symptom LIKE '%当前错误关键词%' OR tags LIKE '%,%当前错误关键词%,%')
-  AND verified = 1
-ORDER BY same_symptom_count DESC, created_at DESC
+-- 查找同类失败（v2.6.1 起 failure_fts MATCH；带 ID + 位置；verified=1 只回溯已验证修复）
+SELECT f.failure_id, f.symptom, f.fix_strategy, f.fix_location, f.same_symptom_count, f.tags,
+       bm25(failure_fts) AS rank_score
+FROM failure_fts
+JOIN failure_db f ON f.rowid = failure_fts.rowid
+WHERE failure_fts MATCH :error_keywords  -- trigram ≥3 字符；2 字词扩展或退化 LIKE
+  AND f.verified = 1
+  AND (f.scope = 'global' OR (f.scope = 'project' AND f.project_name = :current_project))
+ORDER BY rank_score
 LIMIT 3;
 
--- 查找相关反模式（带 ID）
+-- 查找相关反模式（带 ID；保留 LIKE —— ANTIPATTERN 精确类别过滤 + trigram 由 query B 覆盖）
 SELECT fact_id, trigger, action, confidence, hit_count, tags
 FROM fact_store
 WHERE category = 'ANTIPATTERN'
   AND (tags LIKE '%,%当前任务关键词%,%' OR trigger LIKE '%当前任务关键词%')
   AND archived = 0
+  AND (scope = 'global' OR (scope = 'project' AND project_name = :current_project))
 ORDER BY confidence DESC, hit_count DESC
 LIMIT 3;
 ```

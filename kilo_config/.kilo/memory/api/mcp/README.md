@@ -28,7 +28,7 @@ Kilo 之前依赖第三方 sqlite MCP server，但社区实现存在严重内存
 | `insert_fact` | M4 写入 | 去重 INSERT/UPDATE fact_store（事务内临时禁用 FTS5 触发器） |
 | `log_dispatch` | M7 写入 | INSERT OR REPLACE dispatch_log |
 | `update_calibration` | M8 写入 | UPSERT model_calibration（rolling-average success_rate） |
-| `health_check` | 守门员 | 执行 `.kilo/memory/contracts/health_check.sql` 16 项检查 |
+| `health_check` | 守门员 | 执行 `.kilo/memory/contracts/health_check.sql` 17 项检查（v2.6.1） |
 
 ## 启用步骤
 
@@ -36,7 +36,9 @@ Kilo 之前依赖第三方 sqlite MCP server，但社区实现存在严重内存
 
 ```powershell
 cd D:\work\kilo_config\kilo_config\.kilo\memory\api\mcp
-npm install
+# 若目录内无 package.json（v2.6.1 起仓库不再预置）：
+npm init -y; npm install @modelcontextprotocol/sdk
+# 若已有 package.json：npm install
 ```
 
 ### 2. 单元测试
@@ -46,6 +48,11 @@ node test.js
 ```
 
 期望输出：`通过: 17+` / `失败: 0`。
+
+> **v2.6.1 起**：test.js 全程在 temp DB 副本上运行（自动复制生产库 → 设置 `KILO_MEMORY_DB_PATH` →
+> 测试结束删除 temp 文件），生产库零接触。此前版本直接读写生产库，曾产生 `TEST-MCP-*` /
+> `disp-mcp-test-*` / `cal-mcp-test-*` 残留（已清理）。如需对生产库做冒烟测试，显式
+> `Remove-Item Env:KILO_MEMORY_DB_PATH` 后运行（不推荐）。
 
 ### 3. 内存稳定性测试
 
@@ -110,9 +117,9 @@ Remove-Item -Recurse -Force D:\work\kilo_config\kilo_config\.kilo\memory\api\mcp
 
 ## 相关文件
 
-- `memory-mcp.js` — MCP server 主文件（654 行）
-- `test.js` — 单元测试（直接 import tool 函数，不走 MCP 协议）
+- `memory-mcp.js` — MCP server 主文件（DB_PATH 支持 `KILO_MEMORY_DB_PATH` env 覆盖，v2.6.1）
+- `test.js` — 单元测试（temp DB 隔离，v2.6.1；直接 import tool 函数，不走 MCP 协议）
 - `test-stability.js` — 内存稳定性测试（200 次循环）
-- `package.json` — 依赖声明（只依赖 `@modelcontextprotocol/sdk`）
+- `package.json` — 依赖声明（只依赖 `@modelcontextprotocol/sdk`；v2.6.1 起不预置，按 §1 生成）
 - `../../../policy/bash_sqlite_template.md` — 主通道命令模板
 - `../../../contracts/health_check.sql` — health_check tool 消费的契约

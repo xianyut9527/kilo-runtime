@@ -77,4 +77,4 @@ node validate-config.mjs
 - `README.md` 公共 API 表 — 入口声明
 - `contracts/health_check.sql` `PROJECT_CONTEXT_SEEDED` — 健康度校验
 - `policy/query_strategy.md` §1 query A — 注入 SQL
-- `policy/init_check.md` step 5 — 4 步 SOP 后的 seed 步骤
+- `policy/init_check.md` step 5 — 6 步 SOP 中的 seed 步骤
