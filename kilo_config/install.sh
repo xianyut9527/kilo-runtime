@@ -194,6 +194,123 @@ else
     echo "[WARN] kilo.json not found at ${KILO_JSON_PATH}, skip substitution"
 fi
 
+# ============================================================
+# Memory 层初始化（sqlite3 CLI + memory.db）
+# 检测到缺失时提示用户，同意则自动安装 sqlite3 + 初始化 memory.db
+# 缺失时记忆层静默降级（不报错但不写入，自我进化闭环不生效）
+# ============================================================
+echo ""
+echo "========================================"
+echo "  Memory Layer Setup (sqlite3 + memory.db)"
+echo "========================================"
+
+DB_DIR="${HOME}/.config/kilo-data"
+DB_PATH="${DB_DIR}/memory.db"
+# init.sql / 迁移脚本从 TARGET_DIR（已同步的全局配置目录）取
+INIT_SQL="${TARGET_DIR}/.kilo/memory/schema/init.sql"
+MIGRATE_SQL="${TARGET_DIR}/.kilo/memory/api/migrate_skill_to_fact_store.sql"
+SEED_SQL="${TARGET_DIR}/.kilo/memory/api/seed_project_context.sql"
+
+# --- Step 1: 检测 sqlite3 CLI ---
+if ! command -v sqlite3 &> /dev/null; then
+    echo "[CHECK]  sqlite3 CLI 未检测到"
+    echo "记忆层（经验沉淀/错误总结/模型校准/skill 升级）依赖 sqlite3。"
+    echo "缺失时记忆层静默降级：不报错但不写入，自我进化闭环不生效。"
+    echo ""
+    # 检测可用的包管理器并推荐安装命令
+    INSTALL_CMD=""
+    PKG_MGR=""
+    if command -v apt-get &> /dev/null; then
+        INSTALL_CMD="sudo apt-get update && sudo apt-get install -y sqlite3"
+        PKG_MGR="apt"
+    elif command -v brew &> /dev/null; then
+        INSTALL_CMD="brew install sqlite"
+        PKG_MGR="brew"
+    elif command -v dnf &> /dev/null; then
+        INSTALL_CMD="sudo dnf install -y sqlite"
+        PKG_MGR="dnf"
+    elif command -v yum &> /dev/null; then
+        INSTALL_CMD="sudo yum install -y sqlite"
+        PKG_MGR="yum"
+    elif command -v pacman &> /dev/null; then
+        INSTALL_CMD="sudo pacman -S --noconfirm sqlite"
+        PKG_MGR="pacman"
+    elif command -v apk &> /dev/null; then
+        INSTALL_CMD="apk add --no-cache sqlite"
+        PKG_MGR="apk"
+    else
+        echo "[WARN]   未检测到已知包管理器（apt/brew/dnf/yum/pacman/apk）"
+        echo "         请手动安装 sqlite3：https://www.sqlite.org/download.html"
+    fi
+
+    if [ -n "$INSTALL_CMD" ]; then
+        read -p "是否现在自动安装 sqlite3？（${INSTALL_CMD}）[Y/n] " CHOICE
+        if [ "$CHOICE" = "" ] || [ "$CHOICE" = "Y" ] || [ "$CHOICE" = "y" ]; then
+            echo "[INSTALL] ${INSTALL_CMD}"
+            if $INSTALL_CMD; then
+                # 刷新 bash 命令缓存（安装后立即可用，无需重启终端）
+                hash -r
+                if command -v sqlite3 &> /dev/null; then
+                    echo "[OK]     sqlite3 安装成功: $(command -v sqlite3)"
+                else
+                    echo "[WARN]   sqlite3 安装完成但 PATH 未刷新，请重启终端后重新运行 install.sh"
+                fi
+            else
+                echo "[WARN]   sqlite3 安装失败（exit code $?）"
+                echo "         可手动安装: ${INSTALL_CMD}"
+            fi
+        else
+            echo "[SKIP]   用户跳过 sqlite3 安装"
+            echo "[WARN]   记忆层将静默降级（经验/错误/校准零写入，自我进化闭环不生效）"
+        fi
+    fi
+else
+    echo "[CHECK]  sqlite3 CLI 已安装: $(command -v sqlite3)"
+fi
+
+# --- Step 2: 初始化 memory.db（sqlite3 可用时）---
+if command -v sqlite3 &> /dev/null; then
+    # 建数据目录
+    mkdir -p "${DB_DIR}"
+
+    if [ -f "${DB_PATH}" ]; then
+        echo "[SKIP]   memory.db 已存在，跳过初始化: ${DB_PATH}"
+    else
+        # 执行 init.sql 建表
+        if [ -f "${INIT_SQL}" ]; then
+            echo "[INIT]   执行 schema/init.sql 建表..."
+            sqlite3 "${DB_PATH}" < "${INIT_SQL}"
+            echo "[OK]     memory.db 表结构初始化完成: ${DB_PATH}"
+        else
+            echo "[WARN]   schema/init.sql 未找到（${INIT_SQL}），跳过建表"
+        fi
+
+        # 迁移 bootstrap 经验（AP-*/PAT-*）到 fact_store
+        if [ -f "${MIGRATE_SQL}" ]; then
+            echo "[INIT]   迁移 bootstrap 经验 (migrate_skill_to_fact_store.sql)..."
+            sqlite3 "${DB_PATH}" < "${MIGRATE_SQL}"
+            MIGRATED=$(sqlite3 "${DB_PATH}" "SELECT COUNT(*) FROM fact_store WHERE fact_id LIKE 'AP-%' OR fact_id LIKE 'PAT-%';")
+            echo "[OK]     AP/PAT 经验迁移完成: ${MIGRATED} 条"
+        fi
+
+        # 补种 project_context（init.sql 已含种子，此处幂等补种）
+        if [ -f "${SEED_SQL}" ]; then
+            echo "[INIT]   补种 project_context..."
+            sqlite3 "${DB_PATH}" < "${SEED_SQL}"
+        fi
+
+        # 健康度验证
+        TABLES=$(sqlite3 "${DB_PATH}" "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%_fts%';")
+        echo "[VERIFY] 表清单: ${TABLES}"
+    fi
+else
+    echo "[WARN]   sqlite3 CLI 不可用，memory.db 未初始化"
+    echo "         记忆层静默降级。安装 sqlite3 后重新运行 install.sh 即可补初始化。"
+fi
+
+echo ""
+echo "Memory layer setup done."
+
 echo ""
 echo "Please restart Kilo in your projects for changes to take effect."
 echo ""

@@ -1357,10 +1357,31 @@ function check17MemoryDbHealth() {
 
   // (c) 检查文件存在与表结构
   if (!fs.existsSync(dbPath)) {
+    // 检测仓库 commit 历史：有历史却未初始化 → 经验沉淀/错误总结/模型校准全部静默失效
+    // 注：不预检 .git/HEAD 存在性（仓库根可能在父目录），直接执行 git 命令更稳健
+    let commitHint = '';
+    let warnTag = '';
+    try {
+      const { execFileSync } = require('node:child_process');
+      const out = execFileSync('git', ['rev-list', '--count', 'HEAD'], {
+        encoding: 'utf8',
+        timeout: 5000,
+        cwd: ROOT,
+      }).trim();
+      const commits = parseInt(out, 10) || 0;
+      if (commits >= 20) {
+        warnTag = `[MEMORY_DB_NOT_INITIALIZED] ⚠️ `;
+        commitHint = `（仓库已有 ${commits} 次 commit，记忆层从未初始化 → 经验沉淀/错误总结/模型校准/skill 升级全部静默失效，自我进化闭环不生效）`;
+      } else {
+        commitHint = `（仓库 ${commits} 次 commit，新项目属正常）`;
+      }
+    } catch {
+      /* git 不可用或非 git 仓库，跳过 commit 检测 */
+    }
     return {
       name,
       pass: true,
-      detail: `${dbPath} 不存在（首次部署前正常，首次 T1+ 任务前需按 .kilo/memory/policy/init_check.md 6 步 SOP 建表，v2.3 升级为 6 步）`,
+      detail: `${warnTag}${dbPath} 不存在${commitHint}。修复路径：重新运行 install.ps1（Windows）或 install.sh（macOS/Linux）— 脚本会提示安装 sqlite3 并自动初始化 memory.db。或手动执行 .kilo/memory/policy/init_check.md 6 步 SOP。${warnTag ? '缺失 sqlite 通道时记忆层静默降级，不报错但不写入，自我进化闭环不生效。' : ''}`,
     };
   }
 
@@ -1399,6 +1420,16 @@ function check17MemoryDbHealth() {
   } catch (e) {
     // better-sqlite3 不可用 → 退化为 sqlite3 CLI：执行 contracts/health_check.sql 契约，
     // 解析行格式 <check_name>|<pass|fail>|<detail>（铁律 2：契约文件必须被实际消费）
+    // 先刷新会话 PATH（解决 winget/apt 安装后当前 Node 进程 PATH 仍是旧快照的误报）
+    try {
+      const machinePath = require('node:child_process').execSync(
+        process.platform === 'win32'
+          ? 'powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable(\'PATH\',\'Machine\') + \';\' + [Environment]::GetEnvironmentVariable(\'PATH\',\'User\')"'
+          : 'echo $PATH',
+        { encoding: 'utf8', timeout: 3000 }
+      ).trim();
+      if (machinePath) process.env.PATH = machinePath;
+    } catch { /* 刷新失败不影响后续尝试 */ }
     try {
       const { execFileSync } = require('node:child_process');
       const sqlText = fs.readFileSync(contractPath, 'utf8');
@@ -1460,14 +1491,45 @@ function check17MemoryDbHealth() {
         }
       }
     } catch (cliErr) {
-      // 细分降级原因：sqlite3 CLI 不存在（ENOENT）→ 跳过（pass:true）；
-      // CLI 存在但契约执行抛错 → 记忆层异常，FAIL（不再静默落入"均不可用"）
+      // 细分降级原因：sqlite3 CLI 不存在（ENOENT）→ 尝试 winget 目录探测重试；
+      // 仍不可用 → 跳过（pass:true）+ 告警；CLI 存在但契约执行抛错 → 记忆层异常 FAIL
       const isMissing = cliErr && (cliErr.code === 'ENOENT' || /not found|不是内部或外部命令/i.test(String(cliErr.message)));
+      if (isMissing && process.platform === 'win32') {
+        // Windows 专属：探测 winget 安装目录（已安装但 PATH 未刷新）
+        const wingetRoot = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Packages');
+        if (fs.existsSync(wingetRoot)) {
+          const sqliteDir = fs.readdirSync(wingetRoot).find((d) => /SQLite/i.test(d));
+          if (sqliteDir) {
+            const sqliteExe = path.join(wingetRoot, sqliteDir, 'sqlite3.exe');
+            if (fs.existsSync(sqliteExe)) {
+              try {
+                const { execFileSync: execSync2 } = require('node:child_process');
+                const sqlText = fs.readFileSync(contractPath, 'utf8');
+                const out2 = execSync2(sqliteExe, [dbPath], { input: sqlText, encoding: 'utf8', timeout: 8000 });
+                // 复用上方相同的行解析逻辑（简化：直接走 health_check.sql 契约验证成功则 PASS）
+                const rows2 = out2.split(/\r?\n/).filter((l) => l.includes('|')).map((l) => l.split('|'));
+                const failed2 = rows2.filter((r) => r[1] === 'fail' && ![
+                  'PROJECT_CONTEXT_SEEDED','TRIAL_EXPIRED_PENDING','FACT_ID_REFERENCED_INTACT',
+                  'FACT_STORE_SCOPE_COLUMN_PRESENT','COMPENSATION_PROMPT_STALE','FTS5_VIRTUAL_TABLES_PRESENT',
+                  'FACT_STORE_HELPFUL_COLUMNS_PRESENT','PROJECT_CONTEXT_USE_COLUMNS_PRESENT',
+                  'SKILL_USAGE_EVENTS_TABLE_PRESENT','FEEDBACK_LOOP_IDLE','CONTEXT_USE_COUNT_STALE',
+                  'VIEWS_QUERYABLE_OK','FEEDBACK_RATE_LOW',
+                ].includes(r[0]));
+                if (failed2.length === 0) {
+                  // 成功：sqlite3 在 winget 目录找到，契约通过
+                  return { name, pass: true, detail: `memory.db 健康度校验通过（sqlite3 路径: ${sqliteExe}；PATH 未含 — 建议重启终端或重新运行 install.ps1 刷新 PATH）` };
+                }
+                return { name, pass: false, detail: `health_check.sql 契约失败（winget 路径）: ${failed2.map((f) => `${f[0]}(${f[2]})`).join('; ')}` };
+              } catch { /* 探测失败，落入下方告警 */ }
+            }
+          }
+        }
+      }
       if (isMissing) {
         return {
           name,
           pass: true,
-          detail: `better-sqlite3 与 sqlite3 CLI 均不可用，跳过深度校验（仅确认文件存在: ${path.basename(dbPath)}）`,
+          detail: `[MEMORY_RUNTIME_UNAVAILABLE] ⚠️ better-sqlite3 与 sqlite3 CLI 均不可用（会话 PATH 可能未刷新），记忆层静默失效（经验/错误/校准零写入，自我进化闭环不生效）。修复路径：重新运行 install.ps1（Windows）或 install.sh（macOS/Linux）— 脚本会提示安装 sqlite3 并自动初始化 memory.db；或手动安装 sqlite3 CLI（winget install SQLite.SQLite / brew install sqlite / apt-get install sqlite3）+ 执行 .kilo/memory/policy/init_check.md 建表`,
         };
       }
       return {
@@ -1633,7 +1695,9 @@ const out = [];
 out.push('== kilo_config 配置自检 ==');
 const TOTAL = results.length;
 results.forEach((r, i) => {
-  const status = r.pass ? 'PASS' : `FAIL (${r.detail})`;
+  // PASS 但 detail 含告警标记（[MEMORY_*] / ⚠️）时一并打印，避免静默
+  const showDetailOnPass = r.pass && r.detail && (/^\[MEMORY_|⚠️/.test(r.detail));
+  const status = r.pass ? (showDetailOnPass ? `PASS (${r.detail})` : 'PASS') : `FAIL (${r.detail})`;
   out.push(`[${i + 1}/${TOTAL}] ${r.name}: ${status}`);
 });
 const failCount = results.filter((r) => !r.pass).length;

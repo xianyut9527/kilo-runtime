@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+- **2026-07-22**: Memory 层自动初始化 — install 脚本 + validate-config check17 告警增强。
+  - **背景**：memory.db 不存在 + sqlite3 CLI 未安装时，check17 两个分支静默 `pass:true`，输出层 PASS 时丢弃 detail → 记忆层静默失效（经验沉淀/错误总结/模型校准/skill 升级全部不写入，自我进化闭环不生效），用户无感知。
+  - **install.ps1 / install.sh 新增 Memory Layer Setup 段**：
+    - Step 0/1：检测 `sqlite3` CLI，缺失时提示用户并自动安装（Windows: `winget install SQLite.SQLite` + PATH 刷新 + winget 安装目录探测；Linux/macOS: apt/brew/dnf/yum/pacman/apk 自动探测包管理器）
+    - Step 2：初始化 `memory.db`（建目录 + 执行 `schema/init.sql` 建表 + 迁移 bootstrap 经验 `migrate_skill_to_fact_store.sql` + 补种 `project_context` + 表清单验证）
+    - 幂等：memory.db 已存在则 SKIP；sqlite3 不可用则静默降级（不阻断 install）
+  - **validate-config.mjs check17 增强**：
+    - memory.db 不存在分支：新增 git commit 历史检测（≥20 commit → `[MEMORY_DB_NOT_INITIALIZED] ⚠️` 告警，提示经验沉淀/错误总结/模型校准/skill 升级全部静默失效）；修复 `.git/HEAD` 预检缺陷（仓库根在父目录时误判），改为直接 `git rev-list`
+    - ENOENT 降级分支：detail 改为 `[MEMORY_RUNTIME_UNAVAILABLE] ⚠️` + 三条修复路径
+    - 输出层：PASS 但 detail 含 `[MEMORY_*]` 或 `⚠️` 时一并打印（原逻辑 PASS 时完全丢弃 detail）
+    - Windows 专属：sqlite3 CLI ENOENT 时探测 winget 安装目录重试（解决"已安装但会话 PATH 未刷新"误报）；新增会话 PATH 刷新逻辑（从注册表读 Machine+User 合并）
+  - **文档同步**：README.md / core.md / workflow-reference.md / .kilo/memory/AGENTS.md / MODULE_GUIDE.md 5 处初始化指引更新，优先指向 install 脚本自动初始化，手动 init_check.md 6 步 SOP 作为 fallback
+  - **验证**：18/18 PASS；memory.db 初始化成功（7 表 + 2 FTS5 虚表 + 3 视图齐全，fact_store 16 条 AP/PAT 经验已迁移，project_context 8 条种子）
+
+
 - **2026-07-20**: v2.5 记忆通道重构 — 删 sqlite+ddg MCP，主通道切 bash+sqlite3 CLI，备用 memory-mcp 预埋。
   - **背景**：第三方 sqlite MCP（社区 node-sqlite3 实现）+ ddg-search MCP（Chromium 抓 HTML）长期挂起导致 Kilo 进程内存爆炸（≥2 GB），是 Windows 环境下最大的稳定性风险。
   - **改造**：

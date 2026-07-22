@@ -34,7 +34,7 @@
 
 - **主通道**：Kilo `bash` 工具调用 `sqlite3` CLI（命令模板见 `policy/bash_sqlite_template.md`）
 - **备用通道**：自建 `memory-mcp` MCP server（v3.0 规划，`kilo.json` 预埋 `enabled:false`，启用前须 `node test.js` + `node test-stability.js` 双绿）
-- **降级行为**：`memory.db` 不存在时自动跳过全部记忆读写，不报错
+- **降级行为**：`memory.db` 不存在时自动跳过全部记忆读写，不报错；重新运行 `install.ps1`/`install.sh` 可自动安装 `sqlite3` + 初始化 `memory.db`（手动 fallback：`policy/init_check.md` 6 步 SOP）
 
 ### 1.4 模块 4 层架构
 

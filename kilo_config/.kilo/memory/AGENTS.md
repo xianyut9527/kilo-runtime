@@ -56,7 +56,7 @@
 
 ## 模块不生效的降级行为
 
-- `memory.db` 不存在 → 跳过所有 sqlite 查询/写入，Kilo 自动优雅降级
+- `memory.db` 不存在 → 跳过所有 sqlite 查询/写入，Kilo 自动优雅降级；重新运行 `install.ps1`/`install.sh` 可自动安装 `sqlite3` + 初始化 `memory.db`（手动 fallback：`policy/init_check.md` 6 步 SOP）
 - `policy/*.md` 缺失 → 该规则视为不存在（不影响其他规则）
 - `schema/init.sql` 缺失 → 模块不加载，但 `validate-config.mjs` check14 会 FAIL
 

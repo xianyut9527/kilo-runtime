@@ -174,6 +174,136 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
         Write-Host "[WARN]   kilo.json not found at $KiloJsonPath, skip substitution" -ForegroundColor Yellow
     }
 
+    # ============================================================
+    # Memory 层初始化（sqlite3 CLI + memory.db）
+    # 检测到缺失时提示用户，同意则自动安装 sqlite3 + 初始化 memory.db
+    # 缺失时记忆层静默降级（不报错但不写入，自我进化闭环不生效）
+    # ============================================================
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "  Memory Layer Setup (sqlite3 + memory.db)" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+
+    $DbDir = "$env:USERPROFILE\.config\kilo-data"
+    $DbPath = Join-Path $DbDir "memory.db"
+    # init.sql / 迁移脚本从 Target（已同步的全局配置目录）取
+    $InitSql = Join-Path $Target ".kilo\memory\schema\init.sql"
+    $MigrateSql = Join-Path $Target ".kilo\memory\api\migrate_skill_to_fact_store.sql"
+    $SeedSql = Join-Path $Target ".kilo\memory\api\seed_project_context.sql"
+
+    # --- 辅助函数：刷新会话 PATH（从注册表读 Machine+User 合并，解决 winget 安装后会话 PATH 未更新问题）---
+    function Refresh-SessionPath {
+        $machinePath = [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
+        $userPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+        $env:PATH = "$machinePath;$userPath"
+    }
+
+    # --- 辅助函数：探测 winget 安装的 sqlite3 目录并加入会话 PATH ---
+    function Find-WingetSqlite {
+        $wingetRoot = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages"
+        $sqliteDir = Get-ChildItem $wingetRoot -Filter "SQLite*" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($sqliteDir) {
+            $env:PATH = "$($sqliteDir.FullName);$env:PATH"
+            return (Get-Command sqlite3 -ErrorAction SilentlyContinue)
+        }
+        return $null
+    }
+
+    # --- Step 0: 刷新会话 PATH（解决"已安装但当前会话 PATH 未含"的误报）---
+    Refresh-SessionPath
+
+    # --- Step 1: 检测 sqlite3 CLI ---
+    $SqliteExe = Get-Command sqlite3 -ErrorAction SilentlyContinue
+    if (-not $SqliteExe) {
+        # 再尝试从 winget 安装目录探测（可能已安装但 PATH 尚未刷新）
+        $SqliteExe = Find-WingetSqlite
+    }
+
+    if (-not $SqliteExe) {
+        Write-Host "[CHECK]  sqlite3 CLI 未检测到" -ForegroundColor Yellow
+        Write-Host "记忆层（经验沉淀/错误总结/模型校准/skill 升级）依赖 sqlite3。" -ForegroundColor Gray
+        Write-Host "缺失时记忆层静默降级：不报错但不写入，自我进化闭环不生效。" -ForegroundColor Gray
+        Write-Host ""
+        $Choice = Read-Host "是否现在自动安装 sqlite3？（winget install SQLite.SQLite）[Y/n]"
+
+        if ($Choice -eq "" -or $Choice -match "^[Yy]") {
+            Write-Host "[INSTALL] winget install SQLite.SQLite ..." -ForegroundColor Cyan
+            try {
+                # winget 安装（可能需要较长时间）
+                & winget install --id SQLite.SQLite --accept-source-agreements --accept-package-agreements --silent 2>&1 | ForEach-Object { Write-Host $_ }
+
+                # 安装后主动刷新 PATH（从注册表重读 + 探测 winget 安装目录）
+                Refresh-SessionPath
+                $SqliteExe = Get-Command sqlite3 -ErrorAction SilentlyContinue
+                if (-not $SqliteExe) {
+                    $SqliteExe = Find-WingetSqlite
+                }
+
+                if ($SqliteExe) {
+                    Write-Host "[OK]     sqlite3 安装成功: $($SqliteExe.Source)" -ForegroundColor Green
+                } else {
+                    Write-Host "[WARN]   sqlite3 安装完成但未在 PATH 中找到，请重启终端后重新运行 install.ps1" -ForegroundColor Yellow
+                    Write-Host "         或手动运行: winget install SQLite.SQLite" -ForegroundColor Gray
+                }
+            } catch {
+                Write-Host "[WARN]   sqlite3 安装失败: $($_.Exception.Message)" -ForegroundColor Yellow
+                Write-Host "         可手动安装: winget install SQLite.SQLite 或 choco install sqlite" -ForegroundColor Gray
+            }
+        } else {
+            Write-Host "[SKIP]   用户跳过 sqlite3 安装" -ForegroundColor Gray
+            Write-Host "[WARN]   记忆层将静默降级（经验/错误/校准零写入，自我进化闭环不生效）" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[CHECK]  sqlite3 CLI 已安装: $($SqliteExe.Source)" -ForegroundColor Green
+    }
+
+    # --- Step 2: 初始化 memory.db（sqlite3 可用时）---
+    if ($SqliteExe) {
+        # 建数据目录
+        if (-not (Test-Path $DbDir)) {
+            New-Item -ItemType Directory -Path $DbDir -Force | Out-Null
+            Write-Host "[CREATE] $DbDir" -ForegroundColor Green
+        }
+
+        if (Test-Path $DbPath) {
+            Write-Host "[SKIP]   memory.db 已存在，跳过初始化: $DbPath" -ForegroundColor Gray
+        } else {
+            # 执行 init.sql 建表
+            if (Test-Path $InitSql) {
+                Write-Host "[INIT]   执行 schema/init.sql 建表..." -ForegroundColor Cyan
+                & sqlite3 $DbPath ".read `"$InitSql`"" 2>&1 | ForEach-Object { Write-Host $_ }
+                Write-Host "[OK]     memory.db 表结构初始化完成: $DbPath" -ForegroundColor Green
+            } else {
+                Write-Host "[WARN]   schema/init.sql 未找到（$InitSql），跳过建表" -ForegroundColor Yellow
+            }
+
+            # 迁移 bootstrap 经验（AP-*/PAT-*）到 fact_store
+            if (Test-Path $MigrateSql) {
+                Write-Host "[INIT]   迁移 bootstrap 经验 (migrate_skill_to_fact_store.sql)..." -ForegroundColor Cyan
+                & sqlite3 $DbPath ".read `"$MigrateSql`"" 2>&1 | ForEach-Object { Write-Host $_ }
+                # 验证迁移行数
+                $Migrated = & sqlite3 $DbPath "SELECT COUNT(*) FROM fact_store WHERE fact_id LIKE 'AP-%' OR fact_id LIKE 'PAT-%';" 2>&1
+                Write-Host "[OK]     AP/PAT 经验迁移完成: $Migrated 条" -ForegroundColor Green
+            }
+
+            # 补种 project_context（init.sql 已含种子，此处幂等补种）
+            if (Test-Path $SeedSql) {
+                Write-Host "[INIT]   补种 project_context..." -ForegroundColor Cyan
+                & sqlite3 $DbPath ".read `"$SeedSql`"" 2>&1 | ForEach-Object { Write-Host $_ }
+            }
+
+            # 健康度验证
+            $Tables = & sqlite3 $DbPath "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%_fts%';" 2>&1
+            Write-Host "[VERIFY] 表清单: $Tables" -ForegroundColor Gray
+        }
+    } else {
+        Write-Host "[WARN]   sqlite3 CLI 不可用，memory.db 未初始化" -ForegroundColor Yellow
+        Write-Host "         记忆层静默降级。安装 sqlite3 后重新运行 install.ps1 即可补初始化。" -ForegroundColor Gray
+    }
+
+    Write-Host ""
+    Write-Host "Memory layer setup done." -ForegroundColor Cyan
+
     exit 0
 }
 catch {

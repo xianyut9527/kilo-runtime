@@ -144,7 +144,8 @@ diff -rq . ~/.config/kilo \
 1. **结构化记忆全部入全局 sqlite**（7 表 + 2 FTS5 trigram 虚表 + 4 视图）：经验教训 `fact_store`、失败案例 `failure_db`、调度日志 `dispatch_log`、项目上下文 `project_context`、模型校准 `model_calibration`、skill 升级审计 `skill_upgrade_log`、skill 使用时序 `skill_usage_events`
 2. **md 文件仅作静态兜底**：`.kilo/memory/MEMORY.md`（≤ 1500 字符，纯指针 + M-001 动态注入占位）、`.kilo/memory/USER.md`（≤ 1375 字符，用户偏好/安全约束）；**禁止** md 累积经验/日志/时序数据
 3. **访问通道**：agent 通过 bash 调用 `sqlite3` CLI 读写（模板见 `.kilo/memory/policy/bash_sqlite_template.md`）；备用 memory-mcp 在 `kilo.json` 预埋 `enabled:false`
-4. **禁用记忆**：删除或清空 `${HOME}/.config/kilo-data/memory.db` 即可优雅降级，不报错、不删除规则
+4. **首次部署/初始化**：运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）会自动检测 `sqlite3` CLI，缺失时提示用户并自动安装（winget/apt/brew 等）+ 初始化 `memory.db`（执行 `schema/init.sql` + 迁移 bootstrap 经验 + 补种 `project_context`）；跳过安装则记忆层静默降级。手动初始化见 `.kilo/memory/policy/init_check.md` 6 步 SOP。
+5. **禁用记忆**：删除或清空 `${HOME}/.config/kilo-data/memory.db` 即可优雅降级，不报错、不删除规则
 
 模块文档：`.kilo/memory/README.md`（公共 API）、`.kilo/memory/MODULE_GUIDE.md`（模块简介与表说明）、`.kilo/memory/AGENTS.md`（agent 注入指令）、`.kilo/instructions/workflow-reference.md`「程序化记忆」章节。
 

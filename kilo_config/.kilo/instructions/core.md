@@ -58,7 +58,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 - `~/.config/kilo/.kilo/skills/`：全局通用 Skill（与 install.ps1 实际安装路径一致；另通过 `kilo.json` `skills.external_dirs` 接入 `~/.agents/skills/` 社区技能源）
 - `.kilo/skills/`：项目专属 Skill（覆盖全局同名 Skill）
 
-**初始化检查**：`~/.config/kilo-data/memory.db` 不存在时，按 `.kilo/memory/policy/init_check.md` 6 步 SOP 完成建表（mkdir → 建表 → 验证 → model_calibration 基线 → project_context 自动 seed → v2.3+ schema 迁移），再开始使用。模块入口：`.kilo/memory/README.md`。
+**初始化检查**：`~/.config/kilo-data/memory.db` 不存在时，优先重新运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）— 脚本会自动检测 `sqlite3` CLI，缺失时提示安装并自动初始化 `memory.db`（建表 + 迁移 bootstrap 经验 + 补种 project_context）。手动初始化作为 fallback：按 `.kilo/memory/policy/init_check.md` 6 步 SOP 完成建表（mkdir → 建表 → 验证 → model_calibration 基线 → project_context 自动 seed → v2.3+ schema 迁移），再开始使用。模块入口：`.kilo/memory/README.md`。
 
 `gitnexus_*`：代码图谱（调用链/影响面）—— 由 `kilo.json` `mcp.gitnexus.enabled` 独立控制。
 
