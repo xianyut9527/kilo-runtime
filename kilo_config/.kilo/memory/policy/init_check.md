@@ -101,6 +101,15 @@ sqlite3 "${HOME}/.config/kilo-data/memory.db" < .kilo/memory/api/seed_project_co
 |---|---|---|
 | 6d.1 | `api/migrate_fix_v_failure_patterns.sql` | 重建 v_failure_patterns 视图（修复 GROUP_CONCAT DISTINCT 两参数非法；v2.4 起部署的 DB 必修） |
 
+### 6e. v2.6.x → v2.7 project_context scope 隔离（升级场景）
+
+| 步骤 | 迁移脚本 | 影响 |
+|---|---|---|
+| 6e.1 | `api/migrate_project_context_scope.sql` | project_context + scope / project_name 列 + idx_project_scope 索引 + 回填 8 条种子 scope（4 global + 4 project=kilo_config） |
+| 6e.2 | `api/seed_project_context.sql`（重跑） | 幂等补种；末尾 UPDATE 段回填 scope 值（对 INSERT OR IGNORE 未覆盖的既有行） |
+
+新部署（首次 `schema/init.sql`）已直接包含 v2.7 全部 DDL + 8 条带 scope 的种子，无需跑 6e。
+
 ### 7. v2.4/v2.5 → v2.6 FTS5 分词器迁移（升级场景）
 
 v2.6 将 `fact_fts` / `failure_fts` 分词器从 unicode61 更换为 trigram（修复中文 MATCH 0 命中缺陷）：
@@ -132,6 +141,8 @@ v2.6 将 `fact_fts` / `failure_fts` 分词器从 unicode61 更换为 trigram（�
 | FTS5 中文 MATCH 恒 0 命中（v2.6 前部署） | 虚表为 unicode61 分词（连续 CJK 视为单 token） | 执行 `api/migrate_fts_trigram.sql` 重建为 trigram |
 | check17 `VIEWS_QUERYABLE_OK` warn（v2.6.1，soft） | 视图体内 SQL 损坏（如 v2.6 前 v_failure_patterns 的 GROUP_CONCAT DISTINCT 两参数） | 执行 `api/migrate_fix_v_failure_patterns.sql` 重建视图 |
 | 查询 v_failure_patterns 报 `DISTINCT aggregates must have exactly one argument` | 同上（v2.4 部署的视图定义非法） | 执行 `api/migrate_fix_v_failure_patterns.sql` |
+| check17 `PROJECT_CONTEXT_SCOPE_COLUMN_PRESENT` fail（v2.7，硬） | v2.6.x → v2.7 升级未跑 6e.1 | 执行 `api/migrate_project_context_scope.sql`（加 scope / project_name 列 + 索引） |
+| check17 `PROJECT_CONTEXT_SCOPE_DISTRIBUTION` warn（v2.7，soft） | project_context scope 分布异常（global=0 或 project 行 project_name 为空） | 重跑 `api/seed_project_context.sql`（末尾 UPDATE 段回填 scope）；检查 KILO_PROJECT_NAME 设置 |
 
 ## 模块完整性
 

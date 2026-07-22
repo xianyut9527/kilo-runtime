@@ -72,14 +72,14 @@ WHERE trigger = ? AND action = ? AND archived = 0;
 - 禁止重复写入相同 Pattern（先查后写）
 - 禁止写入敏感信息（API Key、密码、内部域名）
 
-## v2.3 跨项目 scope 写入规则（#5）
+## v2.3 跨项目 scope 写入规则（#5；v2.7 扩展至 project_context）
 
-`scope` 字段决定 fact 的可见性范围：
+`scope` 字段决定 fact / project_context 的可见性范围：
 
 | scope 取值 | project_name 取值 | 注入条件 | 典型场景 |
 |---|---|---|---|
-| `'global'`（默认） | NULL | 任意项目注入 | 跨项目通用经验（如 AP-001 Windows BOM / AP-005 PowerShell 5.1 编码） |
-| `'project'` | `:current_project`（= `KILO_PROJECT_NAME` env） | 仅 `project_name = :current_project` 时注入 | 项目专属经验（如某 BFF 路由约定 / 内部命名） |
+| `'global'`（默认） | NULL | 任意项目注入 | 跨项目通用经验（如 AP-001 Windows BOM / AP-005 PowerShell 5.1 编码 / PC-004 跳步即停） |
+| `'project'` | `:current_project`（= `KILO_PROJECT_NAME` env） | 仅 `project_name = :current_project` 时注入 | 项目专属经验（如某 BFF 路由约定 / 内部命名 / kilo_config 的七层架构） |
 
 **写入决策**（agent 在提取经验时判定）：
 
@@ -90,7 +90,9 @@ WHERE trigger = ? AND action = ? AND archived = 0;
 | 经验可跨项目复用（编码规范 / 工具使用 / 流程陷阱） | `'global'`（默认） |
 | 不确定 | `'global'`（保守默认） |
 
-**v2.3 历史数据兼容**：v2.2 迁移时所有 `fact_store` 行的 `scope` 自动设为 `'global'`（`ALTER TABLE ADD COLUMN ... DEFAULT 'global'`），无需回填。
+**project_context scope 写入（v2.7 新增）**：project_context 表同样支持 scope / project_name（对齐 fact_store）。写入决策见 `policy/project_context_seed.md` §scope 写入决策。kilo_config 专属的架构/配置/记忆模块规则标 `project` + `kilo_config`，通用流程规则标 `global`。
+
+**v2.3 历史数据兼容**：v2.2 迁移时所有 `fact_store` 行的 `scope` 自动设为 `'global'`（`ALTER TABLE ADD COLUMN ... DEFAULT 'global'`），无需回填。v2.7 project_context 升级同理（`migrate_project_context_scope.sql` 默认 global，UPDATE 段回填 4 条 project）。
 
 详见 `policy/query_strategy.md` §1 query B scope 过滤 + `api/migrate_add_scope_column.sql`。
 

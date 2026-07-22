@@ -134,9 +134,10 @@ DDL 唯一源：`schema/init.sql`。schema 变更必须三文件同步（init.sq
 | priority | INTEGER | 1–10，1 最高；priority ≤ 5 进注入流 |
 | tags | TEXT | JSON 数组 |
 | use_count / last_used_at | — | v2.4 动态排序维度；v2.6.2 起并入 M1 原子化 `UPDATE...RETURNING`（杜绝只注入不 UPDATE） |
+| scope / project_name | TEXT | v2.7 跨项目隔离（对齐 fact_store v2.3 / #5）；scope='global' 时 project_name=NULL；scope='project' 时为 KILO_PROJECT_NAME |
 | created_at / updated_at | TEXT | ISO8601 |
 
-首次部署自动 seed 8 条（PC-001–PC-008，INSERT OR IGNORE 幂等）。
+首次部署自动 seed 8 条（PC-001–PC-008，INSERT OR IGNORE 幂等）。v2.7 起 8 条种子含 scope：4 global（PC-004/005/006/008 通用流程）+ 4 project=kilo_config（PC-001/002/003/007 kilo_config 专属）。业务项目（KILO_PROJECT_NAME 未设）仅注入 global 行。
 
 ### 3.5 model_calibration — 模型校准记录
 

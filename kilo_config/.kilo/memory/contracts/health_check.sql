@@ -9,7 +9,7 @@
 -- 使用方式（编程）:
 --   better-sqlite3 等只需按行解析本文件输出（行格式: <check_name>|<pass|fail>|<detail>）
 --
--- 版本：v2.6.2（共 18 项检查）
+-- 版本：v2.7（共 20 项检查）
 --   v2.4：13 项（表/索引/视图/行数/CHECK 约束/种子/trial/bootstrap 完整性/scope 列/补偿 prompt 过期）
 --   v2.5 新增：
 --     14. SKILL_USAGE_EVENTS_TABLE_PRESENT（#T1）：skill_usage_events 表存在（替代 .log md 累积）
@@ -23,7 +23,10 @@
 --   v2.6.2 新增：
 --     18. FEEDBACK_RATE_LOW：dispatch ≥5 但反馈列（helpful/misleading_fact_ids）填充率 <50% → M6/M7 执行率低
 --         （补 #15 粒度盲区：#15 仅查反馈事件=0，3 次反馈即 pass，无法捕获 5/13 这类低执行率）
--- soft-warn 语义：第 6-18 项 fail 映射到 check17 warnings[]，不阻断交付（依赖 validate-config.mjs
+--   v2.7 新增：
+--     19. PROJECT_CONTEXT_SCOPE_COLUMN_PRESENT：project_context.scope / project_name 列存在（对齐 #9 FACT_STORE_SCOPE_COLUMN_PRESENT）
+--     20. PROJECT_CONTEXT_SCOPE_DISTRIBUTION：8 条种子 scope 分布合理（global≥4 AND project≥4；soft-warn）
+-- soft-warn 语义：第 6-20 项 fail 映射到 check17 warnings[]，不阻断交付（依赖 validate-config.mjs
 -- softWarnChecks 名单；仅 1-5 项结构性检查 fail 为硬 FAIL）
 
 .headers off
@@ -42,11 +45,11 @@ FROM (
 );
 
 -- ============================================================
--- 2. 索引存在性校验（核心索引）
+-- 2. 索引存在性校验（核心索引；v2.7 新增 idx_project_scope -> 22 个）
 -- ============================================================
 SELECT 'REQUIRED_INDEXES_MISSING' AS check_name,
-       CASE WHEN COUNT(*) >= 21 THEN 'pass' ELSE 'fail' END AS status,
-       'required_min=21 actual=' || COUNT(*) AS detail
+       CASE WHEN COUNT(*) >= 22 THEN 'pass' ELSE 'fail' END AS status,
+       'required_min=22 actual=' || COUNT(*) AS detail
 FROM sqlite_master
 WHERE type='index' AND name LIKE 'idx_%';
 
@@ -245,4 +248,25 @@ SELECT 'FEEDBACK_RATE_LOW' AS check_name,
              (SELECT COUNT(*) FROM dispatch_log
               WHERE helpful_fact_ids IS NOT NULL OR misleading_fact_ids IS NOT NULL) * 1.0
              / MAX((SELECT COUNT(*) FROM dispatch_log), 1)) ||
-       '（rate≥0.5 或 dispatch<5 即 pass）' AS detail;
+        '（rate≥0.5 或 dispatch<5 即 pass）' AS detail;
+
+-- ============================================================
+-- 19. v2.7：project_context scope / project_name 列存在性（硬检查）
+--     对齐 #9 FACT_STORE_SCOPE_COLUMN_PRESENT；列缺失则 query A scope 过滤失效
+-- ============================================================
+SELECT 'PROJECT_CONTEXT_SCOPE_COLUMN_PRESENT' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM pragma_table_info('project_context') WHERE name IN ('scope','project_name')) = 2
+            THEN 'pass' ELSE 'fail' END AS status,
+       'present_count=' || (SELECT COUNT(*) FROM pragma_table_info('project_context') WHERE name IN ('scope','project_name')) || '/2' AS detail;
+
+-- ============================================================
+-- 20. v2.7：project_context scope 分布健康度（soft-warn）
+--     global ≥1 确保业务项目至少有通用流程约束注入；project 行 project_name 非空
+-- ============================================================
+SELECT 'PROJECT_CONTEXT_SCOPE_DISTRIBUTION' AS check_name,
+       CASE WHEN (SELECT COUNT(*) FROM project_context WHERE scope='global') >= 1
+              AND (SELECT COUNT(*) FROM project_context WHERE scope='project' AND project_name IS NULL) = 0
+            THEN 'pass' ELSE 'fail' END AS status,
+       'global=' || (SELECT COUNT(*) FROM project_context WHERE scope='global') ||
+        ',project=' || (SELECT COUNT(*) FROM project_context WHERE scope='project') ||
+        ',project_null_name=' || (SELECT COUNT(*) FROM project_context WHERE scope='project' AND project_name IS NULL) AS detail;

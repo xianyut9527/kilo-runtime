@@ -16,8 +16,18 @@
 -- 模块架构：本文件由 .kilo/memory/contracts/health_check.sql 验证完整性
 --            业务规则由 .kilo/memory/policy/*.md 定义（不在此处重复）
 --
--- 版本：v2.6.1（在 v2.6 基础上修复 v_failure_patterns 视图 GROUP_CONCAT DISTINCT 语法错误 + 段编号重排）
+-- 版本：v2.7（在 v2.6.2 基础上为 project_context 增加跨项目 scope 隔离，对齐 fact_store / failure_db）
+--   v2.6.2：v_active_project_context 视图 / M-001 动态注入 / 反馈执行率告警
+--   v2.6.1：修复 v_failure_patterns 视图 GROUP_CONCAT DISTINCT 语法错误 + 段编号重排
 --   v2.6：FTS5 分词器 unicode61 → trigram，修复中文 MATCH
+--   v2.7（新增）：
+--     - project_context.scope / project_context.project_name 列（跨项目隔离，对齐 fact_store v2.3 / #5）
+--     - idx_project_scope 复合索引
+--     - v_active_project_context 视图增加 scope / project_name 列
+--     - 8 条种子回填 scope：4 global + 4 project(kilo_config)
+--     - 既有 DB 升级执行 api/migrate_project_context_scope.sql
+--     - policy/query_strategy.md §1 query A 加 scope 过滤（对齐 query B/C）
+--     - contracts/health_check.sql 新增 #19 #20 两项检查
 --   v2.4：FTS5 / helpful_rate / failure_db scope / project_context use_count
 --   v2.5（新增）：
 --     - skill_usage_events 表（替代 .kilo/memory/skill-usage.log md 累积）
@@ -152,6 +162,7 @@ CREATE INDEX IF NOT EXISTS idx_dispatch_tier_deviation ON dispatch_log(tier_devi
 
 -- 4. 项目专属上下文 (ProjectMemory)
 -- 架构决策、业务规则、技术栈约束
+-- v2.7：增加 scope / project_name 列，对齐 fact_store v2.3 / #5 与 failure_db v2.4 / #15 跨项目隔离
 CREATE TABLE IF NOT EXISTS project_context (
     context_id TEXT PRIMARY KEY,
     category TEXT NOT NULL CHECK(category IN ('ARCHITECTURE', 'BUSINESS_RULE', 'TECH_STACK', 'CONSTRAINT')),
@@ -162,6 +173,8 @@ CREATE TABLE IF NOT EXISTS project_context (
     tags TEXT,                       -- JSON 数组
     use_count INTEGER NOT NULL DEFAULT 0,         -- v2.4 / #2 实际注入次数
     last_used_at TEXT,                              -- v2.4 / #2 最近一次注入时间
+    scope TEXT NOT NULL DEFAULT 'global' CHECK(scope IN ('global', 'project')),  -- v2.7 跨项目隔离
+    project_name TEXT,               -- v2.7：scope='global' 时为 NULL；scope='project' 时为稳定项目标识（KILO_PROJECT_NAME）
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -169,6 +182,7 @@ CREATE TABLE IF NOT EXISTS project_context (
 CREATE INDEX IF NOT EXISTS idx_project_category ON project_context(category);
 CREATE INDEX IF NOT EXISTS idx_project_priority ON project_context(priority);
 CREATE INDEX IF NOT EXISTS idx_project_use_count ON project_context(use_count DESC);  -- v2.4（#2）
+CREATE INDEX IF NOT EXISTS idx_project_scope ON project_context(scope, project_name);  -- v2.7（对齐 idx_fact_scope）
 
 -- 5. 模型校准记录 (QualityCalibrator)
 -- 随使用积累，指导模型路由
@@ -260,8 +274,9 @@ WHERE archived = 0
 ORDER BY helpful_rate DESC, hit_count DESC;
 
 -- 9. v2.4 高质 project_context 视图（#2 动态化 — 按 use_count + last_used_at 排序）
+--    v2.7：增加 scope / project_name 列（对齐 fact_store / failure_db）
 CREATE VIEW IF NOT EXISTS v_active_project_context AS
-SELECT context_id, category, title, content, priority, use_count, last_used_at
+SELECT context_id, category, title, content, priority, use_count, last_used_at, scope, project_name
 FROM project_context
 WHERE use_count > 0
 ORDER BY use_count DESC, last_used_at DESC;
@@ -312,44 +327,46 @@ END;
 -- 数据源：api/seed_project_context.sql（迁移脚本独立可重跑；本段为首次部署自动种子）
 -- 8 条种子覆盖 4 个 category（ARCHITECTURE / BUSINESS_RULE / TECH_STACK / CONSTRAINT），
 -- 优先级 1（最高）到 4。priority<=5 在 M1 query A 注入流中。
+-- v2.7 scope 分布：4 global（PC-004/005/006/008 通用流程/约束）+ 4 project=kilo_config（PC-001/002/003/007 kilo_config 专属架构/配置/记忆模块规则）
+-- 业务项目（KILO_PROJECT_NAME 未设）仅注入 global 行，不被 kilo_config 专属噪音污染。
 -- 详见 policy/project_context_seed.md。
-INSERT OR IGNORE INTO project_context (context_id, category, title, content, source_file, priority, tags, use_count, last_used_at, created_at, updated_at) VALUES
+INSERT OR IGNORE INTO project_context (context_id, category, title, content, source_file, priority, tags, use_count, last_used_at, scope, project_name, created_at, updated_at) VALUES
 ('PC-001', 'ARCHITECTURE', '七层架构（Brain → L7 Evolution）',
  'xy-code AI Engineering OS 七层架构：L4 MEMORY（dispatch_log/checkpoint/fact_store/project_memory/failure_db）→ L5 EVALUATION（六层验证网络 + 质量校准）→ L6 COGNITION（反模式检测 / 经验推理 / 意图理解）→ L7 EVOLUTION（错误率分析 / A/B 测试 / Strategy Proposal）。当前用 Kilo 快速验证，最终目标是人设计系统，AI Agent 自主生产软件。',
  'brain-architecture.md', 2,
- '["architecture","seven-layer","brain","evolution"]', 0, NULL, '2026-07-19', '2026-07-19'),
+ '["architecture","seven-layer","brain","evolution"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 
 ('PC-002', 'TECH_STACK', '模型与 MCP 配置（kilo.json）',
  '主模型 hx/MiniMax-M3（coderAgent + engineer）；架构/审查 kimi-k2.6 + glm-5.2；checker/fixer deepseek-v4-flash。MCP：context7（文档）+ gitnexus（代码图谱）+ playwright（浏览器自动化，谨慎用）。记忆通道：bash + sqlite3 CLI 主通道（v2.5-过渡版）；可选 memory-mcp（v3.0，kilo.json enabled:false 默认关闭）。已移除 ddg-search / 第三方 sqlite MCP（内存爆炸风险）。compaction auto，threshold 65%，tail_turns 25，preserve_recent_tokens 60K。',
  'kilo.json', 3,
- '["config","model","mcp","compaction","kilo-json"]', 0, NULL, '2026-07-19', '2026-07-19'),
+ '["config","model","mcp","compaction","kilo-json"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 
 ('PC-003', 'CONSTRAINT', '强制 sqlite 优先 + md 兜底',
  '记忆系统采用全局 sqlite 优先（~/.config/kilo-data/memory.db，7 表 + 26 索引 + 4 视图 + 2 FTS5 虚表（trigram 分词，v2.6））+ 项目 md 兜底（MEMORY.md ≤ 1500 字符 + USER.md ≤ 1375 字符）。其他模块通过 bash 调用 sqlite3 CLI 与记忆交互（v2.5-过渡版主通道），禁止直接操作 memory.db 文件。',
  '.kilo/memory/README.md', 1,
- '["memory","sqlite","md-fallback","invariant"]', 0, NULL, '2026-07-19', '2026-07-19'),
+ '["memory","sqlite","md-fallback","invariant"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 
 ('PC-004', 'CONSTRAINT', '跳步即停 / [PROCESS_VIOLATION]',
  '执行类任务禁止跳步（按 task tier 声明的路径执行），缺步即违规；发现 [PROCESS_VIOLATION] 立即暂停修正。MCP 启动超时 / 表缺失 / 写入缺失 / 编码前检查点缺失等均有对应硬门标记（[MISSING_*]）。',
  'AGENTS.md', 1,
- '["process","hard-gate","violation-marker","workflow"]', 0, NULL, '2026-07-19', '2026-07-19'),
+ '["process","hard-gate","violation-marker","workflow"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
 
 ('PC-005', 'BUSINESS_RULE', 'T1+ pre-checker → engineer → checker → fixer 闭环',
  'T1+ 任务单元级闭环：engineer 输出不自行验证（不自验），过 checker；checker FAIL → fixer 修复 → 重新 checker；fixer 连续 2 轮同症状升级 reviewer；Circuit Breaker 连续 3 次无法收敛则停止。T0 极速通道豁免。',
  '.kilo/instructions/workflow-core.md', 2,
- '["workflow","tier","unit-closure","checker","fixer"]', 0, NULL, '2026-07-19', '2026-07-19'),
+ '["workflow","tier","unit-closure","checker","fixer"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
 
 ('PC-006', 'BUSINESS_RULE', 'review_mode 决策表',
  'T0 → none（无 reviewer）；T1 单文件/2-3 文件 → lightweight（架构 + SCOPE_CREEP）；T1 ≥4 文件 / 跨模块 / 安全敏感 → full（自动升级，安全+架构+简化+SCOPE_CREEP 四视角）；T2/T3 → full。升级必须在阶段 B 输出 [REVIEW_MODE_UPGRADED] 标记。',
  '.kilo/instructions/workflow-core.md', 3,
- '["review","review-mode","lightweight","full","upgrade-trigger"]', 0, NULL, '2026-07-19', '2026-07-19'),
+ '["review","review-mode","lightweight","full","upgrade-trigger"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
 
 ('PC-007', 'BUSINESS_RULE', 'Schema 变更三文件同步（铁律 2/3）',
  '记忆模块 schema 变更必须同时改 3 个文件（缺一即破坏模块完整性）：(1) schema/init.sql（DDL 唯一源）;(2) contracts/health_check.sql（表名/索引名/视图名同步）;(3) policy/*.md 对应文档（业务规则同步）。',
  '.kilo/memory/README.md', 2,
- '["invariant","iron-rule","schema-sync","module-internal-consistency"]', 0, NULL, '2026-07-19', '2026-07-19'),
+ '["invariant","iron-rule","schema-sync","module-internal-consistency"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 
 ('PC-008', 'TECH_STACK', '临时文件位置 $env:TEMP / /tmp/',
  '临时文件（脚本 / 构建产物 / debug 日志）必须写入系统临时目录：Windows $env:TEMP / Linux /tmp/。禁止写入项目根目录、src/、lib/、dist/。残留临时文件标记 [FOUND_ORPHAN_ARTIFACT: 路径]。',
  '.kilo/instructions/core.md', 4,
- '["lifecycle","temp-file","artifact-cleanup","cross-platform"]', 0, NULL, '2026-07-19', '2026-07-19');
+ '["lifecycle","temp-file","artifact-cleanup","cross-platform"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19');

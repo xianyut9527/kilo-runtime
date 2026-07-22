@@ -1087,6 +1087,7 @@ function check14MemoryEnabled(config) {
     '.kilo/memory/api/migrate_helpful_columns.sql',
     '.kilo/memory/api/migrate_failure_scope_and_fts.sql',
     '.kilo/memory/api/migrate_project_context_use.sql',
+    '.kilo/memory/api/migrate_project_context_scope.sql',
     '.kilo/memory/api/migrate_dispatch_feedback_columns.sql',
     '.kilo/memory/api/migrate_fact_fts.sql',
     '.kilo/memory/api/migrate_skill_usage_log_to_sqlite.sql',
@@ -1517,7 +1518,38 @@ function check17MemoryDbHealth() {
                 ].includes(r[0]));
                 if (failed2.length === 0) {
                   // 成功：sqlite3 在 winget 目录找到，契约通过
-                  return { name, pass: true, detail: `memory.db 健康度校验通过（sqlite3 路径: ${sqliteExe}；PATH 未含 — 建议重启终端或重新运行 install.ps1 刷新 PATH）` };
+                  // v2.6.3：补查 dispatch_log 行数，内联 HOLLOW 检测（避免 winget 探测路径跳过 (d) 分支）
+                  let dispCount = 0;
+                  let factCount = 0;
+                  try {
+                    const rc2 = rows2.find((r) => r[0] === 'ROW_COUNTS');
+                    if (rc2) {
+                      for (const kv of rc2[2].split(',')) {
+                        const [k, v] = kv.split('=');
+                        if (k.trim() === 'dispatch_log') dispCount = parseInt(v, 10) || 0;
+                        if (k.trim() === 'fact_store') factCount = parseInt(v, 10) || 0;
+                      }
+                    }
+                  } catch { /* 行数解析失败，保留契约 PASS 结论 */ }
+                  if (dispCount === 0) {
+                    // 仓库 commit 数估算
+                    let commitHint = '';
+                    const gitHead = path.resolve(ROOT, '.git/HEAD');
+                    if (fs.existsSync(gitHead)) {
+                      try {
+                        const out = execSync2('git', ['rev-list', '--count', 'HEAD'], { encoding: 'utf8', timeout: 5000, cwd: ROOT }).trim();
+                        const commits = parseInt(out, 10) || 0;
+                        if (commits >= 20) commitHint = `（仓库已有 ${commits} 次 commit，强烈怀疑 [MEMORY_LAYER_HOLLOW]）`;
+                        else commitHint = `（仓库 ${commits} 次 commit，新项目属正常）`;
+                      } catch { /* 忽略 */ }
+                    }
+                    return {
+                      name,
+                      pass: true,
+                      detail: `⚠️ [MEMORY_LAYER_HOLLOW] memory.db 健康度校验通过（sqlite3 路径: ${sqliteExe}；PATH 未含 — 建议重启终端或重新运行 install.ps1 刷新 PATH）；dispatch_log=0${commitHint} → M6 闭环从未闭合`,
+                    };
+                  }
+                  return { name, pass: true, detail: `memory.db 健康度校验通过（sqlite3 路径: ${sqliteExe}；PATH 未含 — 建议重启终端或重新运行 install.ps1 刷新 PATH）；dispatch_log=${dispCount}, fact_store=${factCount}` };
                 }
                 return { name, pass: false, detail: `health_check.sql 契约失败（winget 路径）: ${failed2.map((f) => `${f[0]}(${f[2]})`).join('; ')}` };
               } catch { /* 探测失败，落入下方告警 */ }
@@ -1540,11 +1572,17 @@ function check17MemoryDbHealth() {
     }
   }
 
-  // (d) 行数健康度：dispatch_log=0 且 fact_store=0 提示 hollow
+  // (d) 行数健康度：dispatch_log=0 提示 hollow
+  // v2.6.3 修复盲区：原条件 `dispatch_log=0 AND fact_store=0` 被 16 条 bootstrap 种子数据骗过，
+  //   fact_store 有种子但 dispatch_log=0 仍说明 M6 收尾自检从未真正执行过。
+  //   dispatch_log 是唯一纯运行时写入表（无种子数据），是 M6 闭环是否闭合的 ground truth。
   if (tableRows) {
     const disp = tableRows.dispatch_log || 0;
     const fact = tableRows.fact_store || 0;
-    if (disp === 0 && fact === 0) {
+    const failure = tableRows.failure_db || 0;
+    const cal = tableRows.model_calibration || 0;
+    const skillUsage = tableRows.skill_usage_events || 0;
+    if (disp === 0) {
       // 估算仓库 commit 数（heuristic）：仓库根目录 .git 存在时统计 commit
       let commitHint = '';
       const gitHead = path.resolve(ROOT, '.git/HEAD');
@@ -1559,7 +1597,7 @@ function check17MemoryDbHealth() {
           const commits = parseInt(out, 10) || 0;
           if (commits >= 20) {
             commitHint = `（仓库已有 ${commits} 次 commit，强烈怀疑 [MEMORY_LAYER_HOLLOW]）`;
-            warnings.push(`[MEMORY_LAYER_HOLLOW] dispatch_log=0 且 fact_store=0`);
+            warnings.push(`[MEMORY_LAYER_HOLLOW] dispatch_log=0（fact_store=${fact} 含种子数据但 M6 收尾自检从未执行 → 闭环未闭合）`);
           } else {
             commitHint = `（仓库 ${commits} 次 commit，新项目属正常）`;
           }
@@ -1570,7 +1608,7 @@ function check17MemoryDbHealth() {
       return {
         name,
         pass: true,
-        detail: `memory.db 表结构齐全但 dispatch_log/fact_store 均为空行${commitHint}`,
+        detail: `⚠️ [MEMORY_LAYER_HOLLOW] memory.db 表结构齐全但 dispatch_log 为空${commitHint}；dispatch_log 是 M6 闭环 ground truth，为空意味着经验/错误/校准从未被写入`,
       };
     }
     // (e) v2.1 迁移期望校验：迁移脚本存在 → AP/PAT 经验必须全部入库，防「纸面迁移」空心化

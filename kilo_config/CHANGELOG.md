@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+- **2026-07-22**: v2.7 project_context 跨项目 scope 隔离 — 对齐 fact_store / failure_db，业务项目不再被 kilo_config 专属噪音污染。
+  - **背景**：project_context 表无 scope/project_name 列，8 条种子无差别注入所有项目。其中 4 条 kilo_config 专属内容（七层架构 / kilo.json 模型配置 / sqlite 优先 / 三文件同步）对业务项目是噪音；fact_store 16 条经验全标 global，但 6 条实际是 kilo_config 配置维护专属（agent 删除 / frontmatter / 校验脚本 / 占位符 / 引用化 / prompt 设计）。
+  - **schema 变更（v2.7）**：
+    - `project_context` 加 `scope`（默认 'global'，CHECK 约束）+ `project_name` 列，对齐 `fact_store` v2.3 / #5 与 `failure_db` v2.4 / #15
+    - 新增 `idx_project_scope` 复合索引（对齐 `idx_fact_scope`）
+    - `v_active_project_context` 视图加 scope / project_name 列
+    - 8 条种子回填 scope：4 global（PC-004/005/006/008 通用流程/约束）+ 4 project=kilo_config（PC-001/002/003/007 架构/配置/记忆模块规则）
+  - **query A 加 scope 过滤**：`policy/query_strategy.md` §1 query A+A' 子查询加 `(scope = 'global' OR (scope = 'project' AND project_name = :current_project))`，对齐 query B/C。`KILO_PROJECT_NAME` 未设置时仅注入 global 行（业务项目安全默认）
+  - **fact_store 重新分类**：6 条 kilo_config 专属经验（AP-007/008/010/011/012/PAT-002）scope 从 global 改为 project=kilo_config；10 条通用经验保持 global
+  - **新增迁移脚本**：`api/migrate_project_context_scope.sql`（既有 DB 升级：ALTER TABLE + 索引 + 回填 8 条 scope）
+  - **health_check 新增 2 项**：#19 `PROJECT_CONTEXT_SCOPE_COLUMN_PRESENT`（硬检查，列存在性）+ #20 `PROJECT_CONTEXT_SCOPE_DISTRIBUTION`（soft-warn，分布健康度）；索引数 21→22
+  - **三文件同步**：schema/init.sql + api/seed_project_context.sql + policy/project_context_seed.md（种子 scope 值一致）；policy/query_strategy.md（注入门槛表 + query A SQL）；policy/fact_dedup.md（scope 写入规则扩展 project_context）；policy/init_check.md（§6e 迁移表 + 失败处理）；validate-config.mjs（required 清单加迁移脚本）；MODULE_GUIDE.md（§3.4 表加 scope/project_name 行）
+  - **验证**：20/20 health_check PASS；18/18 validate-config PASS；scope 隔离注入测试通过（KILO_PROJECT_NAME 未设 → 仅 1 条 global；=kilo_config → 3 条含 project；=business_app → 仅 1 条 global，无 kilo_config 噪音）
+
+
 - **2026-07-22**: Memory 层自动初始化 — install 脚本 + validate-config check17 告警增强。
   - **背景**：memory.db 不存在 + sqlite3 CLI 未安装时，check17 两个分支静默 `pass:true`，输出层 PASS 时丢弃 detail → 记忆层静默失效（经验沉淀/错误总结/模型校准/skill 升级全部不写入，自我进化闭环不生效），用户无感知。
   - **install.ps1 / install.sh 新增 Memory Layer Setup 段**：
