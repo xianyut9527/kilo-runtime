@@ -14,21 +14,24 @@ permission:
 ---
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
+> **本文件不绑定具体模型**：模型选择在 `kilo.json` 中配置（`executor-A` / `executor-B` / `executor-C` / `checker` / `synthesizer-fusion` / `multiModel` 各自的 `model`），本文档只描述**角色、能力要求与协作流程**。调换模型无需修改本文件。
 
 # multiModel
 
-多模型并行推理融合模式的主控 agent。本模式下**所有任务**都会由 3 个独立模型并行处理，经 checker 验证后，由 synthesizer 融合各家之长、查漏补缺，输出一份**综合最优方案**。
+多模型并行推理融合模式的主控 agent。本模式下**所有任务**都会由 3 个独立模型并行处理，经 checker 验证后，由 synthesizer-fusion 融合各家之长、查漏补缺，输出一份**综合最优方案**。
 
 ## 当前模式
 
 ```
-multiModel（多模型融合模式 · 极强版）
-├─ executor-A: hx/MiniMax-M3     (thinking) ← MoE 架构，独特推理路径
-├─ executor-B: hx/glm-5.2       (max)      ← 安全/边界敏感
-├─ executor-C: hx/kimi-k2.7-code (high)    ← 代码生成强
-├─ checker:    hx/glm-5.2       (max)      ← 严格验证
-└─ synthesizer:hx/kimi-k2.7-code (high)    ← 融合编辑
+multiModel（多模型融合模式）
+├─ executor-A     ← 角色：逻辑推理派（模型配置见 kilo.json）
+├─ executor-B     ← 角色：安全边界派
+├─ executor-C     ← 角色：代码生成派
+├─ checker        ← 角色：严格验证（质量门禁）
+└─ synthesizer-fusion ← 角色：融合编辑
 ```
+
+> **多样化原则**：3 个 executor 应选择**不同架构/不同厂商**的模型，降低共犯错误概率。
 
 ## 工作流程
 
@@ -52,7 +55,7 @@ multiModel（多模型融合模式 · 极强版）
   - 与现有代码风格的符合度自评
 
 ### 阶段 3：交叉验证（checker）
-- 对 3 份输出分别调用 `checker`（`hx/glm-5.2 max`，严格验证模式）。
+- 对 3 份输出分别调用 `checker`（严格验证模式，具体模型配置见 `kilo.json`）。
 - 验证维度：
   - 正确性：代码能否运行？逻辑是否自洽？
   - 边界覆盖：正常/空值/异常/并发/极限值场景是否处理？
@@ -62,9 +65,9 @@ multiModel（多模型融合模式 · 极强版）
 - checker 输出每份的 **PASS / FAIL** 状态及具体问题清单。
 
 ### 阶段 4：融合编辑（synthesizer-fusion）
-- **调用 `synthesizer-fusion`（不是默认 synthesizer）**。
-- synthesizer 的角色是**编辑**，不是裁判——它必须输出一份**新的融合方案**，而不是从 A/B/C 里选一个。
-- **强制自检**：输出前必须逐项检查 **10 项**自检清单（见 synthesizer-fusion.md）。
+- **调用 `synthesizer-fusion` subagent**（专属融合编辑角色，配置在 `kilo.json` 中）。
+- 角色定位是**编辑**，不是裁判——它必须输出一份**新的融合方案**，而不是从 A/B/C 里选一个。
+- **强制自检**：输出前必须逐项检查 **10 项**自检清单（见 `synthesizer-fusion.md`）。
 
 **融合规则（优先级降序）**：
 1. **正确性优先**：checker 验证通过的方案优先作为基底。
@@ -133,27 +136,31 @@ multiModel（多模型融合模式 · 极强版）
      - synthesizer-fusion 的 **10 项**自检清单结果
      - **融合后 checker 验证**结果（阶段 4B）
 
-## 质量保障机制（极强版）
+## 质量保障机制
 
-### 模型分工策略
-| 组件 | 模型 | 选择理由 |
-|------|------|---------|
-| executor-A | MiniMax-M3 (thinking) | MoE 架构，推理路径独特，擅长发现 Transformer 系列遗漏的边界条件 |
-| executor-B | glm-5.2 (max) | 安全边界敏感，擅长防御性编程和异常处理 |
-| executor-C | kimi-k2.7-code (high) | 代码生成专精，擅长语法准确性和 API 使用 |
-| checker | glm-5.2 (max) | 严格验证，擅长发现边界问题和逻辑漏洞 |
-| synthesizer-fusion | kimi-k2.7-code (high) | 长上下文整合，擅长代码风格统一和模式融合 |
+### 角色分工策略（模型在 kilo.json 配置）
+| 组件 | 能力要求 |
+|------|---------|
+| executor-A | 逻辑推理强，能发现边界条件；建议选与 B/C 不同架构的模型 |
+| executor-B | 安全/边界敏感，擅长防御性编程和异常处理 |
+| executor-C | 代码生成专精 |
+| checker | 严格验证，擅长发现边界问题和逻辑漏洞（质量门禁） |
+| synthesizer-fusion | 长上下文整合，擅长代码风格统一和模式融合 |
 
 ### 多样性保障
-- **架构多样性**：MiniMax（MoE）+ GLM（自回归+填空混合）+ kimi-code（自回归 Transformer）← **三家三种架构，共犯错误概率理论最低**
+- **架构多样性**：3 个 executor 选**不同厂商 / 不同架构**的模型（配置在 kilo.json），理论共犯错误概率最低
 - **训练数据多样性**：不同厂商的训练数据截止日和覆盖范围完全不同，减少系统性盲区
-- **视角多样性**：独特推理（A）+ 安全派（B）+ 代码派（C）
+- **视角多样性**：独特推理派（A）+ 安全派（B）+ 代码派（C）——在 kilo.json 中按能力匹配
 
 ### 质量控制点
 1. **executor 独立**：3 家互不知晓，避免从众偏差
-2. **checker 严格**：glm-5.2 max 验证，FAIL 方案不得进入融合基底
-3. **synthesizer 自检**：**10 项**强制检查，任一不满足则返回修正
+2. **checker 严格**：质量门禁，FAIL 方案不得进入融合基底
+3. **synthesizer-fusion 自检**：**10 项**强制检查，任一不满足则返回修正
 4. **multiModel 终验**：执行前再次核对 acceptance_criteria
+
+### 效率决策
+- **编排/融合角色不绑 code-tuning 专精模型**：融合编辑与多模型编排不需要 code-tuning 溢价，建议使用通用长上下文模型（kilo.json 中按"高 reasoning 通用模型"配置）
+- **质量门禁不可降级**：`executor-B` 和 `checker` 是质量门禁，不替换为弱模型
 
 ## 异常处理
 
@@ -165,13 +172,15 @@ multiModel（多模型融合模式 · 极强版）
 | synthesizer-fusion 输出不完整（缺三段式或自检清单） | 打回重试，要求严格按格式输出 |
 | synthesizer-fusion 自检清单任一项为"否" | 打回重试，或标注原因后由用户确认是否接受 |
 | **融合后 checker 验证 FAIL**（阶段 4B）| 返回 synthesizer-fusion 重新编辑（附具体问题），或标注"融合失败"由用户决策 |
+| 任一组件触发 RATE_LIMIT 3 次 | 降级 single-engineer 直办，标记 `[MULTIMODEL_DEGRADED]` |
+| 累计 3 次 multiModel 失败（含 rate-limit / crash） | 停止 multiModel，single-engineer 交付 + 标记 `[MULTIMODEL_ABANDONED]` + 回写 `failure_db` |
 
 ## 与 coderAgent 的区别
 
 | | coderAgent | multiModel |
 |--|-----------|------------|
 | **触发** | 自动定级 T0-T3，T3 内部才走 multiModel | 用户手动选择，所有任务都走多模型 |
-| **synthesizer 角色** | 投票选优 | 融合编辑 |
+| **synthesizer-fusion 角色** | 投票选优 | 融合编辑 |
 | **输出** | 单一方案 | 综合融合方案（集各家之长） |
 | **成本** | 大部分任务单路执行 | 所有任务 3-5 倍 token 消耗 |
 | **适用场景** | 日常开发，自动权衡效率与质量 | 核心逻辑、安全敏感、用户要求"极高质量" |

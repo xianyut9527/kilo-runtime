@@ -26,13 +26,14 @@ permission:
    - **阶段 A·预估**：执行类任务按 `workflow-core.md` 决策树估 T0/T1/T2/T3 → 显式输出预估结论。
    - **阶段 B·校准**：architect 设计门落地后，基于实际 unit DAG 复核实际等级 → 显式输出校准结论 + review_mode。
 3. **路由**：
-   - T0 → 直达 engineer（使用 `small_model`），review_mode=none
-   - T1 → architect 短设计门（1-3 句方案+验收点）→ 拆单元，每单元 engineer → checker → **review_mode 决策表（默认 lightweight，命中升级条件→full）**
+   - T0 → 直达 engineer（使用 `small_model`），无 reviewer
+   - T1 → architect 短设计门（1-3 句方案+验收点）→ 拆单元，每单元 engineer → checker → reviewer（full 四视角）
    - T2 → architect 完整规划（DAG）→ 单元 DAG → reviewer（full）
    - T3 → **multiModel** → reviewer（full）→ 用户决策
    - **模型选择**：按 `workflow-core.md`「模型选择策略」分配模型。
-    - **设计门硬门**（来源：superpowers/brainstorming）：T1+ 编码前必须过 architect 设计门。"太简单不需要设计"是反模式--简单任务正是未审视假设造成返工的高发区。通过标记 `[DESIGN_GATE_PASS]`，跳过/未过 → `[DESIGN_GATE_MISS]`。
-    - **重复模式硬门**：涉及 UI/样式/行为且症状可能跨页面/组件时，architect 设计门必须包含「全量扫描清单 + 组件化/共享抽象方案」；coderAgent 委派 engineer 时必须要求按 `component-driven-fixes` skill 执行，禁止直接放行逐页补丁方案。
+     - **设计门硬门**（来源：superpowers/brainstorming）：T1+ 编码前必须过 architect 设计门。"太简单不需要设计"是反模式--简单任务正是未审视假设造成返工的高发区。通过标记 `[DESIGN_GATE_PASS]`，跳过/未过 → `[DESIGN_GATE_MISS]`。
+     - **重复模式硬门**：涉及 UI/样式/行为且症状可能跨页面/组件时，architect 设计门必须包含「全量扫描清单 + 组件化/共享抽象方案」；coderAgent 委派 engineer 时必须要求按 `component-driven-fixes` skill 执行，禁止直接放行逐页补丁方案。
+     - **multiModel 配额降级硬门**（T3 触发 multiModel 时）：触发前必扫 `dispatch_log` 查过去 24h T3 失败率（≥30% → 跳过 multiModel 直接降级 single-engineer）；执行中任一组件触发 RATE_LIMIT 3 次 → 降级 single-engineer + 标记 `[MULTIMODEL_DEGRADED]`；累计 3 次 multiModel 失败（含 rate-limit / crash）→ 停止 multiModel + single-engineer 交付 + 标记 `[MULTIMODEL_ABANDONED]` + 回写 `failure_db`。详见 `workflow-core.md`「multiModel 并发配额」节。
 4. **跟踪验证**：维护强制流程日志（含两阶段定级节点），监督各 agent 执行。
 5. **交付**：验收映射表 + 变更回顾 + 经验沉淀。
 
@@ -62,7 +63,7 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 | checker 验证 | ✅/🔄/⏳ | T1+ |
 | fixer 修复 | ✅/🔄/⏸ | |
 | 任务定级·校准 | ✅/🔄/⏳ | 阶段 B（T0 跳过） |
-| reviewer 审查 | ✅/🔄/⏳ | review_mode: none/lightweight/full |
+| reviewer 审查 | ✅/🔄/⏳ | T1+ 走 full 四视角，T0 跳过 |
 ```
 
 > T0 仅需"意图判定 + 任务定级·预估"两节点；T1+ 必须包含全部 8 节点。阶段 B 校准在 architect 设计门落地后输出；reviewer 审查在所有单元通过后执行。
@@ -76,7 +77,7 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 **召回提示（M1 注入 / M2 回溯的当下输出）**：
 
 ```markdown
-🧠 [memory:recall] 注入 fact=2 (AP-006,PAT-001) + context=3 (PC-001,PC-003,PC-004) + cal=1 (cal-kimi-k3) | A' use_count+3 | ~1.2k/2k tokens
+🧠 [memory:recall] 注入 fact=2 (AP-006,PAT-001) + context=3 (PC-001,PC-003,PC-004) + cal=1 (cal-model-a) | A' use_count+3 | ~1.2k/2k tokens
 🧠 [memory:recall] 失败回溯命中 failure=F-003 + fact=AP-005 — 应用历史修复方案
 🧠 [memory:recall] 无匹配命中 — 跳过注入（⏭️）
 ```
@@ -84,7 +85,7 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 **写入提示（M4/M5/M6/M7/M8 执行的当下输出）**：
 
 ```markdown
-💾 [memory:write] fact_store AP-006 hit 3→4 conf→0.95 helpful+1 | dispatch_log +1 (disp-20260720-001, T1/lightweight) | calibration cal-xxx sample 2→3 — 经验已沉淀
+💾 [memory:write] fact_store AP-006 hit 3→4 conf→0.95 helpful+1 | dispatch_log +1 (disp-20260720-001, T1/full) | calibration cal-xxx sample 2→3 — 经验已沉淀
 💾 [memory:write] failure_db +1 (F-20260720-001, 执行层) — 失败案例已沉淀
 💾 [memory:write] fact_store +1 (AP-015, ANTIPATTERN, conf=0.5 试用期) — 新经验已入库
 ```

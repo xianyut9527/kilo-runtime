@@ -51,7 +51,7 @@ coderAgent 委派 agent 时，按任务复杂度选择模型：
 - 校准依据：[实际 unit 数 / 跨模块 / 风险面 / 安全敏感词命中]
 - 偏差：维持预估 / 上调 / 下调
 - 偏差原因（如有）：...
-- review_mode：none / lightweight / full（按本文件「review_mode 决策表」确定）
+- review_mode：none / full（按本文件「review_mode 决策表」确定）
 ```
 
 ### 偏差规则
@@ -145,38 +145,23 @@ architect 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验
 
 ### 总体验收（T1+）
 
-所有单元通过后，coderAgent 按 `review_mode` 选择 reviewer 模式：
+所有单元通过后，coderAgent 调用 `reviewer` 做总体验审：
 
 #### review_mode 决策表
 
 ```
-预估等级 + 校准命中条件 → review_mode
-─────────────────────────────────────────────────
-T0                              → none（无 reviewer）
-T1 且 实际修改文件数 = 1        → lightweight
-T1 且 实际修改文件数 2-3        → lightweight
-T1 且 实际修改文件数 ≥ 4        → full（自动升级）
-T1 且 命中跨模块条件             → full（自动升级）
-T1 且 命中安全敏感关键词          → full（自动升级）
-T2 / T3                         → full
+预估等级 → review_mode
+──────────────────────────
+T0      → none（无 reviewer）
+T1 / T2 / T3 → full（四视角：安全/架构/简化/SCOPE_CREEP）
 ```
+
+> **不采用"轻量档位"**：质量门禁不打折。任何审查档位化设计（如"跳过安全视角以节省 token"）都意味着质量妥协——属于无意义的工程化控制。T1+ 一律走四视角完整审查。
 
 #### 模式说明
 
 - **none**：跳过 reviewer。仅 T0（极速通道）适用。
-- **lightweight**：双视角审查（架构 + SCOPE_CREEP），跳过安全视角。reviewer 模型不变（`glm-5.2`），但产出 token 减约 1/3。
-- **full**：四视角审查（安全/架构/简化/SCOPE_CREEP），T2+ 默认模式 + T1 命中升级条件后切换至此。
-
-#### 升级触发器
-
-阶段 B 校准命中以下任一条件，**强制升级 review_mode**：
-1. 实际修改文件数 ≥ 4（无论预估 T1/T2）
-2. 跨模块（修改文件命中 ≥ 2 个独立目录/包）
-3. 命中安全敏感关键词（user/auth/payment/... 同上）
-
-升级后 coderAgent 必须在阶段 B 输出中显式标注 `[REVIEW_MODE_UPGRADED: lightweight→full]`，并写入 dispatch_log 的 `review_mode` 字段。
-
-> 性能注：T1 单文件/小改动任务走 lightweight，token 成本约为 full 的 60-70%，质量门禁覆盖度不变（架构 + 范围 = 最常漏的两个视角）；只有跨模块/安全敏感才升级到 full。
+- **full**：四视角审查（安全/架构/简化/SCOPE_CREEP），T1+ 唯一模式。
 
 #### 总体验收三步
 

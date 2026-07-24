@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+- **2026-07-24**: ensemble → multiModel 重构 + 配置硬编码清理（B 档修复）。
+  - **背景**：原 `ensemble.md`（投票选优模式）与新建的 `multiModel.md`（融合编辑模式）语义重叠，配置混乱；agent 文件 `synthesizer-fusion.md` 与 `kilo.json` 配的 `synthesizer` 命名不一致（Kilo 按文件名加载，会导致 `multiModel` 阶段 4 调用 `synthesizer-fusion` 找不到 agent → FAIL）；`multiModel.md` 多处硬编码具体模型名（`MiniMax-M3` / `glm-5.2` / `kimi-k2.6` / `kimi-k2.7-code`），配置变更后 agent 文档漂移。
+  - **统一术语**：删除 `agent/ensemble.md` 与 `agent/synthesizer.md`（旧投票版），全仓术语改为 `multiModel` + `synthesizer-fusion`（`workflow-core.md` / `output-schema.md` / `skill-usage-tracking.md` / `README.md` / `hermes-migration/SKILL.md` 同步更新；新增 `MULTIMODEL_DEGRADED` / `MULTIMODEL_ABANDONED` 状态信号）
+  - **配置对齐**：`kilo.json` 中 `synthesizer` 字段重命名为 `synthesizer-fusion`（与 agent 文件名 `synthesizer-fusion.md` 一致；旧字段直接删除，无 alias——修复"配置与文件名错位"的致命问题，否则 Kilo 加载 multiModel 阶段 4 时会找不到 subagent）
+  - **模型去硬编码**：`multiModel.md` 移除所有具体模型名（流程图 / 模型分工策略表 / 架构多样性描述 / 效率决策章节），改为"角色 + 能力要求 + 档位建议"的原则描述；具体模型在 `kilo.json` 中配置，调换模型无需修改 agent 文档
+  - **新增 stage 4B**：融合后必须再次调用 `checker` 验证融合方案本身（防止 synthesizer-fusion 在编辑过程中引入新 bug）
+  - **升级四档模型**：`synthesizer-fusion` / `checker` / `executor-C` 等关键档位升级到更强档位（具体见 `kilo.json`）
+  - **历史记录保留**：本 CHANGELOG 中 `2026-07-XX` 之前关于 ensemble 的条目**不修改**（历史溯源需要），新条目在 `[Unreleased]` 顶部明示迁移
 - **2026-07-22**: v2.7 project_context 跨项目 scope 隔离 — 对齐 fact_store / failure_db，业务项目不再被 kilo_config 专属噪音污染。
   - **背景**：project_context 表无 scope/project_name 列，8 条种子无差别注入所有项目。其中 4 条 kilo_config 专属内容（七层架构 / kilo.json 模型配置 / sqlite 优先 / 三文件同步）对业务项目是噪音；fact_store 16 条经验全标 global，但 6 条实际是 kilo_config 配置维护专属（agent 删除 / frontmatter / 校验脚本 / 占位符 / 引用化 / prompt 设计）。
   - **schema 变更（v2.7）**：

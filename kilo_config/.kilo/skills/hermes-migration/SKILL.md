@@ -79,7 +79,7 @@ provider:
   custom:
     base_url: "https://huixin.nat100.top/v1"  # 从 kilo.json provider.hx.options.baseURL 迁移
     api_key: "${HX_API_KEY}"
-    model: "kimi-k2.7-code"  # 主模型
+    model: "<主模型名>"  # 具体模型名见 kilo.json provider.hx.models（与 coderAgent / engineer 等 agent 节 model 字段保持一致）
 ```
 
 ### 3. 生成 SOUL.md（从 coderAgent.md 提取）
@@ -94,7 +94,7 @@ cat > ~/.hermes/SOUL.md << 'EOF'
 ## 编排规则（从 Kilo 迁移）
 
 - 意图判定优先：咨询类只分析不改文件；执行类进入定级流程。
-- T0-T3 定级：T0 极速通道（≤2行无逻辑）；T1 单元闭环；T2 跨模块+architect；T3 安全敏感+ensemble。
+- T0-T3 定级：T0 极速通道（≤2行无逻辑）；T1 单元闭环；T2 跨模块+architect；T3 安全敏感+**multiModel**（Hermes 风格 ensemble 的 Kilo 映射）。
 - 7 节点流程日志：意图判定→定级→pre-checker→engineer→checker→fixer→reviewer。
 - checker/reviewer 门禁循环：engineer 不自验，必须过 checker；T1+ 必须过 reviewer。
 - SCOPE_CREEP 反向核对：checker L2 扫描 diff 中验收标准未声明的改动。

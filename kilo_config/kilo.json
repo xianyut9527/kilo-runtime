@@ -18,75 +18,51 @@
     "coderAgent": {
       "mode": "primary",
       "model": "hx/kimi-k2.6",
-      "variant": "thinking",
-      "temperature": 0.3,
       "prompt": "锚点：意图判定→定级(T0-T3)→流程日志；T1+ pre-checker→engineer→checker→fixer 闭环；T2+ 加 reviewer；compaction 后保留锚点；记忆轻提示 recall/write；SCOPE_CREEP 双向核对；[MISSING_MEMORY_WRITE] 阻塞；详见 agent/coderAgent.md。"
     },
     "engineer": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
-      "variant": "thinking",
-      "temperature": 0
+      "model": "hx/MiniMax-M3"
     },
     "architect": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
-      "variant": "high",
-      "temperature": 0.3
+      "model": "hx/glm-5.2"
     },
     "checker": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
-      "variant": "max",
-      "temperature": 0
+      "model": "hx/glm-5.2"
     },
     "pre-checker": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6",
-      "variant": "high",
-      "temperature": 0
+      "model": "hx/kimi-k2.6"
     },
     "fixer": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
-      "variant": "max",
-      "temperature": 0
+      "model": "hx/deepseek-v4-flash"
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
-      "variant": "max",
-      "temperature": 0.2
+      "model": "hx/glm-5.2"
     },
     "executor-A": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
-      "variant": "thinking",
-      "temperature": 0
+      "model": "hx/MiniMax-M3"
     },
     "executor-B": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
-      "variant": "max",
-      "temperature": 0
+      "model": "hx/glm-5.2"
     },
     "executor-C": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.7-code",
-      "variant": "high",
-      "temperature": 0
+      "model": "hx/kimi-k2.6"
     },
-    "synthesizer": {
+    "synthesizer-fusion": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.7-code",
-      "variant": "high",
-      "temperature": 0.2
+      "model": "hx/kimi-k2.6"
     },
     "multiModel": {
       "mode": "primary",
-      "model": "hx/kimi-k2.7-code",
-      "variant": "high",
-      "temperature": 0.2
+      "model": "hx/kimi-k2.6"
     }
   },
   "skills": {

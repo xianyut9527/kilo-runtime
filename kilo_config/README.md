@@ -45,15 +45,32 @@ kilo_config/
 │   │   ├── skill-upgrade.md       # Skill 升级提案生成（fact_store 置信度达标时触发）
 │   │   ├── skill-usage-tracking.md # skill 使用记录规范（v2.5 起写入 SQLite skill_usage_events 表）
 │   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
-│   ├── skills/                   # 长期知识库（按项目实例化，兼容 agentskills.io 标准）
-│   │   ├── anti-patterns/
-│   │   ├── patterns/
-│   │   ├── component-driven-fixes/  # 重复 UI/样式/行为问题的组件化修复
+│   ├── skills/                   # 长期知识库（按项目实例化，兼容 agentskills.io 标准），共 30+ 个
+│   │   ├── <...>                 # 完整列表见 `.kilo/skills/`
+│   │   ├── anti-patterns/        # 反模式库（5 个细分变体：contract / coordination / encoding / process / _）
+│   │   ├── patterns/             # 可复用模式
 │   │   ├── workflow/             # 自进化工作流（记忆三层架构、根因回溯）
-│   │   └── hermes-migration/     # Kilo→Hermes 迁移工具包（C 档方案）
-│   └── memory/                   # 程序化记忆（参考 Hermes Agent）
+│   │   ├── brainstorming/        # 需求发散与收敛
+│   │   ├── dispatching-parallel-agents/  # 并行 agent 派发（multiModel 模式雏形）
+│   │   ├── subagent-driven-development/  # 多 agent 顺序协作开发
+│   │   ├── tdd-execution/        # TDD 执行
+│   │   ├── verification-before-completion/  # 完工前验证
+│   │   ├── using-git-worktrees/  # git worktree 隔离
+│   │   ├── component-driven-fixes/  # 重复 UI/样式/行为问题的组件化修复
+│   │   ├── ui-shadcn/            # shadcn/ui 组件库（含 ui-color / ui-animation / ui-frontend 等 12 个子库）
+│   │   └── hermes-migration/     # Kilo→Hermes 迁移工具包
+│   └── memory/                   # 程序化记忆模块（参考 Hermes Agent；主通道 SQLite，md 仅静态兜底）
+│       ├── README.md             # 公共 API 文档
+│       ├── AGENTS.md             # 运行时注入入口
+│       ├── MODULE_GUIDE.md       # 模块简介与表说明
 │       ├── MEMORY.md             # 静态指针 + M-001 占位（≤ 1500 字符）
-│       └── USER.md               # 用户档案（≤ 1375 字符）
+│       ├── USER.md               # 用户档案（≤ 1375 字符）
+│       ├── init.sql              # SQLite 表结构 DDL（7 表 + 2 FTS5 + 4 视图）
+│       ├── memory-strategy.md    # 兼容策略文件指针（保留以命中 strategy: "memory-strategy.md"）
+│       ├── policy/               # 策略（bash_sqlite_template / init_check / query_strategy）
+│       ├── schema/               # SQL DDL 与迁移脚本
+│       ├── api/                  # mcp 接入层（v3.0 standby，enabled=false）
+│       └── contracts/            # 跨层契约（schema 校验规则）
 ├── agent/                        # Kilo 智能体定义（全局可用）
 │   ├── coderAgent.md
 │   ├── architect.md
