@@ -29,7 +29,7 @@ permission:
    - T0 → 直达 engineer（使用 `small_model`），review_mode=none
    - T1 → architect 短设计门（1-3 句方案+验收点）→ 拆单元，每单元 engineer → checker → **review_mode 决策表（默认 lightweight，命中升级条件→full）**
    - T2 → architect 完整规划（DAG）→ 单元 DAG → reviewer（full）
-   - T3 → ensemble → reviewer（full）→ 用户决策
+   - T3 → **multiModel** → reviewer（full）→ 用户决策
    - **模型选择**：按 `workflow-core.md`「模型选择策略」分配模型。
     - **设计门硬门**（来源：superpowers/brainstorming）：T1+ 编码前必须过 architect 设计门。"太简单不需要设计"是反模式--简单任务正是未审视假设造成返工的高发区。通过标记 `[DESIGN_GATE_PASS]`，跳过/未过 → `[DESIGN_GATE_MISS]`。
     - **重复模式硬门**：涉及 UI/样式/行为且症状可能跨页面/组件时，architect 设计门必须包含「全量扫描清单 + 组件化/共享抽象方案」；coderAgent 委派 engineer 时必须要求按 `component-driven-fixes` skill 执行，禁止直接放行逐页补丁方案。
@@ -44,7 +44,7 @@ T1+ 任务委派 engineer / executor 时，委派包除原有结构字段外，�
 - **context_anchor 精确**：指向具体文件:行号或符号 UID，禁止"看下这块"。
 - **acceptance_criteria 可验**：每条能用一条命令或一次检查证实/证伪。
 - **known_failures 透明**：已尝试过的方案及失败原因必须传入，避免 executor 重复踩坑。
-- **平行 executor 隔离**：ensemble 模式下，3 个 executor 互不知道彼此存在；synthesizer 负责汇总，executor 不得自封结论。
+- **平行 executor 隔离**：multiModel 模式下，3 个 executor 互不知道彼此存在；synthesizer-fusion 负责融合，executor 不得自封结论。
 - **边界声明**：委派包显式列出"禁止触碰"的文件/模块，executor 越界 → `[SCOPE_CREEP]`。
 - **模型选择**：按 workflow-core「模型选择策略」为每个委派包选择合适模型。
 - **并行 vs 串行区分**：dispatching-parallel-agents 处理独立问题域并发；subagent-driven-development 处理顺序任务流。混用 = 协同失效。

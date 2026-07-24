@@ -12,7 +12,7 @@ keywords: workflow, orchestration, 任务定级, 单元编排, 闭环, 流程日
 - 简单局部实现 → `engineer`
 - 架构变更、范围不清、跨层规则 → `architect`
 - 显式 review 或安全/资金/权限/核心逻辑 → `reviewer`
-- 多次失败、高风险、用户反馈"还是不对/有遗漏" → `ensemble`
+- 多次失败、高风险、用户反馈"还是不对/有遗漏" → `multiModel`
 
 ## 模型选择策略（来源：`.kilo/skills/plan-execution/SKILL.md` 追踪规范 + superpowers/subagent-driven-development）
 
@@ -22,7 +22,7 @@ coderAgent 委派 agent 时，按任务复杂度选择模型：
 |--------|------|------|
 | 机械任务 | `small_model` | 1-2 文件纯表面修改、搜索、读取确认 |
 | 标准任务 | `agent.model` | 多文件集成、常规功能实现、checker/fix |
-| 架构/审查 | `model` 或最强推理模型 | 完整规划、安全审查、T3 ensemble、复杂根因分析 |
+| 架构/审查 | `model` 或最强推理模型 | 完整规划、安全审查、T3 multiModel、复杂根因分析 |
 
 > 默认 agent 配置在 `kilo.json` 中声明；coderAgent 可在委派时按上表覆盖。
 
@@ -39,7 +39,7 @@ coderAgent 委派 agent 时，按任务复杂度选择模型：
 【任务定级·预估】
 - 任务等级：T0 / T1 / T2 / T3（预估）
 - 定级依据：[具体判定条件]
-- 执行路径：[直达engineer / 拆单元+pre-checker / architect+DAG / reviewer/ensemble]
+- 执行路径：[直达engineer / 拆单元+pre-checker / architect+DAG / reviewer/multiModel]
 - 触发条件：[Trace-First / 需求扩散 / 无]
 ```
 
@@ -100,7 +100,7 @@ T0 直达 engineer，无需 pre-checker、checker、reviewer。
 |------|------|----------|
 | T1 | 2-5 文件，单模块，有明确验收标准 | architect 短设计门 → 拆单元，每单元 engineer → checker 闭环 |
 | T2 | 跨模块，5+ 文件，规则扩散，命中安全敏感词 | architect 完整规划 → 单元 DAG → reviewer |
-| T3 | 安全/资金/权限/核心逻辑，fixer 3 轮仍失败 | 全量 ensemble → reviewer → 用户决策 |
+| T3 | 安全/资金/权限/核心逻辑，fixer 3 轮仍失败 | 全量 multiModel → reviewer → 用户决策 |
 
 > **设计门分级**（来源：superpowers/brainstorming）：T1 走"短设计门"（architect 输出 1-3 句方案+验收点即可放行 engineer）；T2 走"完整规划"（architect 输出任务 DAG+依赖+风险）。连 1 行配置变更也走短设计门--"太简单不需要设计"是反模式，简单任务正是未审视假设造成返工的高发区。
 
@@ -222,20 +222,20 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
 - 不可恢复错误（AUTH/BAD_INPUT）→ 立即停止，回传 coderAgent 或人工
 - 语义错误（AMBIGUOUS/MALFORMED_OUTPUT）→ 降级重试，仍失败升级 reviewer
 
-### ensemble 并发配额（T3 任务专用）
+### multiModel 并发配额（T3 任务专用）
 
-多执行器并行投票模式必须遵守并发上限，防止触发 provider 限流或上下文爆炸：
+多执行器并行融合模式必须遵守并发上限，防止触发 provider 限流或上下文爆炸：
 
 | 触发条件 | 行为 | 失败回退 |
 |----------|------|----------|
-| 单次 ensemble 触发 | ≤3 executor + 1 synthesizer = 4 并发硬上限 | 任一组件异常 → 串行化剩余 executor |
-| 任一组件触发 RATE_LIMIT | 自动串行化 executor（保 2 折并发，即 1+1+1 改为 1→1→1） | 3 次限流 → 降级为单 engineer 直办 + 标记 `[ENSEMBLE_DEGRADED]` |
-| 累计 3 次 ensemble 失败（含 rate-limit / crash） | 停止 ensemble 模式，降级为 single-engineer | 任务降级交付，标注 `[ENSEMBLE_ABANDONED]`，事后回写 failure_db |
+| 单次 multiModel 触发 | ≤3 executor + 1 synthesizer-fusion = 4 并发硬上限 | 任一组件异常 → 串行化剩余 executor |
+| 任一组件触发 RATE_LIMIT | 自动串行化 executor（保 2 折并发，即 1+1+1 改为 1→1→1） | 3 次限流 → 降级为单 engineer 直办 + 标记 `[MULTIMODEL_DEGRADED]` |
+| 累计 3 次 multiModel 失败（含 rate-limit / crash） | 停止 multiModel 模式，降级为 single-engineer | 任务降级交付，标注 `[MULTIMODEL_ABANDONED]`，事后回写 failure_db |
 
 **执行要求**：
-- coderAgent 触发 ensemble 前必须先扫 `dispatch_log` 查过去 24h 内 `tier = 'T3'` 任务的失败率
-- 单次失败率 ≥ 30% → 跳过 ensemble 直接 single-engineer（节省 token + 避免雪崩）
-- 任一 executor 返回 `BLOCKED` / `NEEDS_CONTEXT` → 不等待其他 executor，立即停止整个 ensemble 上报 coderAgent
+- coderAgent 触发 multiModel 前必须先扫 `dispatch_log` 查过去 24h 内 `tier = 'T3'` 任务的失败率
+- 单次失败率 ≥ 30% → 跳过 multiModel 直接 single-engineer（节省 token + 避免雪崩）
+- 任一 executor 返回 `BLOCKED` / `NEEDS_CONTEXT` → 不等待其他 executor，立即停止整个 multiModel 上报 coderAgent
 
 ### 标记 → 硬动作映射（coderAgent 必须执行）
 

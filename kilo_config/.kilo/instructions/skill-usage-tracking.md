@@ -58,7 +58,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'));
 - 仅记录 skill 元数据（skill_name / trigger / outcome），不记录内容
 - 失败重试算 1 次 `partial`，不重复写多行
 - 同会话同 skill 连续 3 次同 outcome 合并为 1 行（trigger 标注 `merged`）
-- executor-A / B / C、synthesizer、ensemble、pre-checker 不参与本协议（仅主流程 agent）
+- executor-A / B / C、synthesizer-fusion、multiModel、pre-checker 不参与本协议（仅主流程 agent）
 
 ## 5. 统计消费（v2.5 推荐 SQL 查询）
 

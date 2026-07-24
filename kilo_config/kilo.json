@@ -17,7 +17,7 @@
   "agent": {
     "coderAgent": {
       "mode": "primary",
-      "model": "hx/MiniMax-M3",
+      "model": "hx/kimi-k2.6",
       "variant": "thinking",
       "temperature": 0.3,
       "prompt": "锚点：意图判定→定级(T0-T3)→流程日志；T1+ pre-checker→engineer→checker→fixer 闭环；T2+ 加 reviewer；compaction 后保留锚点；记忆轻提示 recall/write；SCOPE_CREEP 双向核对；[MISSING_MEMORY_WRITE] 阻塞；详见 agent/coderAgent.md。"
@@ -30,13 +30,13 @@
     },
     "architect": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6",
+      "model": "hx/glm-5.2",
       "variant": "high",
       "temperature": 0.3
     },
     "checker": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
+      "model": "hx/glm-5.2",
       "variant": "max",
       "temperature": 0
     },
@@ -72,20 +72,20 @@
     },
     "executor-C": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
-      "variant": "thinking",
+      "model": "hx/kimi-k2.7-code",
+      "variant": "high",
       "temperature": 0
     },
     "synthesizer": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6",
+      "model": "hx/kimi-k2.7-code",
       "variant": "high",
       "temperature": 0.2
     },
-    "ensemble": {
-      "mode": "all",
-      "model": "hx/MiniMax-M3",
-      "variant": "thinking",
+    "multiModel": {
+      "mode": "primary",
+      "model": "hx/kimi-k2.7-code",
+      "variant": "high",
       "temperature": 0.2
     }
   },
@@ -107,20 +107,13 @@
     },
     "gitnexus": {
       "type": "local",
-      "command": [
-        "npx",
-        "gitnexus",
-        "mcp"
-      ],
+      "command": ["npx", "gitnexus", "mcp"],
       "enabled": true,
       "timeout": 30000
     },
     "playwright": {
       "type": "local",
-      "command": [
-        "npx",
-        "@playwright/mcp"
-      ],
+      "command": ["npx", "@playwright/mcp"],
       "enabled": true,
       "timeout": 120000
     },
@@ -165,13 +158,8 @@
           "name": "kimi-k2.6",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -182,13 +170,8 @@
           "name": "kimi-k2.7-code",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -207,13 +190,8 @@
           "name": "qwen3.7-plus",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -224,13 +202,8 @@
           "name": "MiniMax-M3",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -241,13 +214,8 @@
           "name": "MiniMax-M2.7-highspeed",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -258,13 +226,8 @@
           "name": "kimi-k3",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,

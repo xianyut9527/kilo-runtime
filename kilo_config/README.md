@@ -59,8 +59,8 @@ kilo_config/
 │   ├── architect.md
 │   ├── engineer.md
 │   ├── reviewer.md               # 主审查者，内置覆盖安全/架构/简化三种视角
-│   ├── ensemble.md
-│   ├── synthesizer.md
+│   ├── multiModel.md              # 多模型并行融合模式（用户可手动选择，T3 自动触发）
+│   ├── synthesizer-fusion.md      # 融合编辑（综合 A/B/C 各家之长，非投票选优）
 │   ├── checker.md
 │   ├── pre-checker.md
 │   ├── fixer.md
