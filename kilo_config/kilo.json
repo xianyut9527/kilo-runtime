@@ -140,7 +140,9 @@
       "name": "hx",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
-        "baseURL": "https://huixin.nat100.top/v1"
+        "baseURL": "https://huixin.nat100.top/v1",
+        "timeout": 600000,
+        "chunkTimeout": 180000
       },
       "models": {
         "deepseek-v4-flash": {
