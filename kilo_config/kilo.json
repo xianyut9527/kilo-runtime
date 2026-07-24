@@ -60,8 +60,8 @@
     },
     "executor-A": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6",
-      "variant": "high",
+      "model": "hx/MiniMax-M3",
+      "variant": "thinking",
       "temperature": 0
     },
     "executor-B": {
@@ -168,26 +168,6 @@
         },
         "kimi-k2.7-code": {
           "name": "kimi-k2.7-code",
-          "reasoning": true,
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
-          },
-          "limit": {
-            "context": 200000,
-            "output": 16384
-          }
-        },
-        "qwen3.7-max": {
-          "name": "qwen3.7-max",
-          "reasoning": true,
-          "limit": {
-            "context": 200000,
-            "output": 16384
-          }
-        },
-        "qwen3.7-plus": {
-          "name": "qwen3.7-plus",
           "reasoning": true,
           "modalities": {
             "input": ["text", "image"],
