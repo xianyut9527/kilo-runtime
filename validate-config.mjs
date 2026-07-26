@@ -2,24 +2,35 @@
 // validate-config.mjs
 // kilo_config 配置自检脚本（Node ESM，跨平台）
 // 校验项：
-//   [1/18] kilo.json JSON 合法性
-//   [2/18] agent 名单一致性
-//   [3/18] skills 分类一致性
-//   [4/18] agent 文件 frontmatter 合规性（含 color / hidden）
-//   [5/18] kilo.json prompt 中引用的文档路径存在性
-//   [6/18] README.md 目录树一致性
-//   [7/18] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
-//   [8/18] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
-//   [9/18] coderAgent prompt 锚点关键词校验（防 compaction 误删）
-//   [10/18] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
-//   [11/18] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
-//   [12/18] Hermes 产物存在性（SOUL.md / config.yaml / .hermes.md / memories / skills / delegate-templates）
-//   [13/18] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性
-//   [14/18] 记忆模块完整性（.kilo/memory/ v2.6 边界：README + AGENTS + schema + contracts + api + 11 个 policy）
-//   [15/18] 全 repo 编码健康度扫描（BOM/U+FFFD/GBK，调用 scripts/scan-encoding.mjs）
-//   [16/18] kilo.json 占位符与 README 描述目录一致性（防双源漂移）
-//   [17/18] 全局 sqlite 记忆层健康度（memory.db 表/索引/视图 + 行数，契约 .kilo/memory/contracts/health_check.sql）
-//   [18/18] agent.md ↔ instructions.md 跨文件漂移检测（v2.5.1）
+//   [1/29] kilo.json JSON 合法性
+//   [2/29] agent 名单一致性（primary 必须在 kilo.json 声明，subagent 豁免）
+//   [3/29] skills 分类一致性
+//   [4/29] agent 文件 frontmatter 合规性（含 color / hidden；subagent 必须 hidden:true）
+//   [5/29] kilo.json prompt 中引用的文档路径存在性
+//   [6/29] README.md 目录树一致性
+//   [7/29] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
+//   [8/29] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
+//   [9/29] orchestrator prompt 锚点关键词校验（防 compaction 误删）
+//   [10/29] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
+//   [11/29] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
+//   [12/29] Hermes 产物存在性（已废弃）
+//   [13/29] install-hermes.sh 与 install-hermes.ps1 EXCLUDE 列表一致性（已废弃）
+//   [14/29] 记忆模块完整性（.kilo/memory/ v2.6 边界：README + AGENTS + schema + contracts）
+//   [15/29] 全 repo 编码健康度扫描（BOM/U+FFFD/GBK，调用 scripts/scan-encoding.mjs）
+//   [16/29] kilo.json 占位符与 README 描述目录一致性（防双源漂移）
+//   [17/29] 全局 sqlite 记忆层健康度（memory.db 表/索引/视图 + 行数，契约 .kilo/memory/contracts/health_check.sql）
+//   [18/29] agent.md ↔ instructions.md 跨文件漂移检测（v2.5.1）
+//   [19/29] 生命周期阶段文件完整性（agent/lifecycle/ 8 阶段 + README）
+//   [20/29] 能力插件文件完整性（已废弃 — capabilities/ 已合并入智能体文件）
+//   [21/29] 模型注册表存在性（agent/models/registry.md）
+//   [22/29] 生命周期 ↔ 能力插件映射一致性（已废弃 — capabilities/ 已合并入智能体文件）
+//   [23/29] 智能体文件完整性（agent/ 下 8 个智能体 .md：orchestrator/planner/coder/verifier/reverse-auditor/side-checker/reviewer/fixer）
+//   [24/29] lifecycle 阶段文件 agents frontmatter 字段声明的智能体全部存在
+//   [25/29] task_context 读写规则一致性（lifecycle agents 字段引用的智能体在 agent/ 下有对应 .md）
+//   [26/29] 智能体视角物理隔离校验（reverse-auditor 禁读 plan / side-checker 禁读 verification / reviewer 禁读 verifier_report / coder+fixer 禁写 execution.verification）
+//   [27/29] 模型硬编码反查（agent/*.md frontmatter 不含 model: 字段；body 不含 hx/ 模型 ID）
+//   [28/29] subagent 记忆召回接口校验（v3.2 记忆下沉：7 subagent .md 须含 §记忆召回接口段）
+//   [29/29] config.agents 配置驱动校验（v3.2 可插拔：orchestrator.md 含 config.agents 字段 + 动态加载矩阵；lifecycle/05/06 含条件加载语法）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -72,10 +83,14 @@ function check1KiloJson() {
 }
 
 // ---------- Check 2: agent 名单一致性 ----------
+// 规则（多智能体生命周期架构）：
+//   - primary agent 必须在 kilo.json.agent 中声明
+//   - subagent 智能体不在 kilo.json 注册（通过 orchestrator 的 task 工具按需启动），
+//     按 frontmatter.mode === 'subagent' 识别并豁免
 function check2Agents(config) {
   const name = 'agent 名单一致性';
   if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/18]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/25]）' };
   }
   const declared = new Set(Object.keys(config.agent));
   const agentDir = path.resolve(ROOT, 'agent');
@@ -85,22 +100,48 @@ function check2Agents(config) {
   } catch (e) {
     return { name, pass: false, detail: `读取 agent/ 失败: ${e.message}` };
   }
-  const actual = new Set(
-    entries
-      .filter((d) => d.isFile() && d.name.toLowerCase().endsWith('.md') && d.name.toLowerCase() !== 'readme.md')
-      .map((d) => d.name.slice(0, -3))
-  );
-  const onlyInJson = [...declared].filter((x) => !actual.has(x)).sort();
-  const onlyInFs = [...actual].filter((x) => !declared.has(x)).sort();
-  if (onlyInJson.length === 0 && onlyInFs.length === 0) {
-    return { name, pass: true, detail: `共 ${declared.size} 个 agent 全部对齐` };
+  const mdFiles = entries
+    .filter((d) => d.isFile() && d.name.toLowerCase().endsWith('.md') && d.name.toLowerCase() !== 'readme.md')
+    .map((d) => d.name);
+  const actualPrimary = new Set();
+  const actualSubagent = new Set();
+  const unparseable = [];
+  for (const fname of mdFiles) {
+    const baseName = fname.slice(0, -3);
+    let text;
+    try {
+      text = fs.readFileSync(path.join(agentDir, fname), 'utf8');
+    } catch {
+      // 读取失败留给 check4 报错；此处按 primary 处理避免漏报
+      actualPrimary.add(baseName);
+      continue;
+    }
+    const fm = parseFrontmatter(text);
+    if (fm && fm.mode === 'subagent') {
+      actualSubagent.add(baseName);
+    } else if (fm && fm.mode === 'primary') {
+      actualPrimary.add(baseName);
+    } else {
+      // frontmatter 缺失或 mode 字段异常 → 视为 primary 由 check4 兜底报错
+      actualPrimary.add(baseName);
+      if (!fm) unparseable.push(fname);
+    }
+  }
+  const onlyInJson = [...declared].filter((x) => !actualPrimary.has(x) && !actualSubagent.has(x)).sort();
+  const onlyInFsPrimary = [...actualPrimary].filter((x) => !declared.has(x)).sort();
+  if (onlyInJson.length === 0 && onlyInFsPrimary.length === 0) {
+    return {
+      name,
+      pass: true,
+      detail: `primary ${actualPrimary.size} 个全部对齐；subagent ${actualSubagent.size} 个豁免（[${[...actualSubagent].sort().join(', ')}]）${unparseable.length ? `；frontmatter 异常: [${unparseable.join(', ')}]` : ''}`,
+    };
   }
   const parts = [];
   if (onlyInJson.length) {
     parts.push(`kilo.json 声明但 agent/ 缺少文件: [${onlyInJson.join(', ')}]`);
   }
-  if (onlyInFs.length) {
-    parts.push(`agent/ 存在但 kilo.json 未声明: [${onlyInFs.join(', ')}]`);
+  if (onlyInFsPrimary.length) {
+    parts.push(`agent/ 存在 primary 但 kilo.json 未声明: [${onlyInFsPrimary.join(', ')}]`);
   }
   return { name, pass: false, detail: parts.join('; ') };
 }
@@ -782,33 +823,31 @@ function check8PromptOverlap(config) {
   };
 }
 
-// ---------- Check 9: coderAgent prompt 锚点关键词校验 ----------
-// 防止未来误删 coderAgent.prompt 中的防 compaction 锚点关键词
-const CODER_AGENT_ANCHORS = [
+// ---------- Check 9: orchestrator prompt 锚点关键词校验 ----------
+// 防止未来误删 orchestrator.prompt 中的防 compaction 锚点关键词
+// （多智能体生命周期架构：coderAgent 已重命名为 orchestrator）
+const ORCHESTRATOR_ANCHORS = [
   '意图判定',
   '定级',
-  'pre-checker',
-  'engineer',
-  'checker',
-  'fixer',
-  'reviewer',
+  'lifecycle',
+  'task_context',
   'compaction',
 ];
-function check9CoderAgentAnchors(config) {
-  const name = 'coderAgent prompt 锚点关键词校验';
+function check9OrchestratorAnchors(config) {
+  const name = 'orchestrator prompt 锚点关键词校验';
   if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/18]）' };
+    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/25]）' };
   }
-  const coderAgent = config.agent.coderAgent;
-  if (!coderAgent || typeof coderAgent !== 'object' || typeof coderAgent.prompt !== 'string') {
-    return { name, pass: false, detail: 'kilo.json.agent.coderAgent.prompt 不可用' };
+  const orchestrator = config.agent.orchestrator;
+  if (!orchestrator || typeof orchestrator !== 'object' || typeof orchestrator.prompt !== 'string') {
+    return { name, pass: false, detail: 'kilo.json.agent.orchestrator.prompt 不可用' };
   }
-  const prompt = coderAgent.prompt;
-  const missing = CODER_AGENT_ANCHORS.filter((kw) => !prompt.includes(kw));
+  const prompt = orchestrator.prompt;
+  const missing = ORCHESTRATOR_ANCHORS.filter((kw) => !prompt.includes(kw));
   if (missing.length === 0) {
-    return { name, pass: true, detail: `coderAgent prompt 锚点关键词 ${CODER_AGENT_ANCHORS.length}/${CODER_AGENT_ANCHORS.length} 齐全` };
+    return { name, pass: true, detail: `orchestrator prompt 锚点关键词 ${ORCHESTRATOR_ANCHORS.length}/${ORCHESTRATOR_ANCHORS.length} 齐全` };
   }
-  return { name, pass: false, detail: `coderAgent prompt 缺失锚点关键词: [${missing.join(', ')}]` };
+  return { name, pass: false, detail: `orchestrator prompt 缺失锚点关键词: [${missing.join(', ')}]` };
 }
 
 // ---------- Check 10: SKILL.md frontmatter 合规性 ----------
@@ -1012,14 +1051,14 @@ function check14MemoryEnabled(config) {
     return {
       name,
       pass: false,
-      detail: 'v2.5 sqlite 唯一记忆原则：检测到 .kilo/memory/skill-usage.log 仍存在；执行 `api/migrate_skill_usage_log_to_sqlite.sql` 一次性迁移后删除该文件',
+      detail: 'v2.5 sqlite 唯一记忆原则：检测到 .kilo/memory/skill-usage.log 仍存在；执行 api/migrate_skill_usage_log_to_sqlite.sql 一次性迁移后删除该文件',
     };
   }
   // 兼容旧字段检测
   if (config && typeof config === 'object' && 'memory' in config) {
     return { name, pass: false, detail: 'kilo.json 存在已废弃的 memory 字段（v2.2 起记忆开关以 .kilo/memory/ 目录存在性为准，请删除该字段）' };
   }
-  return { name, pass: true, detail: `记忆模块完整（${required.length} 个文件齐全：README + AGENTS + schema + contracts；skill-usage.log 已迁移；policy/ 目录已清理）` };
+  return { name, pass: true, detail: `记忆模块完整（${required.length} 个文件齐全：README + AGENTS + schema + contracts；skill-usage.log 已迁移）` };
 }
 
 // ---------- Check 15: 全 repo 编码健康度扫描（BOM/U+FFFD/GBK） ----------
@@ -1281,7 +1320,7 @@ function check17MemoryDbHealth() {
     return {
       name,
       pass: true,
-      detail: `${warnTag}${dbPath} 不存在${commitHint}。修复路径：重新运行 install.ps1（Windows）或 install.sh（macOS/Linux）— 脚本会提示安装 sqlite3 并自动初始化 memory.db。或手动执行 .kilo/memory/policy/init_check.md 6 步 SOP。${warnTag ? '缺失 sqlite 通道时记忆层静默降级，不报错但不写入，自我进化闭环不生效。' : ''}`,
+      detail: `${warnTag}${dbPath} 不存在${commitHint}。修复路径：重新运行 install.ps1（Windows）或 install.sh（macOS/Linux）— 脚本会提示安装 sqlite3 并自动初始化 memory.db。或手动执行 \`sqlite3 ~/.config/kilo-data/memory.db < .kilo/memory/schema/init.sql\` 建表。${warnTag ? '缺失 sqlite 通道时记忆层静默降级，不报错但不写入，自我进化闭环不生效。' : ''}`,
     };
   }
 
@@ -1460,7 +1499,7 @@ function check17MemoryDbHealth() {
         return {
           name,
           pass: true,
-          detail: `[MEMORY_RUNTIME_UNAVAILABLE] ⚠️ better-sqlite3 与 sqlite3 CLI 均不可用（会话 PATH 可能未刷新），记忆层静默失效（经验/错误/校准零写入，自我进化闭环不生效）。修复路径：重新运行 install.ps1（Windows）或 install.sh（macOS/Linux）— 脚本会提示安装 sqlite3 并自动初始化 memory.db；或手动安装 sqlite3 CLI（winget install SQLite.SQLite / brew install sqlite / apt-get install sqlite3）+ 执行 .kilo/memory/policy/init_check.md 建表`,
+          detail: `[MEMORY_RUNTIME_UNAVAILABLE] ⚠️ better-sqlite3 与 sqlite3 CLI 均不可用（会话 PATH 可能未刷新），记忆层静默失效（经验/错误/校准零写入，自我进化闭环不生效）。修复路径：重新运行 install.ps1（Windows）或 install.sh（macOS/Linux）— 脚本会提示安装 sqlite3 并自动初始化 memory.db；或手动安装 sqlite3 CLI（winget install SQLite.SQLite / brew install sqlite / apt-get install sqlite3）+ 执行 \`sqlite3 ~/.config/kilo-data/memory.db < .kilo/memory/schema/init.sql\` 建表`,
         };
       }
       return {
@@ -1510,22 +1549,9 @@ function check17MemoryDbHealth() {
         detail: `⚠️ [MEMORY_LAYER_HOLLOW] memory.db 表结构齐全但 dispatch_log 为空${commitHint}；dispatch_log 是 M6 闭环 ground truth，为空意味着经验/错误/校准从未被写入`,
       };
     }
-    // (e) v2.1 迁移期望校验：迁移脚本存在 → AP/PAT 经验必须全部入库，防「纸面迁移」空心化
-    const migrateScript = path.resolve(ROOT, '.kilo/memory/api/migrate_skill_to_fact_store.sql');
-    if (fs.existsSync(migrateScript)) {
-      // 期望数从迁移脚本 INSERT 行解析（'AP-xxx'/'PAT-xxx' 字面值计数），避免硬编码阈值随脚本更新漂移
-      const migText = fs.readFileSync(migrateScript, 'utf8');
-      const expected = (migText.match(/\('(?:AP|PAT)-\d+'/g) || []).length;
-      const migrated = tableRows.__migratedFacts || 0;
-      if (expected > 0 && migrated < expected) {
-        warnings.push(`[MEMORY_MIGRATION_PENDING] AP/PAT fact=${migrated}/${expected}`);
-        return {
-          name,
-          pass: false,
-          detail: `migrate_skill_to_fact_store.sql 存在但 fact_store 中 AP-*/PAT-* 仅 ${migrated}/${expected} 条，迁移未执行或数据缺失。执行: sqlite3 memory.db < .kilo/memory/api/migrate_skill_to_fact_store.sql`,
-        };
-      }
-    }
+    // (e) v2.1 迁移期望校验已随 v2.6.2 精简退役：migrate_skill_to_fact_store.sql 已随 api/ 目录删除，
+    //     既有 DB 的 AP/PAT 经验保留，全新安装从空 DB 开始（schema/init.sql 内含 project_context 种子）。
+    //     此处保留空块作为历史锚点，避免误以为是遗漏。
     // (f) v2.3 软告警：project_context 种子完整性（#1）
     const pcCount = tableRows.project_context || 0;
     if (pcCount < 5) {
@@ -1590,6 +1616,429 @@ function check18AgentInstructionsDrift() {
   return { name, pass: true, detail: 'agent.md 与 instructions.md 规则一致（v2.5.1 漂移检测通过：6 agent.md + install.sh/ps1 均无 skill-usage.log 复活）' };
 }
 
+// ---------- Check 19: 生命周期阶段文件完整性 ----------
+// 验证 agent/lifecycle/ 目录下是否包含 8 个阶段文件 + README.md
+function check19LifecycleIntegrity() {
+  const name = '生命周期阶段文件完整性';
+  const lifecycleDir = path.resolve(ROOT, 'agent', 'lifecycle');
+  if (!fs.existsSync(lifecycleDir)) {
+    return { name, pass: false, detail: 'agent/lifecycle/ 目录不存在' };
+  }
+  const requiredStages = [
+    '01-intent.md',
+    '02-sizing.md',
+    '03-design.md',
+    '04-implementation.md',
+    '05-verification.md',
+    '06-review.md',
+    '07-repair.md',
+    '08-delivering.md',
+    'README.md',
+  ];
+  const missing = [];
+  for (const f of requiredStages) {
+    if (!fs.existsSync(path.join(lifecycleDir, f))) {
+      missing.push(f);
+    }
+  }
+  if (missing.length > 0) {
+    return { name, pass: false, detail: `缺失生命周期文件: [${missing.join(', ')}]` };
+  }
+  return { name, pass: true, detail: `生命周期阶段完整（${requiredStages.length} 个文件齐全）` };
+}
+
+// ---------- Check 20: 能力插件文件完整性（已废弃） ----------
+// v3.0 多智能体生命周期架构：agent/capabilities/ 已合并入对应智能体 .md 文件，
+// capability 概念由 agent/*.md（planner/coder/verifier/...）承载。
+// 本检查保留为占位符以确保编号连续性；完整性校验由 check23 接管。
+function check20CapabilitiesIntegrity() {
+  const name = '能力插件文件完整性（已废弃）';
+  return { name, pass: true, detail: 'capabilities/ 已合并入智能体文件（v3.0 多智能体架构），完整性校验见 check23' };
+}
+
+// ---------- Check 21: 模型注册表存在性 ----------
+function check21ModelsRegistry() {
+  const name = '模型注册表存在性';
+  const registryPath = path.resolve(ROOT, 'agent', 'models', 'registry.md');
+  if (!fs.existsSync(registryPath)) {
+    return { name, pass: false, detail: 'agent/models/registry.md 不存在' };
+  }
+  return { name, pass: true, detail: 'agent/models/registry.md 存在' };
+}
+
+// ---------- Check 22: 生命周期 ↔ 能力插件映射一致性（已废弃） ----------
+// v3.0 多智能体生命周期架构：capabilities/ 已合并入智能体文件，
+// lifecycle 阶段 ↔ 智能体的映射由 check24（agents frontmatter 字段）接管。
+// 本检查保留为占位符以确保编号连续性。
+function check22LifecycleCapabilityMapping() {
+  const name = '生命周期 ↔ 能力插件映射一致性（已废弃）';
+  return { name, pass: true, detail: 'capabilities/ 已合并入智能体文件（v3.0），映射校验见 check24' };
+}
+
+// ---------- Check 23: 智能体文件完整性 ----------
+// v3.0 多智能体生命周期架构：验证 agent/ 下 8 个核心智能体 .md 文件存在。
+// 8 智能体清单（来源：docs/multi-agent-lifecycle-architecture.md §智能体清单）：
+//   orchestrator / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer
+// multiModel.md 是 T3 触发的备选 primary 智能体，不在 8 智能体清单中，由 check2 覆盖。
+function check23AgentIntegrity() {
+  const name = '智能体文件完整性';
+  const agentDir = path.resolve(ROOT, 'agent');
+  const requiredAgents = [
+    'orchestrator.md',
+    'planner.md',
+    'coder.md',
+    'verifier.md',
+    'reverse-auditor.md',
+    'side-checker.md',
+    'reviewer.md',
+    'fixer.md',
+  ];
+  const missing = [];
+  for (const f of requiredAgents) {
+    if (!fs.existsSync(path.join(agentDir, f))) {
+      missing.push(f);
+    }
+  }
+  if (missing.length > 0) {
+    return { name, pass: false, detail: `缺失智能体文件: [${missing.join(', ')}]` };
+  }
+  return { name, pass: true, detail: `8 个核心智能体文件齐全（${requiredAgents.map((x) => x.slice(0, -3)).join('/')}）` };
+}
+
+// ---------- Check 24: lifecycle 阶段文件 agents frontmatter 字段验证 ----------
+// v3.0：每个 lifecycle 阶段文件 frontmatter 必须声明 `agents` 数组（至少 1 个智能体），
+// 且声明的智能体必须在 agent/ 下有对应 .md 文件（check25 做存在性兜底，此处校验字段本身）。
+// README.md 豁免（它是总览文档，不绑定具体阶段）。
+function check24LifecycleAgentsFrontmatter() {
+  const name = 'lifecycle agents frontmatter 字段验证';
+  const lifecycleDir = path.resolve(ROOT, 'agent', 'lifecycle');
+  if (!fs.existsSync(lifecycleDir)) {
+    return { name, pass: false, detail: 'agent/lifecycle/ 目录不存在（依赖 check19）' };
+  }
+  const stageFiles = fs.readdirSync(lifecycleDir, { withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.endsWith('.md') && d.name !== 'README.md')
+    .map((d) => d.name);
+  const errors = [];
+  let checkedCount = 0;
+  for (const sf of stageFiles) {
+    const text = fs.readFileSync(path.join(lifecycleDir, sf), 'utf8');
+    const fm = parseFrontmatter(text);
+    if (!fm) {
+      errors.push(`${sf}: 缺少 frontmatter`);
+      continue;
+    }
+    if (!('agents' in fm)) {
+      errors.push(`${sf}: frontmatter 缺少 agents 字段`);
+      continue;
+    }
+    const agents = fm.agents;
+    if (!Array.isArray(agents) || agents.length === 0) {
+      errors.push(`${sf}: agents 字段必须为非空数组`);
+      continue;
+    }
+    // 校验每个 agent 名是字符串
+    for (const a of agents) {
+      if (typeof a !== 'string' || a.length === 0) {
+        errors.push(`${sf}: agents 数组含非字符串或空值`);
+        break;
+      }
+    }
+    checkedCount++;
+  }
+  if (errors.length > 0) {
+    return { name, pass: false, detail: errors.join('; ') };
+  }
+  return { name, pass: true, detail: `${checkedCount} 个阶段文件 agents frontmatter 全部合规` };
+}
+
+// ---------- Check 25: lifecycle agents 引用的智能体文件存在性 ----------
+// v3.0：lifecycle 阶段文件 frontmatter.agents 声明的每个智能体必须在 agent/<name>.md 存在。
+// 这是 task_context 读写一致性的基础：orchestrator 按阶段加载智能体时，subagent_type 必须有对应 .md。
+function check25LifecycleAgentsExist() {
+  const name = 'lifecycle agents 引用智能体文件存在性';
+  const lifecycleDir = path.resolve(ROOT, 'agent', 'lifecycle');
+  const agentDir = path.resolve(ROOT, 'agent');
+  if (!fs.existsSync(lifecycleDir)) {
+    return { name, pass: false, detail: 'agent/lifecycle/ 目录不存在（依赖 check19）' };
+  }
+  const stageFiles = fs.readdirSync(lifecycleDir, { withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.endsWith('.md') && d.name !== 'README.md')
+    .map((d) => d.name);
+  const errors = [];
+  const allReferenced = new Set();
+  for (const sf of stageFiles) {
+    const text = fs.readFileSync(path.join(lifecycleDir, sf), 'utf8');
+    const fm = parseFrontmatter(text);
+    if (!fm || !Array.isArray(fm.agents)) continue;
+    for (const a of fm.agents) {
+      if (typeof a !== 'string' || a.length === 0) continue;
+      // v3.2 条件加载语法："<name>?<condition>" — 剥离 ? 后缀取实际智能体名
+      const agentName = a.split('?')[0];
+      allReferenced.add(agentName);
+      const agentFile = path.join(agentDir, `${agentName}.md`);
+      if (!fs.existsSync(agentFile)) {
+        errors.push(`${sf}: agents 引用 '${agentName}' 但 agent/${agentName}.md 不存在`);
+      }
+    }
+  }
+  if (errors.length > 0) {
+    return { name, pass: false, detail: errors.join('; ') };
+  }
+  return {
+    name,
+    pass: true,
+    detail: `${stageFiles.length} 阶段文件引用 ${allReferenced.size} 个智能体全部存在: [${[...allReferenced].sort().join(', ')}]`,
+  };
+}
+
+// ---------- Check 26: 智能体视角物理隔离校验（v3.1 反确认偏误） ----------
+// 目标：防止"反向/侧向/审查视角"的输入接口被前序阶段结论污染。
+// 校验项（基于 agent/*.md 输入接口注释与字段声明）：
+//   (a) reverse-auditor.md：输入接口禁含 `plan:` 字段（反向审计不得被规划框定）
+//   (b) side-checker.md：输入接口禁含 `verification.forward` / `verification.reverse`（侧向不得从众正向）
+//   (c) reviewer.md：输入接口禁含 `verifier_report` / `reverse_auditor_report`（审查不得从众）
+//   (d) verifier.md：输入接口禁含 `fixing_history` / `execution.verification`（正向不得读自验声明）
+//   (e) coder.md / fixer.md：输出接口禁含 `execution.verification` 写入（自验声明不得入 context 污染 verifier）
+//   (f) 各 agent 输入接口注释必须含"视角物理隔离"或"禁止注入"说明（防未来回退）
+function check26ViewpointIsolation() {
+  const name = '智能体视角物理隔离校验（v3.1 反确认偏误）';
+  const agentDir = path.resolve(ROOT, 'agent');
+  const errors = [];
+
+  const checks = [
+    {
+      file: 'reverse-auditor.md',
+      rule: 'reverse-auditor 输入接口禁含 plan 字段声明（YAML key: 形式，非注释）',
+      // 匹配输入接口代码块内的 plan: 字段（缩进 + plan:），排除注释行（# / > / 禁止注入说明）
+      pattern: /^(\s+)plan:\s*$/m,
+      shouldNotExist: true,
+    },
+    {
+      file: 'reverse-auditor.md',
+      rule: 'reverse-auditor 须声明视角物理隔离',
+      pattern: /视角物理隔离|禁止注入|禁止读.*plan/,
+      shouldNotExist: false,
+    },
+    {
+      file: 'side-checker.md',
+      rule: 'side-checker 输入接口禁含 verification 字段声明',
+      // 匹配 YAML 字段声明 verification: ... forward/reverse，排除注释说明
+      pattern: /^(\s+)verification:\s*.*forward|^(\s+)verification:\s*.*reverse|^(\s+)forward:\s*\{\s*verdict|^(\s+)reverse:\s*\{\s*verdict/m,
+      shouldNotExist: true,
+    },
+    {
+      file: 'side-checker.md',
+      rule: 'side-checker 须声明视角物理隔离',
+      pattern: /视角物理隔离|禁止注入.*verification/,
+      shouldNotExist: false,
+    },
+    {
+      file: 'reviewer.md',
+      rule: 'reviewer 输入接口禁含 verifier_report / reverse_auditor_report 字段声明',
+      // 匹配 YAML 字段声明 verifier_report: / reverse_auditor_report:，排除注释说明
+      pattern: /^(\s+)verifier_report:\s|^(\s+)reverse_auditor_report:\s/m,
+      shouldNotExist: true,
+    },
+    {
+      file: 'reviewer.md',
+      rule: 'reviewer 须声明视角物理隔离',
+      pattern: /视角物理隔离|禁止注入.*verifier_report|独立第四视角/,
+      shouldNotExist: false,
+    },
+    {
+      file: 'verifier.md',
+      rule: 'verifier 输入接口禁含 fixing_history / execution.verification 字段声明',
+      // 匹配 YAML 字段声明 fixing_history: / execution.verification:，排除注释说明
+      pattern: /^(\s+)fixing_history:\s|^(\s+)execution\.verification:\s/m,
+      shouldNotExist: true,
+    },
+    {
+      file: 'verifier.md',
+      rule: 'verifier 须声明视角物理隔离',
+      pattern: /视角物理隔离|禁止读.*fixing_history|禁止信任传递|禁止注入.*execution\.verification/,
+      shouldNotExist: false,
+    },
+    {
+      file: 'coder.md',
+      rule: 'coder 输出接口须声明禁止写入 execution.verification',
+      pattern: /不写入.*execution\.verification|禁止写入.*execution\.verification/,
+      shouldNotExist: false,
+    },
+    {
+      file: 'fixer.md',
+      rule: 'fixer 输出接口须声明禁止写入 execution.verification',
+      pattern: /不写入.*execution\.verification|禁止写入.*execution\.verification/,
+      shouldNotExist: false,
+    },
+    {
+      file: 'orchestrator.md',
+      rule: 'orchestrator 须含机械汇总原则 + convergence-auditor',
+      pattern: /机械汇总|convergence-auditor|反自验/,
+      shouldNotExist: false,
+    },
+  ];
+
+  for (const c of checks) {
+    const fp = path.join(agentDir, c.file);
+    if (!fs.existsSync(fp)) {
+      errors.push(`${c.file}: 文件缺失（依赖 check23）`);
+      continue;
+    }
+    const text = fs.readFileSync(fp, 'utf8');
+    const found = c.pattern.test(text);
+    if (c.shouldNotExist && found) {
+      errors.push(`${c.file}: ${c.rule} — 检测到禁用模式`);
+    }
+    if (!c.shouldNotExist && !found) {
+      errors.push(`${c.file}: ${c.rule} — 未找到要求模式`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return { name, pass: false, detail: errors.join('; ') };
+  }
+  return { name, pass: true, detail: `${checks.length} 项视角物理隔离校验全部通过` };
+}
+
+// ---------- Check 27: 模型硬编码反查（v3.1 方案1：模型配置统一在 kilo.json） ----------
+// 目标：agent/*.md 不得硬编码模型 ID，模型绑定由 kilo.json agent.<name>.model 单一管理。
+// 校验项：
+//   (a) 7 个 subagent .md frontmatter 不得含 `model:` 字段（orchestrator/multiModel/synthesizer-fusion 作为 primary 也豁免 — kilo.json 已声明）
+//       实际策略：所有 agent/*.md frontmatter 不得含 `model:` 字段（统一由 kilo.json 管）
+//   (b) 7 个 subagent .md body 不得含 `hx/` 模型 ID 硬编码（引用 kilo.json agent.<name>.model 是允许的）
+//       例外：registry.md 是模型能力矩阵文档，允许含 `hx/`；multiModel.md 在角色分工表内允许含 hx/ 但应指向 registry
+function check27NoModelHardcode() {
+  const name = '模型硬编码反查（v3.1 方案1：模型统一在 kilo.json）';
+  const agentDir = path.resolve(ROOT, 'agent');
+  const errors = [];
+
+  const agentFiles = fs.readdirSync(agentDir, { withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.endsWith('.md') && d.name.toLowerCase() !== 'readme.md')
+    .map((d) => d.name);
+
+  for (const fname of agentFiles) {
+    const fp = path.join(agentDir, fname);
+    const text = fs.readFileSync(fp, 'utf8');
+
+    // (a) frontmatter 不得含 model: 字段
+    const fm = parseFrontmatter(text);
+    if (fm && 'model' in fm) {
+      errors.push(`${fname}: frontmatter 含 model: 字段（应由 kilo.json agent.<name>.model 统一声明）`);
+    }
+
+    // (b) body 不得硬编码 hx/ 模型 ID（registry.md 豁免 — 它就是模型能力矩阵文档）
+    if (fname === 'registry.md' || fname === 'models-registry.md') continue;
+    // orchestrator.md / multiModel.md 中的"模型选择"段允许引用 kilo.json，但不得硬编码 hx/xxx
+    // 检测：body 中是否含 hx/<model-name> 模式
+    const bodyMatches = text.match(/hx\/[A-Za-z0-9.\-]+/g);
+    if (bodyMatches && bodyMatches.length > 0) {
+      // 允许出现在 "见 kilo.json agent.<name>.model" 之类的引用注释中，但 hx/ 本身就是硬编码
+      errors.push(`${fname}: body 含 hx/ 模型 ID 硬编码 [${[...new Set(bodyMatches)].join(', ')}]（应改为引用 kilo.json agent.<name>.model）`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return { name, pass: false, detail: errors.join('; ') };
+  }
+  return { name, pass: true, detail: `${agentFiles.length} 个 agent 文件均无模型硬编码（frontmatter 无 model:，body 无 hx/ ID）` };
+}
+
+function check28SubagentMemoryRecall() {
+  const name = 'subagent 记忆召回接口（v3.2 记忆下沉：7 subagent .md 须含 §记忆召回接口段）';
+  const agentDir = path.resolve(ROOT, 'agent');
+  const errors = [];
+
+  // 7 个 subagent 必须含 §记忆召回接口段（orchestrator/multiModel 豁免 — orchestrator 仅做轻量 project_context 注入；multiModel 走自己的生命周期）
+  const required = ['planner.md', 'coder.md', 'verifier.md', 'reverse-auditor.md', 'side-checker.md', 'reviewer.md', 'fixer.md'];
+  for (const fname of required) {
+    const fp = path.join(agentDir, fname);
+    if (!fs.existsSync(fp)) {
+      errors.push(`${fname}: 文件缺失（check23 应已报错，此处跳过）`);
+      continue;
+    }
+    const text = fs.readFileSync(fp, 'utf8');
+    if (!text.includes('记忆召回接口')) {
+      errors.push(`${fname}: 缺少 §记忆召回接口 段（v3.2 记忆下沉要求 subagent 自召回 memory.db）`);
+    }
+    // 必须引用 docs/memory-ops-reference.md SQL 模板
+    if (!text.includes('memory-ops-reference.md')) {
+      errors.push(`${fname}: §记忆召回接口 段未引用 docs/memory-ops-reference.md SQL 模板`);
+    }
+    // 必须声明降级策略（memory.db 不可用时跳过）
+    if (!text.includes('降级不阻塞') && !text.includes('降级') ) {
+      errors.push(`${fname}: §记忆召回接口 段未声明降级策略`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return { name, pass: false, detail: errors.join('; ') };
+  }
+  return { name, pass: true, detail: `7 个 subagent 均含 §记忆召回接口 段 + 引用 memory-ops-reference.md + 声明降级策略` };
+}
+
+function check29ConfigDrivenAgents() {
+  const name = 'config.agents 配置驱动（v3.2 可插拔：orchestrator.md 含 config.agents 字段 + 动态加载矩阵；lifecycle/05/06 含条件加载语法）';
+  const errors = [];
+
+  // (a) orchestrator.md 必须含 config.agents 字段定义 + 动态加载矩阵
+  const orchPath = path.resolve(ROOT, 'agent', 'orchestrator.md');
+  if (!fs.existsSync(orchPath)) {
+    errors.push('agent/orchestrator.md 缺失');
+  } else {
+    const orch = fs.readFileSync(orchPath, 'utf8');
+    if (!orch.includes('config.agents')) {
+      errors.push('orchestrator.md: 缺少 config.agents 字段定义');
+    }
+    if (!orch.includes('动态加载矩阵')) {
+      errors.push('orchestrator.md: 缺少 §动态加载矩阵 段');
+    }
+    if (!orch.includes('custom_overrides')) {
+      errors.push('orchestrator.md: 缺少 custom_overrides 字段（用户自定义覆盖入口）');
+    }
+    if (!orch.includes('条件加载语法') && !orch.includes('条件表达式')) {
+      errors.push('orchestrator.md: 未声明阶段文件条件加载语法');
+    }
+  }
+
+  // (b) lifecycle/05-verification.md 的 agents frontmatter 必须含条件加载语法（reverse-auditor?config.agents.reverse_auditor）
+  const v05Path = path.resolve(ROOT, 'agent', 'lifecycle', '05-verification.md');
+  if (!fs.existsSync(v05Path)) {
+    errors.push('agent/lifecycle/05-verification.md 缺失');
+  } else {
+    const v05 = fs.readFileSync(v05Path, 'utf8');
+    if (!v05.includes('reverse-auditor?config.agents.reverse_auditor')) {
+      errors.push('lifecycle/05-verification.md: agents frontmatter 未使用条件加载语法（reverse-auditor?config.agents.reverse_auditor）');
+    }
+  }
+
+  // (c) lifecycle/06-review.md 的 agents frontmatter 必须含条件加载语法（side-checker?config.agents.side_checker）
+  const v06Path = path.resolve(ROOT, 'agent', 'lifecycle', '06-review.md');
+  if (!fs.existsSync(v06Path)) {
+    errors.push('agent/lifecycle/06-review.md 缺失');
+  } else {
+    const v06 = fs.readFileSync(v06Path, 'utf8');
+    if (!v06.includes('side-checker?config.agents.side_checker')) {
+      errors.push('lifecycle/06-review.md: agents frontmatter 未使用条件加载语法（side-checker?config.agents.side_checker）');
+    }
+  }
+
+  // (d) lifecycle/README.md 必须含 v3.2 条件加载说明
+  const readmePath = path.resolve(ROOT, 'agent', 'lifecycle', 'README.md');
+  if (!fs.existsSync(readmePath)) {
+    errors.push('agent/lifecycle/README.md 缺失');
+  } else {
+    const rm = fs.readFileSync(readmePath, 'utf8');
+    if (!rm.includes('v3.2 条件加载') && !rm.includes('v3.2 配置驱动')) {
+      errors.push('lifecycle/README.md: 未声明 v3.2 条件加载/配置驱动机制');
+    }
+  }
+
+  if (errors.length > 0) {
+    return { name, pass: false, detail: errors.join('; ') };
+  }
+  return { name, pass: true, detail: 'orchestrator.md 含 config.agents + 动态加载矩阵 + custom_overrides；lifecycle/05/06 含条件加载语法；README 含 v3.2 说明' };
+}
+
 const kiloBuf = (() => {
   try {
     return fs.readFileSync(path.resolve(ROOT, 'kilo.json'));
@@ -1614,7 +2063,7 @@ const r5 = check5PromptPaths(config);
 const r6 = check6ReadmeTree();
 const r7 = check7DocIndex();
 const r8 = check8PromptOverlap(config);
-const r9 = check9CoderAgentAnchors(config);
+const r9 = check9OrchestratorAnchors(config);
 const r10 = check10SkillFrontmatter();
 const r11 = check11InstallExcludeSync();
 const r12 = check12HermesArtifacts();
@@ -1625,8 +2074,19 @@ const r15 = await check15EncodingScan();
 const r16 = check16KiloJsonPlaceholders(config);
 const r17 = check17MemoryDbHealth();
 const r18 = check18AgentInstructionsDrift();
+const r19 = check19LifecycleIntegrity();
+const r20 = check20CapabilitiesIntegrity();
+const r21 = check21ModelsRegistry();
+const r22 = check22LifecycleCapabilityMapping();
+const r23 = check23AgentIntegrity();
+const r24 = check24LifecycleAgentsFrontmatter();
+const r25 = check25LifecycleAgentsExist();
+const r26 = check26ViewpointIsolation();
+const r27 = check27NoModelHardcode();
+const r28 = check28SubagentMemoryRecall();
+const r29 = check29ConfigDrivenAgents();
 
-const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18];
+const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18, r19, r20, r21, r22, r23, r24, r25, r26, r27, r28, r29];
 // ---------- 输出 ----------
 const out = [];
 out.push('== kilo_config 配置自检 ==');

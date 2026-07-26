@@ -34,7 +34,7 @@ metadata:
 | `skill_name` | skill 目录名（如 `verification-before-completion`） |
 | `trigger` | 短描述（≤40 字符，如 `U1 前置加载` / `反思触发`） |
 | `outcome` | `success` / `fail` / `partial` |
-| `agent` | 哪个 agent 触发（coderAgent / engineer / architect / checker / fixer / reviewer） |
+| `agent` | 哪个智能体触发（orchestrator / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel） |
 | `task_tier` | T0/T1/T2/T3 |
 | `created_at` | 写入 SQLite 的时间（默认 `datetime('now')`） |
 
@@ -50,7 +50,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'));
 ### 写入路径
 
 - **写入位置**：`.kilo/memory/` 模块的 `skill_usage_events` 表（全局共享，跨项目）
-- **方式**：通过 bash 调用 sqlite3 CLI 执行 INSERT（命令模板见 `.kilo/memory/policy/bash_sqlite_template.md`）；不允许用 append 文件
+- **方式**：通过 bash 调用 sqlite3 CLI 执行 INSERT（命令模板见 `docs/memory-ops-reference.md` §skill_usage_events）；不允许用 append 文件
 - **隐私**：禁止记录 prompt 正文、密钥、用户隐私
 
 ## 4. 反作弊与最小化
@@ -58,7 +58,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'));
 - 仅记录 skill 元数据（skill_name / trigger / outcome），不记录内容
 - 失败重试算 1 次 `partial`，不重复写多行
 - 同会话同 skill 连续 3 次同 outcome 合并为 1 行（trigger 标注 `merged`）
-- executor-A / B / C、synthesizer-fusion、multiModel、pre-checker 不参与本协议（仅主流程 agent）
+- coder-A / B / C（multiModel 模式下）、multiModel 自身、verifier、reverse-auditor、side-checker 不参与本协议（仅主流程 orchestrator + planner + coder + fixer + reviewer 记录）
 
 ## 5. 统计消费（v2.5 推荐 SQL 查询）
 

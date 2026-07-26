@@ -30,7 +30,7 @@ keywords: reflection, 根因回溯, Circuit Breaker
 
 回溯动作（`.kilo/memory/` 存在有效文件时，**未跑 kilo_local_recall 不得进入修复阶段**）：
 - `kilo_local_recall` 搜索历史同类问题（轻量级，本机所有会话）
-- **必须**按 `.kilo/memory/policy/query_strategy.md` §3 跑 sqlite 失败库 + fact_store 反模式查询（带 ID + tags + 置信度门槛），缺则 `[MISSING_RECALL]`
+- **必须**按 `docs/memory-ops-reference.md` §M1/M3 跑 sqlite 失败库 + fact_store 反模式查询（带 ID + tags + 置信度门槛），缺则 `[MISSING_RECALL]`
 - `gitnexus_*` 验证影响面
 
 > 注：`gitnexus_*` 工具本身不受 `.kilo/memory/` 状态影响（见 `core.md`），此处条件化仅指作为强制回溯动作的**自动触发**部分，工具仍可手动调用。

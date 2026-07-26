@@ -1,0 +1,536 @@
+# 多智能体协作生命周期架构
+
+> **状态**：设计门产物，待用户审核后进入实现阶段
+> **作者**：coderAgent architect 设计门
+> **日期**：2026-07-27
+> **替代**：当前"单 coderAgent 走 8 阶段状态机 + capabilities 能力插件"实现
+
+---
+
+## 0. 核心转变一句话
+
+> 从"单 agent 切换能力插件走状态机"转变为"编排者按生命周期阶段加载独立职能智能体，智能体间共享任务上下文+长期记忆，多视角交叉验证循环确认直到收敛"。
+
+---
+
+## 1. 智能体清单设计
+
+### 设计原则
+- **按职能划分独立智能体**，每个智能体有独立 prompt、独立模型、独立 context window
+- **编排者不亲自执行**，只负责生命周期流转、智能体加载、上下文传递、门禁管理
+- **按定级动态加载**：T0 仅加载 1-2 个智能体，T2/T3 加载全部
+- **可插拔**：新增智能体只需在 kilo.json 注册 + agent/ 新增文件 + lifecycle 阶段声明
+
+### 智能体清单（7 个职能智能体 + 1 个编排者）
+
+| ID | 智能体名 | 职责 | 对应生命周期阶段 | 模型绑定 | mode | prompt 锚点 |
+|----|----------|------|------------------|----------|------|-------------|
+| 0 | **orchestrator** | 生命周期编排者：意图判定、定级、阶段流转、智能体加载调度、上下文传递、门禁管理、记忆写入 | 全阶段（不亲自执行） | `kilo.json` `agent.orchestrator.model` | primary | `agent/orchestrator.md` |
+| 1 | **planner** | 规划智能体：设计门、方案设计、单元 DAG 拆分、验收点定义、全量扫描清单 | S05_PLANNING | `kilo.json` `agent.planner.model` | subagent | `agent/planner.md` |
+| 2 | **coder** | 编码智能体：按方案实现代码、输出验收映射表+三件套、状态信号 | S07_EXECUTING | `kilo.json` `agent.coder.model` | subagent | `agent/coder.md` |
+| 3 | **verifier** | 正向验证智能体：按验收标准逐条验证、L1/L2/L3 分层、5元组证据、独立重跑 | S09_CHECKING（正向） | `kilo.json` `agent.verifier.model` | subagent | `agent/verifier.md` |
+| 4 | **reverse-auditor** | 反向审计智能体：从产物反推是否满足原始需求、追溯假设、发现隐性遗漏 | S09_CHECKING（反向） | `kilo.json` `agent.reverse-auditor.model` | subagent | `agent/reverse-auditor.md` |
+| 5 | **side-checker** | 侧向验证智能体：边界/安全/性能/兼容性非主路径角度验证 | S13_REVIEWING（侧向） | `kilo.json` `agent.side-checker.model` | subagent | `agent/side-checker.md` |
+| 6 | **reviewer** | 审查智能体：架构/简化/安全/SCOPE_CREEP 四视角审查 | S13_REVIEWING（审查） | `kilo.json` `agent.reviewer.model` | subagent | `agent/reviewer.md` |
+| 7 | **fixer** | 修复智能体：定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题 | S11_FIXING | `kilo.json` `agent.fixer.model` | subagent | `agent/fixer.md` |
+| 8 | **synthesizer-fusion**（v3.1 恢复） | 多模型融合编辑智能体：读取 3 个 coder 输出 + verifier 验证结果，取长补短生成综合最优方案 | MM_FUSING（multiModel 专属） | `kilo.json` `agent.synthesizer-fusion.model` | subagent | `agent/synthesizer-fusion.md` |
+
+> **memory-ops 不作为独立智能体**：记忆写入是 orchestrator 在 S16_DELIVERING 阶段的内建职责（调用 sqlite3 CLI），不需要独立 context window。`docs/memory-ops-reference.md` 保留作为记忆操作的 SQL 模板参考。
+
+### 模型选择策略（v3.1 方案1：模型统一在 kilo.json）
+
+> **单一真相来源**：模型 ID 绑定由 `kilo.json` `agent.<name>.model` 字段统一管理，agent .md / lifecycle / orchestrator / multiModel / 本设计文档均不硬编码模型 ID。变更某智能体模型只需改 `kilo.json` 一处。能力需求矩阵见 `agent/models/registry.md`。
+
+| 智能体 | 能力需求（registry 别名） | 理由 |
+|--------|--------------------------|------|
+| orchestrator | `fast-reasoning` / 通用 reasoning | 200K 上下文容纳全流程编排 |
+| planner | `deep-reasoning` | 架构分析、长上下文、复杂推理最强 |
+| coder | `code-generation` | Code-tuned，编码专精 |
+| verifier | `strict-verification` | 安全敏感、边界敏感、逻辑审查强 |
+| reverse-auditor | `strict-verification` | 同 verifier，反向推理需要严谨逻辑 |
+| side-checker | `deep-reasoning` | 边界/安全/性能多角度需要强推理 |
+| reviewer | `deep-reasoning` | 架构视角审查需要强 reasoning |
+| fixer | `code-generation` | 代码修复需要编码能力 |
+| synthesizer-fusion | `long-context-synthesis` | 长上下文整合、代码风格统一 |
+
+> **verifier 和 reverse-auditor 同能力需求**：两者都是验证职能，模型能力需求一致。虽然可同模型，但 prompt 不同（正向 vs 反向视角），且独立 context window 保证视角隔离。
+> **v3.1 视角物理隔离原则**：仅靠独立 context window 不足以防止确认偏误——各验证智能体的**输入接口字段**必须物理隔离（详见 §视角物理隔离）。
+
+### kilo.json agent 配置（示例结构）
+
+```json
+{
+  "default_agent": "orchestrator",
+  "agent": {
+    "orchestrator": {
+      "mode": "primary",
+      "model": "<见 kilo.json 实际绑定>",
+      "prompt": "生命周期编排者：意图判定→定级→按 lifecycle/ 加载智能体→管理上下文传递→门禁管理→记忆写入。详见 agent/orchestrator.md。"
+    },
+    "multiModel": {
+      "mode": "primary",
+      "model": "<见 kilo.json 实际绑定>",
+      "prompt": "多模型并行编排（T3）。3 coder + verifier + synthesizer-fusion。详见 agent/multiModel.md。"
+    },
+    "synthesizer-fusion": {
+      "mode": "subagent",
+      "model": "<见 kilo.json 实际绑定>",
+      "prompt": "多模型融合编辑智能体。详见 agent/synthesizer-fusion.md。"
+    },
+    "planner":     { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
+    "coder":       { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
+    "verifier":    { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
+    "reverse-auditor": { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
+    "side-checker":    { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
+    "reviewer":        { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
+    "fixer":           { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." }
+  }
+}
+> 注：此为结构示例，模型 ID 实际绑定以仓库 `kilo.json` 为单一真相来源（v3.1 方案1）。
+```
+
+> **subagent 智能体不在 kilo.json 中声明**：planner/coder/verifier 等 7 个职能智能体通过 orchestrator 的 `task` 工具按需启动（`subagent_type` 参数指向对应 agent/*.md），不需要在 kilo.json 注册。这与 Kilo 的 subagent 机制一致——只有 primary agent 需要在 kilo.json 声明。
+
+---
+
+## 2. 生命周期阶段 → 智能体加载映射（可插拔规则）
+
+### 设计：lifecycle 阶段文件声明 `agents` 字段
+
+每个 `agent/lifecycle/NN-*.md` 阶段文件在 frontmatter 中声明该阶段加载的智能体列表：
+
+```yaml
+---
+description: 生命周期阶段 04 — 实现。
+stage_id: S07_EXECUTING
+agents:
+  - coder          # 主执行智能体
+  - verifier       # 完成后立即正向验证（同阶段闭环）
+previous_stage: S06_PLAN_APPROVED
+next_stage: S09_CHECKING
+---
+```
+
+### 可插拔机制
+
+#### 加载规则
+1. orchestrator 进入某阶段时，读取对应 `lifecycle/NN-*.md` 的 `agents` 字段
+2. 按 `agents` 列表依次用 `task` 工具启动智能体（`subagent_type: planner/coder/verifier/...`）
+3. 每个智能体启动时注入 `task_context`（见第 3 章）作为上下文
+4. 智能体完成后输出结果 + 更新 `task_context`
+
+#### 可扩展规则
+- **新增智能体**：在 `agent/` 新增 `xxx-agent.md` + 在 lifecycle 阶段文件的 `agents` 字段加入 `xxx-agent`
+- **自定义加载**：lifecycle 阶段文件的 `agents` 字段可按定级（T0/T1/T2/T3）条件声明，如：
+
+```yaml
+agents:
+  - coder
+  - verifier        # T1+ 始终加载
+  - reverse-auditor # T2+ 加载（条件）
+  - side-checker    # T2+ 加载（条件）
+  - reviewer        # T1+ 加载
+```
+
+### 按定级的智能体加载矩阵
+
+| 阶段 | T0 | T1 | T2 | T3 |
+|------|----|----|----|----|
+| S01_INTENT | orchestrator | orchestrator | orchestrator | orchestrator |
+| S03_SIZING | orchestrator | orchestrator | orchestrator | orchestrator |
+| S05_PLANNING | — | planner（短设计门） | planner（完整规划） | planner（完整规划） |
+| S07_EXECUTING | coder | coder | coder（按 DAG） | 3×coder（multiModel） |
+| S09_CHECKING（正向） | — | verifier | verifier | verifier |
+| S09_CHECKING（反向） | — | — | reverse-auditor | reverse-auditor |
+| S11_FIXING | — | fixer | fixer | fixer |
+| S13_REVIEWING（侧向） | — | — | side-checker | side-checker |
+| S13_REVIEWING（审查） | — | reviewer | reviewer | reviewer |
+| S16_DELIVERING | orchestrator | orchestrator | orchestrator | orchestrator（+synthesizer-fusion 在 MM_FUSING 阶段融合） |
+
+> **T0 直达**：orchestrator 直接加载 coder 执行，无 planner/verifier/reviewer，与现有 workflow-core.md §T0 直达一致。
+
+---
+
+## 3. 共享上下文机制设计
+
+### 设计：`task_context` 文件 + memory.db 双层共享
+
+#### 第一层：任务级共享上下文 `task_context.json`
+
+**位置**：`$env:TEMP/kilo/task_context_<task_id>.json`（临时文件，任务结束后归档到 memory.db dispatch_log 或删除）
+
+**结构**：
+
+```json
+{
+  "task_id": "task-20260727-001",
+  "created_at": "2026-07-27T01:00:00Z",
+  "updated_at": "2026-07-27T01:30:00Z",
+  "intent": {
+    "type": "EXECUTION",
+    "keywords": ["lifecycle", "multi-agent"],
+    "original_request": "用户原始请求摘要"
+  },
+  "sizing": {
+    "level": "T2",
+    "calibrated_level": "T2",
+    "rationale": "跨模块，5+文件"
+  },
+  "plan": {
+    "design_gate": "PASS",
+    "approach": "方案概述",
+    "acceptance_criteria": ["标准1", "标准2"],
+    "unit_dag": [
+      {"unit_id": "U1", "files": ["a.md"], "deps": [], "status": "DONE"},
+      {"unit_id": "U2", "files": ["b.md"], "deps": ["U1"], "status": "PENDING"}
+    ],
+    "scan_checklist": ["全量同类点扫描清单"],
+    "forbidden_files": ["禁止触碰的文件"]
+  },
+  "execution": {
+    "current_unit": "U2",
+    "completed_units": ["U1"],
+    "diffs": {
+      "U1": {"files": ["a.md"], "summary": "变更摘要", "acceptance_map": {...}}
+    }
+  },
+  "verification": {
+    "forward": {"verdict": "PASS", "evidence": [...]},
+    "reverse": {"verdict": "PASS", "gaps_found": []},
+    "side": {"verdict": "PASS", "boundary_issues": []},
+    "review": {"verdict": "PASS", "perspectives": {...}}
+  },
+  "fixing_history": [
+    {"round": 1, "issue": "...", "fix": "...", "verifier_result": "PASS"}
+  ],
+  "memory_injection": {
+    "facts_used": ["AP-006", "PAT-001"],
+    "context_used": ["PC-001"]
+  },
+  "status": "S07_EXECUTING",
+  "convergence": {
+    "round": 2,
+    "max_rounds": 5,
+    "circuit_breaker": false
+  }
+}
+```
+
+#### 读写规则
+
+| 智能体 | 读取 | 写入 |
+|--------|------|------|
+| orchestrator | 全部 | intent/sizing/status/convergence/memory_injection |
+| planner | intent/sizing | plan |
+| coder | plan/execution/forbidden_files/memory_injection | execution.diffs[current_unit] |
+| verifier | plan/execution.diffs[current_unit] | verification.forward |
+| reverse-auditor | intent/plan/execution | verification.reverse |
+| side-checker | plan/execution | verification.side |
+| reviewer | plan/execution/verification | verification.review |
+| fixer | verification(issues)/plan/forbidden_files | fixing_history/execution.diffs |
+
+#### 注入机制
+- orchestrator 启动智能体时，将 `task_context.json` 的相关章节作为 `task` 工具 prompt 的一部分注入
+- 智能体完成后，返回结构化结果，orchestrator 更新 `task_context.json`
+- **不重复从 0 开始**：每个智能体都能看到前序阶段的完整上下文（方案、已完成单元、验证结果、失败历史）
+
+#### 第二层：长期记忆 `memory.db`（保留现有）
+
+- `fact_store`：跨任务经验模式（PATTERN/ANTIPATTERN/RECIPE/WARNING）
+- `failure_db`：失败案例
+- `dispatch_log`：任务调度记录
+- `model_calibration`：模型能力校准
+- `project_context`：项目级用户偏好/安全约束
+
+> **task_context 是短生命周期（单任务），memory.db 是长生命周期（跨任务）**。任务完成后 orchestrator 在 S16_DELIVERING 将关键信息抽取写入 memory.db（dispatch_log + fact_store + failure_db）。
+
+---
+
+## 4. 交叉验证协议设计
+
+### 四视角交叉验证
+
+| 视角 | 智能体 | 验证方向 | 核心问题 |
+|------|--------|----------|----------|
+| **正向验证** | verifier | 验收标准 → 产物 | 产物是否满足每条验收标准？L1/L2/L3 分层验证 |
+| **反向验证** | reverse-auditor | 产物 → 原始需求 | 从产物反推，是否能满足用户原始意图？有无隐性遗漏？假设是否成立？ |
+| **侧向验证** | side-checker | 边界/安全/性能/兼容 | 非主路径角度：边界条件、安全漏洞、性能退化、向后兼容 |
+| **审查** | reviewer | 架构/简化/SCOPE_CREEP | 架构合理性、可简化、安全、范围蔓延 |
+
+### 正向验证（verifier）— 复用现有 verification.md 逻辑
+- L1（语法/编译/格式/编码）
+- L2（逻辑/边界/范围/SCOPE_CREEP）
+- L3（覆盖/安全/架构，T2/T3）
+- 5 元组证据（命令/参数/exit code/stdout/stderr）
+- 独立重跑，禁止信任传递
+
+### 反向验证（reverse-auditor）— 新增
+1. **需求追溯**：从产物反推，列出原始需求的每一点，确认是否被覆盖
+2. **假设审计**：列出实现中隐含的假设，验证每个假设是否成立
+3. **隐性遗漏检测**：检查是否有"用户没说但应该做"的部分被遗漏
+4. **过度实现检测**：检查是否有"用户没要求但做了"的部分（与 SCOPE_CREEP 互补，SCOPE_CREEP 看 diff 范围，反审看语义范围）
+
+### 侧向验证（side-checker）— 新增
+1. **边界条件**：空输入、极大输入、并发、错误路径
+2. **安全扫描**：注入、越权、敏感信息泄漏
+3. **性能影响**：时间复杂度、内存、I/O
+4. **兼容性**：向后兼容、跨平台、跨版本
+
+### 审查（reviewer）— 复用现有 review.md 四视角
+- 安全视角
+- 架构视角
+- 简化视角
+- SCOPE_CREEP 视角
+
+### 组合判定规则（v3.1 机械汇总 + convergence-auditor）
+
+```
+全视角 verdict 字段 AND 运算 → 进入下一阶段
+任一视角 verdict=FAIL → 进入 S11_FIXING
+  ├─ verifier FAIL → fixer 按验收标准修复
+  ├─ reverse-auditor FAIL → fixer 补做遗漏部分
+  ├─ side-checker FAIL → fixer 按边界/安全/性能修复
+  └─ reviewer FAIL → fixer 按审查建议修复
+warning（非 blocker）→ 标记但放行，写入 task_context 供后续参考
+```
+
+> **不采用投票制**：每个视角都是硬门，任一 FAIL 都必须修复。不存在"多数通过则放行"——质量不打折。
+> **v3.1 机械汇总原则（反自验）**：orchestrator 同时承担编排（写入 task_context）与组合判定。为防止"自写自判"的确认偏误，组合判定必须是**机械汇总**——只读取各视角独立输出的 `verdict` 字段做 AND 运算，不做主观判定、不重新解读证据、不补判。任一视角的 FAIL 由该视角智能体独立给出，orchestrator 不得推翻或降级。
+> **v3.1 convergence-auditor 反向校验**（T2+ 可选硬门）：S09/S13 收齐各视角 verdict 后，orchestrator 内建轻量校验步骤，反推三项：
+> 1. 每个视角智能体是否真的独立执行（检查 task_context.verification.{forward,reverse,side,review} 是否各有独立 evidence）
+> 2. 是否存在信任传递（grep 智能体输出是否含"coder 说的对""verifier 已 PASS"等措辞）
+> 3. evidence 是否为本轮 fresh（不得复用前序阶段声明）
+> 任一项不满足 → `[TRUST_TRANSFER]`，整阶段降级为 FAIL，重跑该视角。
+
+### v3.1 视角物理隔离（反确认偏误 / 反从众偏误）
+
+> **核心问题**：独立 context window 不足以防止确认偏误——如果反向/侧向/审查视角的**输入接口字段**包含前序阶段的结论，模型会锚定"正向已 PASS"而倾向不再质疑，产生从众偏误。物理隔离要求各验证智能体的输入字段**不含**前序阶段结论。
+
+| 智能体 | 应输入 | 应隔离（禁止注入） | 隔离理由 |
+|--------|--------|--------------------|----------|
+| verifier | plan + execution.diffs/changes/forbidden_files + acceptance_criteria | execution.verification / fixing_history | 任何 coder/fixer 自验声明产生信任传递 |
+| reverse-auditor | **只 intent + execution.diffs** | plan / verification.forward / verification.side | 读了 plan 就被规划框定，发现不了 plan 自身的遗漏 |
+| side-checker | plan + execution + project_context | verification.forward / verification.reverse | 看到正向 PASS 会锚定"正向已通过"而不再质疑 |
+| reviewer | diff + plan + acceptance_criteria + project_context | verifier_report / reverse_auditor_report / verification.* | 审查与 verifier L2 重叠，看到 verifier PASS 会快速确认而非独立审查 |
+| fixer | blockers + original_diff + forbidden_files + fixing_history | verification.* / execution.verification | 修复不得被前序结论锚定；自验声明不入 context 污染下一轮 verifier |
+| coder（输出） | — | 禁止写入 execution.verification | 自验声明由 verifier 独立重跑，不入 context |
+| fixer（输出） | — | 禁止写入 execution.verification | 修复后自验声明由 verifier 独立重跑，不入 context |
+| synthesizer-fusion | 3 份 coder 输出 + verifier 报告 + acceptance_criteria | 拆分意图 / 模型身份 / task_context.intent | 知道拆分意图会偏向"符合意图的方案"而非客观最优（v3.1 恢复独立智能体根因）|
+
+> **写入边界硬门**：`execution.verification` 字段只能由 verifier 智能体写入。coder/fixer 自验结果只保留在智能体本地输出，不得写入 task_context。违反 → `[TRUST_TRANSFER]`。
+> **校验机制**：`validate-config.mjs` check26 自动校验视角物理隔离规则，check27 校验模型硬编码反查。
+
+---
+
+## 5. 循环确认机制设计
+
+### 循环流程
+
+```
+S07_EXECUTING（coder）
+  │
+  ▼
+S09_CHECKING
+  ├─ verifier（正向）──┐
+  ├─ reverse-auditor（反向，T2+）──┤
+  └─ （并行执行，各自独立 context）──┘
+  │
+  ▼ 全 PASS？
+  ├─ 是 → S13_REVIEWING
+  └─ 否 → S11_FIXING → 回 S07（修复后重跑 coder 的变更单元）→ S09
+  │
+  ▼
+S13_REVIEWING
+  ├─ side-checker（侧向，T2+）──┐
+  ├─ reviewer（审查）──┤
+  └─ （并行执行）──┘
+  │
+  ▼ 全 PASS？
+  ├─ 是 → S16_DELIVERING
+  └─ 否 → S11_FIXING → 回 S07 → S09 → S13
+```
+
+### 收敛条件
+
+| 条件 | 动作 |
+|------|------|
+| 全视角 PASS | 收敛，进入下一阶段 |
+| fixer 连续 2 轮同症状 | 升级：标记 `[NEEDS_REVIEW_ESCALATION]`，reviewer 介入做根因分析 |
+| 累计循环 ≥ 5 轮 | `[CIRCUIT_BREAKER]`，停止，输出选项等用户决策 |
+| fixer 修复后验证仍 FAIL 3 次 | `[CIRCUIT_BREAKER]`，停止 |
+
+### 循环计数
+- `task_context.convergence.round` 每次进入 S11_FIXING 时 +1
+- `task_context.convergence.max_rounds` 默认 5，T3 可配置为 8
+
+---
+
+## 6. 文件结构迁移方案
+
+### 保留（不变）
+- `.kilo/instructions/core.md` — 通用基线
+- `.kilo/instructions/workflow-core.md` — T0-T3 定级 + 门禁（术语映射注释需更新）
+- `.kilo/memory/` 全部 — memory.db + schema + contracts
+- `.kilo/skills/` 全部 — skills 系统
+- `validate-config.mjs` — 主体保留，新增检查项
+- `install.sh` / `install.ps1` — 不变
+
+### 修改
+
+| 文件 | 修改内容 |
+|------|----------|
+| `kilo.json` | `coderAgent` → `orchestrator`；prompt 锚点更新 |
+| `agent/coderAgent.md` | 重命名为 `agent/orchestrator.md`；更新为多智能体编排逻辑 |
+| `agent/multiModel.md` | 更新引用：`coderAgent` → `orchestrator`；executor 引用更新 |
+| `agent/lifecycle/README.md` | 状态机图更新：每阶段标注加载的智能体；组合规则更新 |
+| `agent/lifecycle/01-intent.md` | frontmatter 加 `agents: [orchestrator]` |
+| `agent/lifecycle/02-sizing.md` | frontmatter 加 `agents: [orchestrator]` |
+| `agent/lifecycle/03-design.md` | frontmatter 加 `agents: [planner]`；引用改为 planner 智能体 |
+| `agent/lifecycle/04-implementation.md` | frontmatter 加 `agents: [coder]` |
+| `agent/lifecycle/05-verification.md` | frontmatter 加 `agents: [verifier, reverse-auditor]`；反向验证逻辑 |
+| `agent/lifecycle/06-review.md` | frontmatter 加 `agents: [side-checker, reviewer]` |
+| `agent/lifecycle/07-repair.md` | frontmatter 加 `agents: [fixer]` |
+| `agent/lifecycle/08-delivering.md` | frontmatter 加 `agents: [orchestrator]`；task_context 归档逻辑 |
+| `agent/models/registry.md` | 按阶段选择策略表更新为按智能体选择 |
+| `AGENTS.md` | 锚点更新：`coderAgent` → `orchestrator`；新增多智能体协作锚点 |
+| `README.md` | 目录树更新：agent/ 结构变更 |
+| `CONFIG_CHANGE_CHECKLIST.md` | agent 引用更新 |
+| `.kilo/instructions/workflow-core.md` | 术语映射注释更新：角色名 → 智能体名 |
+
+### 新建
+
+| 文件 | 内容 |
+|------|------|
+| `agent/orchestrator.md` | 编排者智能体（从 coderAgent.md 演化） |
+| `agent/planner.md` | 规划智能体（从 capabilities/architecture-design.md 演化） |
+| `agent/coder.md` | 编码智能体（从 capabilities/implementation.md 演化） |
+| `agent/verifier.md` | 正向验证智能体（从 capabilities/verification.md 演化） |
+| `agent/reverse-auditor.md` | 反向审计智能体（全新） |
+| `agent/side-checker.md` | 侧向验证智能体（全新） |
+| `agent/reviewer.md` | 审查智能体（从 capabilities/review.md 演化） |
+| `agent/fixer.md` | 修复智能体（从 capabilities/repair.md 演化） |
+| `docs/multi-agent-lifecycle-architecture.md` | 本设计文档 |
+
+### 删除
+
+| 文件 | 理由 |
+|------|------|
+| `agent/coderAgent.md` | 重命名为 orchestrator.md |
+| `agent/capabilities/*.md`（8 文件） | 能力插件合并到对应智能体文件；memory-ops.md 保留作为 SQL 模板参考移至 `docs/memory-ops-reference.md` |
+| `agent/capabilities/` 目录 | 不再需要 |
+
+> **capabilities/memory-ops.md 保留**：记忆操作的 SQL 模板仍有价值，移至 `docs/memory-ops-reference.md` 作为参考文档，orchestrator 在 S16 阶段查阅。
+
+### validate-config.mjs 新增检查
+
+| 检查项 | 说明 |
+|--------|------|
+| check23 | 智能体文件完整性：`agent/` 下 8 个智能体 .md 文件存在（orchestrator/planner/coder/verifier/reverse-auditor/side-checker/reviewer/fixer） |
+| check24 | lifecycle 阶段文件 `agents` frontmatter 字段声明的智能体全部存在 |
+| check25 | task_context 读写规则一致性：lifecycle 阶段文件声明的智能体在 `agent/` 下有对应 .md |
+
+---
+
+## 7. 与现有 workflow-core.md / core.md 的兼容
+
+### 保留
+
+| 现有机制 | 保留状态 |
+|----------|----------|
+| T0-T3 定级 | ✅ 完全保留，两阶段定级不变 |
+| 8 节点强制流程日志 | ✅ 保留，节点名从"能力插件"改为"智能体" |
+| 质量门禁标记 | ✅ `[DESIGN_GATE_PASS]`/`[SCOPE_CREEP]`/`[MISSING_MEMORY_WRITE]` 等全部保留 |
+| 安全敏感模块识别 | ✅ 完全保留 |
+| 单元 DAG | ✅ 完全保留，planner 智能体产出 |
+| Circuit Breaker | ✅ 完全保留 |
+| memory.db 记忆系统 | ✅ 完全保留，orchestrator 在 S16 写入 |
+| skills 系统 | ✅ 完全保留 |
+
+### 修改
+
+| 现有机制 | 修改内容 |
+|----------|----------|
+| workflow-core.md 术语映射注释 | `engineer → coder 智能体`、`checker → verifier + reverse-auditor`、`fixer → fixer`、`reviewer → reviewer + side-checker`、`architect → planner` |
+| 强制流程日志"能力插件"列 | 改为"智能体"列 |
+| review_mode 决策表 | T0→none，T1→正向+审查，T2/T3→正向+反向+侧向+审查 |
+
+### 新增
+
+| 新机制 | 说明 |
+|--------|------|
+| task_context 共享上下文 | 新增，见第 3 章 |
+| 反向验证 | 新增 reverse-auditor 智能体 |
+| 侧向验证 | 新增 side-checker 智能体 |
+| 交叉验证组合判定 | 新增四视角组合规则 |
+
+---
+
+## 8. 风险和权衡
+
+### 多智能体的开销
+
+| 开销类型 | 评估 | 缓解 |
+|----------|------|------|
+| Token 成本 | 每个智能体独立 context window，总 token 是单 agent 的 3-5 倍 | T0/T1 不启动全部智能体；task_context 只注入相关章节 |
+| 延迟 | 串行启动多个智能体增加总延迟 | 正向+反向可并行；侧向+审查可并行 |
+| 上下文传递损耗 | task_context 摘要可能丢失细节 | task_context 结构化字段 + 关键原文保留 |
+
+### 共享上下文的同步风险
+
+| 风险 | 缓解 |
+|------|------|
+| 并发读写冲突 | orchestrator 是唯一写入者，智能体只读 + 返回结构化结果由 orchestrator 写入 |
+| 上下文过大 | task_context 只保留结构化摘要 + 关键证据，不保留完整对话 |
+| 临时文件残留 | 任务结束（S17_DONE）后归档到 memory.db dispatch_log 并删除临时文件 |
+
+### 何时用多智能体 vs 单 agent
+
+| 定级 | 智能体数量 | 理由 |
+|------|-----------|------|
+| T0 | 1（orchestrator 直接执行） | ≤2 行改动，启动多智能体成本 > 收益 |
+| T1 | 3-4（orchestrator + planner + coder + verifier + reviewer） | 单模块，正向验证+审查足够 |
+| T2 | 6-7（+ reverse-auditor + side-checker） | 跨模块，需要全视角交叉验证 |
+| T3 | 8+（+ multiModel 3×coder） | 高风险，全视角 + 多模型并行 |
+
+### 降级策略
+
+| 触发条件 | 降级策略 |
+|----------|----------|
+| 某智能体启动失败 | orchestrator 标记 `[AGENT_UNAVAILABLE]`，跳过该视角，记录降级 |
+| reverse-auditor 不可用 | 正向验证 + 审查覆盖（降低反向验证能力） |
+| side-checker 不可用 | 审查的 SCOPE_CREEP 视角部分覆盖侧向 |
+| 多个智能体不可用 | 降级为单 orchestrator 模式 + 标记 `[DEGRADED_SINGLE_AGENT]` |
+| task_context 读写失败 | 降级为信号传递模式（当前实现） + 标记 `[CONTEXT_SHARING_DEGRADED]` |
+
+---
+
+## 实现单元 DAG（供后续 engineer 执行）
+
+| 单元 | 内容 | 依赖 | 验收标准 |
+|------|------|------|----------|
+| U1 | kilo.json 更新：coderAgent → orchestrator | 无 | kilo.json 合法 + validator PASS |
+| U2 | agent/ 新建 8 个智能体 .md 文件 | U1 | 8 文件存在 + frontmatter 合规 |
+| U3 | agent/coderAgent.md 重命名为 orchestrator.md + 内容更新 | U2 | 引用一致 |
+| U4 | agent/capabilities/ 合并到智能体文件 + 删除目录 | U2,U3 | capabilities/ 不存在 + validator PASS |
+| U5 | agent/lifecycle/*.md frontmatter 加 agents 字段 + 内容更新 | U2,U4 | 8 阶段文件 agents 字段完整 |
+| U6 | agent/lifecycle/README.md 状态机图更新 | U5 | 状态图标注智能体 |
+| U7 | agent/models/registry.md 更新为按智能体选择 | U2 | 模型矩阵更新 |
+| U8 | AGENTS.md + README.md + CONFIG_CHANGE_CHECKLIST.md 更新 | U3,U5 | 索引一致 |
+| U9 | workflow-core.md 术语映射注释更新 | U3,U5 | 角色名 → 智能体名 |
+| U10 | validate-config.mjs 新增 check23/24/25 | U2,U5 | 25/25 PASS |
+| U11 | docs/memory-ops-reference.md 从 capabilities/memory-ops.md 迁移 | U4 | 文件存在 + 引用更新 |
+| U12 | task_context 机制文档化（orchestrator.md 中定义读写规则） | U3 | orchestrator.md 含 task_context 章节 |
+
+---
+
+## 审核检查清单
+
+- [ ] 智能体清单是否符合"规划/编码/检查等独立智能体"意图
+- [ ] 交叉验证四视角是否覆盖"正向/反向/侧向/审查"
+- [ ] task_context 共享机制是否满足"不重复从0开始"
+- [ ] 可插拔机制是否满足"自定义决定加载哪些智能体"
+- [ ] T0-T3 定级保留是否影响兼容性
+- [ ] 文件迁移方案是否可接受（8 个 capabilities 删除 + 8 个 agent 新建）
+- [ ] 降级策略是否足够
+
+> **用户审核通过后，按 U1-U12 单元 DAG 依次委派 engineer 执行，每单元 verifier 验证 + reviewer 审查。**

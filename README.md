@@ -6,7 +6,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 
 ## 当前设计
 
-- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow-core.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`workflow-reference.md` / `skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 coderAgent 在需要时主动读取。`security-checklist.md` 作为 checker 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按角色按需加载，不作为通用上下文全量注入。
+- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow-core.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`workflow-reference.md` / `skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 orchestrator 在需要时主动读取。`security-checklist.md` 作为 verifier 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按智能体按需加载，不作为通用上下文全量注入。
 - **长文档转为参考资料**：`AGENTS.md` 保留为设计标准和人工维护参考，不再承担高频运行时注入职责。
 - **默认路由**：模型选择只在 `kilo.json` 中维护；运行规则按角色和任务复杂度路由，不硬编码具体模型名。
 - **扩展入口内置**：默认仅启用 `gitnexus` 辅助调用链/影响面分析；`context7` 远程 MCP（最新文档检索）与 `playwright`（浏览器端验证）按需手动开启。
@@ -57,31 +57,35 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   │   ├── component-driven-fixes/  # 重复 UI/样式/行为问题的组件化修复
 │   │   ├── ui-shadcn/            # shadcn/ui 组件库（含 ui-color / ui-animation / ui-frontend 等 12 个子库）
 │   │   └── hermes-migration/     # Kilo→Hermes 迁移工具包
-│   └── memory/                   # 程序化记忆模块（参考 Hermes Agent；主通道 SQLite，md 仅静态兜底）
-│       ├── README.md             # 公共 API 文档
-│       ├── AGENTS.md             # 运行时注入入口
-│       ├── MODULE_GUIDE.md       # 模块简介与表说明
-│       ├── MEMORY.md             # 静态指针 + M-001 占位（≤ 1500 字符）
-│       ├── USER.md               # 用户档案（≤ 1375 字符）
-│       ├── init.sql              # SQLite 表结构 DDL（7 表 + 2 FTS5 + 4 视图）
+│   └── memory/                   # 程序化记忆模块（v2.6.2；主通道 SQLite，md 仅静态兜底）
+│       ├── README.md             # 公共 API 文档（唯一外部入口）
+│       ├── AGENTS.md             # 模块对 agent 的运行时注入指令
+│       ├── init.sql              # 旧版根级 DDL 别名（与 schema/init.sql 保持同步，install 兼容入口）
 │       ├── memory-strategy.md    # 兼容策略文件指针（保留以命中 strategy: "memory-strategy.md"）
-│       ├── policy/               # 策略（bash_sqlite_template / init_check / query_strategy）
-│       ├── schema/               # SQL DDL 与迁移脚本
-│       ├── api/                  # mcp 接入层（v3.0 standby，enabled=false）
-│       └── contracts/            # 跨层契约（schema 校验规则）
-├── agent/                        # Kilo 智能体定义（全局可用）
-│   ├── coderAgent.md
-│   ├── architect.md
-│   ├── engineer.md
-│   ├── reviewer.md               # 主审查者，内置覆盖安全/架构/简化三种视角
-│   ├── multiModel.md              # 多模型并行融合模式（用户可手动选择，T3 自动触发）
-│   ├── synthesizer-fusion.md      # 融合编辑（综合 A/B/C 各家之长，非投票选优）
-│   ├── checker.md
-│   ├── pre-checker.md
-│   ├── fixer.md
-│   ├── executor-A.md
-│   ├── executor-B.md
-│   └── executor-C.md
+│       ├── schema/               # DDL 唯一源（init.sql = 7 表 + 26 索引 + 4 视图 + 2 FTS5 trigram 虚表）
+│       └── contracts/            # 跨层契约（health_check.sql，被 validate-config.mjs check17 调用）
+├── agent/                        # Kilo 智能体定义（生命周期驱动，全局可用）
+│   ├── orchestrator.md           # 生命周期编排者（加载智能体 + task_context 共享 + 门禁）
+│   ├── planner.md                # 规划智能体（设计门、DAG、验收点）
+│   ├── coder.md                  # 编码智能体（实现、自测、三件套）
+│   ├── verifier.md               # 正向验证智能体（L1/L2/L3、5 元组证据）
+│   ├── reverse-auditor.md        # 反向审计智能体（需求追溯、假设审计，T2+）
+│   ├── side-checker.md           # 侧向验证智能体（边界/安全/性能/兼容，T2+）
+│   ├── reviewer.md               # 审查智能体（安全/架构/简化/SCOPE_CREEP 四视角）
+│   ├── fixer.md                  # 修复智能体（定向修复阻塞问题）
+│   ├── multiModel.md             # 多模型并行融合模式（T3 自动触发，用户可手动选择）
+│   ├── lifecycle/                # 生命周期阶段定义（状态机主线索）
+│   │   ├── README.md             # 8 阶段总览 + 智能体加载映射 + 组合规则
+│   │   ├── 01-intent.md          # S01 意图判定 [orchestrator]
+│   │   ├── 02-sizing.md          # S03 任务定级 [orchestrator]
+│   │   ├── 03-design.md          # S05 设计门 [planner]
+│   │   ├── 04-implementation.md  # S07 实现 [coder]
+│   │   ├── 05-verification.md    # S09 验证 [verifier + reverse-auditor]
+│   │   ├── 06-review.md          # S13 审查 [side-checker + reviewer]
+│   │   ├── 07-repair.md          # S11 修复 [fixer]
+│   │   └── 08-delivering.md      # S16 交付 [orchestrator]
+│   └── models/
+│       └── registry.md           # 模型能力矩阵 + 按智能体选择策略 + 多样性规则
 ├── install.ps1                   # Kilo 配置安装脚本（Windows）
 ├── install.sh                    # Kilo 配置安装脚本（macOS/Linux）
 └── README.md
@@ -157,12 +161,12 @@ diff -rq . ~/.config/kilo \
 记忆系统（v2.6.2）采用 **SQLite 唯一记忆 + md 静态兜底** 架构，由 `.kilo/memory/` 模块统一管理，通过 `${HOME}/.config/kilo-data/memory.db` 的存在性自动启停，无需 `kilo.json` 配置：
 
 1. **结构化记忆全部入全局 sqlite**（7 表 + 2 FTS5 trigram 虚表 + 4 视图）：经验教训 `fact_store`、失败案例 `failure_db`、调度日志 `dispatch_log`、项目上下文 `project_context`、模型校准 `model_calibration`、skill 升级审计 `skill_upgrade_log`、skill 使用时序 `skill_usage_events`
-2. **md 文件仅作静态兜底**：`.kilo/memory/MEMORY.md`（≤ 1500 字符，纯指针 + M-001 动态注入占位）、`.kilo/memory/USER.md`（≤ 1375 字符，用户偏好/安全约束）；**禁止** md 累积经验/日志/时序数据
-3. **访问通道**：agent 通过 bash 调用 `sqlite3` CLI 读写（模板见 `.kilo/memory/policy/bash_sqlite_template.md`）；备用 memory-mcp 在 `kilo.json` 预埋 `enabled:false`
-4. **首次部署/初始化**：运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）会自动检测 `sqlite3` CLI，缺失时提示用户并自动安装（winget/apt/brew 等）+ 初始化 `memory.db`（执行 `schema/init.sql` + 迁移 bootstrap 经验 + 补种 `project_context`）；跳过安装则记忆层静默降级。手动初始化见 `.kilo/memory/policy/init_check.md` 6 步 SOP。
+2. **md 文件仅作静态兜底**：当前模块边界只保留 `README.md`（公共 API）与 `AGENTS.md`（agent 入口）；**禁止** md 累积经验/日志/时序数据
+3. **访问通道**：agent 通过 bash 调用 `sqlite3` CLI 读写（SQL 模板见 `docs/memory-ops-reference.md`）；备用 memory-mcp 在 `kilo.json` 预埋 `enabled:false`
+4. **首次部署/初始化**：运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）会自动检测 `sqlite3` CLI，缺失时提示用户并自动安装（winget/apt/brew 等）+ 初始化 `memory.db`（执行 `schema/init.sql` + 迁移 bootstrap 经验 + 补种 `project_context`）；跳过安装则记忆层静默降级。
 5. **禁用记忆**：删除或清空 `${HOME}/.config/kilo-data/memory.db` 即可优雅降级，不报错、不删除规则
 
-模块文档：`.kilo/memory/README.md`（公共 API）、`.kilo/memory/MODULE_GUIDE.md`（模块简介与表说明）、`.kilo/memory/AGENTS.md`（agent 注入指令）、`.kilo/instructions/workflow-reference.md`「程序化记忆」章节。
+模块文档：`.kilo/memory/README.md`（公共 API + 故障排查）、`.kilo/memory/AGENTS.md`（agent 注入指令）。SQL 模板与执行流程见 `docs/memory-ops-reference.md`（生命周期驱动后唯一业务规则入口）。
 
 ### 给真实项目接入项目级 context pack
 

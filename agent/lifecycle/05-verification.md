@@ -1,0 +1,107 @@
+---
+description: 生命周期阶段 05 — 验证。正向验证 + 反向审计（T2+），多视角交叉验证，只验证不修复。
+stage_id: S09_CHECKING
+agents:
+  - verifier
+  - "reverse-auditor?config.agents.reverse_auditor"
+previous_stage: S07_EXECUTING
+next_stage: S13_REVIEWING
+---
+
+# lifecycle/05-verification
+
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
+
+## 阶段定义
+
+| 字段 | 值 |
+|------|-----|
+| **阶段 ID** | `S09_CHECKING` |
+| **上一阶段** | `S07_EXECUTING` |
+| **下一阶段** | `S10_CHECK_PASSED` → `S13_REVIEWING`（T1+ 统一 full）或 `S16_DELIVERING`（仅 T0 不经过此阶段） |
+| **加载智能体** | `verifier`（正向，T1+）+ `reverse-auditor`（反向，T2+，与 verifier 并行） |
+| **模型偏好** | `registry:strict-verification`（边界敏感、逻辑审查） |
+| **token 预算** | ≤ 10000 × 智能体数 |
+
+## 输入
+
+> **视角物理隔离**：verifier 只读 `plan + execution.diffs/changes/acceptance_map + forbidden_files + acceptance_criteria`，**禁止读 `execution.verification / fixing_history`**。reverse-auditor 只读 `intent + execution.diffs/changes/acceptance_map`，**禁止读 `plan`**。
+
+- coder 输出的变更摘要 + 验收映射表（**不含 coder 自验声明**）
+- 原始验收标准清单
+- diff（`git diff` 或实际文件变更）
+- 设计门方案（T1+，仅 verifier 用于核对范围）
+- 原始意图（reverse-auditor 用，**不传 plan**）
+
+## 双视角交叉验证（verifier 正向 + reverse-auditor 反向，T2+ 并行）
+
+### 正向验证（verifier）
+按验收标准逐条验证产物，L1/L2/L3 分层，5 元组证据，独立重跑。详见 `agent/verifier.md`。
+
+### 反向审计（reverse-auditor，T2+）
+从产物反推是否满足原始需求，追溯假设，发现隐性遗漏和过度实现。详见 `agent/reverse-auditor.md`。
+
+> 两者并行执行，各自独立 context window，不互相参考。组合判定：任一 FAIL → S11_FIXING。
+
+## 分层验证（verifier 正向）
+
+### L1（语法/编译/格式/编码）
+- 运行测试、构建、类型、Lint
+- 编码扫描（`node scripts/scan-encoding.mjs`）：检测 UTF-8 BOM / U+FFFD / GBK 残留
+- 无法运行 → `[VERIFY_PENDING]`
+
+### L2（逻辑/边界/范围）
+- 逐条验收标准读取代码路径，确认实现、分支、错误路径
+- 需求扩散覆盖矩阵完整性
+- 重复模式/局部补丁拦截：涉及 UI/样式/行为时扫描同类症状
+- 范围越界（`SCOPE_CREEP`）：diff 中存在验收标准未声明的改动
+- 流程合规：核对强制流程日志是否完整
+- 状态信号合规：核对 coder 输出是否包含 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`
+
+### L3（覆盖/安全/架构，仅 T2/T3）
+- API 兼容性（`gitnexus_api_impact`）
+- 安全/性能检测（`security-checklist.md` L1-L3）
+- 跨页面/组件重复模式反向 grep 验证旧模式命中数=0
+- 范围越界（`SCOPE_CREEP`）：diff 中存在验收标准未声明的改动（T1+ 也在此核对）
+
+## 证据验收协议
+
+1. **枚举声明**：列出 coder 输出的每条完成/通过/修复声明。
+2. **本轮重跑**：对每条声明，本轮重新运行证明命令（不复用 coder 输出）。
+3. **完整读取**：读 stdout+stderr+exit code 全文，不截断。
+4. **声明 → 证据比对**：声明"通过"→ exit code=0 且无新失败；声明"修复"→ 原失败转绿且无回归。
+5. **附证据结论**：每条声明输出"声明 X / 证据 Y / 结论 [证实|证伪|未验证]"。
+
+> 任何声明无本轮 fresh 证据 → `[UNVERIFIED]`，整体验证结论 FAIL。
+
+## 输出信号
+
+```yaml
+status_signal: "PASS" | "FAIL" | "VERIFY_PENDING"
+transition_context:
+  unit_id: "string"
+  l1_pass: true | false
+  l2_pass: true | false
+  l3_pass: true | false | "N/A"
+quality_gate:
+  forward_result: "PASS" | "FAIL"     # verifier 正向
+  reverse_result: "PASS" | "FAIL" | "N/A"  # reverse-auditor 反向（T2+）
+  unverified_items: ["string"]
+  blockers: [{ source, severity, file, line, message }]
+```
+
+## 路由规则
+
+- `PASS`（正向+反向全 PASS）→ T1+ 进入 `S13_REVIEWING`（统一 full 四视角）；T0 不经过此阶段
+- `FAIL`（任一视角 FAIL）→ 进入 `S11_FIXING`（修复阶段）
+- `VERIFY_PENDING` → 标记后进入 `S11_FIXING` 或升级人工决策
+
+## FAIL 条件清单
+
+- `[MISSING]` / `[UNVERIFIED]` / `[PARTIAL_IMPLEMENTATION]` / `[REGRESSION]`
+- `[MISSING_ACCEPTANCE_MAP]` / `[FAKE_CONTEXT]` / `[ENCODING_VIOLATION]`
+- `[DESIGN_GATE_MISS]`（T1+ 编码前未过设计门）
+- `[PROCESS_VIOLATION]` / `[PATH_DEVIATION]`
+- `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` / `[MISSING_SCAN]` / `[MISSING_PREVENTION]`
+- `[SCOPE_CREEP]` / `[TRUST_TRANSFER]`
+- 命中 `security-checklist.md` 任一检测项

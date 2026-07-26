@@ -2,7 +2,7 @@
   "$schema": "https://app.kilo.ai/config.json",
   "model": "hx/MiniMax-M3",
   "small_model": "hx/MiniMax-M2.7-highspeed",
-  "default_agent": "coderAgent",
+  "default_agent": "orchestrator",
   "snapshot": true,
   "compaction": {
     "auto": true,
@@ -15,54 +15,55 @@
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
   },
   "agent": {
-    "coderAgent": {
+    "orchestrator": {
       "mode": "primary",
       "model": "hx/kimi-k2.6",
-      "prompt": "锚点：意图判定→定级(T0-T3)→流程日志；T1+ pre-checker→engineer→checker→fixer 闭环；T2+ 加 reviewer；compaction 后保留锚点；记忆轻提示 recall/write；SCOPE_CREEP 双向核对；[MISSING_MEMORY_WRITE] 阻塞；详见 agent/coderAgent.md。"
-    },
-    "engineer": {
-      "mode": "subagent",
-      "model": "hx/MiniMax-M3"
-    },
-    "architect": {
-      "mode": "subagent",
-      "model": "hx/glm-5.2"
-    },
-    "checker": {
-      "mode": "subagent",
-      "model": "hx/glm-5.2"
-    },
-    "pre-checker": {
-      "mode": "subagent",
-      "model": "hx/kimi-k2.6"
-    },
-    "fixer": {
-      "mode": "subagent",
-      "model": "hx/deepseek-v4-flash"
-    },
-    "reviewer": {
-      "mode": "subagent",
-      "model": "hx/glm-5.2"
-    },
-    "executor-A": {
-      "mode": "subagent",
-      "model": "hx/MiniMax-M3"
-    },
-    "executor-B": {
-      "mode": "subagent",
-      "model": "hx/glm-5.2"
-    },
-    "executor-C": {
-      "mode": "subagent",
-      "model": "hx/kimi-k2.6"
-    },
-    "synthesizer-fusion": {
-      "mode": "subagent",
-      "model": "hx/kimi-k2.6"
+      "prompt": "生命周期编排者：意图判定→定级(T0-T3)→按 lifecycle/ 阶段加载智能体→管理 task_context 共享→交叉验证门禁→记忆写入。compaction 保留锚点。详见 agent/orchestrator.md。"
     },
     "multiModel": {
       "mode": "primary",
-      "model": "hx/kimi-k2.6"
+      "model": "hx/kimi-k2.6",
+      "prompt": "多模型并行生命周期编排（T3）。3 coder + verifier + synthesizer-fusion 按 lifecycle 阶段执行。详见 agent/multiModel.md 与 agent/models/registry.md。"
+    },
+    "synthesizer-fusion": {
+      "mode": "subagent",
+      "model": "hx/kimi-k2.6",
+      "prompt": "多模型融合编辑智能体。读取 3 个 coder 输出 + verifier 验证结果，取长补短生成综合最优方案。只融合不推理不验证。详见 agent/synthesizer-fusion.md。"
+    },
+    "planner": {
+      "mode": "subagent",
+      "model": "hx/kimi-k3",
+      "prompt": "规划智能体。设计门、方案设计、单元 DAG 拆分、验收点定义、全量扫描清单。只输出设计方案，不写代码。详见 agent/planner.md。"
+    },
+    "coder": {
+      "mode": "subagent",
+      "model": "hx/kimi-k2.7-code",
+      "prompt": "编码智能体。按方案实现代码、输出验收映射表+三件套、状态信号。端到端闭环。详见 agent/coder.md。"
+    },
+    "verifier": {
+      "mode": "subagent",
+      "model": "hx/glm-5.2",
+      "prompt": "正向验证智能体。按验收标准逐条验证、L1/L2/L3 分层、5元组证据、独立重跑。只验证不修复。详见 agent/verifier.md。"
+    },
+    "reverse-auditor": {
+      "mode": "subagent",
+      "model": "hx/glm-5.2",
+      "prompt": "反向审计智能体。从产物反推是否满足原始需求、追溯假设、发现隐性遗漏。只审计不修复。详见 agent/reverse-auditor.md。"
+    },
+    "side-checker": {
+      "mode": "subagent",
+      "model": "hx/kimi-k3",
+      "prompt": "侧向验证智能体。边界/安全/性能/兼容性非主路径角度验证。只验证不修复。详见 agent/side-checker.md。"
+    },
+    "reviewer": {
+      "mode": "subagent",
+      "model": "hx/kimi-k3",
+      "prompt": "审查智能体。架构/简化/安全/SCOPE_CREEP 四视角审查。只审查不修复。详见 agent/reviewer.md。"
+    },
+    "fixer": {
+      "mode": "subagent",
+      "model": "hx/kimi-k2.7-code",
+      "prompt": "修复智能体。定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题。详见 agent/fixer.md。"
     }
   },
   "skills": {

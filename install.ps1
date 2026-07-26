@@ -88,7 +88,7 @@ try {
         ".kilo/instructions/core.md",
         ".kilo/instructions/workflow-core.md",
         ".kilo/instructions/reflection.md",
-        "agent/coderAgent.md"
+        "agent/orchestrator.md"
     )
 
     $Missing = @()
@@ -161,12 +161,8 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     if (Test-Path $KiloJsonPath) {
         $JsonContent = Get-Content -Path $KiloJsonPath -Raw -Encoding UTF8
         $JsonContent = $JsonContent -replace '\$\{KILO_CONFIG_DIR\}', ($Target -replace '\\', '\\')
-        # memory-mcp 全局部署路径修正：上方替换后 memory-mcp 路径指向 .config/kilo/.kilo/...，
-        # 但 install 排除 node_modules（缺 @modelcontextprotocol/sdk），启用即失败；
-        # 全局统一指向 kilo-data 完整副本（含依赖，独立维护，22/22 functional PASS）
-        $McpGlobalPath = ($env:USERPROFILE -replace '\\', '/') + '/.config/kilo-data/memory-mcp/memory-mcp.js'
-        $JsonContent = $JsonContent -replace [regex]::Escape(($Target -replace '\\', '\\') + '/.kilo/memory/api/mcp/memory-mcp.js'), $McpGlobalPath
         # 注意：memory.db 路径使用 ${HOME}/.config/kilo-data/memory.db，由 bash + sqlite3 CLI 直接访问（v2.5-过渡版主通道），install 阶段不替换
+        # 注意：memory-mcp（v3.0 备用通道）已在 v2.6.2 精简中随 api/ 目录删除，kilo.json 不再引用 memory-mcp.js，此处无需替换 mcp 路径
         # 写回必须无 BOM：PS 5.1 Set-Content -Encoding UTF8 会写入 BOM，导致严格 JSON.parse 失败（AP-001）
         [System.IO.File]::WriteAllText($KiloJsonPath, $JsonContent, (New-Object System.Text.UTF8Encoding($false)))
         Write-Host "[WRITE]  kilo.json path placeholders substituted (KILO_CONFIG_DIR=$Target)" -ForegroundColor Green
@@ -186,10 +182,10 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
     $DbDir = "$env:USERPROFILE\.config\kilo-data"
     $DbPath = Join-Path $DbDir "memory.db"
-    # init.sql / 迁移脚本从 Target（已同步的全局配置目录）取
+    # init.sql 从 Target（已同步的全局配置目录）取；schema/init.sql 内含 7 表 + 索引 + 视图 + project_context 种子
     $InitSql = Join-Path $Target ".kilo\memory\schema\init.sql"
-    $MigrateSql = Join-Path $Target ".kilo\memory\api\migrate_skill_to_fact_store.sql"
-    $SeedSql = Join-Path $Target ".kilo\memory\api\seed_project_context.sql"
+    # v2.6.2 精简：原 api/migrate_skill_to_fact_store.sql + api/seed_project_context.sql 已随 api/ 目录删除；
+    #   AP/PAT bootstrap 经验由既有 DB 保留，全新安装从空 DB 开始（schema/init.sql 内含 project_context 种子）
 
     # --- 辅助函数：刷新会话 PATH（从注册表读 Machine+User 合并，解决 winget 安装后会话 PATH 未更新问题）---
     function Refresh-SessionPath {
@@ -277,20 +273,7 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
                 Write-Host "[WARN]   schema/init.sql 未找到（$InitSql），跳过建表" -ForegroundColor Yellow
             }
 
-            # 迁移 bootstrap 经验（AP-*/PAT-*）到 fact_store
-            if (Test-Path $MigrateSql) {
-                Write-Host "[INIT]   迁移 bootstrap 经验 (migrate_skill_to_fact_store.sql)..." -ForegroundColor Cyan
-                & sqlite3 $DbPath ".read `"$MigrateSql`"" 2>&1 | ForEach-Object { Write-Host $_ }
-                # 验证迁移行数
-                $Migrated = & sqlite3 $DbPath "SELECT COUNT(*) FROM fact_store WHERE fact_id LIKE 'AP-%' OR fact_id LIKE 'PAT-%';" 2>&1
-                Write-Host "[OK]     AP/PAT 经验迁移完成: $Migrated 条" -ForegroundColor Green
-            }
-
-            # 补种 project_context（init.sql 已含种子，此处幂等补种）
-            if (Test-Path $SeedSql) {
-                Write-Host "[INIT]   补种 project_context..." -ForegroundColor Cyan
-                & sqlite3 $DbPath ".read `"$SeedSql`"" 2>&1 | ForEach-Object { Write-Host $_ }
-            }
+            # schema/init.sql 内含 project_context 种子（v2.6.2 起），无需单独 seed 脚本
 
             # 健康度验证
             $Tables = & sqlite3 $DbPath "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%_fts%';" 2>&1

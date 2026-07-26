@@ -6,25 +6,35 @@ keywords: workflow, orchestration, 任务定级, 单元编排, 闭环, 流程日
 
 # Workflow Core Rules
 
+> **生命周期驱动后术语映射**：本文件先于生命周期架构落地，保留以角色名（engineer / checker / fixer / reviewer / architect / pre-checker）描述流程规则。生命周期驱动后，这些角色名等价于对应智能体：
+> - `engineer` → `agent/coder.md`（S07_EXECUTING）
+> - `checker` → `agent/verifier.md`（S09_CHECKING 正向）+ `agent/reverse-auditor.md`（S09_CHECKING 反向，T2+）
+> - `fixer` → `agent/fixer.md`（S11_FIXING）
+> - `reviewer` → `agent/reviewer.md`（S13_REVIEWING 审查）+ `agent/side-checker.md`（S13_REVIEWING 侧向，T2+）
+> - `architect` → `agent/planner.md`（S05_PLANNING）
+> - `pre-checker` → 设计门的前置校验（S05_PLANNING 子步）
+>
+> orchestrator 现按 `agent/lifecycle/*.md` 阶段文件驱动状态流转，加载对应 `agent/*.md` 智能体；本文件的角色名仅作语义对照，实际执行以生命周期阶段文件为准。模型选择见 `agent/models/registry.md`。
+
 ## 默认路由
 
-- 入口：`coderAgent` 负责理解需求、路由、跟踪验证和交付。
-- 简单局部实现 → `engineer`
-- 架构变更、范围不清、跨层规则 → `architect`
-- 显式 review 或安全/资金/权限/核心逻辑 → `reviewer`
+- 入口：`orchestrator` 负责理解需求、路由、跟踪验证和交付。
+- 简单局部实现 → `coder`
+- 架构变更、范围不清、跨层规则 → `planner`
+- 显式 review 或安全/资金/权限/核心逻辑 → `reviewer` + `side-checker`
 - 多次失败、高风险、用户反馈"还是不对/有遗漏" → `multiModel`
 
 ## 模型选择策略（来源：`.kilo/skills/plan-execution/SKILL.md` 追踪规范 + superpowers/subagent-driven-development）
 
-coderAgent 委派 agent 时，按任务复杂度选择模型：
+orchestrator 加载智能体时，按任务复杂度选择模型：
 
 | 复杂度 | 模型 | 场景 |
 |--------|------|------|
 | 机械任务 | `small_model` | 1-2 文件纯表面修改、搜索、读取确认 |
-| 标准任务 | `agent.model` | 多文件集成、常规功能实现、checker/fix |
+| 标准任务 | `agent.model` | 多文件集成、常规功能实现、verifier/fixer |
 | 架构/审查 | `model` 或最强推理模型 | 完整规划、安全审查、T3 multiModel、复杂根因分析 |
 
-> 默认 agent 配置在 `kilo.json` 中声明；coderAgent 可在委派时按上表覆盖。
+> 默认 agent 配置在 `kilo.json` 中声明；orchestrator 可在加载时按上表覆盖。
 
 ## 任务定级（两阶段）
 
@@ -104,7 +114,7 @@ T0 直达 engineer，无需 pre-checker、checker、reviewer。
 
 > **设计门分级**（来源：superpowers/brainstorming）：T1 走"短设计门"（architect 输出 1-3 句方案+验收点即可放行 engineer）；T2 走"完整规划"（architect 输出任务 DAG+依赖+风险）。连 1 行配置变更也走短设计门--"太简单不需要设计"是反模式，简单任务正是未审视假设造成返工的高发区。
 
-> **T1 直办条款**：当 T1 任务单元数=1、纯执行性、验收标准逐条可命令验证时，coderAgent 可不拆委派直接执行，避免委派链切片上下文损耗；但短设计门（自审 1-3 句方案+验收点）与 checker 验证不得省略。直办仅限单模块改动，一旦发现跨模块扩散立即升级为委派链路。禁止以直办为由跳过任何验证门禁。
+> **T1 直办条款**：当 T1 任务单元数=1、纯执行性、验收标准逐条可命令验证时，orchestrator 可不拆委派直接执行，避免委派链切片上下文损耗；但短设计门（自审 1-3 句方案+验收点）与 checker 验证不得省略。直办仅限单模块改动，一旦发现跨模块扩散立即升级为委派链路。禁止以直办为由跳过任何验证门禁。
 
 ### 安全敏感模块识别
 
@@ -139,13 +149,13 @@ architect 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验
 
 - engineer 不自验，必须过 checker。
 - engineer 输出必须包含状态信号（`DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED`）。
-- `NEEDS_CONTEXT` / `BLOCKED` → coderAgent 停止并回传，不进入 checker。
+- `NEEDS_CONTEXT` / `BLOCKED` → orchestrator 停止并回传，不进入 checker。
 - checker FAIL → fixer 修复 → 重新 checker。
 - fixer 连续 2 轮同症状 → 升级 reviewer。
 
 ### 总体验收（T1+）
 
-所有单元通过后，coderAgent 调用 `reviewer` 做总体验审：
+所有单元通过后，orchestrator 调用 `reviewer` 做总体验审：
 
 #### review_mode 决策表
 
@@ -188,7 +198,7 @@ T1 / T2 / T3 → full（四视角：安全/架构/简化/SCOPE_CREEP）
 
 ### 异常路由表
 
-coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由处理：
+orchestrator 解析 agent 返回或工具调用结果时，按以下分级路由处理：
 
 | 错误码 | 触发条件 | 路由策略 | 说明 |
 |--------|----------|----------|------|
@@ -196,7 +206,7 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
 | `RATE_LIMIT` | 模型限流 | 指数退避 + 切备用模型 | 退避间隔 5s/10s/20s |
 | `CONTEXT_OVERFLOW` | 上下文超限 | 转 compaction 压缩后重试 1 次 | 压缩后仍超限 → 拆单元 |
 | `AUTH` | 鉴权失败 | **不重试**，立即升级人工 | 可能是密钥失效 |
-| `BAD_INPUT` | 委派包参数不合法 | **不重试**，回 coderAgent 修正 | 通常是 dispatch 生成错误 |
+| `BAD_INPUT` | 委派包参数不合法 | **不重试**，回 orchestrator 修正 | 通常是 dispatch 生成错误 |
 | `TOOL_DENIED` | 工具被策略拒绝 | 转人机回路确认 | 可能命中安全策略 |
 | `CRASH` | 进程/MCP 崩溃 | 重试 1 次 → 切备用执行器 | 备用执行器指同任务其他模型 |
 | `AMBIGUOUS` | 输出无法解析/语义不清 | 重试 1 次（换严 schema）→ reviewer | 要求 agent 用更严格格式重输出 |
@@ -204,7 +214,7 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
 
 **路由原则**：
 - 可恢复错误（TIMEOUT/RATE_LIMIT/CONTEXT_OVERFLOW）→ 自动重试
-- 不可恢复错误（AUTH/BAD_INPUT）→ 立即停止，回传 coderAgent 或人工
+- 不可恢复错误（AUTH/BAD_INPUT）→ 立即停止，回传 orchestrator 或人工
 - 语义错误（AMBIGUOUS/MALFORMED_OUTPUT）→ 降级重试，仍失败升级 reviewer
 
 ### multiModel 并发配额（T3 任务专用）
@@ -213,18 +223,18 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
 
 | 触发条件 | 行为 | 失败回退 |
 |----------|------|----------|
-| 单次 multiModel 触发 | ≤3 executor + 1 synthesizer-fusion = 4 并发硬上限 | 任一组件异常 → 串行化剩余 executor |
-| 任一组件触发 RATE_LIMIT | 自动串行化 executor（保 2 折并发，即 1+1+1 改为 1→1→1） | 3 次限流 → 降级为单 engineer 直办 + 标记 `[MULTIMODEL_DEGRADED]` |
-| 累计 3 次 multiModel 失败（含 rate-limit / crash） | 停止 multiModel 模式，降级为 single-engineer | 任务降级交付，标注 `[MULTIMODEL_ABANDONED]`，事后回写 failure_db |
+| 单次 multiModel 触发 | ≤3 coder + 1 verifier + 1 synthesizer-fusion = 5 并发硬上限（v3.1 恢复独立融合智能体，multiModel 不参与融合） | 任一组件异常 → 串行化剩余 coder |
+| 任一组件触发 RATE_LIMIT | 自动串行化 coder（保 2 折并发，即 1+1+1 改为 1→1→1） | 3 次限流 → 降级为单 coder 直办 + 标记 `[MULTIMODEL_DEGRADED]` |
+| 累计 3 次 multiModel 失败（含 rate-limit / crash） | 停止 multiModel 模式，降级为 single-coder | 任务降级交付，标注 `[MULTIMODEL_ABANDONED]`，事后回写 failure_db |
 
 **执行要求**：
-- coderAgent 触发 multiModel 前必须先扫 `dispatch_log` 查过去 24h 内 `tier = 'T3'` 任务的失败率
+- orchestrator 触发 multiModel 前必须先扫 `dispatch_log` 查过去 24h 内 `tier = 'T3'` 任务的失败率
 - 单次失败率 ≥ 30% → 跳过 multiModel 直接 single-engineer（节省 token + 避免雪崩）
-- 任一 executor 返回 `BLOCKED` / `NEEDS_CONTEXT` → 不等待其他 executor，立即停止整个 multiModel 上报 coderAgent
+- 任一 executor 返回 `BLOCKED` / `NEEDS_CONTEXT` → 不等待其他 executor，立即停止整个 multiModel 上报 orchestrator
 
-### 标记 → 硬动作映射（coderAgent 必须执行）
+### 标记 → 硬动作映射（orchestrator 必须执行）
 
-以下标记由 coderAgent 在解析子 agent 输出时自动检测，检测后必须执行对应硬动作，不得跳过：
+以下标记由 orchestrator 在解析子 agent 输出时自动检测，检测后必须执行对应硬动作，不得跳过：
 
 | 标记 | 检测方式 | 硬动作 | 失败后果 |
 |------|----------|--------|----------|
@@ -239,7 +249,7 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
 
 **执行要求**：
 - 所有标记检测必须在子 agent 返回后 **10 秒内**完成
-- 标记触发后，coderAgent 必须在回复中显式输出「检测到 `[标记名]`，执行动作：...」
+- 标记触发后，orchestrator 必须在回复中显式输出「检测到 `[标记名]`，执行动作：...」
 - 任何标记未处理即进入下游 → `[PROCESS_VIOLATION]`
 
 ## 规范统一 / 审计类任务 SOP
@@ -274,22 +284,22 @@ coderAgent 解析 agent 返回或工具调用结果时，按以下分级路由�
 
 ### 收尾自检（硬门：T1+ 必走，缺则 `[MISSING_MEMORY_WRITE]` 阻塞交付）
 
-T1+ 任务「经验沉淀」执行前，coderAgent 必须按以下 checklist 全部勾选，任何一项未执行都不得标记任务完成。每条都对应一条具体 SQL / 工具调用，可被自动验证。
+T1+ 任务「经验沉淀」执行前，orchestrator 必须按以下 checklist 全部勾选，任何一项未执行都不得标记任务完成。每条都对应一条具体 SQL / 工具调用，可被自动验证。
 
-- [ ] **dispatch_log 必写（M7）**：通过 bash 调用 sqlite3 CLI 执行 `INSERT INTO dispatch_log ...`（含 `dispatch_id` / `thread_id` / `agent` / `task_summary` / `initial_tier` / `final_tier` / `tier` / `review_mode` / `tier_deviation` / `model` / `status` / `duration_ms` / `files_changed` / `findings_count` / `created_at`），命令模板见 `.kilo/memory/policy/bash_sqlite_template.md`，业务规则详见 `.kilo/memory/policy/dispatch_recorder.md`
-- [ ] **fact_store 去重与插入（M4）**：发现可复用 pattern / anti-pattern 时，先 `SELECT fact_id FROM fact_store WHERE trigger=? AND action=? AND archived=0`；命中则 `UPDATE hit_count+1, confidence, updated_at`，未命中则 `INSERT`（AntiPattern 初始 confidence=0.5 / Pattern=0.6），详见 `.kilo/memory/policy/fact_dedup.md`
-- [ ] **fact_store hit_count 自增回路（M6）**：回顾本次任务中**实际引用过的 fact_id 列表**（两个来源：① agent 输出中的 `[memory:fact_id=...]` 标记；② coderAgent 显式声明「本次实际参考但未注入的 fact_id」，必须使用结构化标记 `[memory:referenced_fact_ids=... not_injected=true]`（v2.2，可机械审计）），对每个 fact_id 执行 `UPDATE fact_store SET hit_count = hit_count + 1, confidence = MIN(0.95, confidence + 0.02), updated_at = datetime('now') WHERE fact_id IN (...)`；若本次失败与历史 failure_db 记录同类，对应 `UPDATE failure_db SET same_symptom_count = same_symptom_count + 1`。详见 `.kilo/memory/policy/query_strategy.md` §4
-- [ ] **M6 Stage 3 helpful/misleading 反馈（v2.6 强制硬门）**：T1+ 收尾**必须**输出反馈标记 `[memory:helpful=A,B]` / `[memory:misleading=X]`；无反馈时显式输出 `[memory:helpful=none]`，**禁止静默省略**（缺失视为 M6 未完成 → `[MISSING_MEMORY_WRITE]`）。对每个 helpful fact：`UPDATE fact_store SET helpful_count=helpful_count+1, helpful_rate=CAST(helpful_count+1 AS REAL)/(helpful_count+1+misleading_count), confidence=MIN(0.95,confidence+0.02) ...`；对每个 misleading fact：`misleading_count+1, confidence=MAX(0.1,confidence-0.05)`；同步写入 dispatch_log `helpful_fact_ids` / `misleading_fact_ids` 列。完整流程见 `.kilo/memory/policy/m6_validation.md` §3 Stage 3；健康度兜底 `contracts/health_check.sql` §15 FEEDBACK_LOOP_IDLE
-- [ ] **failure_db 写入（M5，v2.6 降门槛）**：**checker 首轮 FAIL 即记录**；fixer 连续 2 轮同症状 / Circuit Breaker 触发 / 用户反馈「还是不对」同样必须 `INSERT INTO failure_db ...`，verified 由后续 checker 验证后置 1，详见 `.kilo/memory/policy/failure_recorder.md`
-- [ ] **model_calibration 更新（M8）**：`success_rate = (success_rate*sample_count + ?) / (sample_count + 1)`，DONE=1.0 / DONE_WITH_CONCERNS=0.7 / FAILED=0.0，详见 `.kilo/memory/policy/model_calibration.md`
+- [ ] **dispatch_log 必写（M7）**：通过 bash 调用 sqlite3 CLI 执行 `INSERT INTO dispatch_log ...`（含 `dispatch_id` / `thread_id` / `agent` / `task_summary` / `initial_tier` / `final_tier` / `tier` / `review_mode` / `tier_deviation` / `model` / `status` / `duration_ms` / `files_changed` / `findings_count` / `created_at`），命令模板与业务规则详见 `docs/memory-ops-reference.md` §M8 SQL 模板
+- [ ] **fact_store 去重与插入（M4）**：发现可复用 pattern / anti-pattern 时，先 `SELECT fact_id FROM fact_store WHERE trigger=? AND action=? AND archived=0`；命中则 `UPDATE hit_count+1, confidence, updated_at`，未命中则 `INSERT`（AntiPattern 初始 confidence=0.5 / Pattern=0.6），详见 `docs/memory-ops-reference.md` §M4 SQL 模板
+- [ ] **fact_store hit_count 自增回路（M6）**：回顾本次任务中**实际引用过的 fact_id 列表**（两个来源：① agent 输出中的 `[memory:fact_id=...]` 标记；② orchestrator 显式声明「本次实际参考但未注入的 fact_id」，必须使用结构化标记 `[memory:referenced_fact_ids=... not_injected=true]`（v2.2，可机械审计）），对每个 fact_id 执行 `UPDATE fact_store SET hit_count = hit_count + 1, confidence = MIN(0.95, confidence + 0.02), updated_at = datetime('now') WHERE fact_id IN (...)`；若本次失败与历史 failure_db 记录同类，对应 `UPDATE failure_db SET same_symptom_count = same_symptom_count + 1`。详见 `docs/memory-ops-reference.md` §M6 SQL 模板
+- [ ] **M6 Stage 3 helpful/misleading 反馈（v2.6 强制硬门）**：T1+ 收尾**必须**输出反馈标记 `[memory:helpful=A,B]` / `[memory:misleading=X]`；无反馈时显式输出 `[memory:helpful=none]`，**禁止静默省略**（缺失视为 M6 未完成 → `[MISSING_MEMORY_WRITE]`）。对每个 helpful fact：`UPDATE fact_store SET helpful_count=helpful_count+1, helpful_rate=CAST(helpful_count+1 AS REAL)/(helpful_count+1+misleading_count), confidence=MIN(0.95,confidence+0.02) ...`；对每个 misleading fact：`misleading_count+1, confidence=MAX(0.1,confidence-0.05)`；同步写入 dispatch_log `helpful_fact_ids` / `misleading_fact_ids` 列。完整流程见 `docs/memory-ops-reference.md` §M6 Stage 3；健康度兜底 `contracts/health_check.sql` §15 FEEDBACK_LOOP_IDLE
+- [ ] **failure_db 写入（M5，v2.6 降门槛）**：**checker 首轮 FAIL 即记录**；fixer 连续 2 轮同症状 / Circuit Breaker 触发 / 用户反馈「还是不对」同样必须 `INSERT INTO failure_db ...`，verified 由后续 checker 验证后置 1，详见 `docs/memory-ops-reference.md` §M7 SQL 模板
+- [ ] **model_calibration 更新（M8）**：`success_rate = (success_rate*sample_count + ?) / (sample_count + 1)`，DONE=1.0 / DONE_WITH_CONCERNS=0.7 / FAILED=0.0，详见 `docs/memory-ops-reference.md` §M8 SQL 模板
 - [ ] **fixer error_code 回写**：fixer 被触发过 → `UPDATE dispatch_log SET error_code='FIXED_BY_FIXER_ROUND_N' WHERE dispatch_id=?`，缺则 `[MISSING_FIXER_WRITE]`
-- [ ] **Skill 升级检测（仅记录，不自动落盘）**：`SELECT trigger, action, confidence, hit_count FROM fact_store WHERE category='ANTIPATTERN' AND confidence >= 0.8 AND hit_count >= 3 AND archived = 0`；命中 → 按 `.kilo/memory/policy/skill_upgrade.md` 生成「`[AUTO_DRAFT]`」草稿标记，**不得直接 patch SKILL.md**，必须经人工确认（V1 阶段）
+- [ ] **Skill 升级检测（仅记录，不自动落盘）**：`SELECT trigger, action, confidence, hit_count FROM fact_store WHERE category='ANTIPATTERN' AND confidence >= 0.8 AND hit_count >= 3 AND archived = 0`；命中 → 按 `.kilo/instructions/skill-upgrade.md` 生成「`[AUTO_DRAFT]`」草稿标记，**不得直接 patch SKILL.md**，必须经人工确认（V1 阶段）
 - [ ] **md 兜底**（可选）：MEMORY.md / USER.md 仅作归档索引或用户偏好，不作为经验沉淀主路径
-- [ ] **记忆提示输出（轻量即时）**：记忆操作以即时单行提示可视化——召回时一条 `🧠 [memory:recall]`（含注入条数 + ID + A' 证据），写入时一条 `💾 [memory:write]`（含 fact_id / dispatch_id 等 ID，M6/M7/M8 可合并为 1 行）；格式与规则见 `agent/coderAgent.md` §记忆提示。禁止输出 M1-M8 大表格；审计行内标记（`[memory:fact_id=]` / `[memory:helpful=]` 等）仍为硬门不省略
+- [ ] **记忆提示输出（轻量即时）**：记忆操作以即时单行提示可视化——召回时一条 `🧠 [memory:recall]`（含注入条数 + ID + A' 证据），写入时一条 `💾 [memory:write]`（含 fact_id / dispatch_id 等 ID，M6/M7/M8 可合并为 1 行）；格式与规则见 `agent/orchestrator.md` §记忆编排 + `docs/memory-ops-reference.md` §输出接口。禁止输出 M1-M8 大表格；审计行内标记（`[memory:fact_id=]` / `[memory:helpful=]` 等）仍为硬门不省略
 
-> **路径口径**：sqlite 路径统一为 `${HOME}/.config/kilo-data/memory.db`，由 Kilo 运行时解析，install 阶段不替换。详见 `.kilo/memory/policy/init_check.md`「初始化 SOP」章节（6 步主流程 + v2.3→v2.6.1 各版本迁移段）。
+> **路径口径**：sqlite 路径统一为 `${HOME}/.config/kilo-data/memory.db`，由 Kilo 运行时解析，install 阶段不替换。初始化与建表脚本见 `.kilo/memory/schema/init.sql`（install 脚本自动执行）。
 
-未执行上述任何一项 → `[MISSING_MEMORY_WRITE]`，coderAgent 必须立即补写，不得进入「分支收尾协议」。
+未执行上述任何一项 → `[MISSING_MEMORY_WRITE]`，orchestrator 必须立即补写，不得进入「分支收尾协议」。
 
 ### 收尾三步
 
@@ -299,7 +309,7 @@ T1+ 任务「经验沉淀」执行前，coderAgent 必须按以下 checklist 全
 
 ### 分支收尾协议（来源：superpowers/finishing-a-development-branch）
 
-执行类任务交付后，coderAgent 必须按序确认：
+执行类任务交付后，orchestrator 必须按序确认：
 
 1. **工作树状态**：`git status` 确认无遗留未跟踪文件、无残留临时脚本/构建产物。
 2. **提交边界**：单次提交对应单一定级单元；跨单元改动必须分提交，禁止"一锅烩"。
@@ -314,7 +324,7 @@ T1+ 任务「经验沉淀」执行前，coderAgent 必须按以下 checklist 全
 
 ### 计划执行门禁（来源：`.kilo/skills/plan-execution/SKILL.md`#执行前-Critical-Review + superpowers/executing-plans）
 
-T2+ 任务执行 architect 计划前，coderAgent 必须：
+T2+ 任务执行 architect 计划前，orchestrator 必须：
 
 1. **Critical Review**：重新审阅计划，标记任何疑问或风险；有疑虑先澄清再执行。
 2. **创建追踪 todo**：按任务 DAG 生成结构化 todo 列表，逐条标记进度。

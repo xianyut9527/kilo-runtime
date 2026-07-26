@@ -43,22 +43,23 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 记忆系统采用 **全局 sqlite 优先 + 项目 md 兜底** 架构：
 
-**sqlite 层**（全局共享，`~/.config/kilo-data/memory.db`，通过 **bash + `sqlite3` CLI** 访问（v2.5 起主通道，模板见 `.kilo/memory/policy/bash_sqlite_template.md`）；备用 memory-mcp 在 `kilo.json` 预埋 `enabled:false`；数据目录独立于配置目录，install 同步不会清除）：
+**sqlite 层**（全局共享，`~/.config/kilo-data/memory.db`，通过 **bash + `sqlite3` CLI** 访问（v2.5 起主通道，SQL 模板见 `docs/memory-ops-reference.md`）；备用 memory-mcp 在 `kilo.json` 预埋 `enabled:false`；数据目录独立于配置目录，install 同步不会清除）：
 - `fact_store`：结构化经验教训（PATTERN / ANTIPATTERN / RECIPE / WARNING）
 - `failure_db`：失败案例库（含根因、修复策略、复发次数）
 - `dispatch_log`：全链路任务日志
 - `project_context`：项目专属架构决策与约束
 - `model_calibration`：模型能力积累与偏差补偿
 
-**md 层**（项目级静态规则）：
-- `.kilo/memory/MEMORY.md`：系统级约束、归档索引
-- `.kilo/memory/USER.md`：用户偏好、安全约束
+**md 层**（静态规则兜底，v2.5 起不累积时序数据）：
+- `.kilo/memory/README.md`：公共 API 文档
+- `.kilo/memory/AGENTS.md`：agent 注入入口
+- 用户偏好 / 安全约束等低频内容通过 sqlite `project_context` 表承载，不再单独维护 `MEMORY.md` / `USER.md`
 
 **全局 Skill 层**（跨项目复用）：
 - `~/.config/kilo/.kilo/skills/`：全局通用 Skill（与 install.ps1 实际安装路径一致；另通过 `kilo.json` `skills.external_dirs` 接入 `~/.agents/skills/` 社区技能源）
 - `.kilo/skills/`：项目专属 Skill（覆盖全局同名 Skill）
 
-**初始化检查**：`~/.config/kilo-data/memory.db` 不存在时，优先重新运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）— 脚本会自动检测 `sqlite3` CLI，缺失时提示安装并自动初始化 `memory.db`（建表 + 迁移 bootstrap 经验 + 补种 project_context）。手动初始化作为 fallback：按 `.kilo/memory/policy/init_check.md` 6 步 SOP 完成建表（mkdir → 建表 → 验证 → model_calibration 基线 → project_context 自动 seed → v2.3+ schema 迁移），再开始使用。模块入口：`.kilo/memory/README.md`。
+**初始化检查**：`~/.config/kilo-data/memory.db` 不存在时，优先重新运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）— 脚本会自动检测 `sqlite3` CLI，缺失时提示安装并自动初始化 `memory.db`（建表 + 迁移 bootstrap 经验 + 补种 project_context）。手动建表作为 fallback：执行 `sqlite3 ~/.config/kilo-data/memory.db < .kilo/memory/schema/init.sql`。模块入口：`.kilo/memory/README.md`；SQL 模板见 `docs/memory-ops-reference.md`。
 
 `gitnexus_*`：代码图谱（调用链/影响面）—— 由 `kilo.json` `mcp.gitnexus.enabled` 独立控制。
 
@@ -72,9 +73,9 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 **第一步：sqlite 查询（必须）**
 
-完整 SQL 模板见 `.kilo/memory/policy/query_strategy.md` §3（失败/回溯查询）。该文件是 SQL 唯一源，本节不再重复。
+完整 SQL 模板见 `docs/memory-ops-reference.md` §M1/M3（失败/回溯查询）。该文件是 SQL 唯一源，本节不再重复。
 
-**关键要求**（query_strategy.md §3 已强制）：
+**关键要求**（`memory-ops.md` 已强制）：
 - SELECT **必须带 ID 字段**（failure_id / fact_id）用于回溯
 - 检索主路径：FTS5 trigram `MATCH`（`fact_fts` / `failure_fts`，中文需 ≥3 字符）；LIKE 仅用于试用期/ANTIPATTERN 精确类别过滤等保留场景（`tags LIKE '%,%keyword%,%'` 逗号分隔精确匹配）
 - 注入门槛：fact_store confidence ≥ 0.7 + hit_count ≥ 2；failure_db resolved_at 非空
@@ -147,7 +148,6 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 |------|----------|------|
 | 修改 ≥3 个文件 | `gitnexus_impact` | 影响面分析 |
 | 修改 API/Router/Handler | `gitnexus_route_map` 或 `gitnexus_api_impact` | 接口消费方检查 |
-| 修改数据库表/字段 | `gitnexus_data_impact` | 上下游数据流分析 |
 | 修改核心工具/配置 | `gitnexus_query` | 架构约束检索 |
 | 修改 UI/样式/行为且同类症状 ≥2 处 | `grep` / `glob` / `gitnexus_query` | 全量扫描同类点，优先组件化/共享抽象修复 |
 | 使用陌生第三方库 | `context7_query-docs` | 文档查询 |

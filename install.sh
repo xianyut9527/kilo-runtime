@@ -156,7 +156,7 @@ CRITICAL_FILES=(
     ".kilo/instructions/core.md"
     ".kilo/instructions/workflow-core.md"
     ".kilo/instructions/reflection.md"
-    "agent/coderAgent.md"
+    "agent/orchestrator.md"
 )
 
 MISSING=()
@@ -180,13 +180,11 @@ echo ""
 # ============================================================
 echo "Substituting kilo.json path placeholders..."
 # 注意：memory.db 路径使用 ${HOME}/.config/kilo-data/memory.db，由 bash + sqlite3 CLI 直接访问（v2.5-过渡版主通道），install 阶段不替换
+# 注意：memory-mcp（v3.0 备用通道）已在 v2.6.2 精简中随 api/ 目录删除，kilo.json 不再引用 memory-mcp.js，此处无需替换 mcp 路径
 KILO_JSON_PATH="${TARGET_DIR}/kilo.json"
 if [ -f "${KILO_JSON_PATH}" ]; then
-    # memory-mcp 全局部署路径修正（同 install.ps1）：install 排除 node_modules，
-    # 替换后的 .config/kilo/.kilo/... 路径缺 SDK 依赖，统一指向 kilo-data 完整副本
     sed -i.bak \
         -e "s|\${KILO_CONFIG_DIR}|${TARGET_DIR}|g" \
-        -e "s|${TARGET_DIR}/.kilo/memory/api/mcp/memory-mcp.js|${HOME}/.config/kilo-data/memory-mcp/memory-mcp.js|g" \
         "${KILO_JSON_PATH}" \
         && rm -f "${KILO_JSON_PATH}.bak"
     echo "[WRITE] kilo.json path placeholders substituted (KILO_CONFIG_DIR=${TARGET_DIR})"
@@ -206,10 +204,10 @@ echo "========================================"
 
 DB_DIR="${HOME}/.config/kilo-data"
 DB_PATH="${DB_DIR}/memory.db"
-# init.sql / 迁移脚本从 TARGET_DIR（已同步的全局配置目录）取
+# init.sql 从 TARGET_DIR（已同步的全局配置目录）取；schema/init.sql 内含 7 表 + 索引 + 视图 + project_context 种子
 INIT_SQL="${TARGET_DIR}/.kilo/memory/schema/init.sql"
-MIGRATE_SQL="${TARGET_DIR}/.kilo/memory/api/migrate_skill_to_fact_store.sql"
-SEED_SQL="${TARGET_DIR}/.kilo/memory/api/seed_project_context.sql"
+# v2.6.2 精简：原 api/migrate_skill_to_fact_store.sql + api/seed_project_context.sql 已随 api/ 目录删除；
+#   AP/PAT bootstrap 经验由既有 DB 保留，全新安装从空 DB 开始（schema/init.sql 内含 project_context 种子）
 
 # --- Step 1: 检测 sqlite3 CLI ---
 if ! command -v sqlite3 &> /dev/null; then
@@ -285,19 +283,7 @@ if command -v sqlite3 &> /dev/null; then
             echo "[WARN]   schema/init.sql 未找到（${INIT_SQL}），跳过建表"
         fi
 
-        # 迁移 bootstrap 经验（AP-*/PAT-*）到 fact_store
-        if [ -f "${MIGRATE_SQL}" ]; then
-            echo "[INIT]   迁移 bootstrap 经验 (migrate_skill_to_fact_store.sql)..."
-            sqlite3 "${DB_PATH}" < "${MIGRATE_SQL}"
-            MIGRATED=$(sqlite3 "${DB_PATH}" "SELECT COUNT(*) FROM fact_store WHERE fact_id LIKE 'AP-%' OR fact_id LIKE 'PAT-%';")
-            echo "[OK]     AP/PAT 经验迁移完成: ${MIGRATED} 条"
-        fi
-
-        # 补种 project_context（init.sql 已含种子，此处幂等补种）
-        if [ -f "${SEED_SQL}" ]; then
-            echo "[INIT]   补种 project_context..."
-            sqlite3 "${DB_PATH}" < "${SEED_SQL}"
-        fi
+        # schema/init.sql 内含 project_context 种子（v2.6.2 起），无需单独 seed 脚本
 
         # 健康度验证
         TABLES=$(sqlite3 "${DB_PATH}" "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%_fts%';")

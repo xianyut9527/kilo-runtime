@@ -14,7 +14,7 @@
 --     # 否则在 PowerShell 中: sqlite3 "$env:USERPROFILE\.config\kilo-data\memory.db" ".read .kilo/memory/schema/init.sql"
 --
 -- 模块架构：本文件由 .kilo/memory/contracts/health_check.sql 验证完整性
---            业务规则由 .kilo/memory/policy/*.md 定义（不在此处重复）
+--            业务规则由 docs/memory-ops-reference.md 定义（生命周期驱动后唯一入口，不在此处重复）
 --
 -- 版本：v2.7（在 v2.6.2 基础上为 project_context 增加跨项目 scope 隔离，对齐 fact_store / failure_db）
 --   v2.6.2：v_active_project_context 视图 / M-001 动态注入 / 反馈执行率告警
@@ -25,8 +25,8 @@
 --     - idx_project_scope 复合索引
 --     - v_active_project_context 视图增加 scope / project_name 列
 --     - 8 条种子回填 scope：4 global + 4 project(kilo_config)
---     - 既有 DB 升级执行 api/migrate_project_context_scope.sql
---     - policy/query_strategy.md §1 query A 加 scope 过滤（对齐 query B/C）
+--     - 既有 DB 升级：执行本文件末尾 ALTER TABLE 段或重建（api/ 迁移脚本已随 policy/ 一并在 v2.6.2 精简删除）
+--     - docs/memory-ops-reference.md §M1 query A 加 scope 过滤（对齐 query B/C）
 --     - contracts/health_check.sql 新增 #19 #20 两项检查
 --   v2.4：FTS5 / helpful_rate / failure_db scope / project_context use_count
 --   v2.5（新增）：
@@ -34,7 +34,7 @@
 --     - 强制 sqlite 唯一记忆原则：禁止 md 文件累积经验/日志
 --   v2.6（新增）：
 --     - fact_fts / failure_fts 分词器 trigram（中文 ≥3 字符子串可 MATCH；
---       既有 DB 升级执行 api/migrate_fts_trigram.sql）
+--       既有 DB 升级：DROP 旧虚表后重跑本文件 CREATE VIRTUAL TABLE 段）
 --   v2.3：
 --     - skill_upgrade_log 表（#3）
 --     - fact_store.scope / fact_store.project_name 列（#5 跨项目隔离）
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS fact_store (
     confidence REAL NOT NULL DEFAULT 0.5 CHECK(confidence >= 0 AND confidence <= 1),
     evidence TEXT,                   -- JSON 数组: [dispatch_id, ...]
     tags TEXT,                       -- JSON 数组: ["react", "api", ...]
-    hit_count INTEGER NOT NULL DEFAULT 0,  -- 命中次数（用于排序；衰减由 policy 层 14 天试用窗口实现，见 policy/query_strategy.md）
+    hit_count INTEGER NOT NULL DEFAULT 0,  -- 命中次数（用于排序；衰减由 memory-ops.md §M6 14 天试用窗口实现）
     helpful_count INTEGER NOT NULL DEFAULT 0,    -- v2.4 / #13 M6 [memory:helpful=X] 反馈次数
     misleading_count INTEGER NOT NULL DEFAULT 0, -- v2.4 / #13 M6 [memory:misleading=X] 反馈次数
     helpful_rate REAL,               -- v2.4 / #13 helpful / (helpful+misleading)；NULL = 暂无反馈
@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS skill_usage_events (
     skill_name TEXT NOT NULL,                   -- skill 目录名
     trigger TEXT NOT NULL,                      -- 短描述（≤40 字符）
     outcome TEXT NOT NULL CHECK(outcome IN ('success','fail','partial')),
-    agent TEXT,                                 -- 哪个 agent 触发（coderAgent / engineer / architect / checker / fixer / reviewer）
+    agent TEXT,                                 -- 哪个智能体触发（orchestrator / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel）
     task_tier TEXT,                             -- T0/T1/T2/T3
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -337,7 +337,7 @@ INSERT OR IGNORE INTO project_context (context_id, category, title, content, sou
  '["architecture","seven-layer","brain","evolution"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 
 ('PC-002', 'TECH_STACK', '模型与 MCP 配置（kilo.json）',
- '主模型 hx/MiniMax-M3（coderAgent + engineer）；架构/审查 kimi-k2.6 + glm-5.2；checker/fixer deepseek-v4-flash。MCP：context7（文档）+ gitnexus（代码图谱）+ playwright（浏览器自动化，谨慎用）。记忆通道：bash + sqlite3 CLI 主通道（v2.5-过渡版）；可选 memory-mcp（v3.0，kilo.json enabled:false 默认关闭）。已移除 ddg-search / 第三方 sqlite MCP（内存爆炸风险）。compaction auto，threshold 65%，tail_turns 25，preserve_recent_tokens 60K。',
+ '主模型 hx/MiniMax-M3（orchestrator + coder）；架构/审查 kimi-k3 + glm-5.2；verifier/reverse-auditor glm-5.2；fixer kimi-k2.7-code/deepseek-v4-flash。MCP：context7（文档）+ gitnexus（代码图谱）+ playwright（浏览器自动化，谨慎用）。记忆通道：bash + sqlite3 CLI 主通道（v2.5-过渡版）；可选 memory-mcp（v3.0，kilo.json enabled:false 默认关闭）。已移除 ddg-search / 第三方 sqlite MCP（内存爆炸风险）。compaction auto，threshold 65%，tail_turns 25，preserve_recent_tokens 60K。',
  'kilo.json', 3,
  '["config","model","mcp","compaction","kilo-json"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 
