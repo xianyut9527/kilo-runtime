@@ -30,11 +30,12 @@ next_stage: S03_SIZING
 
 ## 处理流程
 
-1. **语义解析**：提取用户请求中的动词（"改"、"加"、"查"、"解释"、"对比"）和对象（文件、模块、配置、概念）。
-2. **类型判定**：按 `core.md` §意图分类执行：
+1. **M1 记忆召回**（必选，`memory.db` 存在时）：注入 `project_context`（项目级安全约束/技术栈）+ 相关 `fact_store`（confidence ≥ 0.7 + hit_count ≥ 2）+ `failure_db`（resolved 同类失败）。咨询类同样需要——分析质量依赖项目积累，不得跳过。
+2. **语义解析**：提取用户请求中的动词（"改"、"加"、"查"、"解释"、"对比"）和对象（文件、模块、配置、概念）。
+3. **类型判定**：按 `core.md` §意图分类执行：
    - **咨询类**（`INQUIRY`）：只分析、不改文件、不调用修改性工具。输出分析结论即可。
    - **执行类**（`EXECUTION`）：涉及文件修改、代码生成、配置变更。进入 `S03_SIZING`。
-3. **显式输出判定结论**：必须在输出顶部显式标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
+4. **显式输出判定结论**：必须在输出顶部显式标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
 
 ## 输出信号
 
@@ -50,7 +51,7 @@ quality_gate:
 
 ## 路由规则
 
-- `INQUIRY` → 直接回答，生命周期结束（`S17_DONE`）。
+- `INQUIRY` → 直接回答；若命中"价值信号"（见 `agent/orchestrator.md` §记忆编排），回答完成后执行轻量 M4-M8 记忆写入，再进入 `S17_DONE`；未命中 → 直接 `S17_DONE`。
 - `EXECUTION` → 进入 `S03_SIZING`（任务定级）。
 - `NEEDS_CONTEXT` → 回传用户请求补充信息，不推进。
 

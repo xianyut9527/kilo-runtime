@@ -23,7 +23,7 @@ keywords: reflection, 根因回溯, Circuit Breaker
 `.kilo/memory/` 目录不存在或为空时，本章节不生效，不输出 `[MISSING_RECALL]`，`kilo_local_recall` 仍可作为独立工具手动调用。
 
 **强制触发**（仅 `.kilo/memory/` 存在有效文件时生效）：
-1. checker/reviewer FAIL 且错误为方法层/需求层
+1. verifier/reviewer FAIL 且错误为方法层/需求层
 2. fixer 连续 2 轮同症状
 3. 用户反馈"还是有问题/不对/遗漏"
 4. Circuit Breaker 触发

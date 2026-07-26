@@ -41,7 +41,7 @@
 
 **完整 checklist** 详见 `.kilo/instructions/workflow-core.md` §收尾自检（10 条硬门，含 M 节点编号）。本节仅给 agent 4 条**核心原则**：
 
-1. **T1+ 必走收尾自检** — dispatch_log / fact_store / failure_db / model_calibration 全部必须执行，未执行 → `[MISSING_MEMORY_WRITE]` 阻塞交付
+1. **T1+ 必走收尾自检**；**T0/INQUIRY 命中"价值信号"时同样必走**（见 `agent/orchestrator.md` §记忆编排） — dispatch_log / fact_store / failure_db / model_calibration 全部必须执行，未执行 → `[MISSING_MEMORY_WRITE]` 阻塞交付
 2. **记忆提示即时输出** — 记忆操作以即时单行提示可视化：召回时 `🧠 [memory:recall]`、写入时 `💾 [memory:write]`（含 ID，M6/M7/M8 可合并 1 行）；格式见 `docs/memory-ops-reference.md`；禁止输出 M1-M8 大表格
 3. **md 不接收新经验** — `SKILL.md` 仅作归档索引或人工 gate，**所有可复用模式/反模式必须先入 `fact_store`**
 4. **Skill 升级需人工 gate** — `fact_store.confidence ≥ 0.8 && hit_count ≥ 3` 才触发 `[AUTO_DRAFT]` 草稿，**不得直接 patch SKILL.md**

@@ -18,7 +18,7 @@ keywords: workflow, reference, small_model, 程序化记忆, 需求扩散
 3. 不需要推理链（搜索、读取确认、机械替换）
 4. 不属于安全敏感模块
 
-任一不满足 → 使用 `agent.model` 或更强模型。禁止把 checker/fixer/reviewer 等质量门禁角色路由到 small_model。
+任一不满足 → 使用 `agent.model` 或更强模型。禁止把 verifier/fixer/reviewer 等质量门禁角色路由到 small_model。
 
 ## 程序化记忆
 

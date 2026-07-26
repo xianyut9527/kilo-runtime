@@ -37,7 +37,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   │   ├── workflow-core.md       # 运行时工作流规则（自动注入）
 │   │   ├── workflow-reference.md  # 工作流参考内容（按需读取，不自动注入）
 │   │   ├── reflection.md          # 反思与错误恢复规则
-│   │   ├── security-checklist.md  # 安全/性能检查清单（由 checker 在 L3 调用）
+│   │   ├── security-checklist.md  # 安全/性能检查清单（由 verifier 在 L3 调用）
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
 │   │   ├── evolution.md           # 自进化闭环（执行→反思→提炼→固化写入规则）
 │   │   ├── skill-upgrade.md       # Skill 升级提案生成（fact_store 置信度达标时触发）

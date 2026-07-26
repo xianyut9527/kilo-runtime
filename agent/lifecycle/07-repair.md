@@ -28,6 +28,7 @@ next_stage: S09_CHECKING
 - 原始 diff
 - 验收标准清单
 - 失败模式分类（确定性/间歇性、回归/新缺陷、局部/系统性）
+- `task_context.convergence.total_rounds / max_total_rounds`（全局熔断计数，fixer **只读**，禁止修改）
 
 ## 处理流程
 

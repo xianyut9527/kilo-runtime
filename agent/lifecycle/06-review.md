@@ -60,6 +60,10 @@ next_stage: S14_REVIEW_PASSED
 - diff 噪声：格式化噪声、无关改名、调试代码残留
 - 修得过窄：跨模块规则只改一个入口，漏掉同类点
 
+### SCOPE_CREEP 视角
+- 反向核对 diff 范围与设计门 DAG 一致性：diff 中每个改动是否都能映射到 DAG 中某个 unit
+- **职责边界**：本视角仅做"diff ↔ 设计门 DAG 一致性"核对。diff 范围是否超出验收标准由 verifier L2 负责；语义范围是否超出用户需求由 reverse-auditor 负责。本视角不重复这两个判定。
+
 ## 两阶段审查（T1+）
 
 **第一阶段：spec 合规审查**

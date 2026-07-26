@@ -13,7 +13,7 @@ S00(START)
 S01(INTENT) [orchestrator] ──→ S02(INTENT_DONE) ──→ S03(SIZING) [orchestrator]
   │                                                    │
   ▼                                                    ▼
-INQUIRY（咨询类）直接回答结束                    T0 → S07(EXECUTING) [coder] ──→ S16(DELIVERING) [orchestrator]
+INQUIRY（咨询类）→ M1 召回 → 直接回答 → 价值信号? → M4-M8 轻量写入 → S17_DONE                    T0 → S07(EXECUTING) [coder] ──→ S16(DELIVERING) [orchestrator]
                                                       │                        │
                                                       T1 → S05(PLANNING)      PASS → S16(DELIVERING)
                                                      │    [planner]            │
@@ -62,8 +62,8 @@ INQUIRY（咨询类）直接回答结束                    T0 → S07(EXECUTING
 ### T0（直达执行）— 默认 config.agents
 `config.agents = { coder: true, 其他: false }`，`review_mode = none`
 - 路径：`S01` → `S03`（T0）→ `S07` → `S16` → `S17`
-- 无设计门，无 verifier，无 reviewer，无记忆写入（来源：`workflow-core.md` §T0 直达）
-- M1 可选（有注入时调用）
+- 无设计门，无 verifier，无 reviewer；记忆写入**按"价值信号"触发**（非按定级一刀切，详见 `agent/orchestrator.md` §记忆编排 T0 条款）
+- M1 必选（`memory.db` 存在时强制执行）
 
 ### T1（短设计门 + full 四视角审查）— 默认 config.agents
 `config.agents = { planner: true, coder: true, verifier: true, reviewer: true, fixer: true, reverse_auditor: false, side_checker: false, synthesizer_fusion: false }`，`review_mode = full`

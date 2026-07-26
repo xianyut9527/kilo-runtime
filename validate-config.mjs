@@ -825,7 +825,7 @@ function check8PromptOverlap(config) {
 
 // ---------- Check 9: orchestrator prompt 锚点关键词校验 ----------
 // 防止未来误删 orchestrator.prompt 中的防 compaction 锚点关键词
-// （多智能体生命周期架构：coderAgent 已重命名为 orchestrator）
+// （多智能体生命周期架构：原编排角色名现为 orchestrator）
 const ORCHESTRATOR_ANCHORS = [
   '意图判定',
   '定级',

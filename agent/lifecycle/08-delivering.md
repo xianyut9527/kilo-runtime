@@ -48,7 +48,7 @@ next_stage: S17_DONE
 
 ### 3. 经验沉淀（sqlite 优先，md 仅作索引兜底）
 
-**T1+ 必走「收尾自检」硬门**：
+**T1+ 必走「收尾自检」硬门**；**T0/INQUIRY 命中"价值信号"时同样必走**（见 `agent/orchestrator.md` §记忆编排 T0/INQUIRY 条款）：
 - M4：去重 — 查询 `fact_store` 是否已有同类记录
 - M5：新经验写入 — INSERT `fact_store`（Pattern confidence=0.6，AntiPattern=0.5）
 - M6：反馈 — `[memory:helpful=...]` / `[memory:misleading=...]`（无反馈显式 `[memory:helpful=none]`）

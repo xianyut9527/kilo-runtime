@@ -3,8 +3,8 @@
 // 编码健康度检测器：扫描文件列表，检测 BOM / U+FFFD / GBK 残留字节流
 //
 // 用途：
-//   - checker L1 必查项（默认对 git diff --name-only HEAD 跑）
-//   - engineer 完工前自检
+//   - verifier L1 必查项（默认对 git diff --name-only HEAD 跑）
+//   - coder 完工前自检
 //   - validate-config.mjs [15/15] 调用覆盖全 repo
 //
 // 用法：

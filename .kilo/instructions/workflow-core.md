@@ -6,15 +6,7 @@ keywords: workflow, orchestration, 任务定级, 单元编排, 闭环, 流程日
 
 # Workflow Core Rules
 
-> **生命周期驱动后术语映射**：本文件先于生命周期架构落地，保留以角色名（engineer / checker / fixer / reviewer / architect / pre-checker）描述流程规则。生命周期驱动后，这些角色名等价于对应智能体：
-> - `engineer` → `agent/coder.md`（S07_EXECUTING）
-> - `checker` → `agent/verifier.md`（S09_CHECKING 正向）+ `agent/reverse-auditor.md`（S09_CHECKING 反向，T2+）
-> - `fixer` → `agent/fixer.md`（S11_FIXING）
-> - `reviewer` → `agent/reviewer.md`（S13_REVIEWING 审查）+ `agent/side-checker.md`（S13_REVIEWING 侧向，T2+）
-> - `architect` → `agent/planner.md`（S05_PLANNING）
-> - `pre-checker` → 设计门的前置校验（S05_PLANNING 子步）
->
-> orchestrator 现按 `agent/lifecycle/*.md` 阶段文件驱动状态流转，加载对应 `agent/*.md` 智能体；本文件的角色名仅作语义对照，实际执行以生命周期阶段文件为准。模型选择见 `agent/models/registry.md`。
+> **生命周期驱动**：orchestrator 按 `agent/lifecycle/*.md` 阶段文件驱动状态流转，加载对应 `agent/*.md` 智能体（planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel）。本文件以新术语描述流程规则。模型选择见 `agent/models/registry.md`。
 
 ## 默认路由
 
@@ -41,7 +33,7 @@ orchestrator 加载智能体时，按任务复杂度选择模型：
 执行类任务必须按以下两阶段流程定级，**两阶段均显式输出**：
 
 - **阶段 A·开场预估**：用于路由/模型选择/设计门深度选择
-- **阶段 B·规划后校准**：architect 设计门落地后，基于实际 unit DAG 复核实际等级
+- **阶段 B·规划后校准**：planner 设计门落地后，基于实际 unit DAG 复核实际等级
 
 ### 阶段 A·开场预估（必填）
 
@@ -49,11 +41,11 @@ orchestrator 加载智能体时，按任务复杂度选择模型：
 【任务定级·预估】
 - 任务等级：T0 / T1 / T2 / T3（预估）
 - 定级依据：[具体判定条件]
-- 执行路径：[直达engineer / 拆单元+pre-checker / architect+DAG / reviewer/multiModel]
+- 执行路径：[直达coder / 拆单元+planner / planner+DAG / reviewer/multiModel]
 - 触发条件：[Trace-First / 需求扩散 / 无]
 ```
 
-### 阶段 B·规划后校准（必填，architect 设计门落地后立即输出）
+### 阶段 B·规划后校准（必填，planner 设计门落地后立即输出）
 
 ```
 【任务定级·校准】
@@ -68,9 +60,9 @@ orchestrator 加载智能体时，按任务复杂度选择模型：
 
 - **维持或上调**：默认放行
 - **拿不准就升档**（成本不对称）：阶段 A 判据不足以区分相邻等级时预估取高一级——高估仅多付流程开销，低估导致返工与质量逃逸
-- **下调**（如 T2 → T1）：必须同时满足以下全部硬条件：(1) 实际文件数 < 4；(2) 不跨模块；(3) 不命中安全敏感关键词；(4) architect 设计门已过 `[DESIGN_GATE_PASS]`。满足全部条件后，须显式标注 `[DOWNGRADE_AFTER_PLAN]` 并写明依据。任一条件不满足则不得下调
+- **下调**（如 T2 → T1）：必须同时满足以下全部硬条件：(1) 实际文件数 < 4；(2) 不跨模块；(3) 不命中安全敏感关键词；(4) planner 设计门已过 `[DESIGN_GATE_PASS]`。满足全部条件后，须显式标注 `[DOWNGRADE_AFTER_PLAN]` 并写明依据。任一条件不满足则不得下调
 
-> 性能注：阶段 B 不触发额外 architect 调用，仅在已有设计门产物基础上做复核；T0 不进阶段 B（极速通道豁免）。
+> 性能注：阶段 B 不触发额外 planner 调用，仅在已有设计门产物基础上做复核；T0 不进阶段 B（极速通道豁免）。
 
 ### 定级决策树
 
@@ -80,7 +72,7 @@ Step 1: 意图判定（core.md）
   └─ 执行类 → 继续 Step 2
 
 Step 2: T0 极速通道检查（5条全部满足）
-  ├─ 全部满足 → T0，直达 engineer
+  ├─ 全部满足 → T0，直达 coder
   └─ 任一不满足 → 继续 Step 3
 
 Step 3: 需求清晰度检查
@@ -102,19 +94,19 @@ Step 4: 复杂度量化判定（预估）
 4. 纯表面修改（文案/格式/命名）
 5. 无跨模块依赖
 
-T0 直达 engineer，无需 pre-checker、checker、reviewer。
+T0 直达 coder，无需 planner、verifier、reviewer。
 
 ### T1-T3 预估定级
 
 | 级别 | 标准 | 执行路径 |
 |------|------|----------|
-| T1 | 2-5 文件，单模块，有明确验收标准 | architect 短设计门 → 拆单元，每单元 engineer → checker 闭环 |
-| T2 | 跨模块，5+ 文件，规则扩散，命中安全敏感词 | architect 完整规划 → 单元 DAG → reviewer |
+| T1 | 2-5 文件，单模块，有明确验收标准 | planner 短设计门 → 拆单元，每单元 coder → verifier 闭环 |
+| T2 | 跨模块，5+ 文件，规则扩散，命中安全敏感词 | planner 完整规划 → 单元 DAG → reviewer |
 | T3 | 安全/资金/权限/核心逻辑，fixer 3 轮仍失败 | 全量 multiModel → reviewer → 用户决策 |
 
-> **设计门分级**（来源：superpowers/brainstorming）：T1 走"短设计门"（architect 输出 1-3 句方案+验收点即可放行 engineer）；T2 走"完整规划"（architect 输出任务 DAG+依赖+风险）。连 1 行配置变更也走短设计门--"太简单不需要设计"是反模式，简单任务正是未审视假设造成返工的高发区。
+> **设计门分级**（来源：superpowers/brainstorming）：T1 走"短设计门"（planner 输出 1-3 句方案+验收点即可放行 coder）；T2 走"完整规划"（planner 输出任务 DAG+依赖+风险）。连 1 行配置变更也走短设计门--"太简单不需要设计"是反模式，简单任务正是未审视假设造成返工的高发区。
 
-> **T1 直办条款**：当 T1 任务单元数=1、纯执行性、验收标准逐条可命令验证时，orchestrator 可不拆委派直接执行，避免委派链切片上下文损耗；但短设计门（自审 1-3 句方案+验收点）与 checker 验证不得省略。直办仅限单模块改动，一旦发现跨模块扩散立即升级为委派链路。禁止以直办为由跳过任何验证门禁。
+> **T1 直办条款**：当 T1 任务单元数=1、纯执行性、验收标准逐条可命令验证时，orchestrator 可不拆委派直接执行，避免委派链切片上下文损耗；但短设计门（自审 1-3 句方案+验收点）与 verifier 验证不得省略。直办仅限单模块改动，一旦发现跨模块扩散立即升级为委派链路。禁止以直办为由跳过任何验证门禁。
 
 ### 安全敏感模块识别
 
@@ -135,7 +127,7 @@ T1+ 任务必须拆分为可验证的单元，每单元独立闭环。
 ### 单元 DAG
 
 ```
-architect 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验收 → 总体验收
+planner 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验收 → 总体验收
 ```
 
 - 无依赖单元 → 并行执行
@@ -145,12 +137,12 @@ architect 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验
 
 ### 单元级闭环（T1+）
 
-每单元：engineer → checker → 如需 fixer → 重新 checker。
+每单元：coder → verifier → 如需 fixer → 重新 verifier。
 
-- engineer 不自验，必须过 checker。
-- engineer 输出必须包含状态信号（`DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED`）。
-- `NEEDS_CONTEXT` / `BLOCKED` → orchestrator 停止并回传，不进入 checker。
-- checker FAIL → fixer 修复 → 重新 checker。
+- coder 不自验，必须过 verifier。
+- coder 输出必须包含状态信号（`DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED`）。
+- `NEEDS_CONTEXT` / `BLOCKED` → orchestrator 停止并回传，不进入 verifier。
+- verifier FAIL → fixer 修复 → 重新 verifier。
 - fixer 连续 2 轮同症状 → 升级 reviewer。
 
 ### 总体验收（T1+）
@@ -183,18 +175,18 @@ T1 / T2 / T3 → full（四视角：安全/架构/简化/SCOPE_CREEP）
 
 | 门禁 | 说明 | 失败标记 |
 |------|------|----------|
-| 设计门（T1+）| T1 短设计门、T2 完整规划未过不得进 engineer；通过标记 `[DESIGN_GATE_PASS]`，未过/跳过标记 `[DESIGN_GATE_MISS]` | `[DESIGN_GATE_MISS]` |
-| 不自验 | engineer 不得自行验证 | `[PROCESS_VIOLATION]` |
-| 状态信号 | engineer 必须输出 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED` | `[MISSING_STATUS_SIGNAL]` |
-| 双重 checker | 正向（需求/语法/逻辑/边界）+ 反向（SCOPE_CREEP/调试残留/重复实现/局部补丁） | `[SCOPE_CREEP]` / `[MISSING_ACCEPTANCE_MAP]` / `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` |
+| 设计门（T1+）| T1 短设计门、T2 完整规划未过不得进 coder；通过标记 `[DESIGN_GATE_PASS]`，未过/跳过标记 `[DESIGN_GATE_MISS]` | `[DESIGN_GATE_MISS]` |
+| 不自验 | coder 不得自行验证 | `[PROCESS_VIOLATION]` |
+| 状态信号 | coder 必须输出 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED` | `[MISSING_STATUS_SIGNAL]` |
+| 双重 verifier | 正向（需求/语法/逻辑/边界）+ 反向（SCOPE_CREEP/调试残留/重复实现/局部补丁） | `[SCOPE_CREEP]` / `[MISSING_ACCEPTANCE_MAP]` / `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` |
 | 局部补丁拦截 | 重复模式未走组件化/共享抽象，逐页复制样式 | `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` |
-| 扫描与防复发交付门 | engineer 交付必须含全量同类点扫描清单 + 至少一项防复发产物 | `[MISSING_SCAN]` / `[MISSING_PREVENTION]` |
+| 扫描与防复发交付门 | coder 交付必须含全量同类点扫描清单 + 至少一项防复发产物 | `[MISSING_SCAN]` / `[MISSING_PREVENTION]` |
 | 同症状防空转 | 连续 2 轮 fixer 同症状 → 升级 reviewer | `[NEEDS_REVIEW]` |
 | Circuit Breaker | 连续 3 次无法收敛 → 停止 | `[CIRCUIT_BREAKER]` |
 | 验收映射表 | 每条标准 → 实现位置 → 验证方式 → 边界覆盖 → 状态 | `[MISSING_ACCEPTANCE_MAP]` |
 | 计划执行门禁 | 计划执行前必须 critical review；遇 blocker 立即停止不猜测 | `[PLAN_DEVIATION]` |
 | 结构化输出验证 | agent 返回必须经过 schema 自检（JSON.parse/XML 标签检查），失败 → 重试 | `[MALFORMED_OUTPUT]` |
-| sqlite 记忆写入 | T1+ 任务完成后必须写入 dispatch_log；发现有效模式必须写入 fact_store/failure_db | `[MISSING_MEMORY_WRITE]` |
+| sqlite 记忆写入 | T1+ 任务完成后必须写入 dispatch_log；T0/INQUIRY 命中"价值信号"时同样必须写入（见 `agent/orchestrator.md` §记忆编排）；发现有效模式必须写入 fact_store/failure_db | `[MISSING_MEMORY_WRITE]` |
 
 ### 异常路由表
 
@@ -229,8 +221,8 @@ orchestrator 解析 agent 返回或工具调用结果时，按以下分级路由
 
 **执行要求**：
 - orchestrator 触发 multiModel 前必须先扫 `dispatch_log` 查过去 24h 内 `tier = 'T3'` 任务的失败率
-- 单次失败率 ≥ 30% → 跳过 multiModel 直接 single-engineer（节省 token + 避免雪崩）
-- 任一 executor 返回 `BLOCKED` / `NEEDS_CONTEXT` → 不等待其他 executor，立即停止整个 multiModel 上报 orchestrator
+- 单次失败率 ≥ 30% → 跳过 multiModel 直接 single-coder（节省 token + 避免雪崩）
+- 任一 coder 返回 `BLOCKED` / `NEEDS_CONTEXT` → 不等待其他 coder，立即停止整个 multiModel 上报 orchestrator
 
 ### 标记 → 硬动作映射（orchestrator 必须执行）
 
@@ -276,13 +268,13 @@ orchestrator 解析 agent 返回或工具调用结果时，按以下分级路由
 5. **防复发产物**：交付必须包含至少一项防复发机制（design token、共享组件、lint 规则、文档条款、自动化测试、视觉回归测试），否则视为未完成。
 6. **反向验证**：交付前对旧模式做反向 grep（命中数=0），对新引用做正向 grep（命中数=预期消费者数），数据写入验收映射表。
 
-违反任意一步 → `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` / `[MISSING_SCAN]` / `[MISSING_PREVENTION]`，checker 必须 FAIL。
+违反任意一步 → `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` / `[MISSING_SCAN]` / `[MISSING_PREVENTION]`，verifier 必须 FAIL。
 
 > 命中「统一 XX 规范」「全量审计」「批量整改」「全局替换」类任务时，额外按上方「规范统一 / 审计类任务 SOP」五步执行。
 
 ## 交付
 
-### 收尾自检（硬门：T1+ 必走，缺则 `[MISSING_MEMORY_WRITE]` 阻塞交付）
+### 收尾自检（硬门：T1+ 必走；T0/INQUIRY 命中"价值信号"时同样必走，缺则 `[MISSING_MEMORY_WRITE]` 阻塞交付）
 
 T1+ 任务「经验沉淀」执行前，orchestrator 必须按以下 checklist 全部勾选，任何一项未执行都不得标记任务完成。每条都对应一条具体 SQL / 工具调用，可被自动验证。
 
@@ -290,7 +282,7 @@ T1+ 任务「经验沉淀」执行前，orchestrator 必须按以下 checklist �
 - [ ] **fact_store 去重与插入（M4）**：发现可复用 pattern / anti-pattern 时，先 `SELECT fact_id FROM fact_store WHERE trigger=? AND action=? AND archived=0`；命中则 `UPDATE hit_count+1, confidence, updated_at`，未命中则 `INSERT`（AntiPattern 初始 confidence=0.5 / Pattern=0.6），详见 `docs/memory-ops-reference.md` §M4 SQL 模板
 - [ ] **fact_store hit_count 自增回路（M6）**：回顾本次任务中**实际引用过的 fact_id 列表**（两个来源：① agent 输出中的 `[memory:fact_id=...]` 标记；② orchestrator 显式声明「本次实际参考但未注入的 fact_id」，必须使用结构化标记 `[memory:referenced_fact_ids=... not_injected=true]`（v2.2，可机械审计）），对每个 fact_id 执行 `UPDATE fact_store SET hit_count = hit_count + 1, confidence = MIN(0.95, confidence + 0.02), updated_at = datetime('now') WHERE fact_id IN (...)`；若本次失败与历史 failure_db 记录同类，对应 `UPDATE failure_db SET same_symptom_count = same_symptom_count + 1`。详见 `docs/memory-ops-reference.md` §M6 SQL 模板
 - [ ] **M6 Stage 3 helpful/misleading 反馈（v2.6 强制硬门）**：T1+ 收尾**必须**输出反馈标记 `[memory:helpful=A,B]` / `[memory:misleading=X]`；无反馈时显式输出 `[memory:helpful=none]`，**禁止静默省略**（缺失视为 M6 未完成 → `[MISSING_MEMORY_WRITE]`）。对每个 helpful fact：`UPDATE fact_store SET helpful_count=helpful_count+1, helpful_rate=CAST(helpful_count+1 AS REAL)/(helpful_count+1+misleading_count), confidence=MIN(0.95,confidence+0.02) ...`；对每个 misleading fact：`misleading_count+1, confidence=MAX(0.1,confidence-0.05)`；同步写入 dispatch_log `helpful_fact_ids` / `misleading_fact_ids` 列。完整流程见 `docs/memory-ops-reference.md` §M6 Stage 3；健康度兜底 `contracts/health_check.sql` §15 FEEDBACK_LOOP_IDLE
-- [ ] **failure_db 写入（M5，v2.6 降门槛）**：**checker 首轮 FAIL 即记录**；fixer 连续 2 轮同症状 / Circuit Breaker 触发 / 用户反馈「还是不对」同样必须 `INSERT INTO failure_db ...`，verified 由后续 checker 验证后置 1，详见 `docs/memory-ops-reference.md` §M7 SQL 模板
+- [ ] **failure_db 写入（M5，v2.6 降门槛）**：**verifier 首轮 FAIL 即记录**；fixer 连续 2 轮同症状 / Circuit Breaker 触发 / 用户反馈「还是不对」同样必须 `INSERT INTO failure_db ...`，verified 由后续 verifier 验证后置 1，详见 `docs/memory-ops-reference.md` §M7 SQL 模板
 - [ ] **model_calibration 更新（M8）**：`success_rate = (success_rate*sample_count + ?) / (sample_count + 1)`，DONE=1.0 / DONE_WITH_CONCERNS=0.7 / FAILED=0.0，详见 `docs/memory-ops-reference.md` §M8 SQL 模板
 - [ ] **fixer error_code 回写**：fixer 被触发过 → `UPDATE dispatch_log SET error_code='FIXED_BY_FIXER_ROUND_N' WHERE dispatch_id=?`，缺则 `[MISSING_FIXER_WRITE]`
 - [ ] **Skill 升级检测（仅记录，不自动落盘）**：`SELECT trigger, action, confidence, hit_count FROM fact_store WHERE category='ANTIPATTERN' AND confidence >= 0.8 AND hit_count >= 3 AND archived = 0`；命中 → 按 `.kilo/instructions/skill-upgrade.md` 生成「`[AUTO_DRAFT]`」草稿标记，**不得直接 patch SKILL.md**，必须经人工确认（V1 阶段）
@@ -324,7 +316,7 @@ T1+ 任务「经验沉淀」执行前，orchestrator 必须按以下 checklist �
 
 ### 计划执行门禁（来源：`.kilo/skills/plan-execution/SKILL.md`#执行前-Critical-Review + superpowers/executing-plans）
 
-T2+ 任务执行 architect 计划前，orchestrator 必须：
+T2+ 任务执行 planner 计划前，orchestrator 必须：
 
 1. **Critical Review**：重新审阅计划，标记任何疑问或风险；有疑虑先澄清再执行。
 2. **创建追踪 todo**：按任务 DAG 生成结构化 todo 列表，逐条标记进度。

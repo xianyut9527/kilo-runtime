@@ -18,7 +18,7 @@ description: 记忆操作 SQL 模板参考。sqlite 优先，md 仅作索引兜�
 
 | 节点 | 时机 | 操作 | SQL 表 |
 |------|------|------|--------|
-| M1 | 任务定级后、实现前 | 注入 project_context + fact_store + failure_db + model_calibration | SELECT |
+| M1 | 任务定级后、实现前 | 注入 project_context + fact_store + failure_db | SELECT |
 | M3 | 实现中（失败回溯） | 查询同类失败模式 | failure_db MATCH |
 | M4 | 交付前 | 去重查询 | fact_store SELECT |
 | M5 | 交付前 | 新经验写入 | fact_store INSERT |
@@ -71,25 +71,25 @@ dispatch_record:
 ### M1 查询
 ```bash
 sqlite3 "${HOME}/.config/kilo-data/memory.db" "
-SELECT id, content FROM project_context WHERE project='PROJECT_NAME' ORDER BY use_count DESC LIMIT 5;
-SELECT fact_id, pattern, anti_pattern, confidence, hit_count FROM fact_store WHERE keywords MATCH 'keyword1 keyword2' AND archived=0 ORDER BY confidence DESC, hit_count DESC LIMIT 10;
-SELECT failure_id, symptom, root_cause, fix_strategy FROM failure_db WHERE pattern MATCH 'keyword1' AND scope='PROJECT_NAME' ORDER BY occurred_at DESC LIMIT 5;
+SELECT context_id, title, content FROM project_context WHERE scope='global' OR (scope='project' AND project_name='PROJECT_NAME') ORDER BY priority ASC, use_count DESC LIMIT 5;
+SELECT f.fact_id, f.trigger, f.action, f.confidence FROM fact_store f JOIN fact_fts ft ON f.rowid=ft.rowid WHERE ft.fact_fts MATCH 'keyword1 OR keyword2' AND f.archived=0 ORDER BY f.confidence DESC LIMIT 10;
+SELECT fd.failure_id, fd.symptom, fd.fix_strategy FROM failure_db fd JOIN failure_fts ft ON fd.rowid=ft.rowid WHERE ft.failure_fts MATCH 'keyword1' ORDER BY fd.created_at DESC LIMIT 5;
 "
 ```
 
 ### M5 写入
 ```bash
 sqlite3 "${HOME}/.config/kilo-data/memory.db" "
-INSERT INTO fact_store (fact_id, pattern, anti_pattern, confidence, hit_count, keywords, source_project, created_at)
-VALUES ('AP-' || hex(randomblob(4)), 'pattern text', 'anti-pattern text', 0.6, 1, 'kw1 kw2', 'PROJECT_NAME', datetime('now'));
+INSERT INTO fact_store (fact_id, category, trigger, action, confidence, hit_count, tags, scope, project_name, created_at, updated_at)
+VALUES ('AP-' || hex(randomblob(4)), 'ANTIPATTERN', 'trigger text', 'action text', 0.6, 1, '[\"kw1\",\"kw2\"]', 'project', 'PROJECT_NAME', datetime('now'), datetime('now'));
 "
 ```
 
 ### M8 写入
 ```bash
 sqlite3 "${HOME}/.config/kilo-data/memory.db" "
-INSERT INTO dispatch_log (dispatch_id, task_summary, task_type, agent_role, status, duration_ms, token_usage, created_at)
-VALUES ('disp-YYYYMMDD-NNN', 'summary', 'T1', 'engineer', 'DONE', 120000, 8000, datetime('now'));
+INSERT INTO dispatch_log (dispatch_id, thread_id, agent, task_summary, tier, status, duration_ms, input_tokens, output_tokens, created_at)
+VALUES ('disp-YYYYMMDD-NNN', 'thread-id', 'coder', 'summary', 'T1', 'DONE', 120000, 5000, 3000, datetime('now'));
 "
 ```
 

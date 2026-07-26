@@ -1,6 +1,6 @@
 ---
 name: skill-usage-tracking
-description: 6 主流程 agent（coder / engineer / architect / checker / fixer / reviewer）使用 skill 时的频次自动记录协议。v2.5 起强制写入 SQLite `skill_usage_events` 表（替代 .log md 累积）；sqlite 唯一记忆原则：禁止 md 文件累积时序数据。
+description: 6 主流程 agent（coder / coder / planner / verifier / fixer / reviewer）使用 skill 时的频次自动记录协议。v2.5 起强制写入 SQLite `skill_usage_events` 表（替代 .log md 累积）；sqlite 唯一记忆原则：禁止 md 文件累积时序数据。
 keywords: skill-usage, tracking, sqlite, telemetry, 频次, 记录, sqlite-唯一记忆
 license: MIT
 compatibility:

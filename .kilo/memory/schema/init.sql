@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS failure_db (
     symptom TEXT NOT NULL,           -- 症状描述
     fix_strategy TEXT NOT NULL,      -- 修复策略
     fix_location TEXT,               -- 文件:行号
-    verified INTEGER NOT NULL DEFAULT 0 CHECK(verified IN (0, 1)),  -- 是否经 checker 验证修复
+    verified INTEGER NOT NULL DEFAULT 0 CHECK(verified IN (0, 1)),  -- 是否经 verifier 验证修复
     same_symptom_count INTEGER NOT NULL DEFAULT 1,  -- 同症状复发次数
     tags TEXT,                       -- JSON 数组
     scope TEXT NOT NULL DEFAULT 'global' CHECK(scope IN ('global', 'project')),  -- v2.4（#15）镜像 fact_store
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS dispatch_log (
     initial_tier TEXT CHECK(initial_tier IN ('T0', 'T1', 'T2', 'T3')),  -- 阶段 A 预估等级
     final_tier TEXT CHECK(final_tier IN ('T0', 'T1', 'T2', 'T3')),      -- 阶段 B 校准等级
     tier TEXT CHECK(tier IN ('T0', 'T1', 'T2', 'T3')),                  -- 兼容旧字段（=final_tier）
-    review_mode TEXT CHECK(review_mode IN ('none', 'lightweight', 'full')),  -- reviewer 工作模式（T0=none）
+    review_mode TEXT CHECK(review_mode IN ('none', 'lightweight', 'full')),  -- reviewer 工作模式（T0=none；v3.2 起 lightweight 已废弃，全用 full，保留值仅为兼容历史数据）
     tier_deviation TEXT CHECK(tier_deviation IN ('maintain', 'upgrade', 'downgrade')),  -- 校准偏差方向
     model TEXT,                      -- 实际使用的模型
     status TEXT NOT NULL CHECK(status IN ('STARTED', 'DONE', 'DONE_WITH_CONCERNS', 'FAILED', 'BLOCKED', 'TIMEOUT')),
@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS dispatch_log (
     input_tokens INTEGER,
     output_tokens INTEGER,
     files_changed TEXT,              -- JSON 数组
-    findings_count INTEGER,          -- checker 发现的问题数
+    findings_count INTEGER,          -- verifier 发现的问题数
     compensation_prompt_used INTEGER NOT NULL DEFAULT 0 CHECK(compensation_prompt_used IN (0,1)),  -- v2.3（#8）本次 dispatch 是否消费了补偿 prompt
     compensation_calibration_id TEXT, -- v2.3（#8）本次消费的 calibration_id（用于反查 model_calibration）
     trigger_fact_ids TEXT,         -- v2.4 / #13 本次 dispatch 涉及的 fact_id（JSON 数组；M3 注入引用收集）
@@ -189,10 +189,10 @@ CREATE INDEX IF NOT EXISTS idx_project_scope ON project_context(scope, project_n
 CREATE TABLE IF NOT EXISTS model_calibration (
     calibration_id TEXT PRIMARY KEY,
     model TEXT NOT NULL,
-    agent_role TEXT NOT NULL,        -- engineer/checker/reviewer/...
+    agent_role TEXT NOT NULL,        -- coder/verifier/reviewer/...
     task_type TEXT NOT NULL,         -- 如 "react-refactor", "api-design"
     success_rate REAL,               -- 成功率（0-1）
-    avg_findings REAL,               -- checker 平均发现问题数
+    avg_findings REAL,               -- verifier 平均发现问题数
     structure_adherence REAL,        -- 结构 adherence 评分
     overconfident_flag INTEGER DEFAULT 0 CHECK(overconfident_flag IN (0, 1)),
     compensation_prompt TEXT,        -- 补偿 prompt 片段
@@ -351,10 +351,10 @@ INSERT OR IGNORE INTO project_context (context_id, category, title, content, sou
  'AGENTS.md', 1,
  '["process","hard-gate","violation-marker","workflow"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
 
-('PC-005', 'BUSINESS_RULE', 'T1+ pre-checker → engineer → checker → fixer 闭环',
- 'T1+ 任务单元级闭环：engineer 输出不自行验证（不自验），过 checker；checker FAIL → fixer 修复 → 重新 checker；fixer 连续 2 轮同症状升级 reviewer；Circuit Breaker 连续 3 次无法收敛则停止。T0 极速通道豁免。',
+('PC-005', 'BUSINESS_RULE', 'T1+ planner → coder → verifier → fixer 闭环',
+ 'T1+ 任务单元级闭环：coder 输出不自行验证（不自验），过 verifier；verifier FAIL → fixer 修复 → 重新 verifier；fixer 连续 2 轮同症状升级 reviewer；Circuit Breaker 连续 3 次无法收敛则停止。T0 极速通道豁免。',
  '.kilo/instructions/workflow-core.md', 2,
- '["workflow","tier","unit-closure","checker","fixer"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
+ '["workflow","tier","unit-closure","verifier","fixer"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
 
 ('PC-006', 'BUSINESS_RULE', 'review_mode 决策表',
  'T0 → none（无 reviewer）；T1 单文件/2-3 文件 → lightweight（架构 + SCOPE_CREEP）；T1 ≥4 文件 / 跨模块 / 安全敏感 → full（自动升级，安全+架构+简化+SCOPE_CREEP 四视角）；T2/T3 → full。升级必须在阶段 B 输出 [REVIEW_MODE_UPGRADED] 标记。',

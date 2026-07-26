@@ -18,7 +18,7 @@
 
 ```
 ① 执行 → 写入 dispatch_log（什么任务 + 什么策略 + 什么模型 + 什么结果）
-② 反思 → 从 dispatch_log + checker 结果提取 Pattern / AntiPattern
+② 反思 → 从 dispatch_log + verifier 结果提取 Pattern / AntiPattern
 ③ 提炼 → 写入全局 sqlite（fact_store / failure_db / model_calibration）
 ④ 应用 → 生成 Strategy Proposal，经 Regression Test → 应用
 ```

@@ -111,6 +111,14 @@ S01_INTENT（orchestrator 内建）→ S03_SIZING（orchestrator 内建）
 }
 ```
 
+> **字段语义**：
+> - `round`：当前修复轮次，每次进入 S11_FIXING 时 +1（单点循环计数）
+> - `max_rounds`：单点熔断阈值（默认 5），`round` 达到此值时触发单点 `[CIRCUIT_BREAKER]`
+> - `total_rounds`：全局累计轮次，**每次进入 S09_CHECKING 或 S13_REVIEWING 时 +1**（由 orchestrator 在进入这两个阶段前递增）
+> - `max_total_rounds`：全局熔断阈值（默认 7），`total_rounds` 达到此值时触发全局 `[CIRCUIT_BREAKER]`，停止所有修复并输出选项等用户决策
+>
+> **递增责任**：`total_rounds` 只能由 orchestrator 在进入 S09/S13 前写入，coder/fixers/subagents 禁止修改此字段。违反 → `[PROCESS_VIOLATION]`。
+
 > **v3.2 配置驱动加载**：`config.agents` 字段声明本次任务要加载哪些智能体（布尔值），由 orchestrator 在 S03 定级后根据定级 + 任务特征 + 用户自定义覆盖写入。lifecycle 阶段文件按 `config.agents.<name>` 条件加载，而非定级硬编码。`custom_overrides` 供用户/高阶场景显式覆盖默认组合。
 
 ### 动态加载矩阵（v3.2 配置驱动）
@@ -198,7 +206,7 @@ T1+ 任务加载 coder 智能体时，委派包仍必须包含：
 ## 记忆编排（S16_DELIVERING 内建）
 
 T1+ 任务在交付阶段 orchestrator 直接调用 memory.db（SQL 模板见 `docs/memory-ops-reference.md`）：
-- **M1 注入**：S01 后可选（`memory.db` 存在时调用）
+- **M1 注入**：S01 后**必选**（`memory.db` 存在时强制执行），所有任务类型（INQUIRY / T0 / T1 / T2 / T3）统一适用；成本极低（几条 SELECT），收益极高（避免重复犯错、利用项目积累）；token 预算 ≤2000 tokens 控制注入量，注入门槛（confidence ≥ 0.7 + hit_count ≥ 2）控制质量
 - **M4-M8 写入**：S16 阶段统一执行
   - M4：去重查询
   - M5：新经验写入 `fact_store`
@@ -206,7 +214,8 @@ T1+ 任务在交付阶段 orchestrator 直接调用 memory.db（SQL 模板见 `d
   - M7：`failure_db` 写入（如有失败案例）
   - M8：`dispatch_log` 写入 + `model_calibration` 更新
 
-> **T0 任务**：M1 可选，收尾不调用记忆写入。
+> **T0 任务**：记忆写入**不按定级一刀切**，按"价值信号"触发——命中以下任一信号即执行 M4-M8：① 用户明确指正错误 ② 发现流程或规则缺陷 ③ 形成可复用 pattern/antipattern ④ 连续失败后的根因 ⑤ 架构决策依据。纯执行日志（`dispatch_log` 已覆盖）或无信息增量的"任务完成"不写。
+> **INQUIRY 咨询类**：M1 召回必选（同 T0）；记忆写入按同一"价值信号"触发——咨询类完全可能产生高价值经验（如用户指正规则缺陷、发现可复用 pattern），不得因"只分析不改文件"而跳过。命中价值信号时，orchestrator 在回答完成后、S17 前执行轻量 M4-M8（仅 SQL 写入，无需完整 S16 交付流程）。
 > **multiModel 任务**：由 multiModel 主控在 `MM_DELIVERING` 阶段统一调用记忆能力。
 
 ### 降级处理
@@ -228,6 +237,7 @@ orchestrator 自身模型见 `kilo.json` `agent.orchestrator.model`。各职能�
 - fixer 连续 2 轮同症状 → 升级 reviewer 做根因分析
 - Circuit Breaker（连续 3 次无法收敛）→ 停止修复，输出选项等用户决策
 - S09 或 S13 每次进入时 task_context.convergence.total_rounds 自增 1；total_rounds ≥ max_total_rounds(7) → [CIRCUIT_BREAKER] 全局熔断，停止修复，输出选项等用户决策
+- 分支收尾协议禁止自动 `git commit` / `git push` / `git merge` / `git reset` / `git rebase` 等改写分支历史的命令；orchestrator 在 S16 必须呈现 `finishing-a-development-branch` skill 的 4 选项（merge / PR / keep / discard）等用户决策后再执行；未经用户明确选择直接 commit → `[PROCESS_VIOLATION]`，立即暂停并告知用户回退命令（`git reset --soft HEAD~1` 保留 staged / `--mixed` 取消 staged）
 
 ## 输出
 
