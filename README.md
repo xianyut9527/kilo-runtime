@@ -70,8 +70,8 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   ├── coder.md                  # 编码智能体（实现、自测、三件套）
 │   ├── verifier.md               # 正向验证智能体（L1/L2/L3、5 元组证据）
 │   ├── reverse-auditor.md        # 反向审计智能体（需求追溯、假设审计，T2+）
-│   ├── side-checker.md           # 侧向验证智能体（边界/安全/性能/兼容，T2+）
-│   ├── reviewer.md               # 审查智能体（安全/架构/简化/SCOPE_CREEP 四视角）
+│   ├── side-checker.md           # 运行时行为视角验证智能体（边界/安全/性能/兼容性实测，T2+）
+│   ├── reviewer.md               # 静态代码审查智能体（安全编码模式/架构/简化/SCOPE_CREEP 四视角）
 │   ├── fixer.md                  # 修复智能体（定向修复阻塞问题）
 │   ├── multiModel.md             # 多模型并行融合模式（T3 自动触发，用户可手动选择）
 │   ├── lifecycle/                # 生命周期阶段定义（状态机主线索）

@@ -58,7 +58,8 @@ quality_gate:
 
 - `DONE` → 回到 `S09_CHECKING`（重新验证）
 - `BLOCKED` / 连续 2 轮同症状 → 停止修复，升级 reviewer 或人工决策
-- 同一状态循环 ≥3 次 → `[CIRCUIT_BREAKER]` → 停止修复
+- 同一状态循环 ≥3 次（单点熔断）→ `[CIRCUIT_BREAKER]` → 停止修复
+- S09+S13 累计进入次数 ≥ max_total_rounds(7)（全局熔断）→ `[CIRCUIT_BREAKER]` → 停止修复
 
 ## 硬规则
 

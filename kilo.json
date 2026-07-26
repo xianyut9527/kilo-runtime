@@ -53,12 +53,12 @@
     "side-checker": {
       "mode": "subagent",
       "model": "hx/kimi-k3",
-      "prompt": "侧向验证智能体。边界/安全/性能/兼容性非主路径角度验证。只验证不修复。详见 agent/side-checker.md。"
+      "prompt": "运行时行为视角验证智能体。通过实际执行/构造输入/实测对比验证边界/安全/性能/兼容性。只验证不修复。详见 agent/side-checker.md。"
     },
     "reviewer": {
       "mode": "subagent",
       "model": "hx/kimi-k3",
-      "prompt": "审查智能体。架构/简化/安全/SCOPE_CREEP 四视角审查。只审查不修复。详见 agent/reviewer.md。"
+      "prompt": "静态代码审查智能体。通过阅读代码审查安全编码模式/架构/简化/SCOPE_CREEP 四视角。只审查不修复。详见 agent/reviewer.md。"
     },
     "fixer": {
       "mode": "subagent",

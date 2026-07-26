@@ -30,8 +30,8 @@
 | 2 | **coder** | 编码智能体：按方案实现代码、输出验收映射表+三件套、状态信号 | S07_EXECUTING | `kilo.json` `agent.coder.model` | subagent | `agent/coder.md` |
 | 3 | **verifier** | 正向验证智能体：按验收标准逐条验证、L1/L2/L3 分层、5元组证据、独立重跑 | S09_CHECKING（正向） | `kilo.json` `agent.verifier.model` | subagent | `agent/verifier.md` |
 | 4 | **reverse-auditor** | 反向审计智能体：从产物反推是否满足原始需求、追溯假设、发现隐性遗漏 | S09_CHECKING（反向） | `kilo.json` `agent.reverse-auditor.model` | subagent | `agent/reverse-auditor.md` |
-| 5 | **side-checker** | 侧向验证智能体：边界/安全/性能/兼容性非主路径角度验证 | S13_REVIEWING（侧向） | `kilo.json` `agent.side-checker.model` | subagent | `agent/side-checker.md` |
-| 6 | **reviewer** | 审查智能体：架构/简化/安全/SCOPE_CREEP 四视角审查 | S13_REVIEWING（审查） | `kilo.json` `agent.reviewer.model` | subagent | `agent/reviewer.md` |
+| 5 | **side-checker** | 运行时行为视角验证智能体：实际执行/构造输入/实测对比验证边界/安全/性能/兼容性 | S13_REVIEWING（侧向） | `kilo.json` `agent.side-checker.model` | subagent | `agent/side-checker.md` |
+| 6 | **reviewer** | 静态代码审查智能体：阅读代码审查安全编码模式/架构/简化/SCOPE_CREEP 四视角 | S13_REVIEWING（审查） | `kilo.json` `agent.reviewer.model` | subagent | `agent/reviewer.md` |
 | 7 | **fixer** | 修复智能体：定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题 | S11_FIXING | `kilo.json` `agent.fixer.model` | subagent | `agent/fixer.md` |
 | 8 | **synthesizer-fusion**（v3.1 恢复） | 多模型融合编辑智能体：读取 3 个 coder 输出 + verifier 验证结果，取长补短生成综合最优方案 | MM_FUSING（multiModel 专属） | `kilo.json` `agent.synthesizer-fusion.model` | subagent | `agent/synthesizer-fusion.md` |
 
@@ -406,8 +406,8 @@ S13_REVIEWING
 | `agent/coder.md` | 编码智能体（从 capabilities/implementation.md 演化） |
 | `agent/verifier.md` | 正向验证智能体（从 capabilities/verification.md 演化） |
 | `agent/reverse-auditor.md` | 反向审计智能体（全新） |
-| `agent/side-checker.md` | 侧向验证智能体（全新） |
-| `agent/reviewer.md` | 审查智能体（从 capabilities/review.md 演化） |
+| `agent/side-checker.md` | 运行时行为视角验证智能体（全新） |
+| `agent/reviewer.md` | 静态代码审查智能体（从 capabilities/review.md 演化） |
 | `agent/fixer.md` | 修复智能体（从 capabilities/repair.md 演化） |
 | `docs/multi-agent-lifecycle-architecture.md` | 本设计文档 |
 

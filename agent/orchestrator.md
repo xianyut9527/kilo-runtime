@@ -102,7 +102,12 @@ S01_INTENT（orchestrator 内建）→ S03_SIZING（orchestrator 内建）
   "fixing_history": [...],
   "memory_injection": {...},
   "status": "...",
-  "convergence": {"round": N, "max_rounds": 5}
+  "convergence": {
+    "round": 0,
+    "max_rounds": 5,
+    "total_rounds": 0,
+    "max_total_rounds": 7
+  }
 }
 ```
 
@@ -134,6 +139,7 @@ orchestrator 在 S03 定级后，按以下规则写入 `config.agents` + `config
 | 审查通过 | `S13` | FAIL → `S11_FIXING` |
 | `[MISSING_MEMORY_WRITE]` | `S16` | 未执行阻塞交付 |
 | 连续 3 次无法收敛 | `S11` | `[CIRCUIT_BREAKER]` → 人工决策 |
+| 全局累计轮次 ≥ max_total_rounds | S09/S13 | [CIRCUIT_BREAKER] → 人工决策 |
 
 ## 交叉验证组合判定
 
@@ -221,6 +227,7 @@ orchestrator 自身模型见 `kilo.json` `agent.orchestrator.model`。各职能�
 - coder 返回 `NEEDS_CONTEXT` / `BLOCKED` → 停止执行，补上下文或升级
 - fixer 连续 2 轮同症状 → 升级 reviewer 做根因分析
 - Circuit Breaker（连续 3 次无法收敛）→ 停止修复，输出选项等用户决策
+- S09 或 S13 每次进入时 task_context.convergence.total_rounds 自增 1；total_rounds ≥ max_total_rounds(7) → [CIRCUIT_BREAKER] 全局熔断，停止修复，输出选项等用户决策
 
 ## 输出
 
