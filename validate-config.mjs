@@ -10,7 +10,7 @@
 //   [6/29] README.md 目录树一致性
 //   [7/29] AGENTS.md / CONFIG_CHANGE_CHECKLIST.md 索引一致性
 //   [8/29] prompt 与 agent.md 过度文本重复检测（4-gram Jaccard）
-//   [9/29] orchestrator prompt 锚点关键词校验（防 compaction 误删）
+//   [9/29] conductor prompt 锚点关键词校验（防 compaction 误删）
 //   [10/29] SKILL.md frontmatter 合规性（name 与目录名一致 / description ≤1024 / keywords 数量 [3,20]）
 //   [11/29] install.sh 与 install.ps1 EXCLUDE 列表一致性（ROOT_ONLY + RECURSIVE）
 //   [12/29] Hermes 产物存在性（已废弃）
@@ -24,13 +24,13 @@
 //   [20/29] 能力插件文件完整性（已废弃 — capabilities/ 已合并入智能体文件）
 //   [21/29] 模型注册表存在性（agent/models/registry.md）
 //   [22/29] 生命周期 ↔ 能力插件映射一致性（已废弃 — capabilities/ 已合并入智能体文件）
-//   [23/29] 智能体文件完整性（agent/ 下 8 个智能体 .md：orchestrator/planner/coder/verifier/reverse-auditor/side-checker/reviewer/fixer）
+//   [23/29] 智能体文件完整性（agent/ 下 8 个智能体 .md：conductor/planner/coder/verifier/reverse-auditor/side-checker/reviewer/fixer）
 //   [24/29] lifecycle 阶段文件 agents frontmatter 字段声明的智能体全部存在
 //   [25/29] task_context 读写规则一致性（lifecycle agents 字段引用的智能体在 agent/ 下有对应 .md）
 //   [26/29] 智能体视角物理隔离校验（reverse-auditor 禁读 plan / side-checker 禁读 verification / reviewer 禁读 verifier_report / coder+fixer 禁写 execution.verification）
 //   [27/29] 模型硬编码反查（agent/*.md frontmatter 不含 model: 字段；body 不含 hx/ 模型 ID）
 //   [28/29] subagent 记忆召回接口校验（v3.2 记忆下沉：7 subagent .md 须含 §记忆召回接口段）
-//   [29/29] config.agents 配置驱动校验（v3.2 可插拔：orchestrator.md 含 config.agents 字段 + 动态加载矩阵；lifecycle/05/06 含条件加载语法）
+//   [29/29] config.agents 配置驱动校验（v3.2 可插拔：conductor.md 含 config.agents 字段 + 动态加载矩阵；lifecycle/05/06 含条件加载语法）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -85,7 +85,7 @@ function check1KiloJson() {
 // ---------- Check 2: agent 名单一致性 ----------
 // 规则（多智能体生命周期架构）：
 //   - primary agent 必须在 kilo.json.agent 中声明
-//   - subagent 智能体不在 kilo.json 注册（通过 orchestrator 的 task 工具按需启动），
+//   - subagent 智能体不在 kilo.json 注册（通过 conductor 的 task 工具按需启动），
 //     按 frontmatter.mode === 'subagent' 识别并豁免
 function check2Agents(config) {
   const name = 'agent 名单一致性';
@@ -823,31 +823,31 @@ function check8PromptOverlap(config) {
   };
 }
 
-// ---------- Check 9: orchestrator prompt 锚点关键词校验 ----------
-// 防止未来误删 orchestrator.prompt 中的防 compaction 锚点关键词
-// （多智能体生命周期架构：原编排角色名现为 orchestrator）
-const ORCHESTRATOR_ANCHORS = [
+// ---------- Check 9: conductor prompt 锚点关键词校验 ----------
+// 防止未来误删 conductor.prompt 中的防 compaction 锚点关键词
+// （多智能体生命周期架构：原编排角色名现为 conductor）
+const conductor_ANCHORS = [
   '意图判定',
   '定级',
   'lifecycle',
   'task_context',
   'compaction',
 ];
-function check9OrchestratorAnchors(config) {
-  const name = 'orchestrator prompt 锚点关键词校验';
+function check9conductorAnchors(config) {
+  const name = 'conductor prompt 锚点关键词校验';
   if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
     return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/25]）' };
   }
-  const orchestrator = config.agent.orchestrator;
-  if (!orchestrator || typeof orchestrator !== 'object' || typeof orchestrator.prompt !== 'string') {
-    return { name, pass: false, detail: 'kilo.json.agent.orchestrator.prompt 不可用' };
+  const conductor = config.agent.conductor;
+  if (!conductor || typeof conductor !== 'object' || typeof conductor.prompt !== 'string') {
+    return { name, pass: false, detail: 'kilo.json.agent.conductor.prompt 不可用' };
   }
-  const prompt = orchestrator.prompt;
-  const missing = ORCHESTRATOR_ANCHORS.filter((kw) => !prompt.includes(kw));
+  const prompt = conductor.prompt;
+  const missing = conductor_ANCHORS.filter((kw) => !prompt.includes(kw));
   if (missing.length === 0) {
-    return { name, pass: true, detail: `orchestrator prompt 锚点关键词 ${ORCHESTRATOR_ANCHORS.length}/${ORCHESTRATOR_ANCHORS.length} 齐全` };
+    return { name, pass: true, detail: `conductor prompt 锚点关键词 ${conductor_ANCHORS.length}/${conductor_ANCHORS.length} 齐全` };
   }
-  return { name, pass: false, detail: `orchestrator prompt 缺失锚点关键词: [${missing.join(', ')}]` };
+  return { name, pass: false, detail: `conductor prompt 缺失锚点关键词: [${missing.join(', ')}]` };
 }
 
 // ---------- Check 10: SKILL.md frontmatter 合规性 ----------
@@ -1051,7 +1051,7 @@ function check14MemoryEnabled(config) {
     return {
       name,
       pass: false,
-      detail: 'v2.5 sqlite 唯一记忆原则：检测到 .kilo/memory/skill-usage.log 仍存在；执行 api/migrate_skill_usage_log_to_sqlite.sql 一次性迁移后删除该文件',
+      detail: 'v2.5 sqlite 唯一记忆原则：检测到 .kilo/memory/skill-usage.log 仍存在；该 .log 文件已在 v2.6.2 精简中废弃，请直接删除（历史数据无需迁移，skill_usage_events 表由 agent 运行时写入）',
     };
   }
   // 兼容旧字段检测
@@ -1678,13 +1678,13 @@ function check22LifecycleCapabilityMapping() {
 // ---------- Check 23: 智能体文件完整性 ----------
 // v3.0 多智能体生命周期架构：验证 agent/ 下 8 个核心智能体 .md 文件存在。
 // 8 智能体清单（来源：docs/multi-agent-lifecycle-architecture.md §智能体清单）：
-//   orchestrator / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer
+//   conductor / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer
 // multiModel.md 是 T3 触发的备选 primary 智能体，不在 8 智能体清单中，由 check2 覆盖。
 function check23AgentIntegrity() {
   const name = '智能体文件完整性';
   const agentDir = path.resolve(ROOT, 'agent');
   const requiredAgents = [
-    'orchestrator.md',
+    'conductor.md',
     'planner.md',
     'coder.md',
     'verifier.md',
@@ -1753,7 +1753,7 @@ function check24LifecycleAgentsFrontmatter() {
 
 // ---------- Check 25: lifecycle agents 引用的智能体文件存在性 ----------
 // v3.0：lifecycle 阶段文件 frontmatter.agents 声明的每个智能体必须在 agent/<name>.md 存在。
-// 这是 task_context 读写一致性的基础：orchestrator 按阶段加载智能体时，subagent_type 必须有对应 .md。
+// 这是 task_context 读写一致性的基础：conductor 按阶段加载智能体时，subagent_type 必须有对应 .md。
 function check25LifecycleAgentsExist() {
   const name = 'lifecycle agents 引用智能体文件存在性';
   const lifecycleDir = path.resolve(ROOT, 'agent', 'lifecycle');
@@ -1871,8 +1871,8 @@ function check26ViewpointIsolation() {
       shouldNotExist: false,
     },
     {
-      file: 'orchestrator.md',
-      rule: 'orchestrator 须含机械汇总原则 + convergence-auditor',
+      file: 'conductor.md',
+      rule: 'conductor 须含机械汇总原则 + convergence-auditor',
       pattern: /机械汇总|convergence-auditor|反自验/,
       shouldNotExist: false,
     },
@@ -1903,7 +1903,7 @@ function check26ViewpointIsolation() {
 // ---------- Check 27: 模型硬编码反查（v3.1 方案1：模型配置统一在 kilo.json） ----------
 // 目标：agent/*.md 不得硬编码模型 ID，模型绑定由 kilo.json agent.<name>.model 单一管理。
 // 校验项：
-//   (a) 7 个 subagent .md frontmatter 不得含 `model:` 字段（orchestrator/multiModel/synthesizer-fusion 作为 primary 也豁免 — kilo.json 已声明）
+//   (a) 7 个 subagent .md frontmatter 不得含 `model:` 字段（conductor/multiModel/synthesizer-fusion 作为 primary 也豁免 — kilo.json 已声明）
 //       实际策略：所有 agent/*.md frontmatter 不得含 `model:` 字段（统一由 kilo.json 管）
 //   (b) 7 个 subagent .md body 不得含 `hx/` 模型 ID 硬编码（引用 kilo.json agent.<name>.model 是允许的）
 //       例外：registry.md 是模型能力矩阵文档，允许含 `hx/`；multiModel.md 在角色分工表内允许含 hx/ 但应指向 registry
@@ -1928,7 +1928,7 @@ function check27NoModelHardcode() {
 
     // (b) body 不得硬编码 hx/ 模型 ID（registry.md 豁免 — 它就是模型能力矩阵文档）
     if (fname === 'registry.md' || fname === 'models-registry.md') continue;
-    // orchestrator.md / multiModel.md 中的"模型选择"段允许引用 kilo.json，但不得硬编码 hx/xxx
+    // conductor.md / multiModel.md 中的"模型选择"段允许引用 kilo.json，但不得硬编码 hx/xxx
     // 检测：body 中是否含 hx/<model-name> 模式
     const bodyMatches = text.match(/hx\/[A-Za-z0-9.\-]+/g);
     if (bodyMatches && bodyMatches.length > 0) {
@@ -1948,7 +1948,7 @@ function check28SubagentMemoryRecall() {
   const agentDir = path.resolve(ROOT, 'agent');
   const errors = [];
 
-  // 7 个 subagent 必须含 §记忆召回接口段（orchestrator/multiModel 豁免 — orchestrator 仅做轻量 project_context 注入；multiModel 走自己的生命周期）
+  // 7 个 subagent 必须含 §记忆召回接口段（conductor/multiModel 豁免 — conductor 仅做轻量 project_context 注入；multiModel 走自己的生命周期）
   const required = ['planner.md', 'coder.md', 'verifier.md', 'reverse-auditor.md', 'side-checker.md', 'reviewer.md', 'fixer.md'];
   for (const fname of required) {
     const fp = path.join(agentDir, fname);
@@ -1977,26 +1977,26 @@ function check28SubagentMemoryRecall() {
 }
 
 function check29ConfigDrivenAgents() {
-  const name = 'config.agents 配置驱动（v3.2 可插拔：orchestrator.md 含 config.agents 字段 + 动态加载矩阵；lifecycle/05/06 含条件加载语法）';
+  const name = 'config.agents 配置驱动（v3.2 可插拔：conductor.md 含 config.agents 字段 + 动态加载矩阵；lifecycle/05/06 含条件加载语法）';
   const errors = [];
 
-  // (a) orchestrator.md 必须含 config.agents 字段定义 + 动态加载矩阵
-  const orchPath = path.resolve(ROOT, 'agent', 'orchestrator.md');
+  // (a) conductor.md 必须含 config.agents 字段定义 + 动态加载矩阵
+  const orchPath = path.resolve(ROOT, 'agent', 'conductor.md');
   if (!fs.existsSync(orchPath)) {
-    errors.push('agent/orchestrator.md 缺失');
+    errors.push('agent/conductor.md 缺失');
   } else {
     const orch = fs.readFileSync(orchPath, 'utf8');
     if (!orch.includes('config.agents')) {
-      errors.push('orchestrator.md: 缺少 config.agents 字段定义');
+      errors.push('conductor.md: 缺少 config.agents 字段定义');
     }
     if (!orch.includes('动态加载矩阵')) {
-      errors.push('orchestrator.md: 缺少 §动态加载矩阵 段');
+      errors.push('conductor.md: 缺少 §动态加载矩阵 段');
     }
     if (!orch.includes('custom_overrides')) {
-      errors.push('orchestrator.md: 缺少 custom_overrides 字段（用户自定义覆盖入口）');
+      errors.push('conductor.md: 缺少 custom_overrides 字段（用户自定义覆盖入口）');
     }
     if (!orch.includes('条件加载语法') && !orch.includes('条件表达式')) {
-      errors.push('orchestrator.md: 未声明阶段文件条件加载语法');
+      errors.push('conductor.md: 未声明阶段文件条件加载语法');
     }
   }
 
@@ -2036,7 +2036,7 @@ function check29ConfigDrivenAgents() {
   if (errors.length > 0) {
     return { name, pass: false, detail: errors.join('; ') };
   }
-  return { name, pass: true, detail: 'orchestrator.md 含 config.agents + 动态加载矩阵 + custom_overrides；lifecycle/05/06 含条件加载语法；README 含 v3.2 说明' };
+  return { name, pass: true, detail: 'conductor.md 含 config.agents + 动态加载矩阵 + custom_overrides；lifecycle/05/06 含条件加载语法；README 含 v3.2 说明' };
 }
 
 const kiloBuf = (() => {
@@ -2063,7 +2063,7 @@ const r5 = check5PromptPaths(config);
 const r6 = check6ReadmeTree();
 const r7 = check7DocIndex();
 const r8 = check8PromptOverlap(config);
-const r9 = check9OrchestratorAnchors(config);
+const r9 = check9conductorAnchors(config);
 const r10 = check10SkillFrontmatter();
 const r11 = check11InstallExcludeSync();
 const r12 = check12HermesArtifacts();

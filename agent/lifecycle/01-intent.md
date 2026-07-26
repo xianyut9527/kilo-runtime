@@ -2,7 +2,7 @@
 description: 生命周期阶段 01 — 意图判定。接收用户输入，判定咨询类/执行类，输出类型信号。
 stage_id: S01_INTENT
 agents:
-  - orchestrator
+  - conductor
 previous_stage: S00_START
 next_stage: S03_SIZING
 ---
@@ -18,7 +18,7 @@ next_stage: S03_SIZING
 | **阶段 ID** | `S01_INTENT` |
 | **上一阶段** | `S00_START`（会话初始化） |
 | **下一阶段** | `S02_INTENT_DONE`（判定完成）→ `S03_SIZING` |
-| **加载智能体** | `orchestrator`（内建，无需 task 启动） |
+| **加载智能体** | `conductor`（内建，无需 task 启动） |
 | **模型偏好** | `registry:fast-reasoning`（轻量、低延迟） |
 | **token 预算** | ≤ 4000 |
 
@@ -51,7 +51,7 @@ quality_gate:
 
 ## 路由规则
 
-- `INQUIRY` → 直接回答；若命中"价值信号"（见 `agent/orchestrator.md` §记忆编排），回答完成后执行轻量 M4-M8 记忆写入，再进入 `S17_DONE`；未命中 → 直接 `S17_DONE`。
+- `INQUIRY` → 直接回答；若命中"价值信号"（见 `agent/conductor.md` §记忆编排），回答完成后执行轻量 M4-M8 记忆写入，再进入 `S17_DONE`；未命中 → 直接 `S17_DONE`。
 - `EXECUTION` → 进入 `S03_SIZING`（任务定级）。
 - `NEEDS_CONTEXT` → 回传用户请求补充信息，不推进。
 

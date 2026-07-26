@@ -3,7 +3,7 @@
 > **模块位置**：`.kilo/memory/`（仓库内唯一记忆边界）
 > **职责**：跨项目持久化结构化经验 + 任务调度日志 + 模型校准 + 项目上下文 + 反馈质量量化
 > **状态**：v2.6.2（**SQLite 唯一记忆** + md 静态规则兜底 + FTS5 trigram + helpful_rate 强制反馈 + scope 隔离 + 回路空转告警 + 视图可查询性校验）
-> **作者**：orchestrator 自动维护 + 人工审核
+> **作者**：conductor 自动维护 + 人工审核
 
 ## 模块架构（2 层精简）
 
@@ -26,8 +26,8 @@
 | 入口 | 触发方 | 用途 |
 |---|---|---|
 | `schema/init.sql` | install / 首次部署 | 建表（7 表 + 索引 + 视图 + 2 FTS5 虚表）+ 8 条 project_context 自动种子 |
-| `docs/memory-ops-reference.md` | lifecycle `S01` / `S16` 阶段 | M1 注入查询模板 + M4-M8 写入模板 + 降级处理（orchestrator 在 S16 内建调用） |
-| `.kilo/instructions/workflow-core.md` §收尾自检 | orchestrator 收尾 | 10 条硬门 checklist（M4-M8 SQL 模板内联） |
+| `docs/memory-ops-reference.md` | lifecycle `S01` / `S16` 阶段 | M1 注入查询模板 + M4-M8 写入模板 + 降级处理（conductor 在 S16 内建调用） |
+| `.kilo/instructions/workflow-core.md` §收尾自检 | conductor 收尾 | 10 条硬门 checklist（M4-M8 SQL 模板内联） |
 | `contracts/health_check.sql` | validate-config.mjs check17 | 18 项健康度查询（v2.6.2 含反馈执行率 soft-warn） |
 | `AGENTS.md` | 运行时自动注入 | 模块对 agent 的核心原则 + Token Budget + 必读规则 |
 
@@ -121,7 +121,7 @@
 |---|---|
 | `.kilo/instructions/` | `workflow-core.md` §收尾自检定义 10 条硬门；不重复定义 SQL |
 | `.kilo/skills/` | skill 是 sqlite fact_store 的固化产物（满足 confidence/hit_count 门槛后触发草稿） |
-| `agent/*.md` | 智能体 prompt 不直接引用 SQL；通过 lifecycle 阶段文件加载智能体，orchestrator 在 S16 查阅 `docs/memory-ops-reference.md` |
+| `agent/*.md` | 智能体 prompt 不直接引用 SQL；通过 lifecycle 阶段文件加载智能体，conductor 在 S16 查阅 `docs/memory-ops-reference.md` |
 | `docs/memory-ops-reference.md` | 生命周期驱动后唯一业务规则与 SQL 模板入口 |
 | `validate-config.mjs` | check17 通过 contracts/health_check.sql 校验模块；check14 校验模块入口文件存在 |
 | `kilo.json` | 记忆主通道 = bash + sqlite3 CLI（v2.5-过渡版）；数据库文件 `~/.config/kilo-data/memory.db` |
@@ -154,7 +154,7 @@
 | check17 `[PROJECT_CONTEXT_EMPTY]` | project_context 种子未应用 → 执行 `schema/init.sql` 末尾 INSERT OR IGNORE 段 |
 | check17 `[TRIAL_EXPIRED_PENDING]` | 14 天过期 trial 行未归档 → 手动执行 `UPDATE fact_store SET archived=1 WHERE created_at < date('now','-14 days') AND hit_count < 2` |
 | check17 `[FEEDBACK_LOOP_IDLE]` | dispatch ≥5 但全库 helpful/misleading 反馈 = 0 → M6 Stage 3 未激活，强制输出 `[memory:helpful=...]` 反馈标记 |
-| check17 `[CONTEXT_USE_COUNT_STALE]` | dispatch ≥5 但 project_context use_count 总和 = 0 → M1 query A' UPDATE 未执行，按 memory-ops.md M1 模板执行 `UPDATE...RETURNING` |
+| check17 `[CONTEXT_USE_COUNT_STALE]` | dispatch ≥5 但 project_context use_count 总和 = 0 → M1 query A' UPDATE 未执行，按 `docs/memory-ops-reference.md` M1 模板执行 `UPDATE...RETURNING` |
 | check17 `[VIEWS_QUERYABLE_OK]` | 视图体内 SQL 损坏 → 重新执行 `schema/init.sql` 末尾 CREATE VIEW 段 |
 | FTS5 中文 MATCH 恒 0 命中 | v2.6 前部署的 DB 虚表为 unicode61 分词 → 重建：`DROP TABLE fact_fts; DROP TABLE failure_fts;` 再执行 `schema/init.sql` 中的 CREATE VIRTUAL TABLE 段 |
 

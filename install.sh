@@ -156,7 +156,7 @@ CRITICAL_FILES=(
     ".kilo/instructions/core.md"
     ".kilo/instructions/workflow-core.md"
     ".kilo/instructions/reflection.md"
-    "agent/orchestrator.md"
+    "agent/conductor.md"
 )
 
 MISSING=()

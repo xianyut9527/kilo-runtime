@@ -30,7 +30,7 @@ subagent_type: fixer
 
 ## 记忆召回接口（M3-sub，subagent 自召回失败回溯）
 
-> **v3.2 记忆下沉**：fixer 在 S11 修复前**自行调用 memory.db** 召回同类 symptom 的历史修复策略（M3 失败回溯），不再依赖 orchestrator 集中注入。这是"避免防空转"的关键——同症状修复失败 2 轮时，必须查历史是否已有成功修复策略。
+> **v3.2 记忆下沉**：fixer 在 S11 修复前**自行调用 memory.db** 召回同类 symptom 的历史修复策略（M3 失败回溯），不再依赖 conductor 集中注入。这是"避免防空转"的关键——同症状修复失败 2 轮时，必须查历史是否已有成功修复策略。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 blockers 修复。
 
 **召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M3 查询）：
@@ -85,7 +85,7 @@ convergence:
 
 ## 输出接口（写入 task_context.fixing_history + execution.diffs）
 
-> **写入边界**：fixer 只写入 `fixing_history` + `execution.diffs`，**不写入 `execution.verification`**——修复后自验声明会污染下一轮 verifier 的独立重跑。fixer 自验结果只保留在智能体本地输出供 orchestrator 参考，不进入 task_context。
+> **写入边界**：fixer 只写入 `fixing_history` + `execution.diffs`，**不写入 `execution.verification`**——修复后自验声明会污染下一轮 verifier 的独立重跑。fixer 自验结果只保留在智能体本地输出供 conductor 参考，不进入 task_context。
 
 ```yaml
 status_signal: "DONE" | "DONE_WITH_CONCERNS" | "BLOCKED"

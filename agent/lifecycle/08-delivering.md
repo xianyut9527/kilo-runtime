@@ -2,7 +2,7 @@
 description: 生命周期阶段 08 — 交付。闭环确认、变更回顾、记忆沉淀、task_context 归档、分支收尾。
 stage_id: S16_DELIVERING
 agents:
-  - orchestrator
+  - conductor
 previous_stage: S14_REVIEW_PASSED
 next_stage: S17_DONE
 ---
@@ -18,7 +18,7 @@ next_stage: S17_DONE
 | **阶段 ID** | `S16_DELIVERING` |
 | **上一阶段** | `S10_CHECK_PASSED`（T0/T1）或 `S14_REVIEW_PASSED`（T2+） |
 | **下一阶段** | `S17_DONE`（归档） |
-| **加载智能体** | `orchestrator`（内建，直接调用 memory.db + 归档 task_context） |
+| **加载智能体** | `conductor`（内建，直接调用 memory.db + 归档 task_context） |
 | **模型偏好** | `registry:fast-reasoning`（轻量整理） |
 | **token 预算** | ≤ 6000 |
 
@@ -48,7 +48,7 @@ next_stage: S17_DONE
 
 ### 3. 经验沉淀（sqlite 优先，md 仅作索引兜底）
 
-**T1+ 必走「收尾自检」硬门**；**T0/INQUIRY 命中"价值信号"时同样必走**（见 `agent/orchestrator.md` §记忆编排 T0/INQUIRY 条款）：
+**T1+ 必走「收尾自检」硬门**；**T0/INQUIRY 命中"价值信号"时同样必走**（见 `agent/conductor.md` §记忆编排 T0/INQUIRY 条款）：
 - M4：去重 — 查询 `fact_store` 是否已有同类记录
 - M5：新经验写入 — INSERT `fact_store`（Pattern confidence=0.6，AntiPattern=0.5）
 - M6：反馈 — `[memory:helpful=...]` / `[memory:misleading=...]`（无反馈显式 `[memory:helpful=none]`）

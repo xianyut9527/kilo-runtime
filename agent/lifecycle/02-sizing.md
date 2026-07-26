@@ -2,7 +2,7 @@
 description: 生命周期阶段 02 — 任务定级。按决策树预估 T0/T1/T2/T3，决定后续生命周期路径。
 stage_id: S03_SIZING
 agents:
-  - orchestrator
+  - conductor
 previous_stage: S02_INTENT_DONE
 next_stage: S07_EXECUTING
 ---
@@ -18,7 +18,7 @@ next_stage: S07_EXECUTING
 | **阶段 ID** | `S03_SIZING`（跳 S02 内部过渡） |
 | **上一阶段** | `S02_INTENT_DONE` |
 | **下一阶段** | `S07_EXECUTING`（T0 直达）或 `S05_PLANNING`（T1+） |
-| **加载智能体** | `orchestrator`（内建，无需 task 启动） |
+| **加载智能体** | `conductor`（内建，无需 task 启动） |
 | **模型偏好** | `registry:fast-reasoning` |
 | **token 预算** | ≤ 4000 |
 

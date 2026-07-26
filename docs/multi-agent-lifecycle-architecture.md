@@ -25,7 +25,7 @@
 
 | ID | 智能体名 | 职责 | 对应生命周期阶段 | 模型绑定 | mode | prompt 锚点 |
 |----|----------|------|------------------|----------|------|-------------|
-| 0 | **orchestrator** | 生命周期编排者：意图判定、定级、阶段流转、智能体加载调度、上下文传递、门禁管理、记忆写入 | 全阶段（不亲自执行） | `kilo.json` `agent.orchestrator.model` | primary | `agent/orchestrator.md` |
+| 0 | **conductor** | 生命周期编排者：意图判定、定级、阶段流转、智能体加载调度、上下文传递、门禁管理、记忆写入 | 全阶段（不亲自执行） | `kilo.json` `agent.conductor.model` | primary | `agent/conductor.md` |
 | 1 | **planner** | 规划智能体：设计门、方案设计、单元 DAG 拆分、验收点定义、全量扫描清单 | S05_PLANNING | `kilo.json` `agent.planner.model` | subagent | `agent/planner.md` |
 | 2 | **coder** | 编码智能体：按方案实现代码、输出验收映射表+三件套、状态信号 | S07_EXECUTING | `kilo.json` `agent.coder.model` | subagent | `agent/coder.md` |
 | 3 | **verifier** | 正向验证智能体：按验收标准逐条验证、L1/L2/L3 分层、5元组证据、独立重跑 | S09_CHECKING（正向） | `kilo.json` `agent.verifier.model` | subagent | `agent/verifier.md` |
@@ -35,15 +35,15 @@
 | 7 | **fixer** | 修复智能体：定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题 | S11_FIXING | `kilo.json` `agent.fixer.model` | subagent | `agent/fixer.md` |
 | 8 | **synthesizer-fusion**（v3.1 恢复） | 多模型融合编辑智能体：读取 3 个 coder 输出 + verifier 验证结果，取长补短生成综合最优方案 | MM_FUSING（multiModel 专属） | `kilo.json` `agent.synthesizer-fusion.model` | subagent | `agent/synthesizer-fusion.md` |
 
-> **memory-ops 不作为独立智能体**：记忆写入是 orchestrator 在 S16_DELIVERING 阶段的内建职责（调用 sqlite3 CLI），不需要独立 context window。`docs/memory-ops-reference.md` 保留作为记忆操作的 SQL 模板参考。
+> **memory-ops 不作为独立智能体**：记忆写入是 conductor 在 S16_DELIVERING 阶段的内建职责（调用 sqlite3 CLI），不需要独立 context window。`docs/memory-ops-reference.md` 保留作为记忆操作的 SQL 模板参考。
 
 ### 模型选择策略（v3.1 方案1：模型统一在 kilo.json）
 
-> **单一真相来源**：模型 ID 绑定由 `kilo.json` `agent.<name>.model` 字段统一管理，agent .md / lifecycle / orchestrator / multiModel / 本设计文档均不硬编码模型 ID。变更某智能体模型只需改 `kilo.json` 一处。能力需求矩阵见 `agent/models/registry.md`。
+> **单一真相来源**：模型 ID 绑定由 `kilo.json` `agent.<name>.model` 字段统一管理，agent .md / lifecycle / conductor / multiModel / 本设计文档均不硬编码模型 ID。变更某智能体模型只需改 `kilo.json` 一处。能力需求矩阵见 `agent/models/registry.md`。
 
 | 智能体 | 能力需求（registry 别名） | 理由 |
 |--------|--------------------------|------|
-| orchestrator | `fast-reasoning` / 通用 reasoning | 200K 上下文容纳全流程编排 |
+| conductor | `fast-reasoning` / 通用 reasoning | 200K 上下文容纳全流程编排 |
 | planner | `deep-reasoning` | 架构分析、长上下文、复杂推理最强 |
 | coder | `code-generation` | Code-tuned，编码专精 |
 | verifier | `strict-verification` | 安全敏感、边界敏感、逻辑审查强 |
@@ -60,12 +60,12 @@
 
 ```json
 {
-  "default_agent": "orchestrator",
+  "default_agent": "conductor",
   "agent": {
-    "orchestrator": {
+    "conductor": {
       "mode": "primary",
       "model": "<见 kilo.json 实际绑定>",
-      "prompt": "生命周期编排者：意图判定→定级→按 lifecycle/ 加载智能体→管理上下文传递→门禁管理→记忆写入。详见 agent/orchestrator.md。"
+      "prompt": "生命周期编排者：意图判定→定级→按 lifecycle/ 加载智能体→管理上下文传递→门禁管理→记忆写入。详见 agent/conductor.md。"
     },
     "multiModel": {
       "mode": "primary",
@@ -89,7 +89,7 @@
 > 注：此为结构示例，模型 ID 实际绑定以仓库 `kilo.json` 为单一真相来源（v3.1 方案1）。
 ```
 
-> **subagent 智能体不在 kilo.json 中声明**：planner/coder/verifier 等 7 个职能智能体通过 orchestrator 的 `task` 工具按需启动（`subagent_type` 参数指向对应 agent/*.md），不需要在 kilo.json 注册。这与 Kilo 的 subagent 机制一致——只有 primary agent 需要在 kilo.json 声明。
+> **subagent 智能体不在 kilo.json 中声明**：planner/coder/verifier 等 7 个职能智能体通过 conductor 的 `task` 工具按需启动（`subagent_type` 参数指向对应 agent/*.md），不需要在 kilo.json 注册。这与 Kilo 的 subagent 机制一致——只有 primary agent 需要在 kilo.json 声明。
 
 ---
 
@@ -114,7 +114,7 @@ next_stage: S09_CHECKING
 ### 可插拔机制
 
 #### 加载规则
-1. orchestrator 进入某阶段时，读取对应 `lifecycle/NN-*.md` 的 `agents` 字段
+1. conductor 进入某阶段时，读取对应 `lifecycle/NN-*.md` 的 `agents` 字段
 2. 按 `agents` 列表依次用 `task` 工具启动智能体（`subagent_type: planner/coder/verifier/...`）
 3. 每个智能体启动时注入 `task_context`（见第 3 章）作为上下文
 4. 智能体完成后输出结果 + 更新 `task_context`
@@ -136,8 +136,8 @@ agents:
 
 | 阶段 | T0 | T1 | T2 | T3 |
 |------|----|----|----|----|
-| S01_INTENT | orchestrator | orchestrator | orchestrator | orchestrator |
-| S03_SIZING | orchestrator | orchestrator | orchestrator | orchestrator |
+| S01_INTENT | conductor | conductor | conductor | conductor |
+| S03_SIZING | conductor | conductor | conductor | conductor |
 | S05_PLANNING | — | planner（短设计门） | planner（完整规划） | planner（完整规划） |
 | S07_EXECUTING | coder | coder | coder（按 DAG） | 3×coder（multiModel） |
 | S09_CHECKING（正向） | — | verifier | verifier | verifier |
@@ -145,9 +145,9 @@ agents:
 | S11_FIXING | — | fixer | fixer | fixer |
 | S13_REVIEWING（侧向） | — | — | side-checker | side-checker |
 | S13_REVIEWING（审查） | — | reviewer | reviewer | reviewer |
-| S16_DELIVERING | orchestrator | orchestrator | orchestrator | orchestrator（+synthesizer-fusion 在 MM_FUSING 阶段融合） |
+| S16_DELIVERING | conductor | conductor | conductor | conductor（+synthesizer-fusion 在 MM_FUSING 阶段融合） |
 
-> **T0 直达**：orchestrator 直接加载 coder 执行，无 planner/verifier/reviewer，与现有 workflow-core.md §T0 直达一致。
+> **T0 直达**：conductor 直接加载 coder 执行，无 planner/verifier/reviewer，与现有 workflow-core.md §T0 直达一致。
 
 ---
 
@@ -220,7 +220,7 @@ agents:
 
 | 智能体 | 读取 | 写入 |
 |--------|------|------|
-| orchestrator | 全部 | intent/sizing/status/convergence/memory_injection |
+| conductor | 全部 | intent/sizing/status/convergence/memory_injection |
 | planner | intent/sizing | plan |
 | coder | plan/execution/forbidden_files/memory_injection | execution.diffs[current_unit] |
 | verifier | plan/execution.diffs[current_unit] | verification.forward |
@@ -230,8 +230,8 @@ agents:
 | fixer | verification(issues)/plan/forbidden_files | fixing_history/execution.diffs |
 
 #### 注入机制
-- orchestrator 启动智能体时，将 `task_context.json` 的相关章节作为 `task` 工具 prompt 的一部分注入
-- 智能体完成后，返回结构化结果，orchestrator 更新 `task_context.json`
+- conductor 启动智能体时，将 `task_context.json` 的相关章节作为 `task` 工具 prompt 的一部分注入
+- 智能体完成后，返回结构化结果，conductor 更新 `task_context.json`
 - **不重复从 0 开始**：每个智能体都能看到前序阶段的完整上下文（方案、已完成单元、验证结果、失败历史）
 
 #### 第二层：长期记忆 `memory.db`（保留现有）
@@ -242,7 +242,7 @@ agents:
 - `model_calibration`：模型能力校准
 - `project_context`：项目级用户偏好/安全约束
 
-> **task_context 是短生命周期（单任务），memory.db 是长生命周期（跨任务）**。任务完成后 orchestrator 在 S16_DELIVERING 将关键信息抽取写入 memory.db（dispatch_log + fact_store + failure_db）。
+> **task_context 是短生命周期（单任务），memory.db 是长生命周期（跨任务）**。任务完成后 conductor 在 S16_DELIVERING 将关键信息抽取写入 memory.db（dispatch_log + fact_store + failure_db）。
 
 ---
 
@@ -295,8 +295,8 @@ warning（非 blocker）→ 标记但放行，写入 task_context 供后续参�
 ```
 
 > **不采用投票制**：每个视角都是硬门，任一 FAIL 都必须修复。不存在"多数通过则放行"——质量不打折。
-> **v3.1 机械汇总原则（反自验）**：orchestrator 同时承担编排（写入 task_context）与组合判定。为防止"自写自判"的确认偏误，组合判定必须是**机械汇总**——只读取各视角独立输出的 `verdict` 字段做 AND 运算，不做主观判定、不重新解读证据、不补判。任一视角的 FAIL 由该视角智能体独立给出，orchestrator 不得推翻或降级。
-> **v3.1 convergence-auditor 反向校验**（T2+ 可选硬门）：S09/S13 收齐各视角 verdict 后，orchestrator 内建轻量校验步骤，反推三项：
+> **v3.1 机械汇总原则（反自验）**：conductor 同时承担编排（写入 task_context）与组合判定。为防止"自写自判"的确认偏误，组合判定必须是**机械汇总**——只读取各视角独立输出的 `verdict` 字段做 AND 运算，不做主观判定、不重新解读证据、不补判。任一视角的 FAIL 由该视角智能体独立给出，conductor 不得推翻或降级。
+> **v3.1 convergence-auditor 反向校验**（T2+ 可选硬门）：S09/S13 收齐各视角 verdict 后，conductor 内建轻量校验步骤，反推三项：
 > 1. 每个视角智能体是否真的独立执行（检查 task_context.verification.{forward,reverse,side,review} 是否各有独立 evidence）
 > 2. 是否存在信任传递（grep 智能体输出是否含"coder 说的对""verifier 已 PASS"等措辞）
 > 3. evidence 是否为本轮 fresh（不得复用前序阶段声明）
@@ -377,6 +377,8 @@ S13_REVIEWING
 
 ### 修改
 
+> **历史迁移档案**：以下表格记录的是 v2.x 时代从 `coderAgent` 迁移到 `orchestrator` 的原始动作清单，作为历史档案保留原 `orchestrator` 字样。该角色后续已再次改名为 `conductor`（v3.3，避免与 kilo 内置 agent 重名）；当前架构中以 `conductor` 为唯一编排者智能体名。详见本文件 §1 智能体清单表与 `agent/conductor.md`。
+
 | 文件 | 修改内容 |
 |------|----------|
 | `kilo.json` | `coderAgent` → `orchestrator`；prompt 锚点更新 |
@@ -419,13 +421,13 @@ S13_REVIEWING
 | `agent/capabilities/*.md`（8 文件） | 能力插件合并到对应智能体文件；memory-ops.md 保留作为 SQL 模板参考移至 `docs/memory-ops-reference.md` |
 | `agent/capabilities/` 目录 | 不再需要 |
 
-> **capabilities/memory-ops.md 保留**：记忆操作的 SQL 模板仍有价值，移至 `docs/memory-ops-reference.md` 作为参考文档，orchestrator 在 S16 阶段查阅。
+> **capabilities/memory-ops.md 保留**：记忆操作的 SQL 模板仍有价值，移至 `docs/memory-ops-reference.md` 作为参考文档，conductor 在 S16 阶段查阅。
 
 ### validate-config.mjs 新增检查
 
 | 检查项 | 说明 |
 |--------|------|
-| check23 | 智能体文件完整性：`agent/` 下 8 个智能体 .md 文件存在（orchestrator/planner/coder/verifier/reverse-auditor/side-checker/reviewer/fixer） |
+| check23 | 智能体文件完整性：`agent/` 下 8 个智能体 .md 文件存在（conductor/planner/coder/verifier/reverse-auditor/side-checker/reviewer/fixer） |
 | check24 | lifecycle 阶段文件 `agents` frontmatter 字段声明的智能体全部存在 |
 | check25 | task_context 读写规则一致性：lifecycle 阶段文件声明的智能体在 `agent/` 下有对应 .md |
 
@@ -443,7 +445,7 @@ S13_REVIEWING
 | 安全敏感模块识别 | ✅ 完全保留 |
 | 单元 DAG | ✅ 完全保留，planner 智能体产出 |
 | Circuit Breaker | ✅ 完全保留 |
-| memory.db 记忆系统 | ✅ 完全保留，orchestrator 在 S16 写入 |
+| memory.db 记忆系统 | ✅ 完全保留，conductor 在 S16 写入 |
 | skills 系统 | ✅ 完全保留 |
 
 ### 修改
@@ -479,7 +481,7 @@ S13_REVIEWING
 
 | 风险 | 缓解 |
 |------|------|
-| 并发读写冲突 | orchestrator 是唯一写入者，智能体只读 + 返回结构化结果由 orchestrator 写入 |
+| 并发读写冲突 | conductor 是唯一写入者，智能体只读 + 返回结构化结果由 conductor 写入 |
 | 上下文过大 | task_context 只保留结构化摘要 + 关键证据，不保留完整对话 |
 | 临时文件残留 | 任务结束（S17_DONE）后归档到 memory.db dispatch_log 并删除临时文件 |
 
@@ -487,8 +489,8 @@ S13_REVIEWING
 
 | 定级 | 智能体数量 | 理由 |
 |------|-----------|------|
-| T0 | 1（orchestrator 直接执行） | ≤2 行改动，启动多智能体成本 > 收益 |
-| T1 | 3-4（orchestrator + planner + coder + verifier + reviewer） | 单模块，正向验证+审查足够 |
+| T0 | 1（conductor 直接执行） | ≤2 行改动，启动多智能体成本 > 收益 |
+| T1 | 3-4（conductor + planner + coder + verifier + reviewer） | 单模块，正向验证+审查足够 |
 | T2 | 6-7（+ reverse-auditor + side-checker） | 跨模块，需要全视角交叉验证 |
 | T3 | 8+（+ multiModel 3×coder） | 高风险，全视角 + 多模型并行 |
 
@@ -496,10 +498,10 @@ S13_REVIEWING
 
 | 触发条件 | 降级策略 |
 |----------|----------|
-| 某智能体启动失败 | orchestrator 标记 `[AGENT_UNAVAILABLE]`，跳过该视角，记录降级 |
+| 某智能体启动失败 | conductor 标记 `[AGENT_UNAVAILABLE]`，跳过该视角，记录降级 |
 | reverse-auditor 不可用 | 正向验证 + 审查覆盖（降低反向验证能力） |
 | side-checker 不可用 | 审查的 SCOPE_CREEP 视角部分覆盖侧向 |
-| 多个智能体不可用 | 降级为单 orchestrator 模式 + 标记 `[DEGRADED_SINGLE_AGENT]` |
+| 多个智能体不可用 | 降级为单 conductor 模式 + 标记 `[DEGRADED_SINGLE_AGENT]` |
 | task_context 读写失败 | 降级为信号传递模式（当前实现） + 标记 `[CONTEXT_SHARING_DEGRADED]` |
 
 ---
@@ -508,9 +510,9 @@ S13_REVIEWING
 
 | 单元 | 内容 | 依赖 | 验收标准 |
 |------|------|------|----------|
-| U1 | kilo.json 更新：coderAgent → orchestrator | 无 | kilo.json 合法 + validator PASS |
+| U1 | kilo.json 更新：coderAgent → conductor | 无 | kilo.json 合法 + validator PASS |
 | U2 | agent/ 新建 8 个智能体 .md 文件 | U1 | 8 文件存在 + frontmatter 合规 |
-| U3 | agent/coderAgent.md 重命名为 orchestrator.md + 内容更新 | U2 | 引用一致 |
+| U3 | agent/coderAgent.md 重命名为 conductor.md + 内容更新 | U2 | 引用一致 |
 | U4 | agent/capabilities/ 合并到智能体文件 + 删除目录 | U2,U3 | capabilities/ 不存在 + validator PASS |
 | U5 | agent/lifecycle/*.md frontmatter 加 agents 字段 + 内容更新 | U2,U4 | 8 阶段文件 agents 字段完整 |
 | U6 | agent/lifecycle/README.md 状态机图更新 | U5 | 状态图标注智能体 |
@@ -519,7 +521,7 @@ S13_REVIEWING
 | U9 | workflow-core.md 术语映射注释更新 | U3,U5 | 角色名 → 智能体名 |
 | U10 | validate-config.mjs 新增 check23/24/25 | U2,U5 | 25/25 PASS |
 | U11 | docs/memory-ops-reference.md 从 capabilities/memory-ops.md 迁移 | U4 | 文件存在 + 引用更新 |
-| U12 | task_context 机制文档化（orchestrator.md 中定义读写规则） | U3 | orchestrator.md 含 task_context 章节 |
+| U12 | task_context 机制文档化（conductor.md 中定义读写规则） | U3 | conductor.md 含 task_context 章节 |
 
 ---
 

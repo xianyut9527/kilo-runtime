@@ -19,7 +19,7 @@ keywords: output-schema, deliverable, marker, verdict
 
 ## 结构化输出格式（强制）
 
-为提高解析稳定性，orchestrator 必须按以下格式解析各 agent 输出。格式错误 → 标记 `[MALFORMED_OUTPUT]` 要求重试。
+为提高解析稳定性，conductor 必须按以下格式解析各 agent 输出。格式错误 → 标记 `[MALFORMED_OUTPUT]` 要求重试。
 
 ### coder 输出格式（XML）
 ```xml
@@ -60,8 +60,8 @@ keywords: output-schema, deliverable, marker, verdict
 
 ### reviewer 输出格式（markdown 主输出 + JSON 摘要同步）
 
-> reviewer 实际采用**双格式并行**：markdown 便于人工阅读，JSON 摘要便于 orchestrator 自动解析。
-> orchestrator 优先解析 JSON 摘要；JSON 缺失则回退解析 markdown。
+> reviewer 实际采用**双格式并行**：markdown 便于人工阅读，JSON 摘要便于 conductor 自动解析。
+> conductor 优先解析 JSON 摘要；JSON 缺失则回退解析 markdown。
 ```json
 {
   "risk": "LOW|MEDIUM|HIGH",
@@ -126,9 +126,9 @@ keywords: output-schema, deliverable, marker, verdict
 ## 根因回传（强制）
 ```
 
-## 输出自检规则（orchestrator 必须执行）
+## 输出自检规则（conductor 必须执行）
 
-agent 返回后、进入下游流程前，orchestrator 必须按以下规则自检：
+agent 返回后、进入下游流程前，conductor 必须按以下规则自检：
 
 ### v2.4 Preflight 校验（#10 — agent 输出前自检）
 
@@ -150,9 +150,9 @@ agent 返回后、进入下游流程前，orchestrator 必须按以下规则自�
 
 | 阶段 | 行为 | 失败处理 |
 |---|---|---|
-| 1. agent prompt 内嵌 preflight 模板 | 强制 agent 输出前自检 | 模板缺失 → orchestrator 在委派包补充 |
+| 1. agent prompt 内嵌 preflight 模板 | 强制 agent 输出前自检 | 模板缺失 → conductor 在委派包补充 |
 | 2. agent 输出含 `[PREFLIGHT_CHECK]` 块 | 形式合规 | 缺失 → `[PREFLIGHT_MISSED]`，不阻断 |
-| 3. orchestrator 解析 preflight + schema | 双重校验 | preflight 通过但 schema 失败 → `[MALFORMED_OUTPUT]`（同 v2.3 行为） |
+| 3. conductor 解析 preflight + schema | 双重校验 | preflight 通过但 schema 失败 → `[MALFORMED_OUTPUT]`（同 v2.3 行为） |
 | 4. happy path | preflight + schema 都通过 → 直接进入下游 | 节省 1 次重试 roundtrip |
 
 #### 与事后自检的关系
@@ -184,7 +184,7 @@ agent 返回后、进入下游流程前，orchestrator 必须按以下规则自�
 
 ### 通用状态信号提取
 
-无论 agent 使用何种格式，orchestrator 必须能提取以下状态之一：
+无论 agent 使用何种格式，conductor 必须能提取以下状态之一：
 - `DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED`
 - 提取失败 → `[MISSING_STATUS_SIGNAL]`
 
@@ -194,7 +194,7 @@ agent 返回后、进入下游流程前，orchestrator 必须按以下规则自�
 |------|----------|------|
 | `[MALFORMED_OUTPUT]` | JSON/XML 格式错误，重试 1 次后仍失败 | 升级 reviewer |
 | `[MISSING_STATUS_SIGNAL]` | 无法提取 DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED | 要求 agent 显式输出状态 |
-| `[PREFLIGHT_MISSED]` | v2.4 agent 输出未含 `[PREFLIGHT_CHECK]` 块 | 不阻断，仅记 warn；orchestrator 提示 agent 后续补 |
+| `[PREFLIGHT_MISSED]` | v2.4 agent 输出未含 `[PREFLIGHT_CHECK]` 块 | 不阻断，仅记 warn；conductor 提示 agent 后续补 |
 
 ## 标记语言
 
@@ -212,15 +212,15 @@ agent 返回后、进入下游流程前，orchestrator 必须按以下规则自�
 | `[PERF_GAP_*]` | 性能检测项未通过 | verifier |
 | `[MISSING_STATUS_SIGNAL]` | coder/coder 未输出状态信号 | verifier |
 | `[NEEDS_REVIEW]` | fixer 连续 2 轮同症状，需升级 reviewer | fixer |
-| `[PLAN_DEVIATION]` | 执行中计划偏差 | planner/orchestrator |
-| `[DESIGN_GATE_PASS]` / `[DESIGN_GATE_MISS]` | 设计门通过/未过 | planner/orchestrator |
+| `[PLAN_DEVIATION]` | 执行中计划偏差 | planner/conductor |
+| `[DESIGN_GATE_PASS]` / `[DESIGN_GATE_MISS]` | 设计门通过/未过 | planner/conductor |
 | `[BLOCKED]` | coder/coder 遇阻塞需升级 | coder/coder |
 | `[NEEDS_CONTEXT]` | coder/coder 缺少上下文 | coder/coder |
 | `[DONE_WITH_CONCERNS]` | 完成功能但有遗留风险 | coder/coder |
-| `[MISSING_FIXER_WRITE]` | fixer 完成后未写 dispatch_log.error_code | orchestrator（evolution.md §1.5）|
-| `[MISSING_MEMORY_WRITE]` | T1+ 任务收尾未按 SQL 模板写入 dispatch_log / fact_store / failure_db / model_calibration 任一项 | orchestrator（workflow-core.md §收尾自检）|
+| `[MISSING_FIXER_WRITE]` | fixer 完成后未写 dispatch_log.error_code | conductor（evolution.md §1.5）|
+| `[MISSING_MEMORY_WRITE]` | T1+ 任务收尾未按 SQL 模板写入 dispatch_log / fact_store / failure_db / model_calibration 任一项 | conductor（workflow-core.md §收尾自检）|
 | `[MEMORY_LAYER_HOLLOW]` | memory.db 表结构齐全但 dispatch_log/fact_store 全空行，疑似 sqlite 层空跑 | validate-config.mjs check17 |
-| `[MULTIMODEL_DEGRADED]` | multiModel 触发限流降级为单 coder | orchestrator（workflow-core.md multiModel 并发配额）|
-| `[MULTIMODEL_ABANDONED]` | multiModel 累计 3 次失败，放弃融合 | orchestrator（workflow-core.md multiModel 并发配额）|
+| `[MULTIMODEL_DEGRADED]` | multiModel 触发限流降级为单 coder | conductor（workflow-core.md multiModel 并发配额）|
+| `[MULTIMODEL_ABANDONED]` | multiModel 累计 3 次失败，放弃融合 | conductor（workflow-core.md multiModel 并发配额）|
 
 **写法规则**：全大写，下划线分隔；就近引用；路径格式 `文件:行号`；空值显式写 `无`。

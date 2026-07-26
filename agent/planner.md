@@ -30,7 +30,7 @@ subagent_type: planner
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 
-> **v3.2 记忆下沉**：planner 在 S05 规划前**自行调用 memory.db** 召回同类任务历史，不再依赖 orchestrator 在 S01/S03 的集中注入。这避免 orchestrator 上下文压力 + 让规划直接触达历史经验。
+> **v3.2 记忆下沉**：planner 在 S05 规划前**自行调用 memory.db** 召回同类任务历史，不再依赖 conductor 在 S01/S03 的集中注入。这避免 conductor 上下文压力 + 让规划直接触达历史经验。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 task_context 规划。
 
 **召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
@@ -108,5 +108,5 @@ quality_gate:
 - 短设计门可以只有几句话，但必须输出
 - 方案须经确认或按授权放行，不得自行进入执行阶段
 - 重复模式必须产出全量扫描清单 + 组件化方案
-- 输出必须显式标记 `[DESIGN_GATE_PASS]`（由 orchestrator 或 lifecycle 添加）
+- 输出必须显式标记 `[DESIGN_GATE_PASS]`（由 conductor 或 lifecycle 添加）
 - T2+ 必须包含单元 DAG + 依赖关系 + 风险应对

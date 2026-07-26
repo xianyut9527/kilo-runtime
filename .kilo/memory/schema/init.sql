@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS skill_usage_events (
     skill_name TEXT NOT NULL,                   -- skill 目录名
     trigger TEXT NOT NULL,                      -- 短描述（≤40 字符）
     outcome TEXT NOT NULL CHECK(outcome IN ('success','fail','partial')),
-    agent TEXT,                                 -- 哪个智能体触发（orchestrator / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel）
+    agent TEXT,                                 -- 哪个智能体触发（conductor / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel）
     task_tier TEXT,                             -- T0/T1/T2/T3
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -337,7 +337,7 @@ INSERT OR IGNORE INTO project_context (context_id, category, title, content, sou
  '["architecture","seven-layer","brain","evolution"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 
 ('PC-002', 'TECH_STACK', '模型与 MCP 配置（kilo.json）',
- '主模型 hx/MiniMax-M3（orchestrator + coder）；架构/审查 kimi-k3 + glm-5.2；verifier/reverse-auditor glm-5.2；fixer kimi-k2.7-code/deepseek-v4-flash。MCP：context7（文档）+ gitnexus（代码图谱）+ playwright（浏览器自动化，谨慎用）。记忆通道：bash + sqlite3 CLI 主通道（v2.5-过渡版）；可选 memory-mcp（v3.0，kilo.json enabled:false 默认关闭）。已移除 ddg-search / 第三方 sqlite MCP（内存爆炸风险）。compaction auto，threshold 65%，tail_turns 25，preserve_recent_tokens 60K。',
+ '主模型 hx/MiniMax-M3（conductor + coder）；架构/审查 kimi-k3 + glm-5.2；verifier/reverse-auditor glm-5.2；fixer kimi-k2.7-code/deepseek-v4-flash。MCP：context7（文档）+ gitnexus（代码图谱）+ playwright（浏览器自动化，谨慎用）。记忆通道：bash + sqlite3 CLI 主通道（v2.5-过渡版）；可选 memory-mcp（v3.0，kilo.json enabled:false 默认关闭）。已移除 ddg-search / 第三方 sqlite MCP（内存爆炸风险）。compaction auto，threshold 65%，tail_turns 25，preserve_recent_tokens 60K。',
  'kilo.json', 3,
  '["config","model","mcp","compaction","kilo-json"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 

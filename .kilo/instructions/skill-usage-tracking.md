@@ -12,7 +12,7 @@ metadata:
 
 # Skill 使用频次记录协议（v2.5 — SQLite 唯一记忆）
 
-> **v2.5 强制变更**：所有 skill 使用频次数据必须写入 SQLite `skill_usage_events` 表（schema/init.sql）。**禁止** md append（`.kilo/memory/skill-usage.log` 已被废弃，由 `api/migrate_skill_usage_log_to_sqlite.sql` 一次性迁移）。
+> **v2.5 强制变更**：所有 skill 使用频次数据必须写入 SQLite `skill_usage_events` 表（schema/init.sql）。**禁止** md append（`.kilo/memory/skill-usage.log` 已被废弃，v2.5 一次性迁移至 SQLite 后该 .log 文件及对应迁移脚本已在 v2.6.2 精简中删除）。
 >
 > **sqlite 唯一记忆原则**：md 文件只存静态规则（policy）和指针（index），不累积时序数据。时序数据全部入 SQLite（`dispatch_log` / `skill_usage_events` / `fact_store.hit_count` 等），通过 FTS5 / 索引 / 视图高效查询。
 >
@@ -34,7 +34,7 @@ metadata:
 | `skill_name` | skill 目录名（如 `verification-before-completion`） |
 | `trigger` | 短描述（≤40 字符，如 `U1 前置加载` / `反思触发`） |
 | `outcome` | `success` / `fail` / `partial` |
-| `agent` | 哪个智能体触发（orchestrator / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel） |
+| `agent` | 哪个智能体触发（conductor / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel） |
 | `task_tier` | T0/T1/T2/T3 |
 | `created_at` | 写入 SQLite 的时间（默认 `datetime('now')`） |
 
@@ -58,7 +58,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'));
 - 仅记录 skill 元数据（skill_name / trigger / outcome），不记录内容
 - 失败重试算 1 次 `partial`，不重复写多行
 - 同会话同 skill 连续 3 次同 outcome 合并为 1 行（trigger 标注 `merged`）
-- coder-A / B / C（multiModel 模式下）、multiModel 自身、verifier、reverse-auditor、side-checker 不参与本协议（仅主流程 orchestrator + planner + coder + fixer + reviewer 记录）
+- coder-A / B / C（multiModel 模式下）、multiModel 自身、verifier、reverse-auditor、side-checker 不参与本协议（仅主流程 conductor + planner + coder + fixer + reviewer 记录）
 
 ## 5. 统计消费（v2.5 推荐 SQL 查询）
 
@@ -104,7 +104,7 @@ v2.5 起 `contracts/health_check.sql` 不直接验证 `skill_usage_events`（无
 
 ## 7. 相关文件
 
-- `api/migrate_skill_usage_log_to_sqlite.sql` — 从 .log 文件一次性导入历史数据
-- `policy/skills-lifecycle.md` — SKILL.md 分类与生命周期（指针文件）
-- `schema/init.sql` — skill_usage_events 表 DDL 唯一源
+- `schema/init.sql`（`.kilo/memory/schema/init.sql`） — skill_usage_events 表 DDL 唯一源
+- `.kilo/instructions/skills-lifecycle.md` — SKILL.md 分类与生命周期
 - `.kilo/memory/README.md` §v2.5 — sqlite 唯一记忆原则说明
+- `docs/memory-ops-reference.md` — skill_usage_events 写入 SQL 模板

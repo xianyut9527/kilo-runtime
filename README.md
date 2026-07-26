@@ -6,7 +6,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 
 ## 当前设计
 
-- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow-core.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`workflow-reference.md` / `skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 orchestrator 在需要时主动读取。`security-checklist.md` 作为 verifier 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按智能体按需加载，不作为通用上下文全量注入。
+- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow-core.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`workflow-reference.md` / `skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 conductor 在需要时主动读取。`security-checklist.md` 作为 verifier 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按智能体按需加载，不作为通用上下文全量注入。
 - **长文档转为参考资料**：`AGENTS.md` 保留为设计标准和人工维护参考，不再承担高频运行时注入职责。
 - **默认路由**：模型选择只在 `kilo.json` 中维护；运行规则按角色和任务复杂度路由，不硬编码具体模型名。
 - **扩展入口内置**：默认仅启用 `gitnexus` 辅助调用链/影响面分析；`context7` 远程 MCP（最新文档检索）与 `playwright`（浏览器端验证）按需手动开启。
@@ -65,7 +65,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │       ├── schema/               # DDL 唯一源（init.sql = 7 表 + 26 索引 + 4 视图 + 2 FTS5 trigram 虚表）
 │       └── contracts/            # 跨层契约（health_check.sql，被 validate-config.mjs check17 调用）
 ├── agent/                        # Kilo 智能体定义（生命周期驱动，全局可用）
-│   ├── orchestrator.md           # 生命周期编排者（加载智能体 + task_context 共享 + 门禁）
+│   ├── conductor.md           # 生命周期编排者（加载智能体 + task_context 共享 + 门禁）
 │   ├── planner.md                # 规划智能体（设计门、DAG、验收点）
 │   ├── coder.md                  # 编码智能体（实现、自测、三件套）
 │   ├── verifier.md               # 正向验证智能体（L1/L2/L3、5 元组证据）
@@ -76,14 +76,14 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   ├── multiModel.md             # 多模型并行融合模式（T3 自动触发，用户可手动选择）
 │   ├── lifecycle/                # 生命周期阶段定义（状态机主线索）
 │   │   ├── README.md             # 8 阶段总览 + 智能体加载映射 + 组合规则
-│   │   ├── 01-intent.md          # S01 意图判定 [orchestrator]
-│   │   ├── 02-sizing.md          # S03 任务定级 [orchestrator]
+│   │   ├── 01-intent.md          # S01 意图判定 [conductor]
+│   │   ├── 02-sizing.md          # S03 任务定级 [conductor]
 │   │   ├── 03-design.md          # S05 设计门 [planner]
 │   │   ├── 04-implementation.md  # S07 实现 [coder]
 │   │   ├── 05-verification.md    # S09 验证 [verifier + reverse-auditor]
 │   │   ├── 06-review.md          # S13 审查 [side-checker + reviewer]
 │   │   ├── 07-repair.md          # S11 修复 [fixer]
-│   │   └── 08-delivering.md      # S16 交付 [orchestrator]
+│   │   └── 08-delivering.md      # S16 交付 [conductor]
 │   └── models/
 │       └── registry.md           # 模型能力矩阵 + 按智能体选择策略 + 多样性规则
 ├── install.ps1                   # Kilo 配置安装脚本（Windows）

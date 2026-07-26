@@ -30,7 +30,7 @@ subagent_type: verifier
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 
-> **v3.2 记忆下沉**：verifier 在 S09 验证前**自行调用 memory.db** 召回历史 anti-pattern，用于补验已知易错点。不再依赖 orchestrator 集中注入。
+> **v3.2 记忆下沉**：verifier 在 S09 验证前**自行调用 memory.db** 召回历史 anti-pattern，用于补验已知易错点。不再依赖 conductor 集中注入。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 acceptance_criteria 验证。
 
 **召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：

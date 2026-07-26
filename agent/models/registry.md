@@ -9,7 +9,7 @@ description: 模型能力矩阵 + 按智能体能力需求选择策略 + 多样�
 1. **模型是资源，不是角色**：`kilo.json` `agent.<name>.model` 字段统一声明每个智能体绑定哪个模型 ID；本文件**不绑定模型 ID**，只定义能力需求矩阵。
 2. **能力匹配优先**：按智能体的能力需求选模型，而非按 agent 名称硬编码。`kilo.json` 声明的模型应满足本文件 §按智能体能力需求矩阵 中该智能体的能力要求。
 3. **多样性保障**：multiModel 模式下 3 个 coder 必须选不同厂商/不同架构模型。
-4. **单一真相来源**：模型 ID 变更只在 `kilo.json` 一处修改，agent .md / lifecycle / orchestrator / multiModel 均不硬编码模型 ID。
+4. **单一真相来源**：模型 ID 变更只在 `kilo.json` 一处修改，agent .md / lifecycle / conductor / multiModel 均不硬编码模型 ID。
 
 ## 模型能力矩阵（参考，实际选择见 kilo.json）
 
@@ -29,11 +29,11 @@ description: 模型能力矩阵 + 按智能体能力需求选择策略 + 多样�
 
 > 本表定义每个智能体的**能力需求**（registry 别名），`kilo.json` 声明的模型应满足该能力需求。变更某智能体的模型只需改 `kilo.json`，无需改本文件。
 
-### 单任务生命周期（orchestrator 编排）
+### 单任务生命周期（conductor 编排）
 
 | 智能体 | 生命周期阶段 | 能力需求（registry 别名） | 能力要点 |
 |--------|-------------|--------------------------|----------|
-| `orchestrator` | `S01_INTENT` / `S03_SIZING` / `S16_DELIVERING` | `fast-reasoning` | 低延迟、轻量判定、记忆写入 |
+| `conductor` | `S01_INTENT` / `S03_SIZING` / `S16_DELIVERING` | `fast-reasoning` | 低延迟、轻量判定、记忆写入 |
 | `planner` | `S05_PLANNING` | `deep-reasoning` | 架构分析、长上下文、复杂推理 |
 | `coder` | `S07_EXECUTING` | `code-generation` | 编码专精、风格一致、最小改动 |
 | `verifier` | `S09_CHECKING`（正向） | `strict-verification` | 边界敏感、逻辑审查、安全敏感 |
@@ -71,9 +71,9 @@ description: 模型能力矩阵 + 按智能体能力需求选择策略 + 多样�
 {
   "model": "hx/MiniMax-M3",
   "small_model": "hx/MiniMax-M2.7-highspeed",
-  "default_agent": "orchestrator",
+  "default_agent": "conductor",
   "agent": {
-    "orchestrator":         { "mode": "primary",  "model": "hx/kimi-k2.6",       "prompt": "..." },
+    "conductor":         { "mode": "primary",  "model": "hx/kimi-k2.6",       "prompt": "..." },
     "multiModel":           { "mode": "primary",  "model": "hx/kimi-k2.6",       "prompt": "..." },
     "synthesizer-fusion":   { "mode": "subagent", "model": "hx/kimi-k2.6",       "prompt": "..." },
     "planner":              { "mode": "subagent", "model": "hx/kimi-k3",         "prompt": "..." },

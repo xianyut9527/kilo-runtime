@@ -30,7 +30,7 @@ subagent_type: coder
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 
-> **v3.2 记忆下沉**：coder 在 S07 编码前**自行调用 memory.db** 召回同类 pattern/anti-pattern，不再依赖 orchestrator 集中注入。让编码直接触达历史经验，避免重复造轮子。
+> **v3.2 记忆下沉**：coder 在 S07 编码前**自行调用 memory.db** 召回同类 pattern/anti-pattern，不再依赖 conductor 集中注入。让编码直接触达历史经验，避免重复造轮子。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 plan 编码。
 
 **召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
@@ -80,7 +80,7 @@ plan:                                   # planner 输出
 
 ## 输出接口（写入 task_context.execution）
 
-> **写入边界**：coder 只写入 `execution.diffs/changes/acceptance_map/risks/encoding_scan`，**不写入 `execution.verification`**——自验声明会污染 verifier 的独立重跑。coder 自验结果只保留在智能体本地输出供 orchestrator 参考，不进入 task_context。
+> **写入边界**：coder 只写入 `execution.diffs/changes/acceptance_map/risks/encoding_scan`，**不写入 `execution.verification`**——自验声明会污染 verifier 的独立重跑。coder 自验结果只保留在智能体本地输出供 conductor 参考，不进入 task_context。
 
 ```yaml
 status_signal: "DONE" | "DONE_WITH_CONCERNS" | "NEEDS_CONTEXT" | "BLOCKED"

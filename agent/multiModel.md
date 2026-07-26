@@ -149,12 +149,12 @@ multiModel（多模型融合模式）
 | 任一组件触发 RATE_LIMIT 3 次 | 降级 single-coder 直办，标记 `[MULTIMODEL_DEGRADED]` |
 | 累计 3 次 multiModel 失败 | 停止 multiModel，single-coder 交付 + `[MULTIMODEL_ABANDONED]` |
 
-## 与 orchestrator 的区别
+## 与 conductor 的区别
 
-| | orchestrator | multiModel |
+| | conductor | multiModel |
 |--|-------------|------------|
 | **触发** | 自动定级 T0-T3，T3 内部才走 multiModel | 用户手动选择，所有任务都走多模型 |
-| **融合角色** | 不适用（orchestrator 不走融合） | 独立 synthesizer-fusion 智能体（v3.1 恢复，multiModel 不参与融合） |
+| **融合角色** | 不适用（conductor 不走融合） | 独立 synthesizer-fusion 智能体（v3.1 恢复，multiModel 不参与融合） |
 | **输出** | 单一方案 | 综合融合方案（集各家之长） |
 | **成本** | 大部分任务单路执行 | 所有任务 3-5 倍 token 消耗 |
 | **适用场景** | 日常开发，自动权衡效率与质量 | 核心逻辑、安全敏感、用户要求"极高质量" |
