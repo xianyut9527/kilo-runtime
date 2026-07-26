@@ -989,8 +989,8 @@ function check13HermesInstallExcludeSync() {
   const name = 'install-hermes EXCLUDE 一致性（已废弃）';
   return { name, pass: true, detail: 'install-hermes 脚本已删除，本检查项不再执行' };
 }
-// ---------- Check 14: 记忆模块文件存在性（v2.5 模块边界：.kilo/memory/{README,AGENTS,schema,policy,api,contracts}） ----------
-// 验证：模块入口文件 + DDL + 关键 policy 全部存在；模块根目录不可缺失
+// ---------- Check 14: 记忆模块文件存在性（v2.6.2 模块边界：.kilo/memory/{README,AGENTS,schema,contracts}） ----------
+// 验证：模块入口文件 + DDL + 关键文件全部存在；模块根目录不可缺失
 // v2.5：sqlite 唯一记忆 — 禁止 .kilo/memory/skill-usage.log 存在（必须迁移至 skill_usage_events 表）
 function check14MemoryEnabled(config) {
   const name = '记忆模块完整性（.kilo/memory/ v2.6.2 边界）';
@@ -1019,7 +1019,7 @@ function check14MemoryEnabled(config) {
   if (config && typeof config === 'object' && 'memory' in config) {
     return { name, pass: false, detail: 'kilo.json 存在已废弃的 memory 字段（v2.2 起记忆开关以 .kilo/memory/ 目录存在性为准，请删除该字段）' };
   }
-  return { name, pass: true, detail: `记忆模块完整（${required.length} 个文件齐全：README + AGENTS + schema + contracts + 13 个 api + 10 个 policy；skill-usage.log 已迁移）` };
+  return { name, pass: true, detail: `记忆模块完整（${required.length} 个文件齐全：README + AGENTS + schema + contracts；skill-usage.log 已迁移；policy/ 目录已清理）` };
 }
 
 // ---------- Check 15: 全 repo 编码健康度扫描（BOM/U+FFFD/GBK） ----------

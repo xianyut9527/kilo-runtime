@@ -11,7 +11,7 @@ keywords: skills, lifecycle, sqlite, fact-store, no-md-append
 > - **how 模板**（SKILL.md = 工作流程模板，不累积时序）
 > - **what 数据**（PATTERN / ANTIPATTERN / RECIPE / WARNING）必须入 `fact_store`，禁止 md append
 >
-> **回写流程已迁移**：去重查询 + fact_store 写入 + skill 升级检测 的完整逻辑已迁移到 `.kilo/memory/policy/fact_dedup.md` 与 `.kilo/memory/policy/skill_upgrade.md`。
+> **回写流程**：去重查询 + fact_store 写入 + skill 升级检测 的完整逻辑由 `.kilo/memory/AGENTS.md` 与 `README.md` 统一定义。
 >
 > 本文件保留 **SKILL.md 分类表 + 回写触发条件 + SKILL.md 条目模板 + frontmatter 规范**（即 SKILL.md 文件层面的生命周期）；不再重复 sqlite fact_store 的写入规则。
 >
@@ -55,7 +55,7 @@ keywords: skills, lifecycle, sqlite, fact-store, no-md-append
 
 ## 回写触发条件
 
-以下场景触发 skills 回写（实际写入 sqlite fact_store，详见 `.kilo/memory/policy/fact_dedup.md`）：
+以下场景触发 skills 回写（实际写入 sqlite fact_store，详见 `.kilo/memory/AGENTS.md`）：
 
 1. 同类错误出现 2 次及以上
 2. 用户明确纠正
@@ -63,7 +63,7 @@ keywords: skills, lifecycle, sqlite, fact-store, no-md-append
 4. 未记录经验导致验证失败
 5. reviewer 标注 `[建议回写 skills]`
 
-**完整回写流程**（去重 SQL → fact_store INSERT/UPDATE → skill 升级检测）见 `.kilo/memory/policy/fact_dedup.md`。
+**完整回写流程**（去重 SQL → fact_store INSERT/UPDATE → skill 升级检测）见 `.kilo/memory/AGENTS.md`。
 
 ## SKILL.md 条目模板
 
