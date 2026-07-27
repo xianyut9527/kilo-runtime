@@ -25,20 +25,20 @@ nodes:
     note: M1 等效记忆注入；3 个 coder 相同内容（公平性），降级不阻塞
 
   - id: MM_EXECUTING
-    required: [coder-a, coder-b, coder-c]    # 3 coder 必配，frontmatter mount: MM_EXECUTING 覆盖
+    required: [coder-a, coder-b, coder-c]
     note: 3 coder 并行、互不知晓；多样化硬规则：必须不同厂商/架构模型
     parallel: true                            # 并行执行（无 order，视角隔离）
 
   - id: MM_CHECKING
-    required: [verifier]                      # verifier 对 3 份输出分别独立验证
+    required: [verifier]
     note: verifier 对 3 份输出分别独立验证；写 verification.forward
 
   - id: MM_FUSING
-    required: [synthesizer-fusion]            # 独立融合编辑
+    required: [synthesizer-fusion]
     note: 独立融合编辑；隔离硬门：不读拆分意图/模型身份/task_context.intent
 
   - id: MM_FCHECK
-    required: [verifier]                      # 融合后再次验证
+    required: [verifier]
     note: 融合后验证；写 verification.forward.fusion_check
 
   - id: MM_DELIVERING
@@ -71,9 +71,6 @@ edges:
   - { from: MM_DELIVERING, to: MM_ARCHIVED }
 
 # 多样化硬规则（从原 capabilities.yaml 迁移，仅本子图使用）
-# 3 个 coder 必须绑定不同 (vendor, architecture) 的模型——防止输出趋同
-# bootstrap 校验 coder-a/b/c 在 kilo.json 绑定模型的 (vendor, architecture) 两两不同
-# 违反 → [DIVERSITY_VIOLATION]，不进入 MM_EXECUTING
 diversity_rule:
   applies_to: [coder-a, coder-b, coder-c]
   dimensions:
@@ -81,4 +78,10 @@ diversity_rule:
     architecture: required   # 模型架构两两不同
   on_violation: DIVERSITY_VIOLATION
 
-# 降级规则见 agent/multiModel.md §异常处理（唯一真相，本文件不重复声明）
+# 降级规则见 agent/multiModel.md §异常处理（唯一真相）
+#
+# 子图异常处理主权：MM_* 节点不适用主图 graph.yaml 节点级 on_fail 派发
+# （abort/retry_once/degrade/escalate/pause）。子图异常按 multiModel.md §异常处理
+# 表格处理（coder BLOCKED → 补上下文重试；3 份 FAIL → 用户降级；RATE_LIMIT 3 次 →
+# [MULTIMODEL_DEGRADED]；累计 3 次 → [MULTIMODEL_ABANDONED]）。
+# timeouts 仍适用：子图智能体经 task 工具启动，per_agent_s 守卫照常生效。

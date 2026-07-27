@@ -22,6 +22,7 @@ subagent_type: reverse-auditor
 mount:
   - at: CHECKING
     when: "config.agents.reverse_auditor"
+    on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED（不阻塞主流程）
 
 # task_context：读写边界声明
 #   read   可读切片（intent 原始需求；execution.diffs 实际产物；changes 变更清单；acceptance_map 验收映射）

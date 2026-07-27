@@ -49,15 +49,17 @@ forbid_write: [execution.verification]   # 反自验硬门
 
 1. **读图**：`lifecycle/graph.yaml`（主 DAG，节点含 `required` 必配角色）+ `lifecycle/multimodel-graph.yaml`（T3 子图），派生挂载点全集——`{on:bootstrap, on:done}` ∪ 每个节点 N 的 `{pre:N, N, post:N}`。type: stage 的节点执行逻辑文件路径自动派生：`stages/<id 小写>.md`（如 PLANNING → stages/planning.md）。
 2. **读注册**：扫描 `agent/*.md` 全部 frontmatter（YAML 头），按 `mount[].at` 把智能体注册进对应挂载点（携带 `order`/`when`/`on_fail`）——**文件制自动注册，丢一个 .md 文件即挂载**（manifest 与行为文件合二为一，单源无冗余）。
-3. **读配置**：`lifecycle/config.yaml`（tier_defaults + overrides + convergence）。
+3. **读配置**：`lifecycle/config.yaml`（tier_defaults + overrides + convergence + timeouts）。
 4. **校验**（任一失败 → 启动报错 `[ASSEMBLY_FAIL]`，不进入运行）：
    - graph.yaml 每条 edge 的 from/to 必须引用已声明 node
    - 每个 frontmatter `mount[].at` 必须命中派生挂载点；`on_fail` ∈ {abort,warn,skip}
+   - graph.yaml 节点 `on_fail`（若声明）∈ {abort, retry_once, degrade, escalate, pause}；未声明按 `config.yaml §on_fail 默认值规则` 求值并写入 resolved 视图
+   - `config.yaml timeouts` 段：`per_agent_s` 键名与 `agent/*.md` frontmatter 智能体名（去 .md + 连字符转下划线）一致；`per_tier_multiplier` 键 ⊆ {T0,T1,T2,T3}；数值为正整数
    - 每个非内建节点 `required: [role...]` 的角色，必须有 ≥1 个 frontmatter 在该节点主挂载点注册（`when` 求值后 active 覆盖在运行时再校验）
    - `config.yaml overrides.disabled_agents` 中的角色若是某节点 `required` → 报错（禁用了必配角色）
     - multiModel 子图：coder-a/b/c 绑定模型的 `(vendor, architecture)` 两两不同（`multimodel-graph.yaml` `diversity_rule` 声明，人工校验，违反 → `[DIVERSITY_VIOLATION]`）
     - > **能力匹配**：无机械校验；模型绑定在 `kilo.json` `agent.<name>.model`，能力倾向参考 `docs/model-registry.md` 人工维护。
-5. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, order, when, on_fail } ]（按 order 升序，无 order 为并行组）}` + edges 表。运行时查表，零重复解析。
+5. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, order, when, on_fail } ]（按 order 升序，无 order 为并行组）}` + `{ nodeId → on_fail_resolved }` + edges 表 + `{ agent → timeout_s }` 预算表（per_agent_s × tier_multiplier）。运行时查表，零重复解析。
 
 > **运行时零解析**：装配完成后，conductor 每进入一阶段只查 resolved 视图：挂载点 → 有序/并行智能体列表 → `when` 条件对照 `task_context.config.agents` 求值过滤 → `task` 工具启动。
 
@@ -139,7 +141,12 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
   },
   "fixing_history": [...],
   "memory_injection": {...},
-  "status": "...",
+  "status": "RUNNING" | "PAUSED" | "DEGRADED" | "DONE" | "FAILED",
+  #   RUNNING   — 正常流转中
+  #   PAUSED    — on_fail: pause / [CIRCUIT_BREAKER] 触发，等用户决策
+  #   DEGRADED  — 基础设施降级（memory/agent/context 不可用），主流程继续
+  #   DONE      — 终态，已交付
+  #   FAILED    — [ASSEMBLY_FAIL] / 不可恢复错误，终止
   "convergence": {
     "round": 0,
     "max_rounds": 5,            # 阈值来源：lifecycle/config.yaml convergence
@@ -176,7 +183,9 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 1. 求值 `when`（对照 `task_context.config.agents` + `config.yaml overrides.condition_overrides`）；无 `when` = 必加载
 2. 取 frontmatter 所在的 `agent/<name>.md` 行为文件 + 模型（kilo.json 绑定）
 3. 按 frontmatter `task_context.read` 注入上下文切片，按 `isolation.forbid_read` 执行视角隔离
-4. `task` 工具启动；返回后按 frontmatter `task_context.write` 收回结构化结果
+4. 查 resolved 视图取 `timeout_s = per_agent_s[<name>] × per_tier_multiplier[<tier>]`（缺 per_agent_s 回退 `stage_default_s`）；`task` 工具启动，记录 start_time
+5. **超时守卫**：wall-clock 超过 `timeout_s` 智能体仍未返回 → 标记 `[AGENT_TIMEOUT]`，按当前节点 `on_fail` 派发（见 §异常处理派发表）；`agent_startup_s` 内 task 工具未开始执行 → 同样 `[AGENT_TIMEOUT]`
+6. 返回后按 frontmatter `task_context.write` 收回结构化结果；超时/异常也写入 `dispatch_log`（agent_status=timeout/error + duration_ms）
 
 > **智能体名不出现在阶段文件正文**：阶段文件只有执行逻辑。新增/替换/排序智能体 = 改对应 `agent/<name>.md` frontmatter 的 `mount`（`order` 调顺序，`at` 选挂载点，多条目即多点挂载），阶段文件不动；加必配角色才动 graph.yaml 节点 `required` 一行。
 
@@ -260,27 +269,70 @@ T1+ 任务在交付阶段 conductor 直接调用 memory.db（SQL 模板见 `docs
 > **INQUIRY 咨询类**：M1 召回必选（同 T0）；记忆写入按同一"价值信号"触发——咨询类完全可能产生高价值经验（如用户指正规则缺陷、发现可复用 pattern），不得因"只分析不改文件"而跳过。命中价值信号时，conductor 在回答完成后、入 DONE 前执行轻量 M4-M8（仅 SQL 写入，无需完整 DELIVERING 交付流程）。
 > **multiModel 任务**：由 multiModel 主控在 `MM_DELIVERING` 阶段统一调用记忆能力。
 
-### 降级处理
-
-- `memory.db` 不存在 → `DEGRADED`，首次输出提示，后续静默，不阻塞主流程
-- SQL 失败 → `ERROR`，输出警告行，继续执行
-- 某智能体启动失败 → `[AGENT_UNAVAILABLE]`，跳过该视角，记录降级
-- 多个智能体不可用 → 降级为单 conductor 模式 + `[DEGRADED_SINGLE_AGENT]`
-- task_context 读写失败 → 降级为信号传递模式 + `[CONTEXT_SHARING_DEGRADED]`
-- bootstrap 装配失败 → `[ASSEMBLY_FAIL]`，输出具体缺失项（角色/文件/模型能力），停止进入运行
+> **降级处理**见下方 §异常处理 §降级处理（基础设施层）段，统一并入 on_fail 派发表后不再单列。
 
 ## 模型选择
 
 conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能体的模型选择**不在本文件硬编码**，统一由 `kilo.json` `agent.<name>.model` 字段声明。能力倾向与降级规则参考 `docs/model-registry.md` 人工维护。
 
-## 异常处理
+## 异常处理（阶段级 on_fail 派发）
 
-- 发现跳步 → 标记 `[PROCESS_VIOLATION]`，暂停并修正
-- coder 返回 `NEEDS_CONTEXT` / `BLOCKED` → 停止执行，补上下文或升级
-- fixer 连续 2 轮同症状 → 升级 reviewer 做根因分析
-- Circuit Breaker（单点 max_rounds / 全局 max_total_rounds）→ 停止修复，输出选项等用户决策
-- CHECKING 或 REVIEWING 每次进入时 task_context.convergence.total_rounds 自增 1；total_rounds ≥ max_total_rounds → [CIRCUIT_BREAKER] 全局熔断，停止修复，输出选项等用户决策
-- 分支收尾协议禁止自动 `git commit` / `git push` / `git merge` / `git reset` / `git rebase` 等改写分支历史的命令；conductor 在 DELIVERING 必须呈现 `finishing-a-development-branch` skill 的 4 选项（merge / PR / keep / discard）等用户决策后再执行；未经用户明确选择直接 commit → `[PROCESS_VIOLATION]`，立即暂停并告知用户回退命令（`git reset --soft HEAD~1` 保留 staged / `--mixed` 取消 staged）
+> 错误处理是 conductor 内建职责，**不是独立生命周期支线**——用户全程在场，无需 Teardown/Destroy 销毁流程。每个阶段通过 graph.yaml `on_fail` 字段声明失败策略，conductor 捕获异常后查表派发。
+>
+> **子图例外**：MM_* 节点（T3 子图）的异常处理主权在 `agent/multiModel.md` §异常处理（表格形式，独立语义），不适用本节 on_fail 派发；timeouts 仍适用（子图智能体也走 task 工具）。
+
+### 触发条件
+
+| 触发源 | 信号 | 说明 |
+|------|------|------|
+| 智能体 wall-clock 超时 | `[AGENT_TIMEOUT]` | 见 §智能体加载流程 §超时守卫；分启动卡死（agent_startup_s）与执行超时（per_agent_s/stage_default_s） |
+| `task` 工具抛异常/启动失败 | `[AGENT_UNAVAILABLE]` | 启动失败区别于超时 |
+| 智能体返回 `BLOCKED` / `NEEDS_CONTEXT` | 状态信号 | 需补上下文或升级 |
+| 硬门 gate FAIL | `[DESIGN_GATE_MISS]` / `[MISSING_MEMORY_WRITE]` 等 | gate 边定义的硬门 |
+| 跳步/越界/自验污染 | `[PROCESS_VIOLATION]` / `[SCOPE_CREEP]` / `[TRUST_TRANSFER]` | 即停，不走 on_fail（见 §流程级即停规则） |
+
+### 派发表（查 graph.yaml `node.on_fail` → 执行对应动作）
+
+| `on_fail` 值 | conductor 动作 | 适用场景 |
+|------|------|------|
+| `abort` | 标 `[STAGE_ABORT]`，停止该阶段，输出当前状态等用户决策 | START/DONE/terminal、装配类错误 |
+| `retry_once` | **同智能体重跑 1 次**：task 工具开新会话（清空前次上下文，避免同样卡死），prompt 注入"前次超时/异常"信号；重跑仍超时/异常 → 转 `escalate`；重试配额见 `config.yaml retry.agent_timeout_max_retries` | EXECUTING（coder 偶发卡死） |
+| `degrade` | 跳过该视角，task_context 标 `DEGRADED`，主流程继续；仅可选挂载视角（reverse-auditor/side-checker，frontmatter `mount[].on_fail: degrade` 声明） | 可选视角节点 |
+| `escalate` | 升级路径（按阶段分支，**只做以下三选一**）：① FIXING 连续 2 轮同症状 → 在 FIXING 节点临时挂载 reviewer 做根因分析（不进 REVIEWING 流转，分析完回 FIXING）；② PLANNING/CHECKING/REVIEWING 必配失败且 tier < T2 → 写 `config.agents` 升级 tier（T1→T2 开 reverse_auditor/side_checker），重跑当前阶段；③ tier == T2 或升级后仍失败 → 输出选项等用户决策 | PLANNING/CHECKING/FIXING/REVIEWING 必配失败 |
+| `pause` | 挂起 task_context（status=PAUSED），输出选项等用户决策；不自动 commit/push/merge/reset/rebase | INTENT/SIZING/DELIVERING 内建阶段 |
+
+> **未声明 `on_fail` 的节点**：按 `config.yaml §on_fail 默认值规则` 求值——required 必配 → escalate；可选挂载 → degrade；executor 内建 → pause；terminal → abort。
+> **节点级 vs 挂载点 on_fail**：同名字段两种取值集（节点级 5 值 / 挂载点 3 值），按字段位置区分——节点 `on_fail:` 在节点定义内，`mount[].on_fail:` 在 frontmatter mount 条目内。bootstrap 校验按位置分别校验取值集。
+
+### 流程级即停规则（不走 on_fail 派发）
+
+以下违规由 conductor 主动暂停并修正流程，**不挂起等人**（区别于 `pause`）：
+
+- 发现跳步 → 标记 `[PROCESS_VIOLATION]`，回退到正确阶段重走
+- `[SCOPE_CREEP]` / `[TRUST_TRANSFER]` → 标记后回退到违规阶段，按 verifier/reviewer 指出的问题重新执行
+- 分支收尾协议违规（未经用户决策直接 commit/push/merge/reset/rebase）→ `[PROCESS_VIOLATION]`，立即告知用户回退命令（`git reset --soft HEAD~1` 保留 staged / `--mixed` 取消 staged），并暂停后续操作
+
+### 熔断叠加规则
+
+`on_fail` 派发与收敛熔断独立但叠加：
+
+- `FIXING` 阶段 `round >= max_rounds` → `[CIRCUIT_BREAKER]` 单点熔断，覆盖 `on_fail: escalate`，直接 pause 等人
+- `CHECKING`/`REVIEWING` 进入前 `total_rounds += 1`；`total_rounds >= max_total_rounds` → `[CIRCUIT_BREAKER]` 全局熔断，覆盖 `on_fail`，直接 pause 等人
+- `[AGENT_TIMEOUT]` + `retry_once` 耗尽 → 转 `escalate`，不直接熔断（熔断只看轮次，不看超时）
+
+### 现有规则（保留）
+
+- fixer 连续 2 轮同症状 → 升级 reviewer 做根因分析（`escalate` ① 分支的具体实现）
+- CHECKING 或 REVIEWING 每次进入时 task_context.convergence.total_rounds 自增 1
+
+### 降级处理（基础设施层，不走 on_fail）
+
+- `memory.db` 不存在 → `DEGRADED`，首次输出提示，后续静默，不阻塞主流程
+- SQL 失败 → `ERROR`，输出警告行，继续执行
+- 某智能体启动失败 → `[AGENT_UNAVAILABLE]`，按节点 `on_fail` 派发（必配 escalate / 可选 degrade）
+- 多个智能体不可用 → 降级为单 conductor 模式 + `[DEGRADED_SINGLE_AGENT]`
+- task_context 读写失败 → 降级为信号传递模式 + `[CONTEXT_SHARING_DEGRADED]`
+- bootstrap 装配失败 → `[ASSEMBLY_FAIL]`，输出具体缺失项（角色/文件/模型能力/on_fail 校验/timeouts 校验），停止进入运行
 
 ## 输出
 

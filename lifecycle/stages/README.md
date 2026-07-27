@@ -30,16 +30,18 @@ agent/                      # 智能体行为文件 + 生命周期声明（v6 �
 
 ## 阶段索引
 
-| 阶段 ID | 文件 | 必配角色（graph.yaml `required`） | 质量门禁 |
-|---------|------|-----------------------------------|----------|
-| INTENT | `intent.md` | conductor 内建 | 类型明确 |
-| SIZING | `sizing.md` | conductor 内建 | T0-T3 准确 + 写入 `config.agents` |
-| PLANNING | `planning.md` | `planner` | `[DESIGN_GATE_PASS]` |
-| EXECUTING | `executing.md` | `coder` | 验收映射表 + 三件套 |
-| CHECKING | `checking.md` | `verifier`（+ `reverse-auditor` 可选） | 正向+反向 PASS |
-| REVIEWING | `reviewing.md` | `reviewer`（+ `side-checker` 可选） | 侧向+审查四视角通过 |
-| FIXING | `fixing.md` | `fixer` | 根因确认 + 验证通过 |
-| DELIVERING | `delivering.md` | conductor 内建 | `[MISSING_MEMORY_WRITE]` 检查 |
+| 阶段 ID | 文件 | 必配角色（graph.yaml `required`） | `on_fail`（graph.yaml） | 质量门禁 |
+|---------|------|-----------------------------------|------------------------|----------|
+| INTENT | `intent.md` | conductor 内建 | `pause` | 类型明确 |
+| SIZING | `sizing.md` | conductor 内建 | `pause` | T0-T3 准确 + 写入 `config.agents` |
+| PLANNING | `planning.md` | `planner` | `escalate` | `[DESIGN_GATE_PASS]` |
+| EXECUTING | `executing.md` | `coder` | `retry_once` | 验收映射表 + 三件套 |
+| CHECKING | `checking.md` | `verifier`（+ `reverse-auditor` 可选） | `escalate` | 正向+反向 PASS |
+| REVIEWING | `reviewing.md` | `reviewer`（+ `side-checker` 可选） | `escalate` | 侧向+审查四视角通过 |
+| FIXING | `fixing.md` | `fixer` | `escalate` | 根因确认 + 验证通过 |
+| DELIVERING | `delivering.md` | conductor 内建 | `pause` | `[MISSING_MEMORY_WRITE]` 检查 |
+
+> `on_fail` 取值：`abort` | `retry_once` | `degrade` | `escalate` | `pause`。未声明按 `config.yaml §on_fail 默认值规则` 求值（required 必配 → escalate；可选挂载 → degrade；executor 内建 → pause；terminal → abort）。派发动作详见 `agent/conductor.md` §异常处理派发表。挂载点 `mount[].on_fail`（abort|warn|skip）覆盖 pre:/post:/on: 失败，与节点级 `on_fail` 互不干涉。
 
 ## 文件路由挂载机制（唯一挂载方式）
 
@@ -75,11 +77,13 @@ mount:
 
 | 场景 | 操作 |
 |------|------|
-| 新增智能体 | 丢 `agent/<name>.md`（行为 + frontmatter `mount` 声明挂载点 + order/when）——**一个文件搞定，无需 manifest，无需改任何阶段文件**；若该智能体是某阶段必配角色，graph.yaml 该节点 `required` 加一行 |
-| 挂载到任意阶段 | frontmatter `mount` 加一条 `{at: <STAGE>}`（主槽）或 `pre:<STAGE>` / `post:<STAGE>`；启动/收尾：`on:bootstrap` / `on:done` |
+| 新增智能体 | 丢 `agent/<name>.md`（行为 + frontmatter `mount` 声明挂载点 + order/when/on_fail）——**一个文件搞定，无需 manifest，无需改任何阶段文件**；若该智能体是某阶段必配角色，graph.yaml 该节点 `required` 加一行 |
+| 挂载到任意阶段 | frontmatter `mount` 加一条 `{at: <STAGE>}`（主槽）或 `pre:<STAGE>` / `post:<STAGE>`；启动/收尾：`on:bootstrap` / `on:done`；可选视角加 `on_fail: degrade` |
 | 一槽挂载多个 | 多个 agent .md frontmatter 声明同一 `at`；都省略 `order` 默认并行 |
 | 调整执行顺序 | frontmatter mount 条目改 `order` 数字（升序执行；加新智能体用中间号零改其他文件） |
-| 新增阶段 | ① 丢 `lifecycle/stages/<name>.md`（frontmatter 只需 description/model_capability/token_budget；文件名派生节点 ID）② `graph.yaml` 加 node（含 `required`）+ edges（语义 ID，无占号问题）——三挂载点自动派生 |
+| 新增阶段 | ① 丢 `lifecycle/stages/<name>.md`（frontmatter 只需 description/model_capability/token_budget；文件名派生节点 ID）② `graph.yaml` 加 node（含 `required` + `on_fail`）+ edges（语义 ID，无占号问题）——三挂载点自动派生；`on_fail` 取值见 graph.yaml 节点字段说明，未声明按 `config.yaml §on_fail 默认值规则` 求值 |
+| 改阶段失败策略 | `graph.yaml` 节点 `on_fail` 字段改值（abort/retry_once/degrade/escalate/pause）；派发动作见 `agent/conductor.md` §异常处理派发表 |
+| 改超时预算 | `lifecycle/config.yaml` `timeouts` 段：`per_agent_s` 调单智能体预算，`per_tier_multiplier` 调定级系数，`stage_default_s` 调内建阶段守卫值 |
 | 禁用智能体 | `config.yaml` `overrides.disabled_agents` 加名字（若为某节点 `required` → `[ASSEMBLY_FAIL]`） |
 | 换模型 | 改 `kilo.json agent.<name>.model`（能力倾向参考 `docs/model-registry.md` 人工维护，无机械校验） |
 | 改定级默认组合 | 改 `config.yaml` `tier_defaults` |

@@ -21,6 +21,7 @@ subagent_type: side-checker
 mount:
   - at: REVIEWING
     when: "config.agents.side_checker"
+    on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED（不阻塞主流程）
 
 # task_context：读写边界声明
 #   read   可读切片（plan 执行方案；execution 实际产物；project_context 项目级约束）

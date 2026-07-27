@@ -19,8 +19,12 @@
 | 修改内容 | 必查项 |
 |---------|--------|
 | 新增/删除/改名 agent | 同步 `AGENTS.md` 清单、`README.md` 目录树、`agent/` 文件（必须含完整 YAML frontmatter：`description` / `mode` / `hidden` / `color` / `permission` / `steps`），参考现有 `agent/conductor.md` 的写法；**重跑 `./install.ps1` 或 `./install.sh`** |
+| 修改 `lifecycle/graph.yaml` 节点 `on_fail` / `required` / 新增节点 | ① 节点 `on_fail` 取值 ∈ {abort, retry_once, degrade, escalate, pause}；② `stages/README.md` 阶段索引表同步 `on_fail` 列；③ `agent/conductor.md` §异常处理派发表覆盖新取值（如新增取值需扩表）；④ 新增节点须丢 `lifecycle/stages/<id-lower>.md` |
+| 修改 `lifecycle/config.yaml` `timeouts` 段 | ① `per_agent_s` 键名与 `agent/*.md` 智能体名（去 .md + 连字符转下划线）一致；② `per_tier_multiplier` 键 ⊆ {T0,T1,T2,T3}；③ 新增智能体时同步加 `per_agent_s` 键；④ 数值为正整数 |
+| 修改 `lifecycle/config.yaml` `convergence` 段 | ① 阈值变更同步 `agent/conductor.md` §task_context 结构 `max_rounds`/`max_total_rounds` 注释；② 同步 `lifecycle/graph.yaml` edges 注释引用的阈值描述 |
+| 修改 `lifecycle/config.yaml` `tier_defaults` / `overrides` | ① 智能体键名按自动派生规则（连字符转下划线）；② `disabled_agents` 中的角色若被某节点 `required` → `[ASSEMBLY_FAIL]`，checklist 需验证未禁用必配角色 |
 | 新增/修改 `.kilo/instructions/*` | ① 同步 `README.md` 目录树；② 若新文件被 `kilo.json` agent.*.prompt 引用，必须同步更新 `validate-config.mjs` 的引用路径存在性校验；**重跑 `./install.ps1` 或 `./install.sh`**；**漏跑 install 会导致全局版落后于仓库版（已发生过 workflow-core.md 漂移），install 后可用 examples/install-check.md 的 diff 命令验证一致性** |
-| 修改 `agent/*.md` | 确认只包含该 agent 的职责差异和关键门禁；**重跑 `./install.ps1` 或 `./install.sh`** |
+| 修改 `agent/*.md` | 确认只包含该 agent 的职责差异和关键门禁；frontmatter `mount[].on_fail`（可选视角用 degrade）与节点级 `on_fail`（5 值）按位置区分；**重跑 `./install.ps1` 或 `./install.sh`** |
 | 修改 `kilo.json` | 同步 `README.md` 中模型、MCP 说明；**重跑 `./install.ps1` 或 `./install.sh`** |
 | 修改 `kilo.json` 中路径占位符（`${KILO_CONFIG_DIR}` / `${HOME}` 等） | ① 必须同步 install.ps1 与 install.sh 的占位符替换逻辑；② 修改后必须运行 `node validate-config.mjs` 通过校验（check16 会检查双脚本覆盖） |
 | 修改 `kilo.json` 中 `compaction` 字段 | ① 必须同步更新对应 `.kilo/instructions/*.md` 与 `agent/*.md` 的条件化规则描述；② 修改后必须运行 `node validate-config.mjs` 通过校验 |

@@ -5,7 +5,7 @@
 #   - 智能体挂载（文件路由，唯一机制）→ agent/*.md frontmatter `mount` 字段自注册（v6 单源）
 #   - 阶段必配角色（结构层不变量）    → 节点 `required: [role...]`
 #   - 定级默认组合                    → lifecycle/config.yaml
-#   - 收敛熔断阈值                    → lifecycle/config.yaml convergence（唯一真相，本文件不再重复）
+#   - 收敛熔断阈值                    → lifecycle/config.yaml convergence
 # 修改流转 = 改本文件 edges；新增阶段 = 加 node + edges + 丢一个 stages/<id-lower>.md。
 # 节点 ID 语义命名，禁止数字前缀——插入中间节点不存在"占号"问题。
 # ============================================================
@@ -25,6 +25,14 @@
 #   provider  subgraph 节点的子图提供者（对应 agent/<provider>.md frontmatter type: lifecycle_provider）
 #   graph     subgraph 节点的子图 DAG 文件路径
 #   note      人类可读说明（可选）
+#   on_fail   阶段级失败策略（缺省按 lifecycle/config.yaml §on_fail 默认值规则求值）：
+#               abort      - 硬停，标 [STAGE_ABORT]，等用户决策
+#               retry_once - 同智能体重跑 1 次，再失败 escalate（耗尽见 config.yaml retry.*）
+#               degrade    - 跳过该视角 + DEGRADED（仅可选视角节点）
+#               escalate   - 升级：T1→T2 加视角，T2→人工；FIXING 连续失败→reviewer 根因分析
+#               pause      - 挂起 task_context，输出选项等用户决策
+#             节点 on_fail 在智能体 timeout/error/异常返回时触发；
+#             挂载点 mount[].on_fail（abort|warn|skip）覆盖 pre:/post:/on: 失败，二者互不干涉。
 #
 # 边字段说明：
 #   from / to    起止节点 ID
@@ -59,40 +67,48 @@ nodes:
   - id: INTENT
     type: stage
     executor: conductor        # conductor 内建执行，不经 task 启动
+    on_fail: pause             # 内建阶段失败挂起等人（缺省即 pause，显式声明确认意图）
 
   - id: SIZING
     type: stage
     executor: conductor        # conductor 内建；按 config.yaml tier_defaults 写 config.agents
+    on_fail: pause
 
   - id: PLANNING
     type: stage
     required: [planner]        # 必配角色；agent/planner.md frontmatter mount: PLANNING 覆盖
+    on_fail: escalate          # 设计门失败 → 升级人工决策或补上下文
 
   - id: EXECUTING
     type: stage
     required: [coder]          # 必配角色；agent/coder.md frontmatter mount: EXECUTING 覆盖
+    on_fail: retry_once        # coder 异常/超时 → 重跑 1 次，再失败 escalate
 
   - id: CHECKING
     type: stage
     required: [verifier]       # 必配角色；agent/verifier.md mount: CHECKING 覆盖
                               # 可选挂载：reverse-auditor（when: config.agents.reverse_auditor）
+    on_fail: escalate          # verifier 必配失败升级；可选视角（reverse-auditor）走 degrade（由挂载点 on_fail 处理）
 
   - id: FIXING
     type: stage
     required: [fixer]          # 必配角色；agent/fixer.md mount: FIXING 覆盖
+    on_fail: escalate          # FIXING 连续失败 → 升级 reviewer 根因 / 人工
 
   - id: REVIEWING
     type: stage
     required: [reviewer]       # 必配角色；agent/reviewer.md mount: REVIEWING 覆盖
                               # 可选挂载：side-checker（when: config.agents.side_checker）
+    on_fail: escalate          # reviewer 必配失败升级；side-checker 走 degrade
 
   - id: DELIVERING
     type: stage
     executor: conductor        # conductor 内建；记忆写入 + 分支收尾协议
+    on_fail: pause             # 内建阶段失败挂起（不自动 commit/push，等人决策）
 
   - id: MM_SUBGRAPH
     type: subgraph
-    provider: multiModel       # agent/multiModel.md frontmatter type: lifecycle_provider
+    provider: multiModel
     graph: multimodel-graph.yaml
 
   - id: DONE
@@ -104,85 +120,66 @@ edges:
   - from: INTENT
     to: SIZING
     when: "intent_type == 'EXECUTION'"
-    # 执行类任务进入定级
 
   - from: INTENT
     to: DONE
     when: "intent_type == 'INQUIRY'"
     note: 命中价值信号时先执行轻量 M4-M8 记忆写入再入 DONE（见 stages/intent.md）
-    # 咨询类任务直接回答 + 可选记忆写入
 
   - from: SIZING
     to: EXECUTING
     when: "tier == 'T0'"
     note: 极速通道：无设计门/验证/审查
-    # T0 跳过 PLANNING/CHECKING/REVIEWING，只跑 coder
 
   - from: SIZING
     to: PLANNING
     when: "tier in ['T1','T2']"
-    # T1/T2 走完整闭环：设计门 → 实现 → 验证 → 审查
 
   - from: SIZING
     to: MM_SUBGRAPH
     when: "tier == 'T3'"
-    # T3 交给 multiModel 子图（3 coder 并行 + 融合）
 
   - from: PLANNING
     to: EXECUTING
     gate: DESIGN_GATE_PASS
     note: 未过设计门 → [DESIGN_GATE_MISS]，下游 verifier FAIL
-    # 设计门是硬门：planner 输出方案必须通过才能进入实现
 
   - from: EXECUTING
     to: DELIVERING
     when: "tier == 'T0'"
-    # T0 无验证：实现完直接交付
 
   - from: EXECUTING
     to: CHECKING
     when: "tier in ['T1','T2']"
-    # T1/T2 实现完进正向+反向验证
 
   - from: CHECKING
     to: FIXING
     when: "forward_result == 'FAIL' or reverse_result == 'FAIL'"
     note: 进入前 total_rounds+1（conductor 写入）；任一视角 FAIL 都是硬门
-    # 验证不过进修复循环
 
   - from: CHECKING
     to: REVIEWING
     when: "forward_result == 'PASS' and (reverse_result in ['PASS','N/A'])"
-    # 验证通过进审查阶段
 
   - from: FIXING
     to: CHECKING
     note: round+1；round >= max_rounds（见 lifecycle/config.yaml convergence）单点 [CIRCUIT_BREAKER]
-    # 修复后重验；单点 5 轮熔断
 
   - from: REVIEWING
     to: FIXING
     when: "side_result == 'FAIL' or review_result == 'FAIL'"
     note: 进入前 total_rounds+1；total_rounds >= max_total_rounds（见 lifecycle/config.yaml convergence）全局 [CIRCUIT_BREAKER]
-    # 审查不过进修复循环
 
   - from: REVIEWING
     to: DELIVERING
     when: "(side_result in ['PASS','N/A']) and (review_result in ['PASS','CONDITIONAL_PASS'])"
-    # 审查通过进交付
 
   - from: MM_SUBGRAPH
     to: DELIVERING
     when: "subgraph_status == 'ready_for_delivery'"
     note: 子图 MM_ARCHIVED 后 task_context 交还 conductor
-    # 子图完成后回主图交付
 
   - from: DELIVERING
     to: DONE
     gate: MEMORY_WRITE_COMPLETE
     note: memory_write_status=DEGRADED 不阻塞；MISSING → [MISSING_MEMORY_WRITE]
-    # 记忆写入完成才允许进入 DONE
-
-# 收敛熔断阈值见 lifecycle/config.yaml convergence（唯一真相来源）
-# conductor 在进入 CHECKING/REVIEWING 前递增 total_rounds
-# 达到阈值 → [CIRCUIT_BREAKER] 停止修复，输出选项等用户决策

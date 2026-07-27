@@ -29,9 +29,8 @@ tier_defaults:
     agents:
       coder: true
     review_mode: none
-    note: 极速通道：INTENT → SIZING → EXECUTING → DELIVERING
 
-  # T1 标准闭环：短设计门 + 正向验证 + 四视角审查
+  # T1 标准闭环
   # 默认不开反向审计/侧向验证/融合（适合中等复杂度任务）
   T1:
     agents:
@@ -44,7 +43,6 @@ tier_defaults:
       side_checker: false         # T2+ 才开（运行时行为实测）
       synthesizer_fusion: false   # 仅 T3 multiModel 用
     review_mode: full
-    note: 短设计门 + 正向验证 + 四视角审查
 
   # T2 全视角交叉验证：正向+反向+侧向+审查全开
   # 适合复杂任务：架构变更、跨多文件重构、安全敏感改动
@@ -59,7 +57,6 @@ tier_defaults:
       fixer: true
       synthesizer_fusion: false   # 仅 T3 multiModel 用
     review_mode: full
-    note: 全视角交叉验证（正向+反向+侧向+审查）
 
   # T3 多模型并行融合：交给 multiModel 子图（lifecycle/multimodel-graph.yaml）
   # 3 个不同厂商/架构的 coder 并行实现，verifier 交叉验证，synthesizer-fusion 独立融合
@@ -69,7 +66,6 @@ tier_defaults:
     agents:
       synthesizer_fusion: true    # 融合编辑智能体（隔离硬门：不读拆分意图/模型身份）
     review_mode: full
-    note: 走 lifecycle/multimodel-graph.yaml 子图
 
 # ============================================================
 # overrides：用户/环境覆盖（默认全空 = 全量自动发现注册）
@@ -91,10 +87,71 @@ overrides:
   condition_overrides: {}
 
 # ============================================================
-# convergence：收敛熔断阈值（唯一真相来源，graph.yaml 不再重复声明）
+# convergence：收敛熔断阈值（唯一真相来源）
 # conductor 在进入 CHECKING/REVIEWING 前递增 total_rounds
 # 达到阈值 → [CIRCUIT_BREAKER] 停止修复，输出选项等用户决策
 # ============================================================
 convergence:
   max_rounds: 5        # FIXING 单点熔断（同一验证失败点的修复轮次上限）
   max_total_rounds: 7  # CHECKING+REVIEWING 累计进入次数全局熔断
+
+# ============================================================
+# timeouts：阶段/智能体级时间预算（唯一真相来源）
+# conductor 启动智能体时记录 start_time；超时 → [AGENT_TIMEOUT]
+# 按 graph.yaml 节点 on_fail 字段路由（未声明按默认值规则）
+#
+# 时间模型：
+#   agent_startup_s   — task 工具从调用到首次响应的等待上限（启动阶段独立计时）
+#                       超过 → [AGENT_TIMEOUT]（启动卡死）；不计入 stage 预算
+#   stage_default_s   — 主槽执行时间上限（启动后到智能体返回）；executor: conductor
+#                       内建阶段用此值守卫；per_agent_s 未覆盖的智能体回退此值
+#   per_agent_s       — 单智能体执行预算（启动后到返回）；按智能体名查表
+#   实际预算          — per_agent_s[name] × per_tier_multiplier[tier]（缺 per_agent_s
+#                       回退 stage_default_s × multiplier）
+#
+# 守卫范围：
+#   - 经 task 工具启动的外部智能体 → per_agent_s / stage_default_s 守卫
+#   - executor: conductor/multiModel 内建阶段 → stage_default_s 守卫（conductor 自身
+#     卡住无自动守卫，用户 Ctrl-C 即手动 teardown——开发工具用户在场，不自动销毁）
+#   - 子图 MM_* 节点的智能体同样走 task 工具 → per_agent_s 守卫（子图异常处理主权
+#     在 agent/multiModel.md §异常处理，不适用主图 on_fail 派发）
+# ============================================================
+timeouts:
+  agent_startup_s: 30      # task 工具启动智能体，30s 未响应 → [AGENT_TIMEOUT]（启动卡死）
+  stage_default_s: 600     # 单阶段默认预算（主槽执行时间上限；内建阶段守卫值）
+  per_agent_s:
+    coder: 1800            # coder 写代码可能较长，给 30min
+    coder_a: 1800
+    coder_b: 1800
+    coder_c: 1800
+    verifier: 900
+    reverse_auditor: 600
+    side_checker: 900
+    reviewer: 600
+    planner: 600
+    fixer: 1200
+    synthesizer_fusion: 900
+  per_tier_multiplier:     # 定级系数（per_agent_s × multiplier = 实际预算）
+    T0: 0.5
+    T1: 1.0
+    T2: 1.5
+    T3: 2.0
+  retry:
+    # timeout 重试配额：仅当节点 on_fail: retry_once 时生效；
+    # retry_once 语义 = "同智能体重跑 1 次（新会话，清空前次上下文）"，
+    # 此字段限定 [AGENT_TIMEOUT] 后最多重试次数；与节点 on_fail 协同：
+    #   on_fail: retry_once + agent_timeout_max_retries: 1 → 重跑 1 次，再超时转 escalate
+    #   on_fail: 非 retry_once → 超时直接按 on_fail 派发（不重试）
+    agent_timeout_max_retries: 1
+
+# ============================================================
+# on_fail 默认值规则（graph.yaml 节点未声明 on_fail 时按此求值）
+#   required 必配阶段 → escalate   （升级路径见 conductor.md §异常处理派发表）
+#   可选挂载视角    → degrade     （跳过该视角 + DEGRADED）
+#   executor 内建   → pause       （挂起 task_context，输出选项等人）
+#   START/DONE/terminal → abort   （硬停）
+#
+# 取值集（节点级 on_fail，与挂载点 mount[].on_fail 同名但取值不同，按字段位置区分）：
+#   节点级  on_fail ∈ {abort, retry_once, degrade, escalate, pause}  ← 主槽失败策略
+#   挂载点  mount[].on_fail ∈ {abort, warn, skip}                     ← pre:/post:/on: 失败
+# ============================================================
