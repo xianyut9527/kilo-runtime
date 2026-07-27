@@ -12,6 +12,24 @@ permission:
   glob: allow
   grep: allow
 subagent_type: coder
+# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
+# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
+
+# mount：挂载点声明
+#   at    挂载点（EXECUTING 阶段主槽，派生自 graph.yaml EXECUTING 节点）
+#   when  条件挂载（对照 config.agents.coder 求值）；T0-T3 均 true
+mount:
+  - at: EXECUTING
+    when: "config.agents.coder"
+
+# task_context：读写边界声明
+#   read        可读切片（plan 由 planner 写入；forbidden_files 边界声明；memory_injection 记忆召回）
+#   write       可写切片（diffs/changes/acceptance_map）
+#   forbid_write 禁写切片（execution.verification 写入边界硬门——自验声明不入 context，由 verifier 独立重跑）
+task_context:
+  read: [plan, execution, forbidden_files, memory_injection]
+  write: [execution.diffs, execution.changes, execution.acceptance_map]
+  forbid_write: [execution.verification]   # 自验声明不入 context，由 verifier 独立重跑
 ---
 
 # coder
@@ -20,7 +38,7 @@ subagent_type: coder
 
 ## 智能体定位
 
-**生命周期阶段**：`S07_EXECUTING`
+**生命周期阶段**：`EXECUTING`（见 `lifecycle/graph.yaml` + `lifecycle/stages/executing.md`）
 **加载条件**：T0+（所有执行类任务）
 **模型**：见 `kilo.json` `agent.coder.model`（Code-tuned，编码专精能力需求）
 
@@ -30,7 +48,7 @@ subagent_type: coder
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 
-> **v3.2 记忆下沉**：coder 在 S07 编码前**自行调用 memory.db** 召回同类 pattern/anti-pattern，不再依赖 conductor 集中注入。让编码直接触达历史经验，避免重复造轮子。
+> **记忆下沉**：coder 在 EXECUTING 编码前**自行调用 memory.db** 召回同类 pattern/anti-pattern，不再依赖 conductor 集中注入。让编码直接触达历史经验，避免重复造轮子。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 plan 编码。
 
 **召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：

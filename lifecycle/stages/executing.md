@@ -1,30 +1,16 @@
 ---
-description: 生命周期阶段 04 — 实现。读取→编码→测试→修复，交付可运行代码。
-stage_id: S07_EXECUTING
-agents:
-  - coder
-previous_stage: S06_PLAN_APPROVED
-next_stage: S09_CHECKING
+description: 生命周期阶段 EXECUTING — 实现。读取→编码→测试→修复，交付可运行代码。
+model_capability: code-generation
+token_budget: 16000        # 按单元拆分，每单元 ≤ 16000
 ---
 
-# lifecycle/04-implementation
+# lifecycle/stages/executing
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 阶段定义
-
-| 字段 | 值 |
-|------|-----|
-| **阶段 ID** | `S07_EXECUTING` |
-| **上一阶段** | `S06_PLAN_APPROVED`（设计门通过）或 `S03_SIZING`（T0 直达） |
-| **下一阶段** | `S09_CHECKING`（T1+）或 `S16_DELIVERING`（T0 直达，跳过验证/审查） |
-| **加载智能体** | `coder`（`agent/coder.md`，T0+ 加载） |
-| **模型偏好** | `registry:code-generation`（编码专精） |
-| **token 预算** | 按单元拆分，每单元 ≤ 16000 |
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（节点 `required: [coder]`）；coder 经 frontmatter `mount` 自注册挂载（见 `agent/coder.md`）。
 
 ## 输入
 
-- `S05` 输出的任务 DAG（T1+）或用户请求（T0）
+- `PLANNING` 输出的任务 DAG（T1+）或用户请求（T0）
 - 设计门方案（T1+）
 - 验收标准清单
 - 已知失败模式（来自 `fact_store` / `failure_db`，M1 注入）
@@ -57,10 +43,10 @@ quality_gate:
   no_debug_leftovers: true | false
 ```
 
-## 路由规则
+## 路由规则（边定义见 graph.yaml）
 
-- `DONE` → 进入 `S09_CHECKING`
-- `DONE_WITH_CONCERNS` → 附带风险说明进入 `S09_CHECKING`
+- `DONE` → T1+ 进入 `CHECKING`；T0 直达 `DELIVERING`
+- `DONE_WITH_CONCERNS` → 附带风险说明进入 `CHECKING`
 - `NEEDS_CONTEXT` / `BLOCKED` → 停止并回传，不推进
 
 ## 硬规则

@@ -29,6 +29,11 @@ import os from 'node:os';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+// 脚本所在目录（ESM 无 __dirname）
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// 收敛阈值权威来源：lifecycle/config.yaml
+const CONVERGENCE_SOURCE = path.resolve(__dirname, '..', 'lifecycle', 'config.yaml');
+
 // ============================================================
 // 写权限矩阵（矩阵源：agent/conductor.md §task_context 共享机制）
 // 矩阵变更须同步本脚本
@@ -119,8 +124,26 @@ function assertValidTaskId(taskId) {
   }
 }
 
+// 从 lifecycle/config.yaml 读取收敛阈值（纯 YAML 子集正则解析；失败降级到 5/7）
+function readConvergenceFromConfig() {
+  try {
+    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
+    // max_rounds / max_total_rounds 在 config.yaml 中唯一出现，直接匹配即可
+    const mr = text.match(/^\s*max_rounds:\s*(\d+)/m);
+    const mtr = text.match(/^\s*max_total_rounds:\s*(\d+)/m);
+    return {
+      max_rounds: mr ? parseInt(mr[1], 10) : 5,
+      max_total_rounds: mtr ? parseInt(mtr[1], 10) : 7,
+    };
+  } catch {
+    // 降级：config.yaml 不存在或格式异常时不阻塞 init
+    return { max_rounds: 5, max_total_rounds: 7 };
+  }
+}
+
 // 初始 task_context 结构（按 conductor.md §task_context 结构摘要）
 function buildInitialContext(taskId) {
+  const conv = readConvergenceFromConfig();
   return {
     task_id: taskId,
     intent: {},
@@ -152,9 +175,9 @@ function buildInitialContext(taskId) {
     status: 'initialized',
     convergence: {
       round: 0,
-      max_rounds: 5,
+      max_rounds: conv.max_rounds,
       total_rounds: 0,
-      max_total_rounds: 7,
+      max_total_rounds: conv.max_total_rounds,
     },
   };
 }

@@ -12,6 +12,31 @@ permission:
   glob: allow
   grep: allow
 subagent_type: verifier
+# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
+# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
+# bootstrap 不做能力匹配机械校验
+
+# mount：挂载点声明（可挂一个或多个点；每个条目是一个挂载点）
+#   at       挂载点（派生自 graph.yaml 节点：on:bootstrap/on:done/pre:N/N/post:N）
+#   when     可选条件挂载（对照 task_context.config.agents.<key> 求值）；省略 = 必加载
+#   order    可选顺序号（同挂载点升序执行）；省略 = 并行组成员
+#   on_fail  可选失败策略（abort|warn|skip）；pre:/post:/on: 默认 warn
+mount:
+  - at: CHECKING               # 无条件：CHECKING 仅 T1+ 可达（reachability 即开关）
+  - at: MM_CHECKING            # 一智能体可挂载多槽（同时在 multiModel 子图挂载）
+  - at: MM_FCHECK
+
+# task_context：读写边界声明（bootstrap 注入上下文切片 + 运行时强制隔离）
+#   read      可读的 task_context 切片
+#   write     可写的 task_context 切片（execution.verification 唯一写入者——写入边界硬门）
+task_context:
+  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, forbidden_files]
+  write: [verification.forward]      # execution.verification 唯一写入者（写入边界硬门）
+
+# isolation：视角物理隔离声明（防止确认偏误）
+#   forbid_read  禁止读取的 task_context 切片（即使 task_context.read 声明了也会被过滤）
+isolation:
+  forbid_read: [execution.verification, fixing_history]   # 视角物理隔离
 ---
 
 # verifier
@@ -20,7 +45,7 @@ subagent_type: verifier
 
 ## 智能体定位
 
-**生命周期阶段**：`S09_CHECKING`（正向）
+**生命周期阶段**：`CHECKING`（正向；另在 multiModel 子图 `MM_CHECKING` / `MM_FCHECK` 加载，见 `lifecycle/multimodel-graph.yaml`）
 **加载条件**：T1+（T0 不加载）
 **模型**：见 `kilo.json` `agent.verifier.model`（边界敏感、逻辑审查、安全敏感能力需求）
 
@@ -30,7 +55,7 @@ subagent_type: verifier
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 
-> **v3.2 记忆下沉**：verifier 在 S09 验证前**自行调用 memory.db** 召回历史 anti-pattern，用于补验已知易错点。不再依赖 conductor 集中注入。
+> **记忆下沉**：verifier 在 CHECKING 验证前**自行调用 memory.db** 召回历史 anti-pattern，用于补验已知易错点。不再依赖 conductor 集中注入。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 acceptance_criteria 验证。
 
 **召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：

@@ -6,7 +6,7 @@ keywords: workflow, orchestration, 任务定级, 单元编排, 闭环, 流程日
 
 # Workflow Core Rules
 
-> **生命周期驱动**：conductor 按 `agent/lifecycle/*.md` 阶段文件驱动状态流转，加载对应 `agent/*.md` 智能体（planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel）。本文件以新术语描述流程规则。模型选择见 `agent/models/registry.md`。
+> **生命周期驱动**：conductor 按 `lifecycle/graph.yaml` DAG（节点含 `required` 必配角色）+ `lifecycle/stages/*.md` 阶段文件驱动状态流转，按文件路由（`agent/*.md` frontmatter `mount` 声明 at/order/when/on_fail，v6 单源）加载智能体（planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel）。本文件以新术语描述流程规则。模型能力倾向唯一人类可读参考见 `docs/model-registry.md`（无机器可读副本，v6.1 删除 `lifecycle/capabilities.yaml`）。
 
 ## 默认路由
 

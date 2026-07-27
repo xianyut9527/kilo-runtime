@@ -12,6 +12,28 @@ permission:
   glob: allow
   grep: allow
 subagent_type: reverse-auditor
+# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
+# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
+# 边界敏感、逻辑审查、反向推理能力倾向（从产物反推是否满足原始需求）
+
+# mount：挂载点声明
+#   at    挂载点（CHECKING 阶段，与 verifier 同槽并行）
+#   when  条件挂载（对照 config.agents.reverse_auditor 求值）；T2+ 默认 true，T0/T1 false
+mount:
+  - at: CHECKING
+    when: "config.agents.reverse_auditor"
+
+# task_context：读写边界声明
+#   read   可读切片（intent 原始需求；execution.diffs 实际产物；changes 变更清单；acceptance_map 验收映射）
+#   write  可写切片（verification.reverse 反向审计结论）
+task_context:
+  read: [intent, execution.diffs, execution.changes, execution.acceptance_map]
+  write: [verification.reverse]
+
+# isolation：视角物理隔离声明（反向审计不见设计意图 plan，从产物反推是否满足原始需求）
+#   forbid_read  禁止读取的 task_context 切片
+isolation:
+  forbid_read: [plan]                # 视角物理隔离：不见设计意图，从产物反推
 ---
 
 # reverse-auditor
@@ -20,7 +42,7 @@ subagent_type: reverse-auditor
 
 ## 智能体定位
 
-**生命周期阶段**：`S09_CHECKING`（反向，与 verifier 并行）
+**生命周期阶段**：`CHECKING`（反向，与 verifier 并行；条件加载 `?config.agents.reverse_auditor`）
 **加载条件**：T2+（T0/T1 不加载）
 **模型**：见 `kilo.json` `agent.reverse-auditor.model`（严谨逻辑、反向推理能力需求）
 
@@ -30,7 +52,7 @@ subagent_type: reverse-auditor
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 
-> **v3.2 记忆下沉**：reverse-auditor 在 S09 反向审计前**自行调用 memory.db** 召回历史隐性遗漏模式，用于补审已知易漏点。不再依赖 conductor 集中注入。
+> **记忆下沉**：reverse-auditor 在 CHECKING 反向审计前**自行调用 memory.db** 召回历史隐性遗漏模式，用于补审已知易漏点。不再依赖 conductor 集中注入。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 intent + execution 审计。
 
 **召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
@@ -44,7 +66,7 @@ subagent_type: reverse-auditor
 > **视角物理隔离**：reverse-auditor 只读 `intent` + `execution.diffs/changes/acceptance_map`，**禁止读 `plan`**——反向审计的本意是从产物反推是否满足**原始需求**，读了 plan 就会被规划框定，发现不了 plan 自身的遗漏。
 
 ```yaml
-intent:                           # 原始意图（S01 输出）— 反向审计的唯一基准
+intent:                           # 原始意图（INTENT 输出）— 反向审计的唯一基准
   type: "EXECUTION"
   keywords: ["string"]
   original_request: "string"

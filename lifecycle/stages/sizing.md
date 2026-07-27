@@ -1,30 +1,17 @@
 ---
-description: 生命周期阶段 02 — 任务定级。按决策树预估 T0/T1/T2/T3，决定后续生命周期路径。
-stage_id: S03_SIZING
-agents:
-  - conductor
-previous_stage: S02_INTENT_DONE
-next_stage: S07_EXECUTING
+description: 生命周期阶段 SIZING — 任务定级。按决策树预估 T0/T1/T2/T3，写入 config.agents，决定后续生命周期路径。
+executor: conductor        # conductor 内建主槽，不经 mount 挂载
+model_capability: fast-reasoning
+token_budget: 4000
 ---
 
-# lifecycle/02-sizing
+# lifecycle/stages/sizing
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 阶段定义
-
-| 字段 | 值 |
-|------|-----|
-| **阶段 ID** | `S03_SIZING`（跳 S02 内部过渡） |
-| **上一阶段** | `S02_INTENT_DONE` |
-| **下一阶段** | `S07_EXECUTING`（T0 直达）或 `S05_PLANNING`（T1+） |
-| **加载智能体** | `conductor`（内建，无需 task 启动） |
-| **模型偏好** | `registry:fast-reasoning` |
-| **token 预算** | ≤ 4000 |
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`，定级默认组合见 `lifecycle/config.yaml`。
 
 ## 输入
 
-- `S01` 输出的 intent_type（必须为 EXECUTION）
+- `INTENT` 输出的 intent_type（必须为 EXECUTION）
 - 用户请求的具体内容
 - 项目上下文（技术栈、已有架构、最近 commit）
 
@@ -43,8 +30,10 @@ T2: 多模块影响 / 需架构决策 / 有需求扩散风险 / 需完整 DAG
      → 完整设计门 → 单元 DAG → planner → coder → verifier → reviewer(full)
 
 T3: 核心逻辑 / 安全敏感 / 用户明确要求 multiModel
-     → multiModel 并行生命周期（见 `agent/multiModel.md`）
+     → multiModel 并行生命周期（子图 lifecycle/multimodel-graph.yaml）
 ```
+
+定级完成后，conductor 按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户覆盖（prompt 显式声明）写入 `task_context.config.agents` + `review_mode` + `custom_overrides`。
 
 ## 输出信号
 
@@ -54,24 +43,24 @@ transition_context:
   task_type: "T0" | "T1" | "T2" | "T3"
   estimated_units: int           # 预估单元数
   design_gate_required: true | false
-  review_mode: "full" | "N/A"
+  review_mode: "full" | "none"
 quality_gate:
   sizing_rationale: "string"     # 定级理由（强制输出）
   confidence: "high" | "medium" | "low"
 ```
 
-## 路由规则
+## 路由规则（边定义见 graph.yaml）
 
-| task_type | 下一状态 | 设计门 | reviewer |
+| task_type | 下一节点 | 设计门 | reviewer |
 |-----------|----------|--------|----------|
-| T0 | `S07_EXECUTING` | 否 | N/A |
-| T1 | `S05_PLANNING`（短）→ `S07_EXECUTING` | 短设计门 | full |
-| T2 | `S05_PLANNING`（完整）→ `S07_EXECUTING` | 完整设计门 | full |
-| T3 | `MM_INIT`（multiModel 生命周期） | 完整设计门 | full |
+| T0 | `EXECUTING` | 否 | N/A |
+| T1 | `PLANNING`（短）→ `EXECUTING` | 短设计门 | full |
+| T2 | `PLANNING`（完整）→ `EXECUTING` | 完整设计门 | full |
+| T3 | `MM_SUBGRAPH`（multiModel 子图） | 完整设计门 | full |
 
 ## 阶段 B·校准（后置）
 
-在 `S13_REVIEWING` 阶段，基于实际执行的 unit DAG 和变更范围，复核实际等级：
+在 `REVIEWING` 阶段，基于实际执行的 unit DAG 和变更范围，复核实际等级：
 - 若实际单元数 > 预估 50% → 升级 task_type 并标注 `[LEVEL_UP]`
 - 若实际未触发需求扩散 → 降级并标注 `[LEVEL_DOWN]`（极少发生）
 

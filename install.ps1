@@ -14,7 +14,10 @@ $RecursiveExclude = @(
     ".git", ".gitignore",
     "node_modules",
     "package.json", "package-lock.json", "pnpm-lock.yaml", "bun.lock", "yarn.lock",
-    "agent-manager.json"
+    "agent-manager.json",
+    ".tmp",
+    "worktrees",
+    ".pytest_cache"
 )
 
 Write-Host "========================================" -ForegroundColor Cyan
@@ -92,7 +95,12 @@ try {
         ".kilo/instructions/core.md",
         ".kilo/instructions/workflow-core.md",
         ".kilo/instructions/reflection.md",
-        "agent/conductor.md"
+        "agent/conductor.md",
+        "agent/verifier.md",
+        "lifecycle/graph.yaml",
+        "lifecycle/config.yaml",
+        "lifecycle/multimodel-graph.yaml",
+        "lifecycle/stages/README.md"
     )
 
     $Missing = @()

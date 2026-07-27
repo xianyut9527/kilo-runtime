@@ -12,6 +12,36 @@ permission:
   glob: allow
   grep: allow
 subagent_type: synthesizer-fusion
+# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
+# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
+# long-context-synthesis 倾向：长上下文整合能力（需读 3 份 coder 输出 + verifier 报告）
+
+# mount：挂载点声明
+#   at    挂载点（MM_FUSING，multiModel 子图融合阶段主槽）
+#   when  条件挂载（对照 config.agents.synthesizer_fusion 求值）；仅 T3 true
+mount:
+  - at: MM_FUSING
+    when: "config.agents.synthesizer_fusion"
+
+# task_context：读写边界声明
+#   read   可读切片（mm_outputs 3 份 coder 输出；verification.forward verifier 报告；acceptance_criteria 验收标准）
+#   write  可写切片（execution.fused_output 融合后输出）
+task_context:
+  read: [execution.mm_outputs, verification.forward, acceptance_criteria, project_context]
+  write: [execution.fused_output]
+
+# isolation：视角物理隔离声明（v3.1 融合隔离原则——反确认偏误）
+#   forbid_read  禁止读取的 task_context 切片
+#     task_context.intent   - 不知原始需求拆分意图（防止偏向"符合拆分意图的方案"而非"客观最优方案"）
+#     plan.subtasks         - 不知子任务拆分细节
+#     model_identities      - 不知各家模型身份（防止偏向某家模型）
+isolation:
+  # v3.1 融合隔离原则（反确认偏误）：不知拆分意图、不知模型身份
+  forbid_read: [task_context.intent, plan.subtasks, model_identities]
+
+# gate：本智能体输出须通过的质量门禁（multimodel-graph.yaml edge MM_FUSING→MM_FCHECK 的 gate）
+# FUSION_SELF_CHECK_10：融合后自检 10 项（详见 agent/synthesizer-fusion.md）
+gate: FUSION_SELF_CHECK_10
 ---
 
 # synthesizer-fusion
@@ -22,7 +52,7 @@ subagent_type: synthesizer-fusion
 
 **生命周期阶段**：`MM_FUSING`（multiModel 专属生命周期，详见 `agent/multiModel.md`）
 **加载条件**：T3（multiModel 模式），verifier 对 3 份方案分别验证后触发
-**模型**：见 `agent/models/registry.md` §multiModel 并行（长上下文整合、代码风格统一能力）
+**模型**：见 `kilo.json` `agent.synthesizer-fusion.model`（能力倾向 `long-context-synthesis`，见 `docs/model-registry.md` §multiModel 并行）
 
 **做什么**：读取 3 个 coder 的独立输出 + verifier 对每份的验证报告，**执行融合编辑**——吸收各家之长、查漏补缺、消除矛盾，输出一份**新的综合最优方案**。
 

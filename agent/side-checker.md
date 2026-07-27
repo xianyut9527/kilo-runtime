@@ -12,6 +12,27 @@ permission:
   glob: allow
   grep: allow
 subagent_type: side-checker
+# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
+# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
+
+# mount：挂载点声明
+#   at    挂载点（REVIEWING 阶段，与 reviewer 同槽并行）
+#   when  条件挂载（对照 config.agents.side_checker 求值）；T2+ 默认 true，T0/T1 false
+mount:
+  - at: REVIEWING
+    when: "config.agents.side_checker"
+
+# task_context：读写边界声明
+#   read   可读切片（plan 执行方案；execution 实际产物；project_context 项目级约束）
+#   write  可写切片（verification.side 侧向验证结论）
+task_context:
+  read: [plan, execution, project_context]
+  write: [verification.side]
+
+# isolation：视角物理隔离声明（侧向验证不见正向/反向结论，独立实测）
+#   forbid_read  禁止读取的 task_context 切片
+isolation:
+  forbid_read: [verification.forward, verification.reverse]   # 视角物理隔离
 ---
 
 # side-checker
@@ -20,7 +41,7 @@ subagent_type: side-checker
 
 ## 智能体定位
 
-**生命周期阶段**：`S13_REVIEWING`（侧向，与 reviewer 并行）
+**生命周期阶段**：`REVIEWING`（侧向，与 reviewer 并行；条件加载 `?config.agents.side_checker`）
 **加载条件**：T2+（T0/T1 不加载）
 **模型**：见 `kilo.json` `agent.side-checker.model`（边界/安全/性能多角度需要强推理能力需求）
 
@@ -30,7 +51,7 @@ subagent_type: side-checker
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 
-> **v3.2 记忆下沉**：side-checker 在 S13 侧向验证前**自行调用 memory.db** 召回历史边界/安全/性能失效模式，用于补验已知易错点。不再依赖 conductor 集中注入。
+> **记忆下沉**：side-checker 在 REVIEWING 侧向验证前**自行调用 memory.db** 召回历史边界/安全/性能失效模式，用于补验已知易错点。不再依赖 conductor 集中注入。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 plan + execution 验证。
 
 **召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：

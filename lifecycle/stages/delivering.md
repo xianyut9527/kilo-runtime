@@ -1,26 +1,13 @@
 ---
-description: 生命周期阶段 08 — 交付。闭环确认、变更回顾、记忆沉淀、task_context 归档、分支收尾。
-stage_id: S16_DELIVERING
-agents:
-  - conductor
-previous_stage: S14_REVIEW_PASSED
-next_stage: S17_DONE
+description: 生命周期阶段 DELIVERING — 交付。闭环确认、变更回顾、记忆沉淀、task_context 归档、分支收尾。
+executor: conductor        # conductor 内建主槽，不经 mount 挂载
+model_capability: fast-reasoning
+token_budget: 6000
 ---
 
-# lifecycle/08-delivering
+# lifecycle/stages/delivering
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 阶段定义
-
-| 字段 | 值 |
-|------|-----|
-| **阶段 ID** | `S16_DELIVERING` |
-| **上一阶段** | `S10_CHECK_PASSED`（T0/T1）或 `S14_REVIEW_PASSED`（T2+） |
-| **下一阶段** | `S17_DONE`（归档） |
-| **加载智能体** | `conductor`（内建，直接调用 memory.db + 归档 task_context） |
-| **模型偏好** | `registry:fast-reasoning`（轻量整理） |
-| **token 预算** | ≤ 6000 |
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（DELIVERING → DONE 经 MEMORY_WRITE_COMPLETE 门禁边）。
 
 ## 输入
 
@@ -76,10 +63,10 @@ quality_gate:
   branch_cleanup_done: true | false
 ```
 
-## 路由规则
+## 路由规则（边定义见 graph.yaml）
 
-- `DONE` + 所有 quality_gate 通过 → `S17_DONE`（生命周期结束）
-- `memory_write_status: MISSING` → `[MISSING_MEMORY_WRITE]` 阻塞，回到 `S16_DELIVERING` 补充
+- `status_signal: DONE` + 所有 quality_gate 通过 → 终态节点 `DONE`（生命周期结束）
+- `memory_write_status: MISSING` → `[MISSING_MEMORY_WRITE]` 阻塞，回到 `DELIVERING` 补充
 - `memory_write_status: DEGRADED`（memory.db 不存在）→ 不阻塞，输出提示后继续
 
 ## 记忆提示即时输出

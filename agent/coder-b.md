@@ -12,6 +12,29 @@ permission:
   glob: allow
   grep: allow
 subagent_type: coder-b
+# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
+# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
+# 安全边界派：编码专精 + 防御性编程与风险识别
+
+# mount：挂载点声明
+#   at    挂载点（MM_EXECUTING，multiModel 子图执行阶段；3 coder 同挂此点）
+#   when  省略 = 必加载（multiModel 模式由 multiModel 主控经 task 工具启动）
+#   order 省略 = 并行组成员（3 coder 视角隔离，必须并行，不得声明 order）
+mount:
+  - at: MM_EXECUTING           # 3 coder 同号并行（视角隔离，不声明 order）
+
+# diversity_role：multiModel 多样化角色标识（3 coder 的 (vendor, architecture) 应两两不同，防止输出趋同）
+# 此为 conductor bootstrap 启动期人工校验项（非机械校验）；模型绑定在 kilo.json
+diversity_role: 安全边界派
+
+# task_context：读写边界声明
+#   read        可读切片（plan/execution/forbidden_files/memory_injection）
+#   write       可写切片（execution.mm_outputs 3 份输出之一，不含身份标签）
+#   forbid_write 禁写切片（execution.verification 写入边界硬门）
+task_context:
+  read: [plan, execution, forbidden_files, memory_injection]
+  write: [execution.mm_outputs]
+  forbid_write: [execution.verification]
 ---
 
 # coder-b
@@ -20,7 +43,7 @@ subagent_type: coder-b
 
 ## 智能体定位
 
-**生命周期阶段**：`S07_EXECUTING`
+**生命周期阶段**：`MM_EXECUTING`（multiModel 子图，见 `lifecycle/multimodel-graph.yaml`）
 **加载条件**：multiModel 模式（T3）由 multiModel 主控经 task 工具启动
 **模型**：见 `kilo.json` `agent.coder-b.model`（禁止在 frontmatter 写具体模型 ID）
 

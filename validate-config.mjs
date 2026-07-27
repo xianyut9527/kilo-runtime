@@ -20,17 +20,17 @@
 //   [16/29] kilo.json 占位符与 README 描述目录一致性（防双源漂移）
 //   [17/29] 全局 sqlite 记忆层健康度（memory.db 表/索引/视图 + 行数，契约 .kilo/memory/contracts/health_check.sql）
 //   [18/29] agent.md ↔ instructions.md 跨文件漂移检测（v2.5.1）
-//   [19/29] 生命周期阶段文件完整性（agent/lifecycle/ 8 阶段 + README）
+//   [19/29] 生命周期结构完整性（lifecycle/：graph/config/multimodel-graph + stages/ 语义命名，禁数字编号；v6 agents/ 已合入 agent/*.md frontmatter；v6.1 capabilities.yaml 已删除）
 //   [20/29] 能力插件文件完整性（已废弃 — capabilities/ 已合并入智能体文件）
 //   [21/29] 模型注册表存在性（agent/models/registry.md）
 //   [22/29] 生命周期 ↔ 能力插件映射一致性（已废弃 — capabilities/ 已合并入智能体文件）
 //   [23/29] 智能体文件完整性（agent/ 下 8 个智能体 .md：conductor/planner/coder/verifier/reverse-auditor/side-checker/reviewer/fixer）
-//   [24/29] lifecycle 阶段文件 agents frontmatter 字段声明的智能体全部存在
-//   [25/29] task_context 读写规则一致性（lifecycle agents 字段引用的智能体在 agent/ 下有对应 .md）
+//   [24/29] lifecycle 阶段文件 frontmatter 最小契约校验（v6.1：文件名派生节点 ID + description/model_capability/token_budget；stage_id 已废弃）
+//   [25/29] 文件路由注册与 graph required 覆盖校验（v6.1：agent/*.md frontmatter mount 注册 + graph 节点 required 覆盖；capabilities_required 已删除）
 //   [26/29] 智能体视角物理隔离校验（reverse-auditor 禁读 plan / side-checker 禁读 verification / reviewer 禁读 verifier_report / coder+fixer 禁写 execution.verification）
 //   [27/29] 模型硬编码反查（agent/*.md frontmatter 不含 model: 字段；body 不含 hx/ 模型 ID）
 //   [28/29] subagent 记忆召回接口校验（v3.2 记忆下沉：7 subagent .md 须含 §记忆召回接口段）
-//   [29/29] config.agents 配置驱动校验（v3.2 可插拔：conductor.md 含 config.agents 字段 + 动态加载矩阵；lifecycle/05/06 含条件加载语法）
+//   [29/29] config.agents 配置驱动校验（v6：conductor.md 含 bootstrap/config.agents/custom_overrides 锚点；agent frontmatter mount 条件挂载；lifecycle/config.yaml 含 tier_defaults）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -1616,35 +1616,47 @@ function check18AgentInstructionsDrift() {
   return { name, pass: true, detail: 'agent.md 与 instructions.md 规则一致（v2.5.1 漂移检测通过：6 agent.md + install.sh/ps1 均无 skill-usage.log 复活）' };
 }
 
-// ---------- Check 19: 生命周期阶段文件完整性 ----------
-// 验证 agent/lifecycle/ 目录下是否包含 8 个阶段文件 + README.md
+// ---------- Check 19: 生命周期结构完整性（v3.4 lifecycle/ 新架构） ----------
+// 验证 lifecycle/ 目录下新架构要素齐全：
+//   根级：graph.yaml（主 DAG）+ multimodel-graph.yaml（T3 子图）+ config.yaml（定级组合）
+//   stages/：8 个语义命名阶段文件 + README.md（禁止数字编号前缀，插入无占号问题）
+//   agents/：已废弃（v6 合并入 agent/*.md frontmatter，单源无冗余）
+//   capabilities.yaml：已废弃（v6.1 删除——无机械校验，能力匹配靠人类维护 docs/model-registry.md）
+// 同时断言旧结构 agent/lifecycle/ 已清除（防数字编号双轨复活）。
 function check19LifecycleIntegrity() {
-  const name = '生命周期阶段文件完整性';
-  const lifecycleDir = path.resolve(ROOT, 'agent', 'lifecycle');
+  const name = '生命周期结构完整性（lifecycle/ 新架构）';
+  const lifecycleDir = path.resolve(ROOT, 'lifecycle');
   if (!fs.existsSync(lifecycleDir)) {
-    return { name, pass: false, detail: 'agent/lifecycle/ 目录不存在' };
+    return { name, pass: false, detail: 'lifecycle/ 目录不存在' };
   }
-  const requiredStages = [
-    '01-intent.md',
-    '02-sizing.md',
-    '03-design.md',
-    '04-implementation.md',
-    '05-verification.md',
-    '06-review.md',
-    '07-repair.md',
-    '08-delivering.md',
-    'README.md',
-  ];
+  const rootFiles = ['graph.yaml', 'multimodel-graph.yaml', 'config.yaml'];
+  const stageFiles = ['intent.md', 'sizing.md', 'planning.md', 'executing.md', 'checking.md', 'fixing.md', 'reviewing.md', 'delivering.md', 'README.md'];
   const missing = [];
-  for (const f of requiredStages) {
-    if (!fs.existsSync(path.join(lifecycleDir, f))) {
-      missing.push(f);
-    }
+  for (const f of rootFiles) {
+    if (!fs.existsSync(path.join(lifecycleDir, f))) missing.push(`lifecycle/${f}`);
+  }
+  for (const f of stageFiles) {
+    if (!fs.existsSync(path.join(lifecycleDir, 'stages', f))) missing.push(`lifecycle/stages/${f}`);
+  }
+  // v6: lifecycle/agents/ 目录应已删除（manifest 合入 agent/*.md frontmatter）
+  const legacyAgentsDir = path.join(lifecycleDir, 'agents');
+  if (fs.existsSync(legacyAgentsDir)) {
+    missing.push('lifecycle/agents/ 仍存在（v6 起合入 agent/*.md frontmatter，应删除）');
+  }
+  // 旧数字编号结构必须已清除（防双轨复活）
+  if (fs.existsSync(path.resolve(ROOT, 'agent', 'lifecycle'))) {
+    missing.push('旧结构 agent/lifecycle/ 仍存在（数字编号双轨，必须删除）');
+  }
+  // stages/ 文件名禁止数字前缀（语义 ID 原则：插入中间阶段不存在占号）
+  const stagesDir = path.join(lifecycleDir, 'stages');
+  if (fs.existsSync(stagesDir)) {
+    const numeric = fs.readdirSync(stagesDir).filter((f) => /^\d+[-_.]/.test(f));
+    if (numeric.length > 0) missing.push(`stages/ 含数字前缀文件: [${numeric.join(', ')}]`);
   }
   if (missing.length > 0) {
-    return { name, pass: false, detail: `缺失生命周期文件: [${missing.join(', ')}]` };
+    return { name, pass: false, detail: `缺失/违规: [${missing.join('; ')}]` };
   }
-  return { name, pass: true, detail: `生命周期阶段完整（${requiredStages.length} 个文件齐全）` };
+  return { name, pass: true, detail: `lifecycle/ 结构完整（${rootFiles.length} 根文件 + ${stageFiles.length} stages，agents/ 已合入 agent/*.md frontmatter，无数字编号双轨）` };
 }
 
 // ---------- Check 20: 能力插件文件完整性（已废弃） ----------
@@ -1705,89 +1717,232 @@ function check23AgentIntegrity() {
   return { name, pass: true, detail: `8 个核心智能体文件齐全（${requiredAgents.map((x) => x.slice(0, -3)).join('/')}）` };
 }
 
-// ---------- Check 24: lifecycle 阶段文件 agents frontmatter 字段验证 ----------
-// v3.0：每个 lifecycle 阶段文件 frontmatter 必须声明 `agents` 数组（至少 1 个智能体），
-// 且声明的智能体必须在 agent/ 下有对应 .md 文件（check25 做存在性兜底，此处校验字段本身）。
-// README.md 豁免（它是总览文档，不绑定具体阶段）。
+// ---------- Check 24: lifecycle 阶段文件 frontmatter 最小契约校验（v6.0 文件路由） ----------
+// ---------- Check 24: lifecycle 阶段文件 frontmatter 最小契约校验（v6.1 文件名派生） ----------
+// v6.0 起挂载唯一机制 = agent/*.md frontmatter `mount` 文件路由自注册；必配角色 = graph.yaml 节点 `required`。
+// v6.1 起阶段文件不再声明 stage_id——从文件名派生（planning.md → PLANNING），类似 Vue 路由从路径派生。
+// 阶段 frontmatter 只保留执行元数据：description/model_capability/token_budget；
+// executor: conductor/multiModel 的内建阶段标 executor。
+// 残留 requires/expects/slots/stage_id 字段视为回退违规。README.md 豁免（导航文档）。
+
+// 提取 frontmatter 原始文本（首个 --- 与次个 --- 之间）
+function extractFrontmatterText(text) {
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  return m ? m[1] : null;
+}
+
 function check24LifecycleAgentsFrontmatter() {
-  const name = 'lifecycle agents frontmatter 字段验证';
-  const lifecycleDir = path.resolve(ROOT, 'agent', 'lifecycle');
-  if (!fs.existsSync(lifecycleDir)) {
-    return { name, pass: false, detail: 'agent/lifecycle/ 目录不存在（依赖 check19）' };
+  const name = 'lifecycle 阶段文件 frontmatter 最小契约校验（v6.1 文件名派生）';
+  const stagesDir = path.resolve(ROOT, 'lifecycle', 'stages');
+  if (!fs.existsSync(stagesDir)) {
+    return { name, pass: false, detail: 'lifecycle/stages/ 目录不存在（依赖 check19）' };
   }
-  const stageFiles = fs.readdirSync(lifecycleDir, { withFileTypes: true })
+  const stageFiles = fs.readdirSync(stagesDir, { withFileTypes: true })
     .filter((d) => d.isFile() && d.name.endsWith('.md') && d.name !== 'README.md')
     .map((d) => d.name);
   const errors = [];
   let checkedCount = 0;
+  // 加载 graph.yaml + multimodel-graph.yaml 节点 ID 集合（校验阶段文件名派生的 ID 有对应节点）
+  const graphNodeIds = new Set();
+  for (const g of ['graph.yaml', 'multimodel-graph.yaml']) {
+    const gp = path.resolve(ROOT, 'lifecycle', g);
+    if (!fs.existsSync(gp)) continue;
+    const text = fs.readFileSync(gp, 'utf8');
+    for (const m of text.matchAll(/^\s*-\s+id:\s*([A-Z][A-Z0-9_]*)\s*(?:#.*)?$/gm)) graphNodeIds.add(m[1]);
+  }
   for (const sf of stageFiles) {
-    const text = fs.readFileSync(path.join(lifecycleDir, sf), 'utf8');
-    const fm = parseFrontmatter(text);
-    if (!fm) {
+    const text = fs.readFileSync(path.join(stagesDir, sf), 'utf8');
+    const fmText = extractFrontmatterText(text);
+    if (fmText === null) {
       errors.push(`${sf}: 缺少 frontmatter`);
       continue;
     }
-    if (!('agents' in fm)) {
-      errors.push(`${sf}: frontmatter 缺少 agents 字段`);
+    const fm = parseFrontmatter(text);
+    if (!fm || typeof fm.description !== 'string' || !fm.description.trim()) {
+      errors.push(`${sf}: description 缺失（阶段文件 frontmatter 最小契约要求 description）`);
       continue;
     }
-    const agents = fm.agents;
-    if (!Array.isArray(agents) || agents.length === 0) {
-      errors.push(`${sf}: agents 字段必须为非空数组`);
+    // v6.1 防回退：stage_id 字段已废弃（从文件名派生）
+    if (fm.stage_id !== undefined) {
+      errors.push(`${sf}: 残留 stage_id 字段（v6.1 起从文件名派生：${sf.slice(0, -3).toUpperCase()}）`);
       continue;
     }
-    // 校验每个 agent 名是字符串
-    for (const a of agents) {
-      if (typeof a !== 'string' || a.length === 0) {
-        errors.push(`${sf}: agents 数组含非字符串或空值`);
-        break;
-      }
+    // 防回退：requires/expects/slots 均已由 agent frontmatter mount + graph required 替代
+    if (/^(requires|expects|slots)\s*:/m.test(fmText)) {
+      errors.push(`${sf}: 残留 ${RegExp.$1} 字段（v6.0 起由 agent frontmatter mount 文件路由 + graph 节点 required 替代）`);
+      continue;
+    }
+    // 文件名派生节点 ID 校验：planning.md → PLANNING，必须在 graph 节点集合中
+    const derivedId = sf.slice(0, -3).toUpperCase();
+    if (!graphNodeIds.has(derivedId)) {
+      errors.push(`${sf}: 派生节点 ID '${derivedId}' 在 graph.yaml/multimodel-graph.yaml 中无对应节点`);
+      continue;
     }
     checkedCount++;
   }
   if (errors.length > 0) {
     return { name, pass: false, detail: errors.join('; ') };
   }
-  return { name, pass: true, detail: `${checkedCount} 个阶段文件 agents frontmatter 全部合规` };
+  return { name, pass: true, detail: `${checkedCount} 个阶段文件 frontmatter 合规（文件名派生节点 ID + 执行元数据，无 stage_id/requires/expects/slots 残留，v6.1 文件名派生）` };
 }
 
-// ---------- Check 25: lifecycle agents 引用的智能体文件存在性 ----------
-// v3.0：lifecycle 阶段文件 frontmatter.agents 声明的每个智能体必须在 agent/<name>.md 存在。
-// 这是 task_context 读写一致性的基础：conductor 按阶段加载智能体时，subagent_type 必须有对应 .md。
-function check25LifecycleAgentsExist() {
-  const name = 'lifecycle agents 引用智能体文件存在性';
-  const lifecycleDir = path.resolve(ROOT, 'agent', 'lifecycle');
-  const agentDir = path.resolve(ROOT, 'agent');
-  if (!fs.existsSync(lifecycleDir)) {
-    return { name, pass: false, detail: 'agent/lifecycle/ 目录不存在（依赖 check19）' };
+// ---------- Check 25: 文件路由注册与 graph required 覆盖校验（v6.1，bootstrap 静态预演） ----------
+// (a) agent frontmatter 完整性：subagent 必须声明 mount
+// (b) mount 合法性：at ∈ 派生挂载点全集；on_fail ∈ {abort,warn,skip}；order 为非负整数或省略
+// (c) required 覆盖：graph.yaml/multimodel-graph.yaml 节点 required:[role...] 的角色，≥1 frontmatter 在该主挂载点注册
+// (d) 视角并行：CHECKING/REVIEWING/MM_EXECUTING 主挂载点的条件挂载智能体不得声明 order（视角隔离必须并行）
+// v6: manifest 合入 agent/*.md frontmatter，解析源从 lifecycle/agents/*.yaml 改为 agent/*.md
+// v6.1: capabilities_required 字段已删除（capabilities.yaml 已删除，能力匹配靠人类维护 docs/model-registry.md）
+
+// 解析 agent frontmatter 的 mount 块（行解析，支持 list-of-mapping）
+// fmText 是 frontmatter 原始文本（--- 之间）；无 mount 返回 null
+function parseAgentMount(fmText) {
+  if (!fmText) return null;
+  const lines = fmText.split(/\r?\n/);
+  const mounts = [];
+  let inMount = false;
+  let current = null;
+  for (const raw of lines) {
+    if (raw.trim() === '' || raw.trim().startsWith('#')) continue;
+    const indent = raw.match(/^ */)[0].length;
+    const content = raw.trim();
+    if (!inMount) {
+      if (indent === 0 && /^mount\s*:/.test(content)) inMount = true;
+      continue;
+    }
+    if (indent === 0) break; // mount 块结束（indent 0 新键）
+    const mAt = content.match(/^-\s*at\s*:\s*(\S+)/);
+    if (mAt) {
+      current = { at: mAt[1].replace(/^["']|["']$/g, '') };
+      mounts.push(current);
+      continue;
+    }
+    if (current) {
+      const mWhen = content.match(/^when\s*:\s*(.+)$/);
+      if (mWhen) { current.when = mWhen[1].replace(/\s+#.*$/, '').replace(/^["']|["']$/g, '').trim(); continue; }
+      const mOrder = content.match(/^order\s*:\s*(\d+)/);
+      if (mOrder) { current.order = parseInt(mOrder[1], 10); continue; }
+      const mFail = content.match(/^on_fail\s*:\s*(\S+)/);
+      if (mFail) { current.on_fail = mFail[1].replace(/\s+#.*$/, ''); continue; }
+    }
   }
-  const stageFiles = fs.readdirSync(lifecycleDir, { withFileTypes: true })
-    .filter((d) => d.isFile() && d.name.endsWith('.md') && d.name !== 'README.md')
+  return inMount ? mounts : null;
+}
+
+// 派生挂载点全集：on:bootstrap/on:done + 主图与子图每个节点 N 的 {pre:N, N, post:N}
+function deriveMountPoints() {
+  const nodeIds = new Set();
+  for (const g of ['graph.yaml', 'multimodel-graph.yaml']) {
+    const gp = path.resolve(ROOT, 'lifecycle', g);
+    if (!fs.existsSync(gp)) continue;
+    const text = fs.readFileSync(gp, 'utf8');
+    for (const m of text.matchAll(/^\s*-\s+id:\s*([A-Z][A-Z0-9_]*)\s*(?:#.*)?$/gm)) nodeIds.add(m[1]);
+  }
+  const points = new Set(['on:bootstrap', 'on:done']);
+  for (const id of nodeIds) {
+    points.add(id);
+    points.add(`pre:${id}`);
+    points.add(`post:${id}`);
+  }
+  return { nodeIds, points };
+}
+
+// 解析 graph 文件各节点 required（内联列表）
+function parseGraphRequired(text) {
+  const result = new Map();
+  const nodeRe = /^\s*-\s+id:\s*([A-Z][A-Z0-9_]*)\s*$/gm;
+  const nodes = [];
+  let m;
+  while ((m = nodeRe.exec(text)) !== null) nodes.push({ id: m[1], start: m.index });
+  for (let i = 0; i < nodes.length; i++) {
+    const end = i + 1 < nodes.length ? nodes[i + 1].start : text.length;
+    const block = text.slice(nodes[i].start, end);
+    const rm = block.match(/^\s+required:\s*\[([^\]]*)\]/m);
+    if (rm) result.set(nodes[i].id, rm[1].split(',').map((s) => s.trim()).filter(Boolean));
+  }
+  return result;
+}
+
+function check25MountRouteCoverage() {
+  const name = '文件路由注册与 graph required 覆盖校验（v6.0）';
+  const stagesDir = path.resolve(ROOT, 'lifecycle', 'stages');
+  const agentDir = path.resolve(ROOT, 'agent');
+  if (!fs.existsSync(stagesDir)) {
+    return { name, pass: false, detail: 'lifecycle/stages/ 目录不存在（依赖 check19）' };
+  }
+  if (!fs.existsSync(agentDir)) {
+    return { name, pass: false, detail: 'agent/ 目录不存在（依赖 check23）' };
+  }
+  // v6: 加载全部 agent/*.md frontmatter（manifest 已合入）
+  const manifests = [];
+  const agentFiles = fs.readdirSync(agentDir, { withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.endsWith('.md') && d.name.toLowerCase() !== 'readme.md')
     .map((d) => d.name);
-  const errors = [];
-  const allReferenced = new Set();
-  for (const sf of stageFiles) {
-    const text = fs.readFileSync(path.join(lifecycleDir, sf), 'utf8');
+  for (const fname of agentFiles) {
+    const text = fs.readFileSync(path.join(agentDir, fname), 'utf8');
     const fm = parseFrontmatter(text);
-    if (!fm || !Array.isArray(fm.agents)) continue;
-    for (const a of fm.agents) {
-      if (typeof a !== 'string' || a.length === 0) continue;
-      // v3.2 条件加载语法："<name>?<condition>" — 剥离 ? 后缀取实际智能体名
-      const agentName = a.split('?')[0];
-      allReferenced.add(agentName);
-      const agentFile = path.join(agentDir, `${agentName}.md`);
-      if (!fs.existsSync(agentFile)) {
-        errors.push(`${sf}: agents 引用 '${agentName}' 但 agent/${agentName}.md 不存在`);
+    if (!fm) continue; // 无 frontmatter 的 .md 跳过（由 check4 报错）
+    const agentName = fname.slice(0, -3); // 去掉 .md
+    const type = fm.type || (fm.mode === 'subagent' ? 'subagent' : fm.mode === 'primary' ? 'primary' : '');
+    const fmText = extractFrontmatterText(text);
+    const mounts = parseAgentMount(fmText);
+    manifests.push({ file: fname, name: agentName, type, mounts });
+  }
+  const errors = [];
+  const { points } = deriveMountPoints();
+  const mountRegistrants = new Map(); // at -> [{ agent, roles:Set, entry, file }]
+  for (const m of manifests) {
+    // v6.1: capabilities_required 字段已删除，不再检查
+    if (m.type === 'subagent' && (!m.mounts || m.mounts.length === 0)) {
+      errors.push(`${m.file}: subagent 未声明 mount 挂载点（永不加载，死注册）`);
+      continue;
+    }
+    const roles = new Set([m.name]);
+    for (const e of m.mounts || []) {
+      if (!points.has(e.at)) {
+        errors.push(`${m.file}: mount at '${e.at}' 非法（派生挂载点全集 = on:bootstrap/on:done + 每节点 pre:/主/post:）`);
+        continue;
+      }
+      if (e.on_fail && !['abort', 'warn', 'skip'].includes(e.on_fail)) {
+        errors.push(`${m.file}: mount[${e.at}] on_fail '${e.on_fail}' 非法（abort|warn|skip）`);
+      }
+      if (e.order !== undefined && (!Number.isInteger(e.order) || e.order < 0)) {
+        errors.push(`${m.file}: mount[${e.at}] order 非法（必须非负整数或省略=并行）`);
+      }
+      if (!mountRegistrants.has(e.at)) mountRegistrants.set(e.at, []);
+      mountRegistrants.get(e.at).push({ agent: m.name, roles, entry: e, file: m.file });
+    }
+  }
+  // 视角并行校验：条件挂载的视角智能体不得声明 order（视角隔离必须并行）
+  const perspectivePoints = ['CHECKING', 'REVIEWING', 'MM_EXECUTING'];
+  for (const pt of perspectivePoints) {
+    for (const r of mountRegistrants.get(pt) || []) {
+      if (r.entry.when && r.entry.order !== undefined) {
+        errors.push(`${r.file}: mount[${pt}] 声明 order=${r.entry.order} 但带 when 条件（视角隔离场景必须并行，不得声明 order）`);
+      }
+    }
+  }
+  // required 覆盖：graph.yaml + multimodel-graph.yaml 节点 required
+  const coveredBy = (point, role) => (mountRegistrants.get(point) || []).some((r) => r.roles.has(role));
+  for (const g of ['graph.yaml', 'multimodel-graph.yaml']) {
+    const gp = path.resolve(ROOT, 'lifecycle', g);
+    if (!fs.existsSync(gp)) continue;
+    for (const [nodeId, roles] of parseGraphRequired(fs.readFileSync(gp, 'utf8'))) {
+      for (const role of roles) {
+        if (!coveredBy(nodeId, role)) {
+          errors.push(`${g}: 节点 ${nodeId} required '${role}' 无 agent 在该主挂载点注册（覆盖缺口）`);
+        }
       }
     }
   }
   if (errors.length > 0) {
     return { name, pass: false, detail: errors.join('; ') };
   }
+  const mounted = [...mountRegistrants.values()].reduce((n, arr) => n + arr.length, 0);
   return {
     name,
     pass: true,
-    detail: `${stageFiles.length} 阶段文件引用 ${allReferenced.size} 个智能体全部存在: [${[...allReferenced].sort().join(', ')}]`,
+    detail: `${manifests.length} agent frontmatter / ${mountRegistrants.size} 挂载点 / ${mounted} 条挂载全部合法；graph required 覆盖完整；视角并行无违规`,
   };
 }
 
@@ -1977,10 +2132,10 @@ function check28SubagentMemoryRecall() {
 }
 
 function check29ConfigDrivenAgents() {
-  const name = 'config.agents 配置驱动（v3.2 可插拔：conductor.md 含 config.agents 字段 + 动态加载矩阵；lifecycle/05/06 含条件加载语法）';
+  const name = 'config.agents 配置驱动（v6.0：conductor.md bootstrap 锚点 + agent frontmatter mount 条件挂载 + lifecycle/config.yaml tier_defaults）';
   const errors = [];
 
-  // (a) conductor.md 必须含 config.agents 字段定义 + 动态加载矩阵
+  // (a) conductor.md 必须含新架构锚点：config.agents / custom_overrides / graph.yaml / 启动期装配；不得残留旧制硬编码矩阵
   const orchPath = path.resolve(ROOT, 'agent', 'conductor.md');
   if (!fs.existsSync(orchPath)) {
     errors.push('agent/conductor.md 缺失');
@@ -1989,54 +2144,103 @@ function check29ConfigDrivenAgents() {
     if (!orch.includes('config.agents')) {
       errors.push('conductor.md: 缺少 config.agents 字段定义');
     }
-    if (!orch.includes('动态加载矩阵')) {
-      errors.push('conductor.md: 缺少 §动态加载矩阵 段');
-    }
     if (!orch.includes('custom_overrides')) {
       errors.push('conductor.md: 缺少 custom_overrides 字段（用户自定义覆盖入口）');
     }
-    if (!orch.includes('条件加载语法') && !orch.includes('条件表达式')) {
-      errors.push('conductor.md: 未声明阶段文件条件加载语法');
+    if (!orch.includes('lifecycle/graph.yaml')) {
+      errors.push('conductor.md: 未引用 lifecycle/graph.yaml（图结构单一真相来源）');
+    }
+    if (!orch.includes('启动期装配') && !orch.includes('bootstrap')) {
+      errors.push('conductor.md: 缺少启动期装配（bootstrap）段');
+    }
+    if (!orch.includes('mount') && !orch.includes('文件路由')) {
+      errors.push('conductor.md: 缺少 mount 文件路由机制描述（v5.0 唯一挂载机制）');
+    }
+    if (orch.includes('动态加载矩阵')) {
+      errors.push('conductor.md: 残留旧制 §动态加载矩阵（定级硬编码组合已由 lifecycle/config.yaml tier_defaults 替代）');
+    }
+    if (orch.includes('before/after')) {
+      errors.push('conductor.md: 残留 before/after 跨文件排序（v5.0 起由 order 数字自包含排序替代）');
     }
   }
 
-  // (b) lifecycle/05-verification.md 的 agents frontmatter 必须含条件加载语法（reverse-auditor?config.agents.reverse_auditor）
-  const v05Path = path.resolve(ROOT, 'agent', 'lifecycle', '05-verification.md');
-  if (!fs.existsSync(v05Path)) {
-    errors.push('agent/lifecycle/05-verification.md 缺失');
+  // (b) reverse-auditor agent frontmatter 必须 mount 挂载 CHECKING 且带条件（config.agents.reverse_auditor）
+  const raPath = path.resolve(ROOT, 'agent', 'reverse-auditor.md');
+  if (!fs.existsSync(raPath)) {
+    errors.push('agent/reverse-auditor.md 缺失');
   } else {
-    const v05 = fs.readFileSync(v05Path, 'utf8');
-    if (!v05.includes('reverse-auditor?config.agents.reverse_auditor')) {
-      errors.push('lifecycle/05-verification.md: agents frontmatter 未使用条件加载语法（reverse-auditor?config.agents.reverse_auditor）');
+    const raText = fs.readFileSync(raPath, 'utf8');
+    const mounts = parseAgentMount(extractFrontmatterText(raText)) || [];
+    const hasCheckingConditional = mounts.some((e) => e.at === 'CHECKING' && e.when && e.when.includes('config.agents.reverse_auditor'));
+    if (!hasCheckingConditional) {
+      errors.push('reverse-auditor.md: frontmatter mount 未声明 at: CHECKING + when config.agents.reverse_auditor（条件挂载）');
     }
   }
 
-  // (c) lifecycle/06-review.md 的 agents frontmatter 必须含条件加载语法（side-checker?config.agents.side_checker）
-  const v06Path = path.resolve(ROOT, 'agent', 'lifecycle', '06-review.md');
-  if (!fs.existsSync(v06Path)) {
-    errors.push('agent/lifecycle/06-review.md 缺失');
+  // (c) side-checker agent frontmatter 必须 mount 挂载 REVIEWING 且带条件（config.agents.side_checker）
+  const scPath = path.resolve(ROOT, 'agent', 'side-checker.md');
+  if (!fs.existsSync(scPath)) {
+    errors.push('agent/side-checker.md 缺失');
   } else {
-    const v06 = fs.readFileSync(v06Path, 'utf8');
-    if (!v06.includes('side-checker?config.agents.side_checker')) {
-      errors.push('lifecycle/06-review.md: agents frontmatter 未使用条件加载语法（side-checker?config.agents.side_checker）');
+    const scText = fs.readFileSync(scPath, 'utf8');
+    const mounts = parseAgentMount(extractFrontmatterText(scText)) || [];
+    const hasReviewingConditional = mounts.some((e) => e.at === 'REVIEWING' && e.when && e.when.includes('config.agents.side_checker'));
+    if (!hasReviewingConditional) {
+      errors.push('side-checker.md: frontmatter mount 未声明 at: REVIEWING + when config.agents.side_checker（条件挂载）');
     }
   }
 
-  // (d) lifecycle/README.md 必须含 v3.2 条件加载说明
-  const readmePath = path.resolve(ROOT, 'agent', 'lifecycle', 'README.md');
+  // (d) lifecycle/config.yaml 必须含 tier_defaults 全定级 + overrides + convergence
+  const cfgPath = path.resolve(ROOT, 'lifecycle', 'config.yaml');
+  if (!fs.existsSync(cfgPath)) {
+    errors.push('lifecycle/config.yaml 缺失');
+  } else {
+    const cfg = fs.readFileSync(cfgPath, 'utf8');
+    if (!cfg.includes('tier_defaults')) {
+      errors.push('lifecycle/config.yaml: 缺少 tier_defaults（定级→智能体组合唯一声明处）');
+    }
+    for (const t of ['T0', 'T1', 'T2', 'T3']) {
+      if (!new RegExp(`^ {2}${t}:`, 'm').test(cfg)) {
+        errors.push(`lifecycle/config.yaml: tier_defaults 缺少 ${t}`);
+      }
+    }
+    if (!cfg.includes('overrides')) {
+      errors.push('lifecycle/config.yaml: 缺少 overrides（disabled_agents/model_overrides/condition_overrides）');
+    }
+    if (!cfg.includes('convergence')) {
+      errors.push('lifecycle/config.yaml: 缺少 convergence（收敛熔断阈值）');
+    }
+  }
+
+  // (e) stages/README.md 必须含扩展指南（文件路由插拔式注册说明）
+  const readmePath = path.resolve(ROOT, 'lifecycle', 'stages', 'README.md');
   if (!fs.existsSync(readmePath)) {
-    errors.push('agent/lifecycle/README.md 缺失');
+    errors.push('lifecycle/stages/README.md 缺失');
   } else {
     const rm = fs.readFileSync(readmePath, 'utf8');
-    if (!rm.includes('v3.2 条件加载') && !rm.includes('v3.2 配置驱动')) {
-      errors.push('lifecycle/README.md: 未声明 v3.2 条件加载/配置驱动机制');
+    if (!rm.includes('扩展指南') || !rm.includes('mount') || !rm.includes('文件路由')) {
+      errors.push('stages/README.md: 缺少扩展指南/mount 文件路由/挂载说明');
+    }
+  }
+
+  // (f) graph.yaml 必须含节点 required 声明（v5.0 必配角色移至结构层）
+  const graphPath = path.resolve(ROOT, 'lifecycle', 'graph.yaml');
+  if (!fs.existsSync(graphPath)) {
+    errors.push('lifecycle/graph.yaml 缺失');
+  } else {
+    const g = fs.readFileSync(graphPath, 'utf8');
+    if (!g.includes('required:')) {
+      errors.push('graph.yaml: 缺少节点 required 声明（v5.0 必配角色在结构层，不再在阶段 frontmatter expects）');
+    }
+    if (g.includes('expects')) {
+      errors.push('graph.yaml: 残留 expects 字段（v5.0 起必配角色用 required，非 expects）');
     }
   }
 
   if (errors.length > 0) {
     return { name, pass: false, detail: errors.join('; ') };
   }
-  return { name, pass: true, detail: 'conductor.md 含 config.agents + 动态加载矩阵 + custom_overrides；lifecycle/05/06 含条件加载语法；README 含 v3.2 说明' };
+  return { name, pass: true, detail: 'conductor.md bootstrap 锚点齐全且无旧制矩阵残留；agent frontmatter mount 条件挂载合规；config.yaml 含 tier_defaults(T0-T3)+overrides+convergence；graph.yaml 节点 required 就位' };
 }
 
 const kiloBuf = (() => {
@@ -2080,7 +2284,7 @@ const r21 = check21ModelsRegistry();
 const r22 = check22LifecycleCapabilityMapping();
 const r23 = check23AgentIntegrity();
 const r24 = check24LifecycleAgentsFrontmatter();
-const r25 = check25LifecycleAgentsExist();
+const r25 = check25MountRouteCoverage();
 const r26 = check26ViewpointIsolation();
 const r27 = check27NoModelHardcode();
 const r28 = check28SubagentMemoryRecall();

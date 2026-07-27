@@ -1,0 +1,84 @@
+# ============================================================
+# multiModel 子图 DAG（T3 专属生命周期）
+# 由 graph.yaml 的 MM_SUBGRAPH 节点经 provider: multiModel 路由进入。
+# 节点 ID 大写蛇形加 MM_ 前缀；执行细节见 agent/multiModel.md（行为）。
+# multiModel 同时承担"子图编排者"角色（类比主图 conductor）。
+# ============================================================
+# 字段说明（与主图 graph.yaml 一致，额外字段）：
+#   provider     子图提供者（对应 agent/multiModel.md frontmatter type: lifecycle_provider）
+#   entry        子图入口节点
+#   exit         子图出口节点（到达后交还 task_context 给 conductor）
+#   parallel     节点内多 agent 并行执行（MM_EXECUTING 用）
+# ============================================================
+version: 1
+provider: multiModel
+entry: MM_INIT
+exit: MM_ARCHIVED            # 到达 exit 后回主图 DELIVERING
+
+nodes:
+  - id: MM_INIT
+    executor: multiModel
+    note: 理解+拆分 1-3 个子任务委派包；读 intent/sizing，写 plan.subtasks
+
+  - id: MM_INJECT
+    executor: multiModel
+    note: M1 等效记忆注入；3 个 coder 相同内容（公平性），降级不阻塞
+
+  - id: MM_EXECUTING
+    required: [coder-a, coder-b, coder-c]    # 3 coder 必配，frontmatter mount: MM_EXECUTING 覆盖
+    note: 3 coder 并行、互不知晓；多样化硬规则：必须不同厂商/架构模型
+    parallel: true                            # 并行执行（无 order，视角隔离）
+
+  - id: MM_CHECKING
+    required: [verifier]                      # verifier 对 3 份输出分别独立验证
+    note: verifier 对 3 份输出分别独立验证；写 verification.forward
+
+  - id: MM_FUSING
+    required: [synthesizer-fusion]            # 独立融合编辑
+    note: 独立融合编辑；隔离硬门：不读拆分意图/模型身份/task_context.intent
+
+  - id: MM_FCHECK
+    required: [verifier]                      # 融合后再次验证
+    note: 融合后验证；写 verification.forward.fusion_check
+
+  - id: MM_DELIVERING
+    executor: multiModel
+    note: 终验 acceptance_criteria + M4-M8 记忆溯源（含 3-5 倍 token 记录）
+
+  - id: MM_ARCHIVED
+    type: terminal
+    note: 写 status=ready_for_delivery，交还 task_context 给 conductor
+
+edges:
+  - { from: MM_INIT, to: MM_INJECT }
+  - { from: MM_INJECT, to: MM_EXECUTING }
+  - { from: MM_EXECUTING, to: MM_CHECKING, when: "3 份输出均返回" }
+  - from: MM_CHECKING
+    to: MM_FUSING
+    when: "至少 1 份 PASS"
+  - from: MM_CHECKING
+    to: MM_INIT
+    when: "3 份全部 FAIL"
+    note: 不直接写 total_rounds；经 status 信号交还 conductor 计数
+  - { from: MM_FUSING, to: MM_FCHECK, gate: FUSION_SELF_CHECK_10 }
+  - from: MM_FCHECK
+    to: MM_DELIVERING
+    when: "fusion_check == 'PASS'"
+  - from: MM_FCHECK
+    to: MM_FUSING
+    when: "fusion_check == 'FAIL'"
+    note: 打回重编；连续失败标注"融合失败"由用户决策
+  - { from: MM_DELIVERING, to: MM_ARCHIVED }
+
+# 多样化硬规则（从原 capabilities.yaml 迁移，仅本子图使用）
+# 3 个 coder 必须绑定不同 (vendor, architecture) 的模型——防止输出趋同
+# bootstrap 校验 coder-a/b/c 在 kilo.json 绑定模型的 (vendor, architecture) 两两不同
+# 违反 → [DIVERSITY_VIOLATION]，不进入 MM_EXECUTING
+diversity_rule:
+  applies_to: [coder-a, coder-b, coder-c]
+  dimensions:
+    vendor: required         # 模型提供者两两不同
+    architecture: required   # 模型架构两两不同
+  on_violation: DIVERSITY_VIOLATION
+
+# 降级规则见 agent/multiModel.md §异常处理（唯一真相，本文件不重复声明）

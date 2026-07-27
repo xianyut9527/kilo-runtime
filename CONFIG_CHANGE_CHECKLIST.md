@@ -49,7 +49,7 @@
 - 需求扩散、同类点扫描：`.kilo/instructions/workflow-reference.md`
 - 局部补丁拦截、重复模式修复 / 组件化 SOP：`.kilo/instructions/workflow-core.md`
 - 修复方法论（全链路审计、完整阅读、验证剩余路径、推测与验证区分）：`.kilo/instructions/workflow-core.md` + `core.md` + `reflection.md`
-- planner 设计门预审、verifier 分层、fixer 权限约束：`.kilo/instructions/workflow-core.md`（生命周期驱动后由 `agent/lifecycle/` 阶段文件 + `agent/*.md` 智能体承载）
+- planner 设计门预审、verifier 分层、fixer 权限约束：`.kilo/instructions/workflow-core.md`（生命周期驱动后由 `lifecycle/stages/` 阶段文件 + `agent/*.md` frontmatter 生命周期声明 + 行为文件承载，v6 单源）
 - Skills 生命周期管理（触发条件、回写流程、分类规范）：`.kilo/instructions/skills-lifecycle.md`
 - **安全/性能检测模式**（检测项总览、检测项 ID、INJ/PERF/AUTH 分类、检测流程）→ 集中维护在 `.kilo/instructions/security-checklist.md`；其他文件（`kilo.json` prompt、agent 文件、SKILL.md）只做引用。
 - **输出格式规范**（交付输出的最小公共字段、`[MARKER]` 标记语言规范、状态枚举）→ 集中维护在 `.kilo/instructions/output-schema.md`；其他文件只做引用。

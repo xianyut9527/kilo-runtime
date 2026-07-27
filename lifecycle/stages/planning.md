@@ -1,33 +1,19 @@
 ---
-description: 生命周期阶段 03 — 设计门。T1+ 编码前必须经过 planner 设计门，输出方案+验收点+DAG。
-stage_id: S05_PLANNING
-agents:
-  - planner
-previous_stage: S03_SIZING
-next_stage: S07_EXECUTING
+description: 生命周期阶段 PLANNING — 设计门。T1+ 编码前必须经过 planner 设计门，输出方案+验收点+DAG。
+model_capability: deep-reasoning
+token_budget: 12000
 ---
 
-# lifecycle/03-design
+# lifecycle/stages/planning
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 阶段定义
-
-| 字段 | 值 |
-|------|-----|
-| **阶段 ID** | `S05_PLANNING` |
-| **上一阶段** | `S03_SIZING` |
-| **下一阶段** | `S06_PLAN_APPROVED` → `S07_EXECUTING` |
-| **加载智能体** | `planner`（`agent/planner.md`，T1+ 加载） |
-| **模型偏好** | `registry:deep-reasoning`（架构分析、长上下文） |
-| **token 预算** | ≤ 12000 |
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（节点 `required: [planner]`）；planner 经 frontmatter `mount` 自注册挂载（见 `agent/planner.md`）。
 
 ## 输入
 
-- `S03` 输出的 task_type + review_mode
+- `SIZING` 输出的 task_type + review_mode
 - 用户请求（完整需求 + 约束）
 - 项目技术栈上下文
-- 相关代码文件（由 capability 按需读取）
+- 相关代码文件（由智能体按需读取）
 
 ## 处理流程
 
@@ -53,10 +39,10 @@ quality_gate:
   componentization_plan: "yes" | "no" | "N/A"
 ```
 
-## 路由规则
+## 路由规则（边定义见 graph.yaml）
 
-- `design_gate_pass: true` → 进入 `S07_EXECUTING`
-- `design_gate_pass: false` 或 `NEEDS_CONTEXT` → 返回 `S05_PLANNING` 重走，或升级人工决策
+- `design_gate_pass: true` → 经 `DESIGN_GATE_PASS` 门禁边进入 `EXECUTING`
+- `design_gate_pass: false` 或 `NEEDS_CONTEXT` → 返回 `PLANNING` 重走，或升级人工决策
 - 跳过/未过设计门 → `[DESIGN_GATE_MISS]`（下游 verifier 会 FAIL）
 
 ## 反模式

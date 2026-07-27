@@ -64,31 +64,41 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │       ├── memory-strategy.md    # 兼容策略文件指针（保留以命中 strategy: "memory-strategy.md"）
 │       ├── schema/               # DDL 唯一源（init.sql = 7 表 + 26 索引 + 4 视图 + 2 FTS5 trigram 虚表）
 │       └── contracts/            # 跨层契约（health_check.sql，被 validate-config.mjs check17 调用）
-├── agent/                        # Kilo 智能体定义（生命周期驱动，全局可用）
-│   ├── conductor.md           # 生命周期编排者（加载智能体 + task_context 共享 + 门禁）
-│   ├── planner.md                # 规划智能体（设计门、DAG、验收点）
-│   ├── coder.md                  # 编码智能体（实现、自测、三件套）
-│   ├── coder-a.md                # multiModel 并行 coder-A（逻辑推理派）
-│   ├── coder-b.md                # multiModel 并行 coder-B（安全边界派）
-│   ├── coder-c.md                # multiModel 并行 coder-C（代码生成派）
-│   ├── verifier.md               # 正向验证智能体（L1/L2/L3、5 元组证据）
-│   ├── reverse-auditor.md        # 反向审计智能体（需求追溯、假设审计，T2+）
-│   ├── side-checker.md           # 运行时行为视角验证智能体（边界/安全/性能/兼容性实测，T2+）
-│   ├── reviewer.md               # 静态代码审查智能体（安全编码模式/架构/简化/SCOPE_CREEP 四视角）
-│   ├── fixer.md                  # 修复智能体（定向修复阻塞问题）
-│   ├── multiModel.md             # 多模型并行融合模式（T3 自动触发，用户可手动选择）
-│   ├── lifecycle/                # 生命周期阶段定义（状态机主线索）
-│   │   ├── README.md             # 8 阶段总览 + 智能体加载映射 + 组合规则
-│   │   ├── 01-intent.md          # S01 意图判定 [conductor]
-│   │   ├── 02-sizing.md          # S03 任务定级 [conductor]
-│   │   ├── 03-design.md          # S05 设计门 [planner]
-│   │   ├── 04-implementation.md  # S07 实现 [coder]
-│   │   ├── 05-verification.md    # S09 验证 [verifier + reverse-auditor]
-│   │   ├── 06-review.md          # S13 审查 [side-checker + reviewer]
-│   │   ├── 07-repair.md          # S11 修复 [fixer]
-│   │   └── 08-delivering.md      # S16 交付 [conductor]
+├── agent/                        # Kilo 智能体定义（v6 单源：一智能体一文件，frontmatter 自注册生命周期路由）
+│   ├── conductor.md           # 生命周期编排者（type: primary，内建执行 INTENT/SIZING/DELIVERING）
+│   ├── multiModel.md             # T3 子图编排者（type: lifecycle_provider，自带子图）
+│   ├── planner.md                # 规划智能体（mount: PLANNING；设计门、DAG、验收点）
+│   ├── coder.md                  # 编码智能体（mount: EXECUTING；实现、自测、三件套）
+│   ├── coder-a.md                # multiModel 并行 coder-A / 逻辑推理派（mount: MM_EXECUTING）
+│   ├── coder-b.md                # multiModel 并行 coder-B / 安全边界派（mount: MM_EXECUTING）
+│   ├── coder-c.md                # multiModel 并行 coder-C / 代码生成派（mount: MM_EXECUTING）
+│   ├── verifier.md               # 正向验证（mount: CHECKING + MM_CHECKING + MM_FCHECK；L1/L2/L3、5 元组证据）
+│   ├── reverse-auditor.md        # 反向审计（mount: CHECKING, when: T2+；需求追溯、假设审计）
+│   ├── side-checker.md           # 侧向验证（mount: REVIEWING, when: T2+；边界/安全/性能/兼容性实测）
+│   ├── reviewer.md               # 静态审查（mount: REVIEWING；安全编码模式/架构/简化/SCOPE_CREEP 四视角）
+│   ├── fixer.md                  # 修复智能体（mount: FIXING, when: T1+；定向修复阻塞问题）
+│   ├── synthesizer-fusion.md     # 融合编辑（mount: MM_FUSING, when: T3；取长补短生成综合最优方案）
 │   └── models/
-│       └── registry.md           # 模型能力矩阵 + 按智能体选择策略 + 多样性规则
+│       └── registry.md           # 模型能力矩阵人类可读版（历史位置，现迁至 docs/model-registry.md）
+├── lifecycle/                    # 生命周期新架构（v3.4：图/执行/契约/配置分离，语义 ID 无数字编号）
+│   ├── graph.yaml                # 主 DAG 单一真相来源（节点 INTENT/SIZING/.../DONE + 边 + 流转条件）
+│   ├── multimodel-graph.yaml     # T3 multiModel 子图（MM_INIT→...→MM_ARCHIVED + diversity_rule）
+│   ├── config.yaml               # 定级默认智能体组合 tier_defaults + 用户覆盖 overrides + 熔断阈值（唯一真相）
+│   ├── stages/                   # 阶段执行逻辑（语义命名，文件名派生节点 ID，插入中间阶段无占号问题）
+│   │   ├── README.md             # 阶段索引 + 扩展指南（插拔式注册）
+│   │   ├── intent.md             # INTENT 意图判定 [conductor 内建]
+│   │   ├── sizing.md             # SIZING 任务定级 [conductor 内建]
+│   │   ├── planning.md           # PLANNING 设计门 [planner]
+│   │   ├── executing.md          # EXECUTING 实现 [coder]
+│   │   ├── checking.md           # CHECKING 验证 [verifier + reverse-auditor?]
+│   │   ├── reviewing.md          # REVIEWING 审查 [side-checker? + reviewer]
+│   │   ├── fixing.md             # FIXING 修复 [fixer]
+│   │   └── delivering.md         # DELIVERING 交付 [conductor 内建]
+├── docs/                           # 参考文档
+│   ├── configuration-guide.md     # 配置指南（快速上手：新增智能体/阶段/模型/定级调整）
+│   ├── multi-agent-lifecycle-architecture.md  # 多智能体协作生命周期架构（设计门产物）
+│   ├── model-registry.md          # 模型能力倾向矩阵人类可读版（v6.1 唯一能力参考，无机器可读副本）
+│   └── memory-ops-reference.md    # 记忆操作 SQL 模板参考
 ├── install.ps1                   # Kilo 配置安装脚本（Windows）
 ├── install.sh                    # Kilo 配置安装脚本（macOS/Linux）
 └── README.md

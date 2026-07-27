@@ -27,6 +27,9 @@ RECURSIVE_EXCLUDE=(
     "bun.lock"
     "yarn.lock"
     "agent-manager.json"
+    ".tmp"
+    "worktrees"
+    ".pytest_cache"
 )
 
 COPIED_FILES=0
@@ -157,6 +160,11 @@ CRITICAL_FILES=(
     ".kilo/instructions/workflow-core.md"
     ".kilo/instructions/reflection.md"
     "agent/conductor.md"
+    "agent/verifier.md"
+    "lifecycle/graph.yaml"
+    "lifecycle/config.yaml"
+    "lifecycle/multimodel-graph.yaml"
+    "lifecycle/stages/README.md"
 )
 
 MISSING=()

@@ -11,6 +11,30 @@ permission:
   task: allow
   glob: allow
   grep: allow
+# ---- 生命周期元数据（v6 单源：Kilo 原生字段 + 生命周期声明合入同一 frontmatter）----
+# type：lifecycle_provider = 特殊 primary，自带子图，接管 T3 任务（不经 mount 挂载）
+type: lifecycle_provider       # 特殊 primary：自带子图，接管 T3 任务（不经 mount 挂载）
+# multiModel 绑定 graph.yaml MM_SUBGRAPH 节点 provider: multiModel；子图定义见下方 subgraph
+
+# 模型绑定在 kilo.json agent.multiModel.model；能力倾向参考 docs/model-registry.md 人类维护
+# fast-reasoning 倾向：multiModel 作为子图编排者，需要快速编排决策（类比主图 conductor）
+
+# subgraph：子图 DAG 文件路径（相对于 lifecycle/ 目录）
+# multiModel 内部状态机是与主生命周期并行的子图，结构定义在 lifecycle/multimodel-graph.yaml
+subgraph: multimodel-graph.yaml
+
+# handoff：与主生命周期的交接协议
+#   enter  进入条件（何时从主图接管 task_context）
+#   exit   退出条件（何时将 task_context 交还主图 conductor）
+handoff:
+  enter: "SIZING 定级 T3 或用户手动选择；task_context 已由 conductor 初始化或自行初始化"
+  exit: "MM_ARCHIVED 写 status=ready_for_delivery，task_context 交还 conductor 继续 DELIVERING"
+
+# invariants：子图运行期间的不变量（违反 → [PROCESS_VIOLATION]）
+invariants:
+  - task_id 全链一致
+  - MM_* 期间 conductor 不并发写 task_context（单写者原则）
+  - total_rounds 只能由 conductor 递增，multiModel 经 status 信号交还计数
 ---
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
@@ -23,19 +47,17 @@ permission:
 
 ## 生命周期定位
 
-multiModel 是**独立生命周期消费者**，其内部状态机与主生命周期并行：
+multiModel 是**独立生命周期消费者**（`type: lifecycle_provider`，frontmatter 声明，subgraph 指向 `lifecycle/multimodel-graph.yaml`），其内部状态机是与主生命周期并行的子图。**子图结构（节点/边/流转条件）的单一真相来源是 `lifecycle/multimodel-graph.yaml`**，本节只做定位说明：
 
 ```
-主生命周期：S01 → S03(T3) ──→ MM_INIT（multiModel 接管）
-                                         │
-                                         ▼
-                               MM_INJECT ──→ MM_EXECUTING ──→ MM_CHECKING
-                                         │                        │
-                                         ▼                        ▼
-                               MM_FUSING ──→ MM_FCHECK ──→ MM_DELIVERING ──→ MM_ARCHIVED
+主图：INTENT → SIZING(T3) ──→ MM_SUBGRAPH（multiModel 接管）
+                                        │
+   子图（multimodel-graph.yaml）：MM_INIT → MM_INJECT → MM_EXECUTING(3×coder 并行)
+                                        → MM_CHECKING(verifier) → MM_FUSING(synthesizer-fusion)
+                                        → MM_FCHECK(verifier) → MM_DELIVERING → MM_ARCHIVED
 ```
 
-multiModel 完成 `MM_ARCHIVED` 后，返回主生命周期的 `S16_DELIVERING` 阶段。
+multiModel 完成 `MM_ARCHIVED` 后，返回主生命周期的 `DELIVERING` 阶段。
 
 ## task_context 交接协议（MM_* ↔ 主生命周期）
 
@@ -43,7 +65,7 @@ multiModel 期间产生的全部状态写入 `$env:TEMP/kilo/task_context_<task_
 
 ### 初始化（两种进入方式）
 
-1. **conductor 移交（S03 定级 T3）**：task_context 已由 conductor 初始化（`intent` / `sizing` / `config.agents`），multiModel 在 `MM_INIT` 直接读取，无需重写。
+1. **conductor 移交（SIZING 定级 T3）**：task_context 已由 conductor 初始化（`intent` / `sizing` / `config.agents`），multiModel 在 `MM_INIT` 直接读取，无需重写。
 2. **用户手动选择 multiModel 模式**：multiModel 在 `MM_INIT` 自行初始化 task_context：写入 `intent` + `sizing.level=T3` + `config.agents.synthesizer_fusion=true`，其余按 conductor 默认组合补齐。
 
 ### MM_* 阶段 → 字段读写映射
@@ -57,7 +79,7 @@ multiModel 期间产生的全部状态写入 `$env:TEMP/kilo/task_context_<task_
 | `MM_FUSING` | `execution.mm_outputs` / `verification.forward` | `execution.fused_output`（synthesizer-fusion 注入边界不变：不读 intent/拆分意图/模型身份） |
 | `MM_FCHECK` | `execution.fused_output` | `verification.forward.fusion_check`（融合后验证） |
 | `MM_DELIVERING` | 全部 | `status` + `convergence.round` + 记忆溯源（M4-M8，dispatch_log / fact_store / model_calibration 等） |
-| `MM_ARCHIVED` | 全部 | `status=ready_for_delivery`，task_context 交还 conductor 继续 `S16_DELIVERING` |
+| `MM_ARCHIVED` | 全部 | `status=ready_for_delivery`，task_context 交还 conductor 继续 `DELIVERING` |
 
 ### 交接不变量
 
@@ -70,7 +92,7 @@ multiModel 期间产生的全部状态写入 `$env:TEMP/kilo/task_context_<task_
 
 ```
 multiModel（多模型融合模式）
-├─ coder-A           ← 角色：逻辑推理派（模型见 agent/models/registry.md）
+├─ coder-A           ← 角色：逻辑推理派（模型见 kilo.json，能力契约见 agent/coder-a.md frontmatter）
 ├─ coder-B           ← 角色：安全边界派
 ├─ coder-C           ← 角色：代码生成派
 ├─ verifier          ← 角色：严格验证（质量门禁，正向验证，对每份独立验证）
@@ -78,8 +100,8 @@ multiModel（多模型融合模式）
 └─ multiModel 主控    ← 拆分/委派/调度/交付，不参与融合编辑
 ```
 
-> **多样化原则**：3 个 coder 必须选**不同架构/不同厂商**模型，降低共犯错误概率。
-> 具体模型选择见 `agent/models/registry.md` §multiModel 并行。
+> **多样化原则**：3 个 coder 必须选**不同架构/不同厂商**模型，降低共犯错误概率（conductor bootstrap 启动期人工校验，违反 → `[DIVERSITY_VIOLATION]`）。
+> 能力需求矩阵见 `docs/model-registry.md` §multiModel 并行。
 > **融合隔离原则**：synthesizer-fusion 只读 3 份 coder 输出 + verifier 报告 + acceptance_criteria，**不读 multiModel 的拆分意图、不读 task_context.intent、不知道各家模型身份**——纯粹按方案质量融合。
 
 ## 工作流程

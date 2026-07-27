@@ -2,14 +2,16 @@
 
 > Kilo 通过 `findUp` 自动发现本文件作为**唯一全局指令入口**。
 >
-> 通用规则由 Kilo 运行时自动注入 `core.md` + `workflow-core.md` + `reflection.md`。本文件作为**唯一全局指令入口**，只列锚点名称与规则来源；细则按需读取 `.kilo/instructions/*.md`、各 `agent/*.md`、`agent/lifecycle/*.md`、`agent/models/registry.md`，不在此重复展开。
+> 通用规则由 Kilo 运行时自动注入 `core.md` + `workflow-core.md` + `reflection.md`。本文件作为**唯一全局指令入口**，只列锚点名称与规则来源；细则按需读取 `.kilo/instructions/*.md`、各 `agent/*.md`、`lifecycle/graph.yaml` + `lifecycle/stages/*.md`，不在此重复展开。
 > - `.kilo/instructions/core.md` — 通用基线、意图分类（咨询类/执行类）、安全约束、资源与生命周期管理
 > - `.kilo/instructions/workflow-core.md` — 执行类任务定级（T0–T3）、单元闭环、门禁、交付、强制流程日志、需求扩散、Trace-First、MCP/委派包、知识沉淀
 > - `.kilo/instructions/skills-lifecycle.md` — skills 生命周期管理 + 社区技能发现 + Hermes 迁移
 > - `.kilo/instructions/reflection.md` — 反思与错误恢复规则
-> - `agent/*.md` — 各智能体的详细工作说明书（生命周期驱动后：`conductor.md` + `planner.md` + `coder.md` + `coder-a/b/c.md（multiModel 并行派生）` + `verifier.md` + `reverse-auditor.md` + `side-checker.md` + `reviewer.md` + `fixer.md` + `multiModel.md`）
-> - `agent/lifecycle/*.md` — 生命周期阶段定义（状态机主线索）
-> - `agent/models/registry.md` — 模型能力矩阵与选择策略
+> - `agent/*.md` — 各智能体的详细工作说明书 + frontmatter 生命周期声明（v6 单源：mount/task_context/isolation/gate 等字段合入 frontmatter，manifest 与行为文件合二为一，bootstrap 扫 frontmatter 自动注册；含 conductor/planner/coder/coder-a/b/c/verifier/reverse-auditor/side-checker/reviewer/fixer/multiModel/synthesizer-fusion）
+> - `lifecycle/graph.yaml` + `lifecycle/stages/*.md` — 生命周期 DAG（纯图，语义 ID）+ 阶段执行逻辑（状态机主线索）
+> - `lifecycle/config.yaml` — 定级默认智能体组合 + 用户覆盖 + 熔断阈值（唯一真相）
+> - `lifecycle/multimodel-graph.yaml` — T3 子图 DAG + diversity_rule 多样化硬规则
+> - `docs/model-registry.md` — 模型能力倾向矩阵（人类可读，v6.1 唯一能力参考，无机器可读副本）
 >
 > 仓库维护指南见 `CONFIG_CHANGE_CHECKLIST.md`。
 
@@ -31,8 +33,8 @@
    - skill 使用频次写入 SQLite `skill_usage_events` 表，禁止 md append（v2.5 铁律）
    - 兼容策略文件：`.kilo/memory/memory-strategy.md`（保留为指针文件，便于 `strategy: "memory-strategy.md"` 仍可命中）
    - skills 的加载由 `skill` 工具触发（按需），不受本条约束。AGENTS.md 回写与经验回写（经闭环验证）不受影响
-   - **生命周期驱动后**：记忆写入是 conductor 在 `S16_DELIVERING` 阶段的内建职责（调用 sqlite3 CLI），SQL 模板见 `docs/memory-ops-reference.md`
+   - **生命周期驱动后**：记忆写入是 conductor 在 `DELIVERING` 阶段的内建职责（调用 sqlite3 CLI），SQL 模板见 `docs/memory-ops-reference.md`
 9. **流程违规即停**：发现跳步立即标 `[PROCESS_VIOLATION]` 并暂停。
 10. **临时文件**：写入 `$env:TEMP` / `/tmp/`，禁止污染项目目录。
 11. **组件化与重复模式治理**：UI/样式/行为问题跨页面/组件出现时，按 `core.md` + `workflow-core.md` + `component-driven-fixes` skill 执行，禁止逐页复制粘贴式补丁。
-12. **生命周期驱动**：所有执行类任务按 `agent/lifecycle/*.md` 阶段文件驱动状态流转，加载对应 `agent/*.md` 智能体，模型选择按 `agent/models/registry.md` 能力矩阵分配。
+12. **生命周期驱动**：所有执行类任务按 `lifecycle/graph.yaml` DAG（节点含 `required` 必配角色）+ `lifecycle/stages/*.md` 阶段文件驱动状态流转，按文件路由（`agent/*.md` frontmatter `mount`：at/order/when/on_fail）加载智能体（v6 单源：manifest 合入 frontmatter），模型绑定在 `kilo.json` `agent.<name>.model`（能力倾向参考 `docs/model-registry.md` 人类维护，无机械校验）。

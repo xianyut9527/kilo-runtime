@@ -1,26 +1,12 @@
 ---
-description: 生命周期阶段 07 — 修复。定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题。
-stage_id: S11_FIXING
-agents:
-  - fixer
-previous_stage: S09_CHECKING
-next_stage: S09_CHECKING
+description: 生命周期阶段 FIXING — 修复。定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题。
+model_capability: code-generation
+token_budget: 8000
 ---
 
-# lifecycle/07-repair
+# lifecycle/stages/fixing
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 阶段定义
-
-| 字段 | 值 |
-|------|-----|
-| **阶段 ID** | `S11_FIXING` |
-| **上一阶段** | `S09_CHECKING`（verifier/reverse-auditor FAIL）或 `S13_REVIEWING`（side-checker/reviewer FAIL） |
-| **下一阶段** | `S12_FIX_PASS` → `S09_CHECKING`（重新验证） |
-| **加载智能体** | `fixer`（`agent/fixer.md`，T1+ 加载） |
-| **模型偏好** | `registry:code-generation`（快速修复） |
-| **token 预算** | ≤ 8000 |
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（节点 `required: [fixer]`；FIXING → CHECKING 回环边 + 熔断阈值）。fixer 经 frontmatter `mount` 自注册挂载（见 `agent/fixer.md`）。
 
 ## 输入
 
@@ -55,12 +41,12 @@ quality_gate:
   rollback_needed: true | false
 ```
 
-## 路由规则
+## 路由规则（边定义见 graph.yaml）
 
-- `DONE` → 回到 `S09_CHECKING`（重新验证）
+- `DONE` → 回到 `CHECKING`（重新验证）
 - `BLOCKED` / 连续 2 轮同症状 → 停止修复，升级 reviewer 或人工决策
-- 同一状态循环 ≥3 次（单点熔断）→ `[CIRCUIT_BREAKER]` → 停止修复
-- S09+S13 累计进入次数 ≥ max_total_rounds(7)（全局熔断）→ `[CIRCUIT_BREAKER]` → 停止修复
+- 同一状态循环 ≥ max_rounds（单点熔断；阈值见 `lifecycle/config.yaml` convergence）→ `[CIRCUIT_BREAKER]` → 停止修复
+- CHECKING+REVIEWING 累计进入次数 ≥ max_total_rounds（全局熔断；阈值见 `lifecycle/config.yaml` convergence）→ `[CIRCUIT_BREAKER]` → 停止修复
 
 ## 硬规则
 

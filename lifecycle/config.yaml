@@ -1,0 +1,100 @@
+# ============================================================
+# 生命周期配置（定级默认组合 + 用户覆盖 + 熔断阈值）
+# conductor 在 SIZING 阶段读取本文件写入 task_context.config；
+# 用户可在 prompt 显式声明覆盖（conductor 写入 custom_overrides）。
+# 本文件是唯一"定级→智能体组合"声明处，替代原 conductor.md §动态加载矩阵硬编码。
+# ============================================================
+# tier_defaults：按定级 T0/T1/T2/T3 声明本次任务要加载哪些智能体（布尔开关）
+#   - conductor 在 SIZING 阶段把对应 tier 的 agents 表写入 task_context.config.agents
+#   - agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值
+#       true  → 该 agent 在声明挂载点会被加载
+#       false → 跳过该 agent（不影响 required 必配角色——若该角色是节点 required 仍会 [ASSEMBLY_FAIL]）
+#   - review_mode：none（无审查）/ full（四视角：正向+反向+侧向+审查）
+#   - provider：仅 T3 用，声明子图提供者（对应 graph.yaml MM_SUBGRAPH 节点 provider）
+#
+# agents 键命名规则（自动派生，无需手写映射表）：
+#   键 = agent 文件名去 .md 后连字符转下划线
+#   reverse-auditor.md → reverse_auditor
+#   side-checker.md    → side_checker
+#   synthesizer-fusion.md → synthesizer_fusion
+#   coder / planner / verifier / reviewer / fixer 等单词名直接用
+#   coder-a/b/c 不单独开关（由 T3 provider 隐含加载）
+# ============================================================
+version: 1
+
+tier_defaults:
+  # T0 极速通道：INTENT → SIZING → EXECUTING → DELIVERING
+  # 只加载 coder，无设计门/验证/审查；适合一行命令能搞定的局部修改
+  T0:
+    agents:
+      coder: true
+    review_mode: none
+    note: 极速通道：INTENT → SIZING → EXECUTING → DELIVERING
+
+  # T1 标准闭环：短设计门 + 正向验证 + 四视角审查
+  # 默认不开反向审计/侧向验证/融合（适合中等复杂度任务）
+  T1:
+    agents:
+      planner: true
+      coder: true
+      verifier: true
+      reviewer: true
+      fixer: true
+      reverse_auditor: false      # T2+ 才开（需求追溯审计）
+      side_checker: false         # T2+ 才开（运行时行为实测）
+      synthesizer_fusion: false   # 仅 T3 multiModel 用
+    review_mode: full
+    note: 短设计门 + 正向验证 + 四视角审查
+
+  # T2 全视角交叉验证：正向+反向+侧向+审查全开
+  # 适合复杂任务：架构变更、跨多文件重构、安全敏感改动
+  T2:
+    agents:
+      planner: true
+      coder: true
+      verifier: true
+      reverse_auditor: true       # 需求追溯审计（从产物反推是否满足原始需求）
+      side_checker: true          # 运行时行为视角验证（边界/安全/性能/兼容性实测）
+      reviewer: true
+      fixer: true
+      synthesizer_fusion: false   # 仅 T3 multiModel 用
+    review_mode: full
+    note: 全视角交叉验证（正向+反向+侧向+审查）
+
+  # T3 多模型并行融合：交给 multiModel 子图（lifecycle/multimodel-graph.yaml）
+  # 3 个不同厂商/架构的 coder 并行实现，verifier 交叉验证，synthesizer-fusion 独立融合
+  # 适合高难度任务：架构设计、关键算法、需要多家之长
+  T3:
+    provider: multiModel
+    agents:
+      synthesizer_fusion: true    # 融合编辑智能体（隔离硬门：不读拆分意图/模型身份）
+    review_mode: full
+    note: 走 lifecycle/multimodel-graph.yaml 子图
+
+# ============================================================
+# overrides：用户/环境覆盖（默认全空 = 全量自动发现注册）
+# ============================================================
+overrides:
+  # disabled_agents：全局禁用的智能体名列表
+  # 被禁用的 agent 不会被 bootstrap 注册；若该 agent 是某节点 required → [ASSEMBLY_FAIL]
+  # 例: [side-checker] → bootstrap 跳过注册 side-checker（但 REVIEWING 节点 required 是 reviewer，不受影响）
+  disabled_agents: []
+
+  # model_overrides：覆盖 kilo.json 的模型绑定
+  # 键 = agent 名，值 = 模型 ID（能力倾向参考 docs/model-registry.md 人工维护，无机械校验）
+  # 例: { verifier: "hx/kimi-k3" } → 本次任务 verifier 用 kimi-k3 而非 kilo.json 默认绑定
+  model_overrides: {}
+
+  # condition_overrides：强制覆盖 config.agents 开关
+  # 键 = "config.agents.<key>"，值 = true/false
+  # 例: { "config.agents.reverse_auditor": true } → 强制加载 reverse-auditor（即使 tier_defaults 关闭）
+  condition_overrides: {}
+
+# ============================================================
+# convergence：收敛熔断阈值（唯一真相来源，graph.yaml 不再重复声明）
+# conductor 在进入 CHECKING/REVIEWING 前递增 total_rounds
+# 达到阈值 → [CIRCUIT_BREAKER] 停止修复，输出选项等用户决策
+# ============================================================
+convergence:
+  max_rounds: 5        # FIXING 单点熔断（同一验证失败点的修复轮次上限）
+  max_total_rounds: 7  # CHECKING+REVIEWING 累计进入次数全局熔断

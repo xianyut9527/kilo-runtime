@@ -1,27 +1,12 @@
 ---
-description: 生命周期阶段 05 — 验证。正向验证 + 反向审计（T2+），多视角交叉验证，只验证不修复。
-stage_id: S09_CHECKING
-agents:
-  - verifier
-  - "reverse-auditor?config.agents.reverse_auditor"
-previous_stage: S07_EXECUTING
-next_stage: S13_REVIEWING
+description: 生命周期阶段 CHECKING — 验证。正向验证 + 反向审计（条件加载），多视角交叉验证，只验证不修复。
+model_capability: strict-verification
+token_budget: 10000        # × 智能体数
 ---
 
-# lifecycle/05-verification
+# lifecycle/stages/checking
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 阶段定义
-
-| 字段 | 值 |
-|------|-----|
-| **阶段 ID** | `S09_CHECKING` |
-| **上一阶段** | `S07_EXECUTING` |
-| **下一阶段** | `S10_CHECK_PASSED` → `S13_REVIEWING`（T1+ 统一 full）或 `S16_DELIVERING`（仅 T0 不经过此阶段） |
-| **加载智能体** | `verifier`（正向，T1+）+ `reverse-auditor`（反向，T2+，与 verifier 并行） |
-| **模型偏好** | `registry:strict-verification`（边界敏感、逻辑审查） |
-| **token 预算** | ≤ 10000 × 智能体数 |
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（节点 `required: [verifier]`）。挂载：verifier 必加载（reachability 即开关），reverse-auditor 经 manifest `mount` 条件挂载（`config.agents.reverse_auditor=true`，默认 T2，见 `lifecycle/config.yaml`）。
 
 ## 输入
 
@@ -33,15 +18,15 @@ next_stage: S13_REVIEWING
 - 设计门方案（T1+，仅 verifier 用于核对范围）
 - 原始意图（reverse-auditor 用，**不传 plan**）
 
-## 双视角交叉验证（verifier 正向 + reverse-auditor 反向，T2+ 并行）
+## 双视角交叉验证（verifier 正向 + reverse-auditor 反向，条件并行）
 
 ### 正向验证（verifier）
 按验收标准逐条验证产物，L1/L2/L3 分层，5 元组证据，独立重跑。详见 `agent/verifier.md`。
 
-### 反向审计（reverse-auditor，T2+）
+### 反向审计（reverse-auditor，条件加载）
 从产物反推是否满足原始需求，追溯假设，发现隐性遗漏和过度实现。详见 `agent/reverse-auditor.md`。
 
-> 两者并行执行，各自独立 context window，不互相参考。组合判定：任一 FAIL → S11_FIXING。
+> 两者并行执行，各自独立 context window，不互相参考。组合判定：任一 FAIL → FIXING。
 
 ## 分层验证（verifier 正向）
 
@@ -85,16 +70,16 @@ transition_context:
   l3_pass: true | false | "N/A"
 quality_gate:
   forward_result: "PASS" | "FAIL"     # verifier 正向
-  reverse_result: "PASS" | "FAIL" | "N/A"  # reverse-auditor 反向（T2+）
+  reverse_result: "PASS" | "FAIL" | "N/A"  # reverse-auditor 反向（条件加载，未加载时 N/A）
   unverified_items: ["string"]
   blockers: [{ source, severity, file, line, message }]
 ```
 
-## 路由规则
+## 路由规则（边定义见 graph.yaml）
 
-- `PASS`（正向+反向全 PASS）→ T1+ 进入 `S13_REVIEWING`（统一 full 四视角）；T0 不经过此阶段
-- `FAIL`（任一视角 FAIL）→ 进入 `S11_FIXING`（修复阶段）
-- `VERIFY_PENDING` → 标记后进入 `S11_FIXING` 或升级人工决策
+- `PASS`（正向+反向全 PASS）→ T1+ 进入 `REVIEWING`（统一 full 四视角）；T0 不经过此阶段
+- `FAIL`（任一视角 FAIL）→ 进入 `FIXING`（修复阶段）
+- `VERIFY_PENDING` → 标记后进入 `FIXING` 或升级人工决策
 
 ## FAIL 条件清单
 

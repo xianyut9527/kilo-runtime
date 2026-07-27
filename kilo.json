@@ -27,12 +27,12 @@
     },
     "synthesizer-fusion": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6",
+      "model": "hx/MiniMax-M3",
       "prompt": "多模型融合编辑智能体。读取 3 个 coder 输出 + verifier 验证结果，取长补短生成综合最优方案。只融合不推理不验证。详见 agent/synthesizer-fusion.md。"
     },
     "planner": {
       "mode": "subagent",
-      "model": "hx/kimi-k3",
+      "model": "hx/glm-5.2",
       "prompt": "规划智能体。设计门、方案设计、单元 DAG 拆分、验收点定义、全量扫描清单。只输出设计方案，不写代码。详见 agent/planner.md。"
     },
     "coder": {
@@ -42,7 +42,7 @@
     },
     "coder-a": {
       "mode": "subagent",
-      "model": "hx/kimi-k3",
+      "model": "hx/kimi-k2.6",
       "description": "multiModel 逻辑推理派 coder，专精复杂推理与边界发现",
       "prompt": "编码智能体（multiModel 并行-A / 逻辑推理派）。按方案实现代码，侧重逻辑完备性、边界条件与异常路径。输出验收映射表+三件套、状态信号。端到端闭环。详见 agent/coder.md 与 agent/multiModel.md。"
     },
@@ -60,35 +60,32 @@
     },
     "verifier": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
+      "model": "hx/MiniMax-M3",
       "prompt": "正向验证智能体。按验收标准逐条验证、L1/L2/L3 分层、5元组证据、独立重跑。只验证不修复。详见 agent/verifier.md。"
     },
     "reverse-auditor": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
+      "model": "hx/MiniMax-M3",
       "prompt": "反向审计智能体。从产物反推是否满足原始需求、追溯假设、发现隐性遗漏。只审计不修复。详见 agent/reverse-auditor.md。"
     },
     "side-checker": {
       "mode": "subagent",
-      "model": "hx/kimi-k3",
+      "model": "hx/glm-5.2",
       "prompt": "运行时行为视角验证智能体。通过实际执行/构造输入/实测对比验证边界/安全/性能/兼容性。只验证不修复。详见 agent/side-checker.md。"
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "hx/kimi-k3",
+      "model": "hx/MiniMax-M3",
       "prompt": "静态代码审查智能体。通过阅读代码审查安全编码模式/架构/简化/SCOPE_CREEP 四视角。只审查不修复。详见 agent/reviewer.md。"
     },
     "fixer": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.7-code",
+      "model": "hx/MiniMax-M3",
       "prompt": "修复智能体。定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题。详见 agent/fixer.md。"
     }
   },
   "skills": {
-    "paths": [
-      "${KILO_CONFIG_DIR}/.kilo/skills",
-      "${HOME}/.agents/skills"
-    ]
+    "paths": ["${KILO_CONFIG_DIR}/.kilo/skills", "${HOME}/.agents/skills"]
   },
   "permission": {
     "bash": "allow"

@@ -1,0 +1,188 @@
+# ============================================================
+# 主生命周期 DAG（单一真相来源：图结构）
+# 纯图定义：节点 + 边 + 流转条件。
+#   - 执行逻辑（输入/处理/输出信号）→ lifecycle/stages/<id-lower>.md（从节点 id 自动派生路径，无需 stage 字段）
+#   - 智能体挂载（文件路由，唯一机制）→ agent/*.md frontmatter `mount` 字段自注册（v6 单源）
+#   - 阶段必配角色（结构层不变量）    → 节点 `required: [role...]`
+#   - 定级默认组合                    → lifecycle/config.yaml
+#   - 收敛熔断阈值                    → lifecycle/config.yaml convergence（唯一真相，本文件不再重复）
+# 修改流转 = 改本文件 edges；新增阶段 = 加 node + edges + 丢一个 stages/<id-lower>.md。
+# 节点 ID 语义命名，禁止数字前缀——插入中间节点不存在"占号"问题。
+# ============================================================
+# 节点字段说明：
+#   id        节点 ID（大写蛇形语义名，如 INTENT / MM_EXECUTING；禁数字前缀）
+#               type: stage 的节点，执行逻辑文件路径自动派生：stages/<id 小写>.md
+#               （如 PLANNING → stages/planning.md），无需 stage 字段
+#   type      node 类型：
+#               virtual   - 占位（如 START），无阶段文件、不挂载智能体
+#               stage     - 阶段节点，有 stages/<id-lower>.md 执行逻辑文件（路径自动派生）
+#               subgraph  - 子图入口，经 provider 路由进子图 DAG（见 multimodel-graph.yaml）
+#               terminal  - 终态（如 DONE），无阶段文件、不挂载智能体
+#   executor  内建执行者（conductor 或 multiModel）；声明后该节点主槽不经 task 启动外部智能体
+#             未声明 executor 的节点 → 主槽由 frontmatter `mount: at: <NODE>` 注册的智能体填充
+#   required  主槽必配角色列表（结构层不变量）；bootstrap 静态预演——无 agent frontmatter
+#             在该节点挂载该角色 → [ASSEMBLY_FAIL] 启动报错
+#   provider  subgraph 节点的子图提供者（对应 agent/<provider>.md frontmatter type: lifecycle_provider）
+#   graph     subgraph 节点的子图 DAG 文件路径
+#   note      人类可读说明（可选）
+#
+# 边字段说明：
+#   from / to    起止节点 ID
+#   when         流转条件表达式（对照 task_context 求值）；省略 = 无条件流转
+#                常用变量：intent_type / tier / forward_result / reverse_result /
+#                          side_result / review_result / subgraph_status
+#   gate         质量门禁（硬门）；未通过不得流转：
+#                  DESIGN_GATE_PASS       - PLANNING → EXECUTING 设计门
+#                  MEMORY_WRITE_COMPLETE  - DELIVERING → DONE 记忆写入完成
+#                  FUSION_SELF_CHECK_10   - 子图融合自检（见 multimodel-graph.yaml）
+#   note         人类可读说明（可选）
+# ============================================================
+# 挂载点（mount）命名空间（派生，零声明——节点存在即挂载点存在）：
+#   on:bootstrap   装配完成后、INTENT 前（任务启动挂载点）
+#   on:done        DELIVERING 完成后、DONE 前（收尾挂载点）
+#   pre:<NODE>     节点主槽执行前
+#   <NODE>         节点主槽（阶段本体；executor 内建阶段由 conductor/multiModel 占据）
+#   post:<NODE>    节点主槽执行后、edges 流转前
+# 子图节点（MM_*）同样派生三挂载点。智能体在自身 agent/*.md frontmatter `mount` 声明挂载点 +
+# order/when/on_fail；同挂载点按 order 升序执行，无 order 默认并行（视角隔离场景
+# 必须保持并行，不得声明 order）。加智能体用中间号（如 15 插在 10/20 间）零改其他文件。
+# 节点 `required: [role...]` 声明该主槽必须覆盖的角色（结构层不变量）；加可选智能体
+# 不碰本文件，加必配智能体才动一行。
+# ============================================================
+version: 1
+
+nodes:
+  - id: START
+    type: virtual
+    note: 会话初始化占位，无阶段文件
+
+  - id: INTENT
+    type: stage
+    executor: conductor        # conductor 内建执行，不经 task 启动
+
+  - id: SIZING
+    type: stage
+    executor: conductor        # conductor 内建；按 config.yaml tier_defaults 写 config.agents
+
+  - id: PLANNING
+    type: stage
+    required: [planner]        # 必配角色；agent/planner.md frontmatter mount: PLANNING 覆盖
+
+  - id: EXECUTING
+    type: stage
+    required: [coder]          # 必配角色；agent/coder.md frontmatter mount: EXECUTING 覆盖
+
+  - id: CHECKING
+    type: stage
+    required: [verifier]       # 必配角色；agent/verifier.md mount: CHECKING 覆盖
+                              # 可选挂载：reverse-auditor（when: config.agents.reverse_auditor）
+
+  - id: FIXING
+    type: stage
+    required: [fixer]          # 必配角色；agent/fixer.md mount: FIXING 覆盖
+
+  - id: REVIEWING
+    type: stage
+    required: [reviewer]       # 必配角色；agent/reviewer.md mount: REVIEWING 覆盖
+                              # 可选挂载：side-checker（when: config.agents.side_checker）
+
+  - id: DELIVERING
+    type: stage
+    executor: conductor        # conductor 内建；记忆写入 + 分支收尾协议
+
+  - id: MM_SUBGRAPH
+    type: subgraph
+    provider: multiModel       # agent/multiModel.md frontmatter type: lifecycle_provider
+    graph: multimodel-graph.yaml
+
+  - id: DONE
+    type: terminal
+
+edges:
+  - { from: START, to: INTENT }
+
+  - from: INTENT
+    to: SIZING
+    when: "intent_type == 'EXECUTION'"
+    # 执行类任务进入定级
+
+  - from: INTENT
+    to: DONE
+    when: "intent_type == 'INQUIRY'"
+    note: 命中价值信号时先执行轻量 M4-M8 记忆写入再入 DONE（见 stages/intent.md）
+    # 咨询类任务直接回答 + 可选记忆写入
+
+  - from: SIZING
+    to: EXECUTING
+    when: "tier == 'T0'"
+    note: 极速通道：无设计门/验证/审查
+    # T0 跳过 PLANNING/CHECKING/REVIEWING，只跑 coder
+
+  - from: SIZING
+    to: PLANNING
+    when: "tier in ['T1','T2']"
+    # T1/T2 走完整闭环：设计门 → 实现 → 验证 → 审查
+
+  - from: SIZING
+    to: MM_SUBGRAPH
+    when: "tier == 'T3'"
+    # T3 交给 multiModel 子图（3 coder 并行 + 融合）
+
+  - from: PLANNING
+    to: EXECUTING
+    gate: DESIGN_GATE_PASS
+    note: 未过设计门 → [DESIGN_GATE_MISS]，下游 verifier FAIL
+    # 设计门是硬门：planner 输出方案必须通过才能进入实现
+
+  - from: EXECUTING
+    to: DELIVERING
+    when: "tier == 'T0'"
+    # T0 无验证：实现完直接交付
+
+  - from: EXECUTING
+    to: CHECKING
+    when: "tier in ['T1','T2']"
+    # T1/T2 实现完进正向+反向验证
+
+  - from: CHECKING
+    to: FIXING
+    when: "forward_result == 'FAIL' or reverse_result == 'FAIL'"
+    note: 进入前 total_rounds+1（conductor 写入）；任一视角 FAIL 都是硬门
+    # 验证不过进修复循环
+
+  - from: CHECKING
+    to: REVIEWING
+    when: "forward_result == 'PASS' and (reverse_result in ['PASS','N/A'])"
+    # 验证通过进审查阶段
+
+  - from: FIXING
+    to: CHECKING
+    note: round+1；round >= max_rounds（见 lifecycle/config.yaml convergence）单点 [CIRCUIT_BREAKER]
+    # 修复后重验；单点 5 轮熔断
+
+  - from: REVIEWING
+    to: FIXING
+    when: "side_result == 'FAIL' or review_result == 'FAIL'"
+    note: 进入前 total_rounds+1；total_rounds >= max_total_rounds（见 lifecycle/config.yaml convergence）全局 [CIRCUIT_BREAKER]
+    # 审查不过进修复循环
+
+  - from: REVIEWING
+    to: DELIVERING
+    when: "(side_result in ['PASS','N/A']) and (review_result in ['PASS','CONDITIONAL_PASS'])"
+    # 审查通过进交付
+
+  - from: MM_SUBGRAPH
+    to: DELIVERING
+    when: "subgraph_status == 'ready_for_delivery'"
+    note: 子图 MM_ARCHIVED 后 task_context 交还 conductor
+    # 子图完成后回主图交付
+
+  - from: DELIVERING
+    to: DONE
+    gate: MEMORY_WRITE_COMPLETE
+    note: memory_write_status=DEGRADED 不阻塞；MISSING → [MISSING_MEMORY_WRITE]
+    # 记忆写入完成才允许进入 DONE
+
+# 收敛熔断阈值见 lifecycle/config.yaml convergence（唯一真相来源）
+# conductor 在进入 CHECKING/REVIEWING 前递增 total_rounds
+# 达到阈值 → [CIRCUIT_BREAKER] 停止修复，输出选项等用户决策

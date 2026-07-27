@@ -12,6 +12,26 @@ permission:
   glob: allow
   grep: allow
 subagent_type: planner
+# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
+# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
+
+# mount：挂载点声明
+#   at    挂载点（PLANNING 阶段主槽，派生自 graph.yaml PLANNING 节点）
+#   when  条件挂载（对照 config.agents.planner 求值）；T0 跳过 PLANNING 阶段，此处 false 不会被加载
+mount:
+  - at: PLANNING
+    when: "config.agents.planner"
+
+# task_context：读写边界声明
+#   read   可读的 task_context 切片（intent + sizing 由 conductor 在 INTENT/SIZING 写入）
+#   write  可写的 task_context 切片（plan 由 planner 设计方案后写入）
+task_context:
+  read: [intent, sizing]
+  write: [plan]
+
+# gate：本智能体输出须通过的质量门禁（graph.yaml edge PLANNING→EXECUTING 的 gate）
+# planner 输出方案未通过 DESIGN_GATE_PASS → 下游 verifier FAIL
+gate: DESIGN_GATE_PASS
 ---
 
 # planner
@@ -20,7 +40,7 @@ subagent_type: planner
 
 ## 智能体定位
 
-**生命周期阶段**：`S05_PLANNING`
+**生命周期阶段**：`PLANNING`（见 `lifecycle/graph.yaml` + `lifecycle/stages/planning.md`）
 **加载条件**：T1+（T0 不加载）
 **模型**：见 `kilo.json` `agent.planner.model`（架构分析、长上下文、复杂推理能力需求）
 
@@ -30,7 +50,7 @@ subagent_type: planner
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 
-> **v3.2 记忆下沉**：planner 在 S05 规划前**自行调用 memory.db** 召回同类任务历史，不再依赖 conductor 在 S01/S03 的集中注入。这避免 conductor 上下文压力 + 让规划直接触达历史经验。
+> **记忆下沉**：planner 在 PLANNING 规划前**自行调用 memory.db** 召回同类任务历史，不再依赖 conductor 在 INTENT/SIZING 的集中注入。这避免 conductor 上下文压力 + 让规划直接触达历史经验。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 task_context 规划。
 
 **召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：

@@ -1,14 +1,14 @@
 ---
-description: 记忆操作 SQL 模板参考。sqlite 优先，md 仅作索引兜底。conductor 在 S16_DELIVERING 阶段查阅。
+description: 记忆操作 SQL 模板参考。sqlite 优先，md 仅作索引兜底。conductor 在 DELIVERING 阶段查阅。
 ---
 
 # docs/memory-ops-reference
 
-> **定位**：本文件是从原 `agent/capabilities/memory-ops.md` 迁移而来的 SQL 模板参考文档。记忆写入是 conductor 在 `S16_DELIVERING` 阶段的内建职责（调用 sqlite3 CLI），不需要独立智能体。本文件保留作为 SQL 模板参考。
+> **定位**：本文件是从原 `agent/capabilities/memory-ops.md` 迁移而来的 SQL 模板参考文档。记忆写入是 conductor 在 `DELIVERING` 阶段的内建职责（调用 sqlite3 CLI），不需要独立智能体。本文件保留作为 SQL 模板参考。
 
 ## 能力定位
 
-**生命周期阶段**：`S16_DELIVERING`（conductor 内建）+ `S01_INTENT` / `S07_EXECUTING` 按需注入
+**生命周期阶段**：`DELIVERING`（conductor 内建）+ `INTENT` / `EXECUTING` 按需注入
 
 **做什么**：通过 bash + `sqlite3` CLI 操作 `~/.config/kilo-data/memory.db`。
 
