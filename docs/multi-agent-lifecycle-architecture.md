@@ -41,7 +41,7 @@
 
 ### 模型选择策略（v3.1 方案1：模型统一在 kilo.json）
 
-> **单一真相来源**：模型 ID 绑定由 `kilo.json` `agent.<name>.model` 字段统一管理，agent .md / lifecycle / conductor / multiModel / 本设计文档均不硬编码模型 ID。变更某智能体模型只需改 `kilo.json` 一处。能力需求矩阵见 `agent/models/registry.md`。
+> **单一真相来源**：模型 ID 绑定由 `kilo.json` `agent.<name>.model` 字段统一管理，agent .md / lifecycle / conductor / multiModel / 本设计文档均不硬编码模型 ID。变更某智能体模型只需改 `kilo.json` 一处。能力倾向矩阵见 `docs/model-registry.md`（v6.1 唯一人类可读参考，无机器可读副本）。
 
 | 智能体 | 能力需求（registry 别名） | 理由 |
 |--------|--------------------------|------|

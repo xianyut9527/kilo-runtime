@@ -23,7 +23,7 @@
     "multiModel": {
       "mode": "primary",
       "model": "hx/kimi-k2.6",
-      "prompt": "多模型并行生命周期编排（T3）。3 coder + verifier + synthesizer-fusion 按 lifecycle 阶段执行。详见 agent/multiModel.md 与 agent/models/registry.md。"
+      "prompt": "多模型并行生命周期编排（T3）。3 coder + verifier + synthesizer-fusion 按 lifecycle 阶段执行。详见 agent/multiModel.md 与 docs/model-registry.md。"
     },
     "synthesizer-fusion": {
       "mode": "subagent",

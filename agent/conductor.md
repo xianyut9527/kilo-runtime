@@ -1,5 +1,5 @@
 ---
-description: 工作流编排智能体。启动期装配 lifecycle/ 图与智能体契约，按阶段加载职能智能体，管理 task_context 共享，交叉验证门禁。
+description: 编码智能体。启动期装配 lifecycle/ 图与智能体契约，按阶段加载职能智能体，管理 task_context 共享，交叉验证门禁。
 mode: primary
 hidden: false
 color: "#6366F1"

@@ -22,7 +22,7 @@
 //   [18/29] agent.md ↔ instructions.md 跨文件漂移检测（v2.5.1）
 //   [19/29] 生命周期结构完整性（lifecycle/：graph/config/multimodel-graph + stages/ 语义命名，禁数字编号；v6 agents/ 已合入 agent/*.md frontmatter；v6.1 capabilities.yaml 已删除）
 //   [20/29] 能力插件文件完整性（已废弃 — capabilities/ 已合并入智能体文件）
-//   [21/29] 模型注册表存在性（agent/models/registry.md）
+//   [21/29] 模型能力矩阵文档存在性（v6.1：agent/models/registry.md 已迁移至 docs/model-registry.md）
 //   [22/29] 生命周期 ↔ 能力插件映射一致性（已废弃 — capabilities/ 已合并入智能体文件）
 //   [23/29] 智能体文件完整性（agent/ 下 8 个智能体 .md：conductor/planner/coder/verifier/reverse-auditor/side-checker/reviewer/fixer）
 //   [24/29] lifecycle 阶段文件 frontmatter 最小契约校验（v6.1：文件名派生节点 ID + description/model_capability/token_budget；stage_id 已废弃）
@@ -1665,14 +1665,15 @@ function check20CapabilitiesIntegrity() {
   return { name, pass: true, detail: 'capabilities/ 已合并入智能体文件（v3.0 多智能体架构），完整性校验见 check23' };
 }
 
-// ---------- Check 21: 模型注册表存在性 ----------
+// ---------- Check 21: 模型能力矩阵文档存在性 ----------
+// v6.1：agent/models/registry.md 已删除（避免被 Kilo 递归扫描为 subagent），能力矩阵迁至 docs/model-registry.md。
 function check21ModelsRegistry() {
-  const name = '模型注册表存在性';
-  const registryPath = path.resolve(ROOT, 'agent', 'models', 'registry.md');
+  const name = '模型能力矩阵文档存在性';
+  const registryPath = path.resolve(ROOT, 'docs', 'model-registry.md');
   if (!fs.existsSync(registryPath)) {
-    return { name, pass: false, detail: 'agent/models/registry.md 不存在' };
+    return { name, pass: false, detail: 'docs/model-registry.md 不存在（agent/models/registry.md 已于 v6.1 迁移至此）' };
   }
-  return { name, pass: true, detail: 'agent/models/registry.md 存在' };
+  return { name, pass: true, detail: 'docs/model-registry.md 存在' };
 }
 
 // ---------- Check 22: 生命周期 ↔ 能力插件映射一致性（已废弃） ----------
@@ -2058,7 +2059,7 @@ function check26ViewpointIsolation() {
 //   (a) 7 个 subagent .md frontmatter 不得含 `model:` 字段（conductor/multiModel/synthesizer-fusion 作为 primary 也豁免 — kilo.json 已声明）
 //       实际策略：所有 agent/*.md frontmatter 不得含 `model:` 字段（统一由 kilo.json 管）
 //   (b) 7 个 subagent .md body 不得含 `hx/` 模型 ID 硬编码（引用 kilo.json agent.<name>.model 是允许的）
-//       例外：registry.md 是模型能力矩阵文档，允许含 `hx/`；multiModel.md 在角色分工表内允许含 hx/ 但应指向 registry
+//       注：模型能力矩阵文档已迁至 docs/model-registry.md（不在 agent/ 下扫描范围），无需豁免
 function check27NoModelHardcode() {
   const name = '模型硬编码反查（v3.1 方案1：模型统一在 kilo.json）';
   const agentDir = path.resolve(ROOT, 'agent');
@@ -2078,9 +2079,7 @@ function check27NoModelHardcode() {
       errors.push(`${fname}: frontmatter 含 model: 字段（应由 kilo.json agent.<name>.model 统一声明）`);
     }
 
-    // (b) body 不得硬编码 hx/ 模型 ID（registry.md 豁免 — 它就是模型能力矩阵文档）
-    if (fname === 'registry.md' || fname === 'models-registry.md') continue;
-    // conductor.md / multiModel.md 中的"模型选择"段允许引用 kilo.json，但不得硬编码 hx/xxx
+    // (b) body 不得硬编码 hx/ 模型 ID（conductor.md / multiModel.md 中的"模型选择"段允许引用 kilo.json，但不得硬编码 hx/xxx）
     // 检测：body 中是否含 hx/<model-name> 模式
     const bodyMatches = text.match(/hx\/[A-Za-z0-9.\-]+/g);
     if (bodyMatches && bodyMatches.length > 0) {

@@ -78,8 +78,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   ├── reviewer.md               # 静态审查（mount: REVIEWING；安全编码模式/架构/简化/SCOPE_CREEP 四视角）
 │   ├── fixer.md                  # 修复智能体（mount: FIXING, when: T1+；定向修复阻塞问题）
 │   ├── synthesizer-fusion.md     # 融合编辑（mount: MM_FUSING, when: T3；取长补短生成综合最优方案）
-│   └── models/
-│       └── registry.md           # 模型能力矩阵人类可读版（历史位置，现迁至 docs/model-registry.md）
+│   └── (models/ 目录已删除，能力矩阵迁至 docs/model-registry.md)
 ├── lifecycle/                    # 生命周期新架构（v3.4：图/执行/契约/配置分离，语义 ID 无数字编号）
 │   ├── graph.yaml                # 主 DAG 单一真相来源（节点 INTENT/SIZING/.../DONE + 边 + 流转条件）
 │   ├── multimodel-graph.yaml     # T3 multiModel 子图（MM_INIT→...→MM_ARCHIVED + diversity_rule）
