@@ -40,6 +40,24 @@
       "model": "hx/kimi-k2.7-code",
       "prompt": "编码智能体。按方案实现代码、输出验收映射表+三件套、状态信号。端到端闭环。详见 agent/coder.md。"
     },
+    "coder-a": {
+      "mode": "subagent",
+      "model": "hx/kimi-k3",
+      "description": "multiModel 逻辑推理派 coder，专精复杂推理与边界发现",
+      "prompt": "编码智能体（multiModel 并行-A / 逻辑推理派）。按方案实现代码，侧重逻辑完备性、边界条件与异常路径。输出验收映射表+三件套、状态信号。端到端闭环。详见 agent/coder.md 与 agent/multiModel.md。"
+    },
+    "coder-b": {
+      "mode": "subagent",
+      "model": "hx/glm-5.2",
+      "description": "multiModel 安全边界派 coder，专精防御性编程与风险识别",
+      "prompt": "编码智能体（multiModel 并行-B / 安全边界派）。按方案实现代码，侧重安全边界、输入校验、防御性编程与最小权限。输出验收映射表+三件套、状态信号。端到端闭环。详见 agent/coder.md 与 agent/multiModel.md。"
+    },
+    "coder-c": {
+      "mode": "subagent",
+      "model": "hx/kimi-k2.7-code",
+      "description": "multiModel 代码生成派 coder，专精代码风格一致与最小改动",
+      "prompt": "编码智能体（multiModel 并行-C / 代码生成派）。按方案实现代码，侧重代码风格一致、最小增量改动与可维护性。输出验收映射表+三件套、状态信号。端到端闭环。详见 agent/coder.md 与 agent/multiModel.md。"
+    },
     "verifier": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
@@ -67,7 +85,7 @@
     }
   },
   "skills": {
-    "external_dirs": [
+    "paths": [
       "${KILO_CONFIG_DIR}/.kilo/skills",
       "${HOME}/.agents/skills"
     ]

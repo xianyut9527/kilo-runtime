@@ -23,4 +23,11 @@ Thumbs.db
 # kilo.json 备份文件（install 脚本修改前自动生成，不应提交）
 kilo.json.bak.*
 
-.kilo/skills
+# Skill 运行时产物（只忽略生成/缓存/个人数据，不忽略 skill 源码）
+.kilo/skills/**/__pycache__/
+.kilo/skills/**/.pytest_cache/
+.kilo/skills/**/test_output.html
+.kilo/skills/**/reports/*.html
+.kilo/skills/**/reports/*.json
+.kilo/skills/**/_archive/
+.kilo/skills/report-analyzer/项目成员工作报告-*.json

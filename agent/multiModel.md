@@ -64,7 +64,7 @@ multiModel（多模型融合模式）
    - 降级不阻塞，coder 无记忆上下文仍可独立推理
 
 ### 阶段 2：并行执行（coder-A/B/C）
-- 通过 `task` 工具同时启动 3 个 coder 智能体（`subagent_type: coder`），**互不知晓彼此存在**。
+- 通过 `task` 工具同时启动 3 个独立 coder 智能体：`coder-a`（逻辑推理派）、`coder-b`（安全边界派）、`coder-c`（代码生成派）。**互不知晓彼此存在**。
 - 每个 coder 独立阅读上下文、独立推理、独立输出完整方案。
 - 要求输出必须包含：核心思路概述、完整代码/方案、边界处理说明、与现有代码风格自评。
 
@@ -114,14 +114,14 @@ multiModel（多模型融合模式）
 ### 角色分工策略
 | 组件 | 能力要求 | 模型选择 |
 |------|----------|----------|
-| coder-A | 逻辑推理强，能发现边界条件 | 见 `kilo.json` `agent.coder.model`（A 副本，应选 deep-reasoning 倾向）|
-| coder-B | 安全/边界敏感，擅长防御性编程 | 见 `kilo.json` `agent.coder.model`（B 副本，应选 strict-verification 倾向）|
-| coder-C | 代码生成专精 | 见 `kilo.json` `agent.coder.model`（C 副本，应选 code-generation 倾向）|
+| coder-A | 逻辑推理强，能发现边界条件 | `kilo.json` `agent.coder-a.model`（deep-reasoning 倾向）|
+| coder-B | 安全/边界敏感，擅长防御性编程 | `kilo.json` `agent.coder-b.model`（strict-verification 倾向）|
+| coder-C | 代码生成专精 | `kilo.json` `agent.coder-c.model`（code-generation 倾向）|
 | verifier | 严格验证，发现边界问题和逻辑漏洞 | 见 `kilo.json` `agent.verifier.model` |
 | synthesizer-fusion | 长上下文整合，代码风格统一 | 见 `kilo.json` `agent.synthesizer-fusion.model` |
 | multiModel（主控） | 拆分/委派/调度，不参与融合 | 见 `kilo.json` `agent.multiModel.model` |
 
-> **3 个 coder 多样化原则**：必须选**不同架构/不同厂商**模型。当前 `kilo.json` 仅声明一个 `coder` 智能体——multiModel 启动 3 个 coder 副本时，应在 task 调用中通过 `model` 参数覆盖为不同模型（详见 `agent/models/registry.md` §multiModel 并行）。具体模型 ID 由 `agent/models/registry.md` 能力矩阵推荐，不在本文件硬编码。
+> **3 个 coder 多样化原则**：必须选**不同架构/不同厂商**模型。`kilo.json` 已分别声明 `coder-a`、`coder-b`、`coder-c` 三个 subagent，并绑定不同模型；multiModel 启动 3 个副本时应直接调用对应名称的 agent，不得复用单一 `coder` 模型。
 
 ### 多样性保障
 - **架构多样性**：3 个 coder 选不同厂商/不同架构模型

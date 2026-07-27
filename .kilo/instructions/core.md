@@ -56,7 +56,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 - 用户偏好 / 安全约束等低频内容通过 sqlite `project_context` 表承载，不再单独维护 `MEMORY.md` / `USER.md`
 
 **全局 Skill 层**（跨项目复用）：
-- `~/.config/kilo/.kilo/skills/`：全局通用 Skill（与 install.ps1 实际安装路径一致；另通过 `kilo.json` `skills.external_dirs` 接入 `~/.agents/skills/` 社区技能源）
+- `~/.config/kilo/.kilo/skills/`：全局通用 Skill（与 install.ps1 实际安装路径一致；另通过 `kilo.json` `skills.paths` 接入 `~/.agents/skills/` 社区技能源）
 - `.kilo/skills/`：项目专属 Skill（覆盖全局同名 Skill）
 
 **初始化检查**：`~/.config/kilo-data/memory.db` 不存在时，优先重新运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）— 脚本会自动检测 `sqlite3` CLI，缺失时提示安装并自动初始化 `memory.db`（建表 + 迁移 bootstrap 经验 + 补种 project_context）。手动建表作为 fallback：执行 `sqlite3 ~/.config/kilo-data/memory.db < .kilo/memory/schema/init.sql`。模块入口：`.kilo/memory/README.md`；SQL 模板见 `docs/memory-ops-reference.md`。
