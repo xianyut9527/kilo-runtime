@@ -1,6 +1,14 @@
 # Kilo Global Config Installer (Windows)
 # Syncs this repo to: $env:USERPROFILE\.config\kilo\
 # IMPORTANT: EXCLUDE lists must be kept in sync with install.sh
+#
+# v6.1 architecture sync:
+#   lifecycle/              - graph.yaml (DAG), config.yaml (tier defaults), multimodel-graph.yaml, stages/*.md
+#   agent/                  - one .md per agent; frontmatter mount auto-registers into lifecycle
+#   .kilo/instructions/     - cross-agent baseline rules
+#   .kilo/memory/           - sqlite-backed memory module
+#   .kilo/skills/           - capability extensions
+# The installer recursively copies everything above (minus EXCLUDE lists) to the global config dir.
 
 $Source = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Target = "$env:USERPROFILE\.config\kilo"

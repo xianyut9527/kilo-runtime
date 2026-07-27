@@ -2,6 +2,14 @@
 # Kilo 全局配置安装脚本 (macOS / Linux)
 # 将本仓库内容复制到全局配置目录：~/.config/kilo/
 # IMPORTANT: EXCLUDE lists must be kept in sync with install.ps1
+#
+# v6.1 架构同步说明：
+#   lifecycle/              - graph.yaml（DAG）、config.yaml（定级组合）、multimodel-graph.yaml、stages/*.md
+#   agent/                  - 一智能体一文件；frontmatter mount 自注册到生命周期
+#   .kilo/instructions/     - 跨智能体通用基线规则
+#   .kilo/memory/           - sqlite 记忆模块
+#   .kilo/skills/           - 能力扩展 skill
+# 本脚本递归复制以上目录（除去 EXCLUDE 列表）到全局配置目录。
 
 set -euo pipefail
 

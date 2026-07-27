@@ -40,8 +40,9 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
-// ESM 兼容：check17 可选依赖（better-sqlite3）与 node:child_process 通过 createRequire 加载；
-// 缺失时 createRequire 本身不抛错，仅在实际 require 不可用模块时进入 catch 降级路径
+// ESM 兼容：check17 可选依赖 better-sqlite3 通过 createRequire 加载；
+// node:child_process 内建模块使用顶层 import（ESM 下 createRequire().require('node:child_process') 在部分运行时/平台会失败）。
+import { execFileSync, execSync } from 'node:child_process';
 const require = createRequire(import.meta.url);
 
 // 跨平台：从 import.meta.url 解析 __dirname，避免依赖 cwd
@@ -1301,7 +1302,6 @@ function check17MemoryDbHealth() {
     let commitHint = '';
     let warnTag = '';
     try {
-      const { execFileSync } = require('node:child_process');
       const out = execFileSync('git', ['rev-list', '--count', 'HEAD'], {
         encoding: 'utf8',
         timeout: 5000,
@@ -1361,7 +1361,7 @@ function check17MemoryDbHealth() {
     // 解析行格式 <check_name>|<pass|fail>|<detail>（铁律 2：契约文件必须被实际消费）
     // 先刷新会话 PATH（解决 winget/apt 安装后当前 Node 进程 PATH 仍是旧快照的误报）
     try {
-      const machinePath = require('node:child_process').execSync(
+      const machinePath = execSync(
         process.platform === 'win32'
           ? 'powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable(\'PATH\',\'Machine\') + \';\' + [Environment]::GetEnvironmentVariable(\'PATH\',\'User\')"'
           : 'echo $PATH',
@@ -1370,7 +1370,6 @@ function check17MemoryDbHealth() {
       if (machinePath) process.env.PATH = machinePath;
     } catch { /* 刷新失败不影响后续尝试 */ }
     try {
-      const { execFileSync } = require('node:child_process');
       const sqlText = fs.readFileSync(contractPath, 'utf8');
       const out = execFileSync('sqlite3', [dbPath], { input: sqlText, encoding: 'utf8', timeout: 8000 });
       const rows = out
@@ -1441,10 +1440,9 @@ function check17MemoryDbHealth() {
           if (sqliteDir) {
             const sqliteExe = path.join(wingetRoot, sqliteDir, 'sqlite3.exe');
             if (fs.existsSync(sqliteExe)) {
-              try {
-                const { execFileSync: execSync2 } = require('node:child_process');
-                const sqlText = fs.readFileSync(contractPath, 'utf8');
-                const out2 = execSync2(sqliteExe, [dbPath], { input: sqlText, encoding: 'utf8', timeout: 8000 });
+        try {
+          const sqlText = fs.readFileSync(contractPath, 'utf8');
+          const out2 = execFileSync(sqliteExe, [dbPath], { input: sqlText, encoding: 'utf8', timeout: 8000 });
                 // 复用上方相同的行解析逻辑（简化：直接走 health_check.sql 契约验证成功则 PASS）
                 const rows2 = out2.split(/\r?\n/).filter((l) => l.includes('|')).map((l) => l.split('|'));
                 const failed2 = rows2.filter((r) => r[1] === 'fail' && ![
@@ -1475,7 +1473,7 @@ function check17MemoryDbHealth() {
                     const gitHead = path.resolve(ROOT, '.git/HEAD');
                     if (fs.existsSync(gitHead)) {
                       try {
-                        const out = execSync2('git', ['rev-list', '--count', 'HEAD'], { encoding: 'utf8', timeout: 5000, cwd: ROOT }).trim();
+                        const out = execFileSync('git', ['rev-list', '--count', 'HEAD'], { encoding: 'utf8', timeout: 5000, cwd: ROOT }).trim();
                         const commits = parseInt(out, 10) || 0;
                         if (commits >= 20) commitHint = `（仓库已有 ${commits} 次 commit，强烈怀疑 [MEMORY_LAYER_HOLLOW]）`;
                         else commitHint = `（仓库 ${commits} 次 commit，新项目属正常）`;
@@ -1526,7 +1524,6 @@ function check17MemoryDbHealth() {
       const gitHead = path.resolve(ROOT, '.git/HEAD');
       if (fs.existsSync(gitHead)) {
         try {
-          const { execFileSync } = require('node:child_process');
           const out = execFileSync('git', ['rev-list', '--count', 'HEAD'], {
             encoding: 'utf8',
             timeout: 5000,
