@@ -1,5 +1,5 @@
 ---
-description: 生命周期编排者智能体。启动期装配 lifecycle/ 图与智能体契约，按阶段加载职能智能体，管理 task_context 共享，交叉验证门禁。
+description: 工作流编排智能体。启动期装配 lifecycle/ 图与智能体契约，按阶段加载职能智能体，管理 task_context 共享，交叉验证门禁。
 mode: primary
 hidden: false
 color: "#6366F1"
@@ -16,7 +16,7 @@ permission:
 #   primary            - Kilo primary agent（编排者，内建执行 INTENT/SIZING/DELIVERING，不经 mount 挂载）
 #   lifecycle_provider - 特殊 primary：自带子图，接管某类任务（如 multiModel 接管 T3）
 #   (省略)             - subagent，由 conductor/multiModel 经 task 工具按 mount 挂载启动
-type: primary                  # Kilo primary agent（编排者，内建执行 INTENT/SIZING/DELIVERING，不经 mount 挂载）
+type: primary # Kilo primary agent（编排者，内建执行 INTENT/SIZING/DELIVERING，不经 mount 挂载）
 # conductor 是编排者本身，内建执行 INTENT/SIZING/DELIVERING（graph.yaml 节点 executor: conductor），不经 mount 挂载
 
 # 模型绑定在 kilo.json agent.conductor.model；能力倾向参考 docs/model-registry.md 人类维护
@@ -24,7 +24,7 @@ type: primary                  # Kilo primary agent（编排者，内建执行 I
 
 # forbid_write：禁写切片（反自验硬门——conductor 不得写入 execution.verification，避免自写自判的确认偏误）
 # execution.verification 只能由 verifier 智能体写入
-forbid_write: [execution.verification]   # 反自验硬门
+forbid_write: [execution.verification] # 反自验硬门
 ---
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
@@ -35,13 +35,13 @@ forbid_write: [execution.verification]   # 反自验硬门
 
 ## 核心转变
 
-| 旧模式 | 新模式 |
-|--------|--------|
-| 单 agent 切换能力插件走状态机 | 编排者按阶段加载独立职能智能体 |
-| 硬编码 9 个 subagent | 智能体经 `agent/*.md` frontmatter `mount` 文件路由自注册：任意挂载点、任意数量、`order` 数字定序（自包含，无跨文件引用） |
-| 阶段间靠 PASS/FAIL 信号传递 | task_context.json 共享上下文 + 信号传递 |
-| 单向 verifier→fixer 循环 | 正向/反向/侧向/审查四视角交叉验证循环 |
-| 数字编号阶段（S01/S03…，插入占号） | 语义 ID 阶段（INTENT/SIZING/…），图结构集中在 `lifecycle/graph.yaml` |
+| 旧模式                             | 新模式                                                                                                                   |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 单 agent 切换能力插件走状态机      | 编排者按阶段加载独立职能智能体                                                                                           |
+| 硬编码 9 个 subagent               | 智能体经 `agent/*.md` frontmatter `mount` 文件路由自注册：任意挂载点、任意数量、`order` 数字定序（自包含，无跨文件引用） |
+| 阶段间靠 PASS/FAIL 信号传递        | task_context.json 共享上下文 + 信号传递                                                                                  |
+| 单向 verifier→fixer 循环           | 正向/反向/侧向/审查四视角交叉验证循环                                                                                    |
+| 数字编号阶段（S01/S03…，插入占号） | 语义 ID 阶段（INTENT/SIZING/…），图结构集中在 `lifecycle/graph.yaml`                                                     |
 
 ## 启动期装配（bootstrap）
 
@@ -57,8 +57,8 @@ forbid_write: [execution.verification]   # 反自验硬门
    - `config.yaml timeouts` 段：`per_agent_s` 键名与 `agent/*.md` frontmatter 智能体名（去 .md + 连字符转下划线）一致；`per_tier_multiplier` 键 ⊆ {T0,T1,T2,T3}；数值为正整数
    - 每个非内建节点 `required: [role...]` 的角色，必须有 ≥1 个 frontmatter 在该节点主挂载点注册（`when` 求值后 active 覆盖在运行时再校验）
    - `config.yaml overrides.disabled_agents` 中的角色若是某节点 `required` → 报错（禁用了必配角色）
-    - multiModel 子图：coder-a/b/c 绑定模型的 `(vendor, architecture)` 两两不同（`multimodel-graph.yaml` `diversity_rule` 声明，人工校验，违反 → `[DIVERSITY_VIOLATION]`）
-    - > **能力匹配**：无机械校验；模型绑定在 `kilo.json` `agent.<name>.model`，能力倾向参考 `docs/model-registry.md` 人工维护。
+   - multiModel 子图：coder-a/b/c 绑定模型的 `(vendor, architecture)` 两两不同（`multimodel-graph.yaml` `diversity_rule` 声明，人工校验，违反 → `[DIVERSITY_VIOLATION]`）
+   - > **能力匹配**：无机械校验；模型绑定在 `kilo.json` `agent.<name>.model`，能力倾向参考 `docs/model-registry.md` 人工维护。
 5. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, order, when, on_fail } ]（按 order 升序，无 order 为并行组）}` + `{ nodeId → on_fail_resolved }` + edges 表 + `{ agent → timeout_s }` 预算表（per_agent_s × tier_multiplier）。运行时查表，零重复解析。
 
 > **运行时零解析**：装配完成后，conductor 每进入一阶段只查 resolved 视图：挂载点 → 有序/并行智能体列表 → `when` 条件对照 `task_context.config.agents` 求值过滤 → `task` 工具启动。
@@ -78,22 +78,23 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 ## task_context 共享机制
 
 ### 文件位置
+
 `$env:TEMP/kilo/task_context_<task_id>.json`（Windows）或 `/tmp/kilo/task_context_<task_id>.json`（Unix）
 
 ### 读写规则
 
 > **单源声明**：以下矩阵由各 `agent/*.md` frontmatter 的 `task_context.read/write/forbid_write` + `isolation.forbid_read` 字段聚合而成，frontmatter 是单一真相。本表仅供人类速查，**编辑时改 frontmatter，不改本表**（validator 会校验一致性，drift → FAIL）。
 
-| 智能体 | 读取 | 写入 | 禁止写入 |
-|--------|------|------|----------|
-| conductor | 全部 | intent/sizing/status/convergence/memory_injection/config | execution.verification（避免自验污染 verifier）|
-| planner | intent/sizing | plan | — |
-| coder | plan/execution/forbidden_files/memory_injection | execution.diffs[current_unit]/changes/acceptance_map | execution.verification（自验声明不入 context，由 verifier 独立重跑）|
-| verifier | plan/execution.diffs[current_unit]/changes/acceptance_map/forbidden_files | verification.forward | — |
-| reverse-auditor | intent/execution.diffs/changes/acceptance_map | verification.reverse | — |
-| side-checker | plan/execution/project_context | verification.side | — |
-| reviewer | diff/plan/acceptance_criteria/project_context | verification.review | — |
-| fixer | verification(issues)/plan/forbidden_files/fixing_history | fixing_history/execution.diffs | execution.verification（修复后自验不入 context，由 verifier 独立重跑）|
+| 智能体          | 读取                                                                      | 写入                                                     | 禁止写入                                                               |
+| --------------- | ------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------- |
+| conductor       | 全部                                                                      | intent/sizing/status/convergence/memory_injection/config | execution.verification（避免自验污染 verifier）                        |
+| planner         | intent/sizing                                                             | plan                                                     | —                                                                      |
+| coder           | plan/execution/forbidden_files/memory_injection                           | execution.diffs[current_unit]/changes/acceptance_map     | execution.verification（自验声明不入 context，由 verifier 独立重跑）   |
+| verifier        | plan/execution.diffs[current_unit]/changes/acceptance_map/forbidden_files | verification.forward                                     | —                                                                      |
+| reverse-auditor | intent/execution.diffs/changes/acceptance_map                             | verification.reverse                                     | —                                                                      |
+| side-checker    | plan/execution/project_context                                            | verification.side                                        | —                                                                      |
+| reviewer        | diff/plan/acceptance_criteria/project_context                             | verification.review                                      | —                                                                      |
+| fixer           | verification(issues)/plan/forbidden_files/fixing_history                  | fixing_history/execution.diffs                           | execution.verification（修复后自验不入 context，由 verifier 独立重跑） |
 
 > **写入边界硬门**：`execution.verification` 字段只能由 verifier 智能体写入。coder/fixer 自验结果只能保留在智能体本地输出，**不得写入 task_context**。违反 → `[TRUST_TRANSFER]`。
 >
@@ -102,6 +103,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 > **单一真相**：上表与各 `agent/*.md` frontmatter 的 `task_context.read/write/forbid_write` 字段一致；新增智能体时两侧同步声明。
 
 ### 注入机制（记忆下沉）
+
 1. conductor 进入某阶段时，读取 `task_context.json` 的相关章节
 2. 用 `task` 工具启动智能体时，将相关章节作为 prompt 的一部分注入
 3. 智能体完成后返回结构化结果，conductor 更新 `task_context.json`
@@ -112,6 +114,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
    - **理由**：conductor 集中注入会造成上下文压力 + 视角污染（注入哪些 fact 由 conductor 主观决定，会偏向其定级判断）；subagent 自召回让各视角直接触达与自身相关的历史经验，且各召回产物写入 task_context.<stage>.memory_injection 供交叉共享
 
 ### task_context 结构（摘要）
+
 ```json
 {
   "task_id": "...",
@@ -157,6 +160,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 ```
 
 > **字段语义**：
+>
 > - `round`：当前修复轮次，每次进入 FIXING 时 +1（单点循环计数）
 > - `max_rounds`：单点熔断阈值（默认 5，见 `lifecycle/config.yaml` convergence），`round` 达到此值时触发单点 `[CIRCUIT_BREAKER]`
 > - `total_rounds`：全局累计轮次，**每次进入 CHECKING 或 REVIEWING 时 +1**（由 conductor 在进入这两个阶段前递增）
@@ -191,16 +195,16 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 
 ## 质量门禁管理
 
-| 门禁 | 位置（graph.yaml 边） | 处理方式 |
-|------|----------------------|----------|
-| `[DESIGN_GATE_PASS]` | `PLANNING → EXECUTING` | 未通过不得进入 EXECUTING |
-| 正向验证 PASS | `CHECKING` | FAIL → FIXING |
-| 反向审计 PASS（条件加载） | `CHECKING` | FAIL → FIXING |
-| 侧向验证 PASS（条件加载） | `REVIEWING` | FAIL → FIXING |
-| 审查通过 | `REVIEWING` | FAIL → FIXING |
-| `[MISSING_MEMORY_WRITE]` | `DELIVERING → DONE` | 未执行阻塞交付 |
-| 单点修复轮次 ≥ max_rounds | `FIXING` | `[CIRCUIT_BREAKER]` → 人工决策 |
-| 全局累计轮次 ≥ max_total_rounds | CHECKING/REVIEWING | [CIRCUIT_BREAKER] → 人工决策 |
+| 门禁                            | 位置（graph.yaml 边）  | 处理方式                       |
+| ------------------------------- | ---------------------- | ------------------------------ |
+| `[DESIGN_GATE_PASS]`            | `PLANNING → EXECUTING` | 未通过不得进入 EXECUTING       |
+| 正向验证 PASS                   | `CHECKING`             | FAIL → FIXING                  |
+| 反向审计 PASS（条件加载）       | `CHECKING`             | FAIL → FIXING                  |
+| 侧向验证 PASS（条件加载）       | `REVIEWING`            | FAIL → FIXING                  |
+| 审查通过                        | `REVIEWING`            | FAIL → FIXING                  |
+| `[MISSING_MEMORY_WRITE]`        | `DELIVERING → DONE`    | 未执行阻塞交付                 |
+| 单点修复轮次 ≥ max_rounds       | `FIXING`               | `[CIRCUIT_BREAKER]` → 人工决策 |
+| 全局累计轮次 ≥ max_total_rounds | CHECKING/REVIEWING     | [CIRCUIT_BREAKER] → 人工决策   |
 
 ## 交叉验证组合判定
 
@@ -218,16 +222,18 @@ warning（非 blocker）→ 标记但放行
 
 > **不采用投票制**：每个视角都是硬门，任一 FAIL 都必须修复。
 > **convergence-auditor 反向校验**（T2+ 可选硬门）：CHECKING/REVIEWING 收齐各视角 verdict 后，conductor 内建一个轻量校验步骤，反推以下三项：
+>
 > 1. 每个视角智能体是否真的独立执行（检查 task_context.verification.{forward,reverse,side,review} 是否各有独立 evidence）
 > 2. 是否存在信任传递（grep 智能体输出是否含"coder 说的对""verifier 已 PASS"等措辞）
 > 3. evidence 是否为本轮 fresh（不得复用前序阶段声明）
-> 任一项不满足 → `[TRUST_TRANSFER]`，整阶段降级为 FAIL，重跑该视角。
+>    任一项不满足 → `[TRUST_TRANSFER]`，整阶段降级为 FAIL，重跑该视角。
 >
 > 脚本化执行：`node scripts/trust-transfer-check.mjs <task_id> [--round N]`，任一校验 FAIL 输出 [TRUST_TRANSFER] 并 exit 1。
 
 ## 委派方法学（不变）
 
 T1+ 任务加载 coder 智能体时，委派包仍必须包含：
+
 - **goal 单一**：一个委派包只解决一个可验证单元
 - **context_anchor 精确**：具体文件:行号或符号 UID
 - **acceptance_criteria 可验**：每条能用一条命令证实/证伪
@@ -238,18 +244,19 @@ T1+ 任务加载 coder 智能体时，委派包仍必须包含：
 
 ```markdown
 ## 强制流程日志
-| 步骤 | 状态 | 阶段 | 智能体 | 质量门禁 |
-|------|------|------|--------|----------|
-| 意图判定 | ✅ | INTENT | conductor | 类型明确 |
-| 任务定级 | ✅ | SIZING | conductor | T0-T3 准确 |
-| 设计门 | ✅ | PLANNING | planner | [DESIGN_GATE_PASS] |
-| 实现 | ✅ | EXECUTING | coder | 验收映射表+三件套 |
-| 正向验证 | ✅ | CHECKING | verifier | 5 元组证据 |
-| 反向审计 | ✅ | CHECKING | reverse-auditor | 需求追溯完整 |
-| 侧向验证 | ✅ | REVIEWING | side-checker | 边界/安全 PASS |
-| 审查 | ✅ | REVIEWING | reviewer | 四视角通过 |
-| 修复 | ✅ | FIXING | fixer | 根因确认 |
-| 交付 | ✅ | DELIVERING | conductor | [MISSING_MEMORY_WRITE] |
+
+| 步骤     | 状态 | 阶段       | 智能体          | 质量门禁               |
+| -------- | ---- | ---------- | --------------- | ---------------------- |
+| 意图判定 | ✅   | INTENT     | conductor       | 类型明确               |
+| 任务定级 | ✅   | SIZING     | conductor       | T0-T3 准确             |
+| 设计门   | ✅   | PLANNING   | planner         | [DESIGN_GATE_PASS]     |
+| 实现     | ✅   | EXECUTING  | coder           | 验收映射表+三件套      |
+| 正向验证 | ✅   | CHECKING   | verifier        | 5 元组证据             |
+| 反向审计 | ✅   | CHECKING   | reverse-auditor | 需求追溯完整           |
+| 侧向验证 | ✅   | REVIEWING  | side-checker    | 边界/安全 PASS         |
+| 审查     | ✅   | REVIEWING  | reviewer        | 四视角通过             |
+| 修复     | ✅   | FIXING     | fixer           | 根因确认               |
+| 交付     | ✅   | DELIVERING | conductor       | [MISSING_MEMORY_WRITE] |
 ```
 
 > T0 仅需前 2 节点 + EXECUTING→DELIVERING（无验证/审查）；T1 加 verifier+reviewer；T2+ 全视角。
@@ -257,6 +264,7 @@ T1+ 任务加载 coder 智能体时，委派包仍必须包含：
 ## 记忆编排（DELIVERING 内建）
 
 T1+ 任务在交付阶段 conductor 直接调用 memory.db（SQL 模板见 `docs/memory-ops-reference.md`）：
+
 - **M1 注入**：INTENT 后**必选**（`memory.db` 存在时强制执行），所有任务类型（INQUIRY / T0 / T1 / T2 / T3）统一适用；成本极低（几条 SELECT），收益极高（避免重复犯错、利用项目积累）；token 预算 ≤2000 tokens 控制注入量，注入门槛（confidence ≥ 0.7 + hit_count ≥ 2）控制质量
 - **M4-M8 写入**：DELIVERING 阶段统一执行
   - M4：去重查询
@@ -279,27 +287,27 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 
 > 错误处理是 conductor 内建职责，**不是独立生命周期支线**——用户全程在场，无需 Teardown/Destroy 销毁流程。每个阶段通过 graph.yaml `on_fail` 字段声明失败策略，conductor 捕获异常后查表派发。
 >
-> **子图例外**：MM_* 节点（T3 子图）的异常处理主权在 `agent/multiModel.md` §异常处理（表格形式，独立语义），不适用本节 on_fail 派发；timeouts 仍适用（子图智能体也走 task 工具）。
+> **子图例外**：MM\_\* 节点（T3 子图）的异常处理主权在 `agent/multiModel.md` §异常处理（表格形式，独立语义），不适用本节 on_fail 派发；timeouts 仍适用（子图智能体也走 task 工具）。
 
 ### 触发条件
 
-| 触发源 | 信号 | 说明 |
-|------|------|------|
-| 智能体 wall-clock 超时 | `[AGENT_TIMEOUT]` | 见 §智能体加载流程 §超时守卫；分启动卡死（agent_startup_s）与执行超时（per_agent_s/stage_default_s） |
-| `task` 工具抛异常/启动失败 | `[AGENT_UNAVAILABLE]` | 启动失败区别于超时 |
-| 智能体返回 `BLOCKED` / `NEEDS_CONTEXT` | 状态信号 | 需补上下文或升级 |
-| 硬门 gate FAIL | `[DESIGN_GATE_MISS]` / `[MISSING_MEMORY_WRITE]` 等 | gate 边定义的硬门 |
-| 跳步/越界/自验污染 | `[PROCESS_VIOLATION]` / `[SCOPE_CREEP]` / `[TRUST_TRANSFER]` | 即停，不走 on_fail（见 §流程级即停规则） |
+| 触发源                                 | 信号                                                         | 说明                                                                                                 |
+| -------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| 智能体 wall-clock 超时                 | `[AGENT_TIMEOUT]`                                            | 见 §智能体加载流程 §超时守卫；分启动卡死（agent_startup_s）与执行超时（per_agent_s/stage_default_s） |
+| `task` 工具抛异常/启动失败             | `[AGENT_UNAVAILABLE]`                                        | 启动失败区别于超时                                                                                   |
+| 智能体返回 `BLOCKED` / `NEEDS_CONTEXT` | 状态信号                                                     | 需补上下文或升级                                                                                     |
+| 硬门 gate FAIL                         | `[DESIGN_GATE_MISS]` / `[MISSING_MEMORY_WRITE]` 等           | gate 边定义的硬门                                                                                    |
+| 跳步/越界/自验污染                     | `[PROCESS_VIOLATION]` / `[SCOPE_CREEP]` / `[TRUST_TRANSFER]` | 即停，不走 on_fail（见 §流程级即停规则）                                                             |
 
 ### 派发表（查 graph.yaml `node.on_fail` → 执行对应动作）
 
-| `on_fail` 值 | conductor 动作 | 适用场景 |
-|------|------|------|
-| `abort` | 标 `[STAGE_ABORT]`，停止该阶段，输出当前状态等用户决策 | START/DONE/terminal、装配类错误 |
-| `retry_once` | **同智能体重跑 1 次**：task 工具开新会话（清空前次上下文，避免同样卡死），prompt 注入"前次超时/异常"信号；重跑仍超时/异常 → 转 `escalate`；重试配额见 `config.yaml retry.agent_timeout_max_retries` | EXECUTING（coder 偶发卡死） |
-| `degrade` | 跳过该视角，task_context 标 `DEGRADED`，主流程继续；仅可选挂载视角（reverse-auditor/side-checker，frontmatter `mount[].on_fail: degrade` 声明） | 可选视角节点 |
-| `escalate` | 升级路径（按阶段分支，**只做以下三选一**）：① FIXING 连续 2 轮同症状 → 在 FIXING 节点临时挂载 reviewer 做根因分析（不进 REVIEWING 流转，分析完回 FIXING）；② PLANNING/CHECKING/REVIEWING 必配失败且 tier < T2 → 写 `config.agents` 升级 tier（T1→T2 开 reverse_auditor/side_checker），重跑当前阶段；③ tier == T2 或升级后仍失败 → 输出选项等用户决策 | PLANNING/CHECKING/FIXING/REVIEWING 必配失败 |
-| `pause` | 挂起 task_context（status=PAUSED），输出选项等用户决策；不自动 commit/push/merge/reset/rebase | INTENT/SIZING/DELIVERING 内建阶段 |
+| `on_fail` 值 | conductor 动作                                                                                                                                                                                                                                                                                                                                        | 适用场景                                    |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `abort`      | 标 `[STAGE_ABORT]`，停止该阶段，输出当前状态等用户决策                                                                                                                                                                                                                                                                                                | START/DONE/terminal、装配类错误             |
+| `retry_once` | **同智能体重跑 1 次**：task 工具开新会话（清空前次上下文，避免同样卡死），prompt 注入"前次超时/异常"信号；重跑仍超时/异常 → 转 `escalate`；重试配额见 `config.yaml retry.agent_timeout_max_retries`                                                                                                                                                   | EXECUTING（coder 偶发卡死）                 |
+| `degrade`    | 跳过该视角，task_context 标 `DEGRADED`，主流程继续；仅可选挂载视角（reverse-auditor/side-checker，frontmatter `mount[].on_fail: degrade` 声明）                                                                                                                                                                                                       | 可选视角节点                                |
+| `escalate`   | 升级路径（按阶段分支，**只做以下三选一**）：① FIXING 连续 2 轮同症状 → 在 FIXING 节点临时挂载 reviewer 做根因分析（不进 REVIEWING 流转，分析完回 FIXING）；② PLANNING/CHECKING/REVIEWING 必配失败且 tier < T2 → 写 `config.agents` 升级 tier（T1→T2 开 reverse_auditor/side_checker），重跑当前阶段；③ tier == T2 或升级后仍失败 → 输出选项等用户决策 | PLANNING/CHECKING/FIXING/REVIEWING 必配失败 |
+| `pause`      | 挂起 task_context（status=PAUSED），输出选项等用户决策；不自动 commit/push/merge/reset/rebase                                                                                                                                                                                                                                                         | INTENT/SIZING/DELIVERING 内建阶段           |
 
 > **未声明 `on_fail` 的节点**：按 `config.yaml §on_fail 默认值规则` 求值——required 必配 → escalate；可选挂载 → degrade；executor 内建 → pause；terminal → abort。
 > **节点级 vs 挂载点 on_fail**：同名字段两种取值集（节点级 5 值 / 挂载点 3 值），按字段位置区分——节点 `on_fail:` 在节点定义内，`mount[].on_fail:` 在 frontmatter mount 条目内。bootstrap 校验按位置分别校验取值集。
@@ -337,6 +345,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 ## 输出
 
 交付包含：
+
 1. **闭环确认**：验收 → 实现位置 → 验证证据 → 状态
 2. **变更回顾**：改了什么 / 为什么改 / 影响范围 / 清理调试代码
 3. **经验沉淀**：T1+ 必走 M4-M8，未执行 → `[MISSING_MEMORY_WRITE]`
