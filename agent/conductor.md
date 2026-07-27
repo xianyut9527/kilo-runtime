@@ -50,7 +50,7 @@ S01_INTENT（conductor 内建）→ S03_SIZING（conductor 内建）
 
 | 智能体 | 读取 | 写入 | 禁止写入 |
 |--------|------|------|----------|
-| conductor | 全部 | intent/sizing/status/convergence/memory_injection | execution.verification（避免自验污染 verifier）|
+| conductor | 全部 | intent/sizing/status/convergence/memory_injection/config | execution.verification（避免自验污染 verifier）|
 | planner | intent/sizing | plan | — |
 | coder | plan/execution/forbidden_files/memory_injection | execution.diffs[current_unit]/changes/acceptance_map | execution.verification（自验声明不入 context，由 verifier 独立重跑）|
 | verifier | plan/execution.diffs[current_unit]/changes/acceptance_map/forbidden_files | verification.forward | — |
@@ -60,6 +60,8 @@ S01_INTENT（conductor 内建）→ S03_SIZING（conductor 内建）
 | fixer | verification(issues)/plan/forbidden_files/fixing_history | fixing_history/execution.diffs | execution.verification（修复后自验不入 context，由 verifier 独立重跑）|
 
 > **写入边界硬门**：`execution.verification` 字段只能由 verifier 智能体写入。coder/fixer 自验结果只能保留在智能体本地输出，**不得写入 task_context**。违反 → `[TRUST_TRANSFER]`。
+>
+> **运行时强制**：读写操作可经 `node scripts/task-context.mjs` 执行，脚本按上表矩阵机械拒绝越权写入（矩阵变更须同步脚本内常量）。
 
 ### 注入机制（v3.2 记忆下沉）
 1. conductor 进入某阶段时，读取 `task_context.json` 的相关章节
@@ -169,6 +171,8 @@ warning（非 blocker）→ 标记但放行
 > 2. 是否存在信任传递（grep 智能体输出是否含"coder 说的对""verifier 已 PASS"等措辞）
 > 3. evidence 是否为本轮 fresh（不得复用前序阶段声明）
 > 任一项不满足 → `[TRUST_TRANSFER]`，整阶段降级为 FAIL，重跑该视角。
+>
+> 脚本化执行：`node scripts/trust-transfer-check.mjs <task_id> [--round N]`，任一校验 FAIL 输出 [TRUST_TRANSFER] 并 exit 1。
 
 ## 智能体加载规则
 

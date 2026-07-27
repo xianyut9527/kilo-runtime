@@ -68,6 +68,9 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   ├── conductor.md           # 生命周期编排者（加载智能体 + task_context 共享 + 门禁）
 │   ├── planner.md                # 规划智能体（设计门、DAG、验收点）
 │   ├── coder.md                  # 编码智能体（实现、自测、三件套）
+│   ├── coder-a.md                # multiModel 并行 coder-A（逻辑推理派）
+│   ├── coder-b.md                # multiModel 并行 coder-B（安全边界派）
+│   ├── coder-c.md                # multiModel 并行 coder-C（代码生成派）
 │   ├── verifier.md               # 正向验证智能体（L1/L2/L3、5 元组证据）
 │   ├── reverse-auditor.md        # 反向审计智能体（需求追溯、假设审计，T2+）
 │   ├── side-checker.md           # 运行时行为视角验证智能体（边界/安全/性能/兼容性实测，T2+）

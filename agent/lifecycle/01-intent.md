@@ -52,6 +52,10 @@ quality_gate:
 ## 路由规则
 
 - `INQUIRY` → 直接回答；若命中"价值信号"（见 `agent/conductor.md` §记忆编排），回答完成后执行轻量 M4-M8 记忆写入，再进入 `S17_DONE`；未命中 → 直接 `S17_DONE`。
+  - **默认路径**：INQUIRY 默认由 conductor **内建直接回答**，无需 `task` 启动外部智能体。
+  - **可插拔入口**：用户可在 prompt 显式声明外挂咨询智能体，或经 `task_context.config.agents.custom_overrides` 声明（如领域顾问型 agent），conductor 判定 INQUIRY 后经 `task` 工具加载该智能体作答。
+  - **约束**：无论内建还是外挂，INQUIRY 路径**全程禁止修改性工具**（见 `core.md` §意图分类）；外挂智能体必须是 `agent/` 下已存在的 subagent（frontmatter `mode: subagent`）。
+  - **frontmatter 保持**：本阶段 `agents: [conductor]` 不变——条件表达式不适用于咨询类动态命名场景，外挂入口走 `custom_overrides` 通道而非阶段文件条件加载。
 - `EXECUTION` → 进入 `S03_SIZING`（任务定级）。
 - `NEEDS_CONTEXT` → 回传用户请求补充信息，不推进。
 

@@ -7,7 +7,7 @@
 > - `.kilo/instructions/workflow-core.md` — 执行类任务定级（T0–T3）、单元闭环、门禁、交付、强制流程日志、需求扩散、Trace-First、MCP/委派包、知识沉淀
 > - `.kilo/instructions/skills-lifecycle.md` — skills 生命周期管理 + 社区技能发现 + Hermes 迁移
 > - `.kilo/instructions/reflection.md` — 反思与错误恢复规则
-> - `agent/*.md` — 各智能体的详细工作说明书（生命周期驱动后：`conductor.md` + `planner.md` + `coder.md` + `verifier.md` + `reverse-auditor.md` + `side-checker.md` + `reviewer.md` + `fixer.md` + `multiModel.md`）
+> - `agent/*.md` — 各智能体的详细工作说明书（生命周期驱动后：`conductor.md` + `planner.md` + `coder.md` + `coder-a/b/c.md（multiModel 并行派生）` + `verifier.md` + `reverse-auditor.md` + `side-checker.md` + `reviewer.md` + `fixer.md` + `multiModel.md`）
 > - `agent/lifecycle/*.md` — 生命周期阶段定义（状态机主线索）
 > - `agent/models/registry.md` — 模型能力矩阵与选择策略
 >

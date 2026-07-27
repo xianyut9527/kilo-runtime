@@ -37,6 +37,35 @@ multiModel 是**独立生命周期消费者**，其内部状态机与主生命�
 
 multiModel 完成 `MM_ARCHIVED` 后，返回主生命周期的 `S16_DELIVERING` 阶段。
 
+## task_context 交接协议（MM_* ↔ 主生命周期）
+
+multiModel 期间产生的全部状态写入 `$env:TEMP/kilo/task_context_<task_id>.json`（Unix: `/tmp/kilo/task_context_<task_id>.json`），与 conductor 共享同一份上下文。**完整读写权限矩阵、字段语义、`[TRUST_TRANSFER]` 禁令详见 `agent/conductor.md` §task_context 共享机制**，本节只列 multiModel 专属映射，禁止整表复制。
+
+### 初始化（两种进入方式）
+
+1. **conductor 移交（S03 定级 T3）**：task_context 已由 conductor 初始化（`intent` / `sizing` / `config.agents`），multiModel 在 `MM_INIT` 直接读取，无需重写。
+2. **用户手动选择 multiModel 模式**：multiModel 在 `MM_INIT` 自行初始化 task_context：写入 `intent` + `sizing.level=T3` + `config.agents.synthesizer_fusion=true`，其余按 conductor 默认组合补齐。
+
+### MM_* 阶段 → 字段读写映射
+
+| 阶段 | 读 | 写 |
+|------|----|----|
+| `MM_INIT` | `intent` / `sizing` | `plan.subtasks`（1-3 个子任务委派包） |
+| `MM_INJECT` | `memory_injection` | `memory_injection`（3 个 coder 相同内容，公平性原则；降级不阻塞） |
+| `MM_EXECUTING` | `plan` / `forbidden_files` | `execution.mm_outputs`（3 份 coder 输出摘要，**不含身份标签**） |
+| `MM_CHECKING` | `execution.mm_outputs` | `verification.forward`（由 verifier 写入；`execution.verification` 禁令同 conductor 规则） |
+| `MM_FUSING` | `execution.mm_outputs` / `verification.forward` | `execution.fused_output`（synthesizer-fusion 注入边界不变：不读 intent/拆分意图/模型身份） |
+| `MM_FCHECK` | `execution.fused_output` | `verification.forward.fusion_check`（融合后验证） |
+| `MM_DELIVERING` | 全部 | `status` + `convergence.round` + 记忆溯源（M4-M8，dispatch_log / fact_store / model_calibration 等） |
+| `MM_ARCHIVED` | 全部 | `status=ready_for_delivery`，task_context 交还 conductor 继续 `S16_DELIVERING` |
+
+### 交接不变量
+
+- `task_id` 全链一致：multiModel 接管到 `MM_ARCHIVED` 期间不变。
+- **单写者原则**：`MM_*` 期间 conductor 不并发写 task_context，避免与 multiModel 状态机冲突。
+- 熔断计数沿用 `convergence.round` / `total_rounds` 字段语义（详见 conductor.md 字段语义块）。`total_rounds` 只能由 conductor 递增——multiModel 在 `MM_CHECKING` / `MM_FCHECK` 触发重试时**不直接写 `total_rounds`**，通过 `status` 信号交还 conductor 计数。
+- `[TRUST_TRANSFER]` / `[PROCESS_VIOLATION]` 边界与 conductor.md 保持一致，违反即整阶段降级 FAIL。
+
 ## 当前模式
 
 ```

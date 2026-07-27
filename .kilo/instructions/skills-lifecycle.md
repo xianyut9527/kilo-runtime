@@ -52,6 +52,8 @@ keywords: skills, lifecycle, sqlite, fact-store, no-md-append
 | UI 设计 | `ui-seo/` | SEO |
 | UI 设计 | `ui-shadcn/` | shadcn 组件 |
 | UI 设计 | `ui-vocabulary/` | 设计词汇 |
+| 工程方法论 | `project-intelligence-report/` | 项目情报周报（GitNexus 信号聚合 + 风险仪表盘） |
+| 工程方法论 | `report-analyzer/` | 团队日报分析（AdsPower 浏览器 + 项目工时分布） |
 
 ## 回写触发条件
 
