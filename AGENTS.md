@@ -7,7 +7,7 @@
 > - `.kilo/instructions/workflow-core.md` — 执行类任务定级（T0–T3）、单元闭环、门禁、交付、强制流程日志、需求扩散、Trace-First、MCP/委派包、知识沉淀
 > - `.kilo/instructions/skills-lifecycle.md` — skills 生命周期管理 + 社区技能发现 + Hermes 迁移
 > - `.kilo/instructions/reflection.md` — 反思与错误恢复规则
-> - `agent/*.md` — 各智能体的详细工作说明书 + frontmatter 生命周期声明（v6 单源：mount/task_context/isolation/gate 等字段合入 frontmatter，manifest 与行为文件合二为一，bootstrap 扫 frontmatter 自动注册；含 conductor/planner/coder/coder-a/b/c/verifier/reverse-auditor/side-checker/reviewer/fixer/multiModel/synthesizer-fusion）
+> - `agent/*.md` — 各智能体的详细工作说明书 + frontmatter 生命周期声明（v6 单源：mount/task_context/isolation/gate 等字段合入 frontmatter，manifest 与行为文件合二为一，bootstrap 扫 frontmatter 自动注册；含 conductor/planner/plan-reviewer/coder/coder-a/b/c/verifier/reverse-auditor/side-checker/reviewer/fixer/multiModel/synthesizer-fusion）
 > - `lifecycle/graph.yaml` + `lifecycle/stages/*.md` — 生命周期 DAG（纯图，语义 ID）+ 阶段执行逻辑（状态机主线索）
 > - `lifecycle/config.yaml` — 定级默认智能体组合 + 用户覆盖 + 熔断阈值（唯一真相）
 > - `lifecycle/multimodel-graph.yaml` — T3 子图 DAG + diversity_rule 多样化硬规则
@@ -37,4 +37,4 @@
 9. **流程违规即停**：发现跳步立即标 `[PROCESS_VIOLATION]` 并暂停。
 10. **临时文件**：写入 `$env:TEMP` / `/tmp/`，禁止污染项目目录。
 11. **组件化与重复模式治理**：UI/样式/行为问题跨页面/组件出现时，按 `core.md` + `workflow-core.md` + `component-driven-fixes` skill 执行，禁止逐页复制粘贴式补丁。
-12. **生命周期驱动**：所有执行类任务按 `lifecycle/graph.yaml` DAG（节点含 `required` 必配角色）+ `lifecycle/stages/*.md` 阶段文件驱动状态流转，按文件路由（`agent/*.md` frontmatter `mount`：at/order/when/on_fail）加载智能体（v6 单源：manifest 合入 frontmatter），模型绑定在 `kilo.json` `agent.<name>.model`（能力倾向参考 `docs/model-registry.md` 人类维护，无机械校验）。
+12. **生命周期驱动**：所有执行类任务按 `lifecycle/graph.yaml` DAG（纯拓扑，零智能体名——稳定大框架）+ `lifecycle/stages/*.md` 阶段文件（执行逻辑 + frontmatter `required_roles` 必配角色契约）驱动状态流转，按文件路由（`agent/*.md` frontmatter `mount`：at/order/when/on_fail）加载智能体（v6 单源：manifest 合入 frontmatter；新增智能体 = 丢 .md + kilo.json 绑模型，零改框架），模型绑定在 `kilo.json` `agent.<name>.model`（能力倾向参考 `docs/model-registry.md` 人类维护，无机械校验）。装配自检：`node scripts/lifecycle-doctor.mjs`。

@@ -8,7 +8,7 @@ token_budget: 4000
 # lifecycle/stages/intent
 
 > 通用规则由运行时注入的 `core.md` 提供。流转关系见 `lifecycle/graph.yaml`（单一真相来源），本文件只定义执行逻辑。
-> 执行元数据（executor / model_capability / token_budget）见 frontmatter；必配角色见 graph.yaml 节点 `required`。
+> 执行元数据（executor / model_capability / token_budget）见 frontmatter；本阶段为 conductor 内建（executor 声明），无 required_roles；非内建阶段的必配角色契约见各自 stages frontmatter `required_roles`。
 
 ## 输入
 

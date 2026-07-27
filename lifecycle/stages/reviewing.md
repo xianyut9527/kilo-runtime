@@ -2,11 +2,13 @@
 description: 生命周期阶段 REVIEWING — 审查。侧向验证（条件加载）+ 四视角审查，多视角交叉，不直接修复。
 model_capability: deep-reasoning
 token_budget: 10000        # × 智能体数
+# required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
+required_roles: [reviewer]
 ---
 
 # lifecycle/stages/reviewing
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（节点 `required: [reviewer]`）。挂载：reviewer 必加载（T1+），side-checker 经 manifest `mount` 条件挂载（`config.agents.side_checker=true`，默认 T2）。
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（纯拓扑）；必配角色契约见本文件 frontmatter `required_roles`。挂载：reviewer 必加载（恒定挂载，T1+ 拓扑可达），side-checker 经 frontmatter `mount` 条件挂载（`config.agents.side_checker=true`，默认 T2）。
 
 ## 输入
 

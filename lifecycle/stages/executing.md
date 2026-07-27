@@ -2,11 +2,13 @@
 description: 生命周期阶段 EXECUTING — 实现。读取→编码→测试→修复，交付可运行代码。
 model_capability: code-generation
 token_budget: 16000        # 按单元拆分，每单元 ≤ 16000
+# required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
+required_roles: [coder]
 ---
 
 # lifecycle/stages/executing
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（节点 `required: [coder]`）；coder 经 frontmatter `mount` 自注册挂载（见 `agent/coder.md`）。
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（纯拓扑）；必配角色契约见本文件 frontmatter `required_roles`；智能体经 frontmatter `mount` 自注册挂载。
 
 ## 输入
 

@@ -22,8 +22,12 @@ type: primary # Kilo primary agent（编排者，内建执行 INTENT/SIZING/DELI
 # 模型绑定在 kilo.json agent.conductor.model；能力倾向参考 docs/model-registry.md 人类维护
 # fast-reasoning 倾向：低延迟、轻量判定、记忆写入、编排调度（conductor 需要快速编排决策）
 
-# forbid_write：禁写切片（反自验硬门——conductor 不得写入 execution.verification，避免自写自判的确认偏误）
-# execution.verification 只能由 verifier 智能体写入
+# task_context：读写边界声明（conductor 是编排者，WRITE_MATRIX 经 task-context.mjs 从本字段自动派生）
+#   write        可写切片（intent/sizing/status/convergence/memory_injection/config——编排者专属）
+#   forbid_write 禁写切片（反自验硬门——conductor 不得写入 execution.verification，避免自写自判的确认偏误）
+#                execution.verification 只能由 verifier 智能体写入
+task_context:
+  write: [intent, sizing, status, convergence, memory_injection, config]
 forbid_write: [execution.verification] # 反自验硬门
 ---
 
@@ -45,21 +49,23 @@ forbid_write: [execution.verification] # 反自验硬门
 
 ## 启动期装配（bootstrap）
 
-会话首个任务进入 INTENT 前，conductor 执行一次性装配（结果缓存于会话内存，不落盘）：
+会话首个任务进入 INTENT 前，conductor 执行一次性装配（结果缓存于会话内存，不落盘）。**架构三层正交**：graph.yaml 纯拓扑（零智能体名）/ stages/<id>.md 阶段语义（含 required_roles 契约）/ agent/*.md 智能体（mount 挂载 + task_context 权限）。机械化校验工具：`node scripts/lifecycle-doctor.mjs`（以下全部校验项的可执行实现）。
 
-1. **读图**：`lifecycle/graph.yaml`（主 DAG，节点含 `required` 必配角色）+ `lifecycle/multimodel-graph.yaml`（T3 子图），派生挂载点全集——`{on:bootstrap, on:done}` ∪ 每个节点 N 的 `{pre:N, N, post:N}`。type: stage 的节点执行逻辑文件路径自动派生：`stages/<id 小写>.md`（如 PLANNING → stages/planning.md）。
+1. **读图**：`lifecycle/graph.yaml`（主 DAG，纯拓扑：节点 id/type/executor/on_fail + 边）+ `lifecycle/multimodel-graph.yaml`（T3 子图，子图契约保留图内），派生挂载点全集——`{on:bootstrap, on:done}` ∪ 每个节点 N 的 `{pre:N, N, post:N}`。type: stage 的节点执行逻辑文件路径自动派生：`stages/<id 小写>.md`（如 PLANNING → stages/planning.md）。
 2. **读注册**：扫描 `agent/*.md` 全部 frontmatter（YAML 头），按 `mount[].at` 把智能体注册进对应挂载点（携带 `order`/`when`/`on_fail`）——**文件制自动注册，丢一个 .md 文件即挂载**（manifest 与行为文件合二为一，单源无冗余）。
-3. **读配置**：`lifecycle/config.yaml`（tier_defaults + overrides + convergence + timeouts）。
-4. **校验**（任一失败 → 启动报错 `[ASSEMBLY_FAIL]`，不进入运行）：
+3. **读契约**：扫描 `lifecycle/stages/*.md` frontmatter 的 `required_roles`（阶段必配角色契约，阶段语义内聚）。
+4. **读配置**：`lifecycle/config.yaml`（tier_defaults 差异化开关 + overrides + convergence + timeouts）。
+5. **校验**（任一失败 → 启动报错 `[ASSEMBLY_FAIL]`，不进入运行；doctor 脚本可独立预检）：
    - graph.yaml 每条 edge 的 from/to 必须引用已声明 node
-   - 每个 frontmatter `mount[].at` 必须命中派生挂载点；`on_fail` ∈ {abort,warn,skip}
+   - 每个 frontmatter `mount[].at` 必须命中派生挂载点；`on_fail` ∈ {abort,warn,skip,degrade}
    - graph.yaml 节点 `on_fail`（若声明）∈ {abort, retry_once, degrade, escalate, pause}；未声明按 `config.yaml §on_fail 默认值规则` 求值并写入 resolved 视图
-   - `config.yaml timeouts` 段：`per_agent_s` 键名与 `agent/*.md` frontmatter 智能体名（去 .md + 连字符转下划线）一致；`per_tier_multiplier` 键 ⊆ {T0,T1,T2,T3}；数值为正整数
-   - 每个非内建节点 `required: [role...]` 的角色，必须有 ≥1 个 frontmatter 在该节点主挂载点注册（`when` 求值后 active 覆盖在运行时再校验）
-   - `config.yaml overrides.disabled_agents` 中的角色若是某节点 `required` → 报错（禁用了必配角色）
+   - graph.yaml 纯拓扑守护：主图节点不得出现 `required` 字段（契约在 stages frontmatter）
+   - `config.yaml timeouts` 段：`per_agent_s` 每个键必须有对应 agent 文件（防幽灵键，**单向**——agent 文件可无键，回退 `stage_default_s`）；`per_tier_multiplier` 键 ⊆ {T0,T1,T2,T3}；数值为正数
+   - 每个非内建 stage 节点的 `required_roles: [role...]`（stages frontmatter），每角色必须有 ≥1 个智能体（frontmatter `role` ?? 文件名 = 角色名）在该节点主挂载点注册（`when` 求值后 active 覆盖在运行时再校验）
+   - `config.yaml overrides.disabled_agents` 不得使某 `required_roles` 角色无履行者 → 报错（禁用了必配角色）
    - multiModel 子图：coder-a/b/c 绑定模型的 `(vendor, architecture)` 两两不同（`multimodel-graph.yaml` `diversity_rule` 声明，人工校验，违反 → `[DIVERSITY_VIOLATION]`）
    - > **能力匹配**：无机械校验；模型绑定在 `kilo.json` `agent.<name>.model`，能力倾向参考 `docs/model-registry.md` 人工维护。
-5. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, order, when, on_fail } ]（按 order 升序，无 order 为并行组）}` + `{ nodeId → on_fail_resolved }` + edges 表 + `{ agent → timeout_s }` 预算表（per_agent_s × tier_multiplier）。运行时查表，零重复解析。
+6. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, order, when, on_fail } ]（按 order 升序，无 order 为并行组）}` + `{ nodeId → on_fail_resolved }` + edges 表 + `{ agent → timeout_s }` 预算表（per_agent_s × tier_multiplier，缺 per_agent_s 回退 stage_default_s）。运行时查表，零重复解析。
 
 > **运行时零解析**：装配完成后，conductor 每进入一阶段只查 resolved 视图：挂载点 → 有序/并行智能体列表 → `when` 条件对照 `task_context.config.agents` 求值过滤 → `task` 工具启动。
 
@@ -83,24 +89,30 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 
 ### 读写规则
 
-> **单源声明**：以下矩阵由各 `agent/*.md` frontmatter 的 `task_context.read/write/forbid_write` + `isolation.forbid_read` 字段聚合而成，frontmatter 是单一真相。本表仅供人类速查，**编辑时改 frontmatter，不改本表**（validator 会校验一致性，drift → FAIL）。
+> **单源声明**：以下矩阵由各 `agent/*.md` frontmatter 的 `task_context.read/write/forbid_write` + `isolation.forbid_read` 字段聚合而成，frontmatter 是单一真相。本表仅供人类速查，**编辑时改 frontmatter，不改本表**。写入列用逗号分隔完整路径（机器可校验格式）——`node scripts/lifecycle-doctor.mjs` 校验本表与 frontmatter 派生矩阵一致，drift → FAIL。
 
-| 智能体          | 读取                                                                      | 写入                                                     | 禁止写入                                                               |
-| --------------- | ------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------- |
-| conductor       | 全部                                                                      | intent/sizing/status/convergence/memory_injection/config | execution.verification（避免自验污染 verifier）                        |
-| planner         | intent/sizing                                                             | plan                                                     | —                                                                      |
-| coder           | plan/execution/forbidden_files/memory_injection                           | execution.diffs[current_unit]/changes/acceptance_map     | execution.verification（自验声明不入 context，由 verifier 独立重跑）   |
-| verifier        | plan/execution.diffs[current_unit]/changes/acceptance_map/forbidden_files | verification.forward                                     | —                                                                      |
-| reverse-auditor | intent/execution.diffs/changes/acceptance_map                             | verification.reverse                                     | —                                                                      |
-| side-checker    | plan/execution/project_context                                            | verification.side                                        | —                                                                      |
-| reviewer        | diff/plan/acceptance_criteria/project_context                             | verification.review                                      | —                                                                      |
-| fixer           | verification(issues)/plan/forbidden_files/fixing_history                  | fixing_history/execution.diffs                           | execution.verification（修复后自验不入 context，由 verifier 独立重跑） |
+| 智能体          | 读取                                                                      | 写入                                                                                                                              | 禁止写入                                                               |
+| --------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| conductor       | 全部                                                                      | intent, sizing, status, convergence, memory_injection, config                                                                      | execution.verification（避免自验污染 verifier）                        |
+| planner         | intent/sizing/plan_review                                                 | plan                                                                                                                              | —                                                                      |
+| plan-reviewer   | intent/sizing/plan                                                        | plan_review                                                                                                                       | plan, execution.verification                                           |
+| coder           | plan/execution/forbidden_files/memory_injection                           | execution.diffs, execution.changes, execution.acceptance_map                                                                      | execution.verification（自验声明不入 context，由 verifier 独立重跑）   |
+| coder-a         | plan/execution/forbidden_files/memory_injection                           | execution.mm_outputs                                                                                                              | execution.verification                                                 |
+| coder-b         | plan/execution/forbidden_files/memory_injection                           | execution.mm_outputs                                                                                                              | execution.verification                                                 |
+| coder-c         | plan/execution/forbidden_files/memory_injection                           | execution.mm_outputs                                                                                                              | execution.verification                                                 |
+| verifier        | plan/execution.diffs/changes/acceptance_map/forbidden_files               | verification.forward, execution.verification                                                                                      | —                                                                      |
+| reverse-auditor | intent/execution.diffs/changes/acceptance_map                             | verification.reverse                                                                                                              | —                                                                      |
+| side-checker    | plan/execution/project_context                                            | verification.side                                                                                                                 | —                                                                      |
+| reviewer        | diff/plan/acceptance_criteria/project_context                             | verification.review                                                                                                               | —                                                                      |
+| fixer           | verification(issues)/plan/forbidden_files/fixing_history                  | fixing_history, execution.diffs                                                                                                   | execution.verification（修复后自验不入 context，由 verifier 独立重跑） |
+| synthesizer-fusion | execution.mm_outputs/verification.forward/acceptance_criteria/project_context | execution.fused_output                                                                                                        | —                                                                      |
+| multiModel      | 全部（子图编排者）                                                        | plan.subtasks, memory_injection, execution.mm_outputs, execution.fused_output, status, convergence, intent, sizing, config.agents.synthesizer_fusion | convergence.total_rounds（仅 conductor 可递增，经 status 信号交还） |
 
-> **写入边界硬门**：`execution.verification` 字段只能由 verifier 智能体写入。coder/fixer 自验结果只能保留在智能体本地输出，**不得写入 task_context**。违反 → `[TRUST_TRANSFER]`。
+> **写入边界硬门**：`execution.verification` 与 `verification.forward` 字段只能由 verifier 智能体写入；`convergence.total_rounds` 只能由 conductor 写入。coder/fixer 自验结果只能保留在智能体本地输出，**不得写入 task_context**。违反 → `[TRUST_TRANSFER]` / `[PROCESS_VIOLATION]`。
 >
-> **运行时强制**：读写操作可经 `node scripts/task-context.mjs` 执行，脚本按上表矩阵机械拒绝越权写入（矩阵变更须同步脚本内常量）。
+> **运行时强制**：读写操作可经 `node scripts/task-context.mjs` 执行。脚本的 WRITE_MATRIX **从各 agent frontmatter `task_context.write` 自动派生**（新增智能体零改脚本），安全硬门（verification 双字段 / total_rounds）保留脚本内硬编码，机械拒绝越权写入。
 >
-> **单一真相**：上表与各 `agent/*.md` frontmatter 的 `task_context.read/write/forbid_write` 字段一致；新增智能体时两侧同步声明。
+> **单一真相**：上表与各 `agent/*.md` frontmatter 的 `task_context.read/write/forbid_write` 字段一致；新增智能体只需声明 frontmatter + 在本表加一行（doctor 校验 drift）。
 
 ### 注入机制（记忆下沉）
 
@@ -122,13 +134,9 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
   "sizing": {...},
   "config": {
     "agents": {
-      "planner": true,
-      "coder": true,
-      "verifier": true,
+      # 仅差异化开关（恒定挂载智能体无 when，由图拓扑限定可达性，不在此列）
       "reverse_auditor": false,
       "side_checker": false,
-      "reviewer": true,
-      "fixer": true,
       "synthesizer_fusion": false
     },
     "review_mode": "none" | "full",
@@ -168,7 +176,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 >
 > **递增责任**：`total_rounds` 只能由 conductor 在进入 CHECKING/REVIEWING 前写入，coder/fixers/subagents 禁止修改此字段。违反 → `[PROCESS_VIOLATION]`。
 
-> **配置驱动加载**：`config.agents` 字段声明本次任务要加载哪些智能体（布尔值），由 conductor 在 SIZING 定级后按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户显式覆盖写入。frontmatter `mount[].when` 按 `config.agents.<key>` 求值，而非定级硬编码。`custom_overrides` 供用户/高阶场景显式覆盖默认组合。
+> **配置驱动加载（仅差异化开关）**：`config.agents` 只承载"同阶段按 tier 差异化"的开关（当前：reverse_auditor / side_checker / synthesizer_fusion），由 conductor 在 SIZING 定级后按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户显式覆盖写入。frontmatter `mount[].when` 按 `config.agents.<key>` 求值。**恒定挂载智能体（无 `when`）不在此列**——图拓扑可达即加载（T0 不经 PLANNING/CHECKING/FIXING，T3 走子图），新增智能体默认零配置。`custom_overrides` 供用户/高阶场景显式覆盖默认组合。
 
 ## 智能体加载规则（文件路由驱动）
 
@@ -177,7 +185,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 - **装配完成后**立即执行 `on:bootstrap` 挂载点（按 order 升序）
 - **进入节点 N**：
   1. 执行 `pre:N` 挂载点（按 order 升序；`on_fail: abort` → `[SLOT_ABORT]` 中止进入主槽）
-  2. 执行 `N` 主挂载点：`executor: conductor/multiModel` 内建节点直接内建；否则按 order 分组执行（无 order 同组并行、有 order 组间升序），并校验 `required` 激活覆盖（`when` 求值后缺一 → `[SLOT_UNFULFILLED]`）
+  2. 执行 `N` 主挂载点：`executor: conductor/multiModel` 内建节点直接内建；否则按 order 分组执行（无 order 同组并行、有 order 组间升序），并校验 `required_roles` 激活覆盖（契约源：stages/<id>.md frontmatter；`when` 求值后缺一 → `[SLOT_UNFULFILLED]`）
   3. 执行 `post:N` 挂载点（同 pre 语义）
   4. 按 edges + `when`/`gate` 流转
 - **DELIVERING 完成、入 DONE 前**执行 `on:done` 挂载点
@@ -191,13 +199,12 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 5. **超时守卫**：wall-clock 超过 `timeout_s` 智能体仍未返回 → 标记 `[AGENT_TIMEOUT]`，按当前节点 `on_fail` 派发（见 §异常处理派发表）；`agent_startup_s` 内 task 工具未开始执行 → 同样 `[AGENT_TIMEOUT]`
 6. 返回后按 frontmatter `task_context.write` 收回结构化结果；超时/异常也写入 `dispatch_log`（agent_status=timeout/error + duration_ms）
 
-> **智能体名不出现在阶段文件正文**：阶段文件只有执行逻辑。新增/替换/排序智能体 = 改对应 `agent/<name>.md` frontmatter 的 `mount`（`order` 调顺序，`at` 选挂载点，多条目即多点挂载），阶段文件不动；加必配角色才动 graph.yaml 节点 `required` 一行。
+> **智能体名不出现在 graph.yaml 与阶段文件正文**：graph.yaml 是纯拓扑（稳定大框架），阶段文件只有执行逻辑 + frontmatter `required_roles` 契约。新增/替换/排序智能体 = 丢/改 `agent/<name>.md` frontmatter 的 `mount`（`order` 调顺序，`at` 选挂载点，多条目即多点挂载）——**graph.yaml 与 config.yaml 都不动**；仅当引入"新角色作为某阶段必配"时才动该阶段 stages 文件 frontmatter 的 `required_roles` 一行（阶段语义变化，内聚）。
 
 ## 质量门禁管理
 
 | 门禁                            | 位置（graph.yaml 边）  | 处理方式                       |
 | ------------------------------- | ---------------------- | ------------------------------ |
-| `[DESIGN_GATE_PASS]`            | `PLANNING → EXECUTING` | 未通过不得进入 EXECUTING       |
 | 正向验证 PASS                   | `CHECKING`             | FAIL → FIXING                  |
 | 反向审计 PASS（条件加载）       | `CHECKING`             | FAIL → FIXING                  |
 | 侧向验证 PASS（条件加载）       | `REVIEWING`            | FAIL → FIXING                  |
@@ -249,7 +256,7 @@ T1+ 任务加载 coder 智能体时，委派包仍必须包含：
 | -------- | ---- | ---------- | --------------- | ---------------------- |
 | 意图判定 | ✅   | INTENT     | conductor       | 类型明确               |
 | 任务定级 | ✅   | SIZING     | conductor       | T0-T3 准确             |
-| 设计门   | ✅   | PLANNING   | planner         | [DESIGN_GATE_PASS]     |
+| 方案规划 | ✅   | PLANNING   | planner         | 方案输出               |
 | 实现     | ✅   | EXECUTING  | coder           | 验收映射表+三件套      |
 | 正向验证 | ✅   | CHECKING   | verifier        | 5 元组证据             |
 | 反向审计 | ✅   | CHECKING   | reverse-auditor | 需求追溯完整           |
@@ -296,7 +303,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 | 智能体 wall-clock 超时                 | `[AGENT_TIMEOUT]`                                            | 见 §智能体加载流程 §超时守卫；分启动卡死（agent_startup_s）与执行超时（per_agent_s/stage_default_s） |
 | `task` 工具抛异常/启动失败             | `[AGENT_UNAVAILABLE]`                                        | 启动失败区别于超时                                                                                   |
 | 智能体返回 `BLOCKED` / `NEEDS_CONTEXT` | 状态信号                                                     | 需补上下文或升级                                                                                     |
-| 硬门 gate FAIL                         | `[DESIGN_GATE_MISS]` / `[MISSING_MEMORY_WRITE]` 等           | gate 边定义的硬门                                                                                    |
+| 硬门 gate FAIL                         | `[MISSING_MEMORY_WRITE]` 等                                  | gate 边定义的硬门                                                                                    |
 | 跳步/越界/自验污染                     | `[PROCESS_VIOLATION]` / `[SCOPE_CREEP]` / `[TRUST_TRANSFER]` | 即停，不走 on_fail（见 §流程级即停规则）                                                             |
 
 ### 派发表（查 graph.yaml `node.on_fail` → 执行对应动作）

@@ -2,11 +2,15 @@
 description: 生命周期阶段 PLANNING — 设计门。T1+ 编码前必须经过 planner 设计门，输出方案+验收点+DAG。
 model_capability: deep-reasoning
 token_budget: 12000
+# required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
+# 角色名 = 智能体文件名（去 .md）或其 frontmatter 显式 role 字段；
+# bootstrap/doctor 校验：每个角色 ≥1 个智能体 mount 覆盖本阶段主槽，缺一 → [ASSEMBLY_FAIL]
+required_roles: [planner]
 ---
 
 # lifecycle/stages/planning
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（节点 `required: [planner]`）；planner 经 frontmatter `mount` 自注册挂载（见 `agent/planner.md`）。
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（纯拓扑）；必配角色契约见本文件 frontmatter `required_roles`；智能体经 frontmatter `mount` 自注册挂载。
 
 ## 输入
 
@@ -33,20 +37,21 @@ transition_context:
   task_type: "T1" | "T2" | "T3"
   design_gate_type: "short" | "full"
   units: [{ unit_id, goal, key_files, dependencies, acceptance_criteria }]
-quality_gate:
-  design_gate_pass: true | false   # 必须显式输出 [DESIGN_GATE_PASS]
-  scan_coverage: "full" | "partial" | "N/A"
-  componentization_plan: "yes" | "no" | "N/A"
+# 阶段放行由 post:PLANNING 挂载点独立审查判定（通用挂载机制，见 graph.yaml 头注释），主槽智能体不自验
+scan_coverage: "full" | "partial" | "N/A"
+componentization_plan: "yes" | "no" | "N/A"
 ```
 
 ## 路由规则（边定义见 graph.yaml）
 
-- `design_gate_pass: true` → 经 `DESIGN_GATE_PASS` 门禁边进入 `EXECUTING`
-- `design_gate_pass: false` 或 `NEEDS_CONTEXT` → 返回 `PLANNING` 重走，或升级人工决策
-- 跳过/未过设计门 → `[DESIGN_GATE_MISS]`（下游 verifier 会 FAIL）
+- 主槽输出方案 → 执行 `post:PLANNING` 挂载点（挂载机制见 graph.yaml 头注释）
+- 挂载点审查通过 → 阶段完成，经 `PLANNING → EXECUTING` 边进入 `EXECUTING`
+- 挂载点审查失败/超时/异常 → 挂载点 `on_fail: abort` → `[SLOT_ABORT]`，停在 PLANNING 等用户决策（不自动回流）
+- 绕过审查直接进入编码 → 下游 verifier 标 `[PLAN_REVIEW_MISS]` FAIL（见 stages/checking.md）
 
 ## 反模式
 
 - ❌ "太简单不需要设计" — 简单任务正是未审视假设造成返工的高发区。
 - ❌ 未包含重复模式扫描清单就放行 coder。
-- ❌ 自行进入执行阶段，未经 `[DESIGN_GATE_PASS]` 标记。
+- ❌ 主槽智能体自验方案通过并自行进入执行阶段（方案放行由 post:PLANNING 挂载点独立审查判定）。
+- ❌ 未经 post:PLANNING 挂载点审查放行即进入执行阶段。

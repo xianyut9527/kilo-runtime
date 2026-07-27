@@ -35,6 +35,13 @@ invariants:
   - task_id 全链一致
   - MM_* 期间 conductor 不并发写 task_context（单写者原则）
   - total_rounds 只能由 conductor 递增，multiModel 经 status 信号交还计数
+
+# task_context：读写边界声明（WRITE_MATRIX 经 task-context.mjs 从本字段自动派生）
+#   write  可写切片（子图编排者专属：plan.subtasks / memory_injection / execution.mm_outputs /
+#          execution.fused_output / status / convergence / intent / sizing /
+#          config.agents.synthesizer_fusion（MM_INIT 手动模式写入））
+task_context:
+  write: [plan.subtasks, memory_injection, execution.mm_outputs, execution.fused_output, status, convergence, intent, sizing, config.agents.synthesizer_fusion]
 ---
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。

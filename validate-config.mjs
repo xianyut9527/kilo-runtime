@@ -24,13 +24,13 @@
 //   [20/29] 能力插件文件完整性（已废弃 — capabilities/ 已合并入智能体文件）
 //   [21/29] 模型能力矩阵文档存在性（v6.1：agent/models/registry.md 已迁移至 docs/model-registry.md）
 //   [22/29] 生命周期 ↔ 能力插件映射一致性（已废弃 — capabilities/ 已合并入智能体文件）
-//   [23/29] 智能体文件完整性（agent/ 下 8 个智能体 .md：conductor/planner/coder/verifier/reverse-auditor/side-checker/reviewer/fixer）
+//   [23/29] 智能体文件完整性（agent/ 下 9 个智能体 .md：conductor/planner/plan-reviewer/coder/verifier/reverse-auditor/side-checker/reviewer/fixer）
 //   [24/29] lifecycle 阶段文件 frontmatter 最小契约校验（v6.1：文件名派生节点 ID + description/model_capability/token_budget；stage_id 已废弃）
-//   [25/29] 文件路由注册与 graph required 覆盖校验（v6.1：agent/*.md frontmatter mount 注册 + graph 节点 required 覆盖；capabilities_required 已删除）
+//   [25/29] 文件路由注册与角色契约覆盖校验（v6.2：agent/*.md frontmatter mount 注册 + stages frontmatter required_roles 覆盖 + graph 纯拓扑守护 + 子图 required 覆盖；capabilities_required 已删除）
 //   [26/29] 智能体视角物理隔离校验（reverse-auditor 禁读 plan / side-checker 禁读 verification / reviewer 禁读 verifier_report / coder+fixer 禁写 execution.verification）
 //   [27/29] 模型硬编码反查（agent/*.md frontmatter 不含 model: 字段；body 不含 hx/ 模型 ID）
 //   [28/29] subagent 记忆召回接口校验（v3.2 记忆下沉：7 subagent .md 须含 §记忆召回接口段）
-//   [29/29] config.agents 配置驱动校验（v6：conductor.md 含 bootstrap/config.agents/custom_overrides 锚点；agent frontmatter mount 条件挂载；lifecycle/config.yaml 含 tier_defaults）
+//   [29/29] config.agents 配置驱动校验（v6.2：conductor.md 含 bootstrap/config.agents/custom_overrides 锚点；agent frontmatter mount 条件挂载；lifecycle/config.yaml 含 tier_defaults；graph.yaml 纯拓扑零 required + stages frontmatter required_roles 契约）
 // 仅使用 Node 内置模块：node:fs / node:path / node:process / node:url
 // 退出码：全部 PASS 返回 0；任一 FAIL 返回 1。
 
@@ -1686,16 +1686,17 @@ function check22LifecycleCapabilityMapping() {
 }
 
 // ---------- Check 23: 智能体文件完整性 ----------
-// v3.0 多智能体生命周期架构：验证 agent/ 下 8 个核心智能体 .md 文件存在。
-// 8 智能体清单（来源：docs/multi-agent-lifecycle-architecture.md §智能体清单）：
-//   conductor / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer
-// multiModel.md 是 T3 触发的备选 primary 智能体，不在 8 智能体清单中，由 check2 覆盖。
+// v3.0 多智能体生命周期架构：验证 agent/ 下 9 个核心智能体 .md 文件存在。
+// 9 智能体清单（来源：docs/multi-agent-lifecycle-architecture.md §智能体清单）：
+//   conductor / planner / plan-reviewer / coder / verifier / reverse-auditor / side-checker / reviewer / fixer
+// multiModel.md 是 T3 触发的备选 primary 智能体，不在 9 智能体清单中，由 check2 覆盖。
 function check23AgentIntegrity() {
   const name = '智能体文件完整性';
   const agentDir = path.resolve(ROOT, 'agent');
   const requiredAgents = [
     'conductor.md',
     'planner.md',
+    'plan-reviewer.md',
     'coder.md',
     'verifier.md',
     'reverse-auditor.md',
@@ -1712,7 +1713,7 @@ function check23AgentIntegrity() {
   if (missing.length > 0) {
     return { name, pass: false, detail: `缺失智能体文件: [${missing.join(', ')}]` };
   }
-  return { name, pass: true, detail: `8 个核心智能体文件齐全（${requiredAgents.map((x) => x.slice(0, -3)).join('/')}）` };
+  return { name, pass: true, detail: `9 个核心智能体文件齐全（${requiredAgents.map((x) => x.slice(0, -3)).join('/')}）` };
 }
 
 // ---------- Check 24: lifecycle 阶段文件 frontmatter 最小契约校验（v6.0 文件路由） ----------
@@ -1861,8 +1862,17 @@ function parseGraphRequired(text) {
   return result;
 }
 
+// 解析 stages/<id>.md frontmatter required_roles（v6.2 阶段必配角色契约，行内数组）
+function parseStageRequiredRoles(text) {
+  const fm = extractFrontmatterText(text);
+  if (!fm) return [];
+  const m = fm.match(/^required_roles\s*:\s*\[([^\]]*)\]/m);
+  if (!m) return [];
+  return m[1].split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 function check25MountRouteCoverage() {
-  const name = '文件路由注册与 graph required 覆盖校验（v6.0）';
+  const name = '文件路由注册与角色契约覆盖校验（v6.2：mount 注册 + stages frontmatter required_roles 覆盖 + graph 纯拓扑守护）';
   const stagesDir = path.resolve(ROOT, 'lifecycle', 'stages');
   const agentDir = path.resolve(ROOT, 'agent');
   if (!fs.existsSync(stagesDir)) {
@@ -1884,7 +1894,8 @@ function check25MountRouteCoverage() {
     const type = fm.type || (fm.mode === 'subagent' ? 'subagent' : fm.mode === 'primary' ? 'primary' : '');
     const fmText = extractFrontmatterText(text);
     const mounts = parseAgentMount(fmText);
-    manifests.push({ file: fname, name: agentName, type, mounts });
+    const role = fm.role ? String(fm.role).trim() : null;
+    manifests.push({ file: fname, name: agentName, type, mounts, role });
   }
   const errors = [];
   const { points } = deriveMountPoints();
@@ -1895,14 +1906,16 @@ function check25MountRouteCoverage() {
       errors.push(`${m.file}: subagent 未声明 mount 挂载点（永不加载，死注册）`);
       continue;
     }
+    // 角色集合：文件名（缺省角色）+ frontmatter 显式 role 字段（多智能体同角色）
     const roles = new Set([m.name]);
+    if (m.role) roles.add(m.role);
     for (const e of m.mounts || []) {
       if (!points.has(e.at)) {
         errors.push(`${m.file}: mount at '${e.at}' 非法（派生挂载点全集 = on:bootstrap/on:done + 每节点 pre:/主/post:）`);
         continue;
       }
-      if (e.on_fail && !['abort', 'warn', 'skip'].includes(e.on_fail)) {
-        errors.push(`${m.file}: mount[${e.at}] on_fail '${e.on_fail}' 非法（abort|warn|skip）`);
+      if (e.on_fail && !['abort', 'warn', 'skip', 'degrade'].includes(e.on_fail)) {
+        errors.push(`${m.file}: mount[${e.at}] on_fail '${e.on_fail}' 非法（abort|warn|skip|degrade）`);
       }
       if (e.order !== undefined && (!Number.isInteger(e.order) || e.order < 0)) {
         errors.push(`${m.file}: mount[${e.at}] order 非法（必须非负整数或省略=并行）`);
@@ -1920,15 +1933,35 @@ function check25MountRouteCoverage() {
       }
     }
   }
-  // required 覆盖：graph.yaml + multimodel-graph.yaml 节点 required
+  // 角色契约覆盖校验（v6.2 三段）：
+  // (a) 主图：stages/<id>.md frontmatter required_roles（阶段语义内聚，单一真相）
+  // (b) 主图纯拓扑守护：graph.yaml 不得残留节点 required
+  // (c) 子图：multimodel-graph.yaml 节点 required（子图契约保留图内，无 stages 文件）
   const coveredBy = (point, role) => (mountRegistrants.get(point) || []).some((r) => r.roles.has(role));
-  for (const g of ['graph.yaml', 'multimodel-graph.yaml']) {
-    const gp = path.resolve(ROOT, 'lifecycle', g);
-    if (!fs.existsSync(gp)) continue;
-    for (const [nodeId, roles] of parseGraphRequired(fs.readFileSync(gp, 'utf8'))) {
-      for (const role of roles) {
-        if (!coveredBy(nodeId, role)) {
-          errors.push(`${g}: 节点 ${nodeId} required '${role}' 无 agent 在该主挂载点注册（覆盖缺口）`);
+  for (const dirent of fs.readdirSync(stagesDir, { withFileTypes: true })) {
+    if (!dirent.isFile() || !dirent.name.endsWith('.md') || dirent.name.toLowerCase() === 'readme.md') continue;
+    const stageId = dirent.name.slice(0, -3).toUpperCase();
+    const stageRoles = parseStageRequiredRoles(fs.readFileSync(path.join(stagesDir, dirent.name), 'utf8'));
+    for (const role of stageRoles) {
+      if (!coveredBy(stageId, role)) {
+        errors.push(`stages/${dirent.name}: required_roles '${role}' 无 agent 在 ${stageId} 主挂载点注册（覆盖缺口）`);
+      }
+    }
+  }
+  {
+    const gp = path.resolve(ROOT, 'lifecycle', 'graph.yaml');
+    if (fs.existsSync(gp) && parseGraphRequired(fs.readFileSync(gp, 'utf8')).size > 0) {
+      errors.push('graph.yaml: 主图残留节点 required（v6.2 纯拓扑守护：契约已移至 stages/<id>.md frontmatter required_roles）');
+    }
+  }
+  {
+    const gp = path.resolve(ROOT, 'lifecycle', 'multimodel-graph.yaml');
+    if (fs.existsSync(gp)) {
+      for (const [nodeId, roles] of parseGraphRequired(fs.readFileSync(gp, 'utf8'))) {
+        for (const role of roles) {
+          if (!coveredBy(nodeId, role)) {
+            errors.push(`multimodel-graph.yaml: 节点 ${nodeId} required '${role}' 无 agent 在该主挂载点注册（覆盖缺口）`);
+          }
         }
       }
     }
@@ -1940,7 +1973,7 @@ function check25MountRouteCoverage() {
   return {
     name,
     pass: true,
-    detail: `${manifests.length} agent frontmatter / ${mountRegistrants.size} 挂载点 / ${mounted} 条挂载全部合法；graph required 覆盖完整；视角并行无违规`,
+    detail: `${manifests.length} agent frontmatter / ${mountRegistrants.size} 挂载点 / ${mounted} 条挂载全部合法；stages required_roles 契约覆盖完整 + graph 纯拓扑守护通过 + 子图 required 覆盖完整；视角并行无违规`,
   };
 }
 
@@ -2095,12 +2128,12 @@ function check27NoModelHardcode() {
 }
 
 function check28SubagentMemoryRecall() {
-  const name = 'subagent 记忆召回接口（v3.2 记忆下沉：7 subagent .md 须含 §记忆召回接口段）';
+  const name = 'subagent 记忆召回接口（v3.2 记忆下沉：8 subagent .md 须含 §记忆召回接口段）';
   const agentDir = path.resolve(ROOT, 'agent');
   const errors = [];
 
-  // 7 个 subagent 必须含 §记忆召回接口段（conductor/multiModel 豁免 — conductor 仅做轻量 project_context 注入；multiModel 走自己的生命周期）
-  const required = ['planner.md', 'coder.md', 'verifier.md', 'reverse-auditor.md', 'side-checker.md', 'reviewer.md', 'fixer.md'];
+  // 8 个 subagent 必须含 §记忆召回接口段（conductor/multiModel 豁免 — conductor 仅做轻量 project_context 注入；multiModel 走自己的生命周期）
+  const required = ['planner.md', 'plan-reviewer.md', 'coder.md', 'verifier.md', 'reverse-auditor.md', 'side-checker.md', 'reviewer.md', 'fixer.md'];
   for (const fname of required) {
     const fp = path.join(agentDir, fname);
     if (!fs.existsSync(fp)) {
@@ -2124,11 +2157,11 @@ function check28SubagentMemoryRecall() {
   if (errors.length > 0) {
     return { name, pass: false, detail: errors.join('; ') };
   }
-  return { name, pass: true, detail: `7 个 subagent 均含 §记忆召回接口 段 + 引用 memory-ops-reference.md + 声明降级策略` };
+  return { name, pass: true, detail: `8 个 subagent 均含 §记忆召回接口 段 + 引用 memory-ops-reference.md + 声明降级策略` };
 }
 
 function check29ConfigDrivenAgents() {
-  const name = 'config.agents 配置驱动（v6.0：conductor.md bootstrap 锚点 + agent frontmatter mount 条件挂载 + lifecycle/config.yaml tier_defaults）';
+  const name = 'config.agents 配置驱动（v6.2：conductor.md bootstrap 锚点 + agent frontmatter mount 条件挂载 + config.yaml tier_defaults + graph 纯拓扑 + stages required_roles）';
   const errors = [];
 
   // (a) conductor.md 必须含新架构锚点：config.agents / custom_overrides / graph.yaml / 启动期装配；不得残留旧制硬编码矩阵
@@ -2219,24 +2252,33 @@ function check29ConfigDrivenAgents() {
     }
   }
 
-  // (f) graph.yaml 必须含节点 required 声明（v5.0 必配角色移至结构层）
+  // (f) graph.yaml 纯拓扑守护（v6.2 反转）：主图不得含节点 required（契约已移至 stages frontmatter required_roles）
   const graphPath = path.resolve(ROOT, 'lifecycle', 'graph.yaml');
   if (!fs.existsSync(graphPath)) {
     errors.push('lifecycle/graph.yaml 缺失');
   } else {
     const g = fs.readFileSync(graphPath, 'utf8');
-    if (!g.includes('required:')) {
-      errors.push('graph.yaml: 缺少节点 required 声明（v5.0 必配角色在结构层，不再在阶段 frontmatter expects）');
+    if (parseGraphRequired(g).size > 0) {
+      errors.push('graph.yaml: 主图残留节点 required（v6.2 纯拓扑守护：必配角色契约在 stages/<id>.md frontmatter required_roles，graph 零智能体名/角色名）');
     }
     if (g.includes('expects')) {
       errors.push('graph.yaml: 残留 expects 字段（v5.0 起必配角色用 required，非 expects）');
     }
   }
 
+  // (g) 非内建阶段 stages frontmatter 必须声明 required_roles（v6.2 契约内聚）
+  for (const sid of ['planning', 'executing', 'checking', 'reviewing', 'fixing']) {
+    const sp = path.resolve(ROOT, 'lifecycle', 'stages', `${sid}.md`);
+    if (!fs.existsSync(sp)) continue; // 缺失由 check19/24 报
+    if (parseStageRequiredRoles(fs.readFileSync(sp, 'utf8')).length === 0) {
+      errors.push(`stages/${sid}.md: 非内建阶段缺 frontmatter required_roles（v6.2 必配角色契约内聚）`);
+    }
+  }
+
   if (errors.length > 0) {
     return { name, pass: false, detail: errors.join('; ') };
   }
-  return { name, pass: true, detail: 'conductor.md bootstrap 锚点齐全且无旧制矩阵残留；agent frontmatter mount 条件挂载合规；config.yaml 含 tier_defaults(T0-T3)+overrides+convergence；graph.yaml 节点 required 就位' };
+  return { name, pass: true, detail: 'conductor.md bootstrap 锚点齐全且无旧制矩阵残留；agent frontmatter mount 条件挂载合规；config.yaml 含 tier_defaults(T0-T3)+overrides+convergence；graph.yaml 纯拓扑（零 required）；非内建阶段 required_roles 就位' };
 }
 
 const kiloBuf = (() => {

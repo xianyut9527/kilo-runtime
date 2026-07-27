@@ -2,11 +2,13 @@
 description: 生命周期阶段 CHECKING — 验证。正向验证 + 反向审计（条件加载），多视角交叉验证，只验证不修复。
 model_capability: strict-verification
 token_budget: 10000        # × 智能体数
+# required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
+required_roles: [verifier]
 ---
 
 # lifecycle/stages/checking
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（节点 `required: [verifier]`）。挂载：verifier 必加载（reachability 即开关），reverse-auditor 经 manifest `mount` 条件挂载（`config.agents.reverse_auditor=true`，默认 T2，见 `lifecycle/config.yaml`）。
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（纯拓扑）；必配角色契约见本文件 frontmatter `required_roles`。挂载：verifier 必加载（恒定挂载，reachability 即开关），reverse-auditor 经 frontmatter `mount` 条件挂载（`config.agents.reverse_auditor=true`，默认 T2，见 `lifecycle/config.yaml`）。
 
 ## 输入
 
@@ -85,7 +87,7 @@ quality_gate:
 
 - `[MISSING]` / `[UNVERIFIED]` / `[PARTIAL_IMPLEMENTATION]` / `[REGRESSION]`
 - `[MISSING_ACCEPTANCE_MAP]` / `[FAKE_CONTEXT]` / `[ENCODING_VIOLATION]`
-- `[DESIGN_GATE_MISS]`（T1+ 编码前未过设计门）
+- `[PLAN_REVIEW_MISS]`（T1+ 编码前未过方案审查）
 - `[PROCESS_VIOLATION]` / `[PATH_DEVIATION]`
 - `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` / `[MISSING_SCAN]` / `[MISSING_PREVENTION]`
 - `[SCOPE_CREEP]` / `[TRUST_TRANSFER]`

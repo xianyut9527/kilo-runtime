@@ -35,6 +35,11 @@
       "model": "hx/glm-5.2",
       "prompt": "规划智能体。设计门、方案设计、单元 DAG 拆分、验收点定义、全量扫描清单。只输出设计方案，不写代码。详见 agent/planner.md。"
     },
+    "plan-reviewer": {
+      "mode": "subagent",
+      "model": "hx/MiniMax-M3",
+      "prompt": "方案审查智能体。独立审查 planner 输出的方案，反自检自查——planner 不自验方案。只审查方案，不修复、不重写。详见 agent/plan-reviewer.md。"
+    },
     "coder": {
       "mode": "subagent",
       "model": "hx/kimi-k2.7-code",

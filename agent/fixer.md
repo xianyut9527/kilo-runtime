@@ -18,10 +18,9 @@ subagent_type: fixer
 
 # mount：挂载点声明
 #   at    挂载点（FIXING 阶段主槽，派生自 graph.yaml FIXING 节点）
-#   when  条件挂载（对照 config.agents.fixer 求值）；T1+ 默认 true，T0 false
+#   无 when = 恒定挂载：T0 不经 FIXING（T0 无验证/修复循环），图拓扑天然限定仅 T1/T2 触发
 mount:
   - at: FIXING
-    when: "config.agents.fixer"
 
 # task_context：读写边界声明
 #   read        可读切片（verification 各视角 FAIL 原因；plan 修复参考；forbidden_files 边界；fixing_history 修复历史防重复）

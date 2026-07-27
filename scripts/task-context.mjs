@@ -1,10 +1,17 @@
 #!/usr/bin/env node
 // task-context.mjs
-// task_context.json 读写 CLI — 把 conductor.md §task_context 共享机制中的
-// 读写规则矩阵从 prompt 软约束变为运行时机械强制。
+// task_context.json 读写 CLI — task_context 读写的运行时机械强制。
 //
-// 矩阵源：agent/conductor.md §task_context 共享机制 — 矩阵变更须同步本脚本
-// multiModel 字段映射以 agent/multiModel.md §task_context 交接协议 为准（MM_* 阶段 → 字段），变更须同步本脚本 WRITE_MATRIX.multiModel
+// 写权限矩阵（WRITE_MATRIX）：启动时扫描 agent/*.md frontmatter 的
+// task_context.write 自动派生——单一真相在各智能体 frontmatter，
+// 新增智能体丢文件即获得自声明写权限，零改本脚本。
+// conductor 矩阵表（agent/conductor.md §task_context 共享机制）仅为人类速查，
+// drift 由 scripts/lifecycle-doctor.mjs 校验。
+//
+// 安全硬门保留硬编码（框架级安全不变量，显式、稳定、不随 frontmatter 派生）：
+//   硬门 1：verification.forward / execution.verification 仅 verifier 可写
+//   硬门 2：convergence.total_rounds 仅 conductor 可写
+// 即使某智能体自声明 write 包含上述字段，硬门仍会拒绝（fail-closed）。
 //
 // 用法：
 //   node scripts/task-context.mjs init <task_id>
@@ -35,61 +42,98 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONVERGENCE_SOURCE = path.resolve(__dirname, '..', 'lifecycle', 'config.yaml');
 
 // ============================================================
-// 写权限矩阵（矩阵源：agent/conductor.md §task_context 共享机制）
-// 矩阵变更须同步本脚本
-// ============================================================
+// 写权限矩阵（v6.2 派生化：启动时扫描 agent/*.md frontmatter
+// task_context.write 自动聚合——单一真相在各智能体 frontmatter，
+// 新增智能体丢文件即获得自声明写权限，零改本脚本）
 //
 // 路径匹配规则：dot path = pattern 时允许；dot path 以 pattern + "." 或
 // pattern + "[" 开头时也允许（如 execution.diffs[current_unit] 匹配
 // execution.diffs）。这覆盖了 matrix 中声明的字段及其子字段。
-//
-const WRITE_MATRIX = Object.freeze({
-  // 编排者：intent/sizing/status/convergence/memory_injection/config
-  conductor: [
-    'intent',
-    'sizing',
-    'status',
-    'convergence',
-    'memory_injection',
-    'config',
-  ],
-  // 设计：plan
-  planner: ['plan'],
-  // 实现：execution.diffs / execution.changes / execution.acceptance_map
-  coder: [
-    'execution.diffs',
-    'execution.changes',
-    'execution.acceptance_map',
-  ],
-  // 正向验证：verification.forward + execution.verification（自验禁止污染）
-  verifier: ['verification.forward', 'execution.verification'],
-  // 反向审计：verification.reverse
-  'reverse-auditor': ['verification.reverse'],
-  // 侧向验证：verification.side
-  'side-checker': ['verification.side'],
-  // 审查：verification.review
-  reviewer: ['verification.review'],
-  // 修复：fixing_history / execution.diffs
-  fixer: ['fixing_history', 'execution.diffs'],
-  // 多模型：plan.subtasks / memory_injection / execution.mm_outputs /
-  // execution.fused_output / status / convergence / intent / sizing /
-  // config.agents.synthesizer_fusion（MM_INIT 手动模式写入）
-  multiModel: [
-    'plan.subtasks',
-    'memory_injection',
-    'execution.mm_outputs',
-    'execution.fused_output',
-    'status',
-    'convergence',
-    'intent',
-    'sizing',
-    'config.agents.synthesizer_fusion',
-  ],
-});
+// ============================================================
+
+const AGENT_DIR = path.resolve(__dirname, '..', 'agent');
+
+// 从 agent .md 全文提取 frontmatter 块（首个 --- ... --- 之间）
+function extractFrontmatter(text) {
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  return m ? m[1] : null;
+}
+
+// 在 frontmatter 块内提取 task_context.write 列表。
+// 支持行内数组（write: [a, b]）与多行列表（write:\n  - a\n  - b）两种 YAML 子集。
+// task_context 段结束于下一个顶层键（无缩进的非注释行）或块尾。
+function extractTaskContextWrite(frontmatter) {
+  const lines = frontmatter.split(/\r?\n/);
+  let inTaskContext = false;
+  let inWrite = false;
+  const items = [];
+  for (const line of lines) {
+    // 顶层键（无缩进、非空、非注释）：task_context: 开始，或其他顶层键（段结束）
+    if (/^[^\s#]/.test(line)) {
+      if (inTaskContext) break;
+      inTaskContext = /^task_context\s*:/.test(line);
+      continue;
+    }
+    if (!inTaskContext) continue;
+    // write 字段（缩进）：行内数组形式
+    const inline = line.match(/^\s+write\s*:\s*\[(.*)\]\s*(?:#.*)?$/);
+    if (inline) {
+      for (const part of inline[1].split(',')) {
+        const v = part.trim();
+        if (v) items.push(v);
+      }
+      inWrite = false;
+      continue;
+    }
+    // write 字段：多行列表形式起始
+    if (/^\s+write\s*:\s*$/.test(line)) {
+      inWrite = true;
+      continue;
+    }
+    if (inWrite) {
+      const li = line.match(/^\s+-\s+(.+?)\s*(?:#.*)?$/);
+      if (li) {
+        items.push(li[1]);
+        continue;
+      }
+      inWrite = false; // write 列表结束（task_context 段内其他键）
+    }
+  }
+  return items;
+}
+
+function deriveWriteMatrix() {
+  const matrix = {};
+  let files;
+  try {
+    files = fs.readdirSync(AGENT_DIR);
+  } catch {
+    // 降级：agent 目录不存在 → 空矩阵（fail-closed，全部拒写）
+    return Object.freeze(matrix);
+  }
+  for (const file of files) {
+    if (!file.endsWith('.md')) continue;
+    const name = file.slice(0, -'.md'.length);
+    let text;
+    try {
+      text = fs.readFileSync(path.join(AGENT_DIR, file), 'utf8');
+    } catch {
+      continue;
+    }
+    const fm = extractFrontmatter(text);
+    if (!fm) continue;
+    const writes = extractTaskContextWrite(fm);
+    if (writes.length > 0) matrix[name] = writes;
+  }
+  return Object.freeze(matrix);
+}
+
+const WRITE_MATRIX = deriveWriteMatrix();
 
 // F2 invariant：WRITE_MATRIX.conductor 必须包含 memory_injection（单数）
-if (!WRITE_MATRIX.conductor.includes('memory_injection')) {
-  throw new Error('invariant: WRITE_MATRIX.conductor must include "memory_injection"');
+// 派生失败（agent/conductor.md frontmatter 被破坏/缺失）→ 启动即报错，fail-closed
+if (!Array.isArray(WRITE_MATRIX.conductor) || !WRITE_MATRIX.conductor.includes('memory_injection')) {
+  throw new Error('invariant: WRITE_MATRIX.conductor must include "memory_injection" (derived from agent/conductor.md frontmatter task_context.write)');
 }
 
 // 硬门 1：execution.verification 与 verification.forward 仅 verifier 可写
@@ -149,20 +193,18 @@ function buildInitialContext(taskId) {
     intent: {},
     sizing: {},
     config: {
+      // 仅差异化开关（恒定挂载智能体无 when，不依赖 config.agents，由图拓扑限定）
+      // SIZING 按 lifecycle/config.yaml tier_defaults 覆盖写入
       agents: {
-        planner: false,
-        coder: true,
-        verifier: false,
         reverse_auditor: false,
         side_checker: false,
-        reviewer: false,
-        fixer: false,
         synthesizer_fusion: false,
       },
       review_mode: 'none',
       custom_overrides: {},
     },
     plan: {},
+    plan_review: {},
     execution: {},
     verification: {
       forward: null,
@@ -486,6 +528,7 @@ function cmdValidate(taskId) {
     'sizing',
     'config',
     'plan',
+    'plan_review',
     'execution',
     'verification',
     'fixing_history',

@@ -2,11 +2,13 @@
 description: 生命周期阶段 FIXING — 修复。定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题。
 model_capability: code-generation
 token_budget: 8000
+# required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
+required_roles: [fixer]
 ---
 
 # lifecycle/stages/fixing
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（节点 `required: [fixer]`；FIXING → CHECKING 回环边 + 熔断阈值）。fixer 经 frontmatter `mount` 自注册挂载（见 `agent/fixer.md`）。
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（纯拓扑，FIXING → CHECKING 回环边 + 熔断阈值）；必配角色契约见本文件 frontmatter `required_roles`；智能体经 frontmatter `mount` 自注册挂载。
 
 ## 输入
 

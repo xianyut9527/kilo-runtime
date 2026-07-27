@@ -213,7 +213,7 @@ agent 返回后、进入下游流程前，conductor 必须按以下规则自检�
 | `[MISSING_STATUS_SIGNAL]` | coder/coder 未输出状态信号 | verifier |
 | `[NEEDS_REVIEW]` | fixer 连续 2 轮同症状，需升级 reviewer | fixer |
 | `[PLAN_DEVIATION]` | 执行中计划偏差 | planner/conductor |
-| `[DESIGN_GATE_PASS]` / `[DESIGN_GATE_MISS]` | 设计门通过/未过 | planner/conductor |
+| `[PLAN_REVIEW_MISS]` | T1+ 编码前未经方案审查（task_context.plan_review.verdict ≠ PASS） | verifier |
 | `[BLOCKED]` | coder/coder 遇阻塞需升级 | coder/coder |
 | `[NEEDS_CONTEXT]` | coder/coder 缺少上下文 | coder/coder |
 | `[DONE_WITH_CONCERNS]` | 完成功能但有遗留风险 | coder/coder |

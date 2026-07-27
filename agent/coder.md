@@ -17,10 +17,9 @@ subagent_type: coder
 
 # mount：挂载点声明
 #   at    挂载点（EXECUTING 阶段主槽，派生自 graph.yaml EXECUTING 节点）
-#   when  条件挂载（对照 config.agents.coder 求值）；T0-T3 均 true
+#   无 when = 恒定挂载：T0-T2 均经 EXECUTING（T3 走子图不经主图），图拓扑天然限定，无需 config.agents 开关
 mount:
   - at: EXECUTING
-    when: "config.agents.coder"
 
 # task_context：读写边界声明
 #   read        可读切片（plan 由 planner 写入；forbidden_files 边界声明；memory_injection 记忆召回）

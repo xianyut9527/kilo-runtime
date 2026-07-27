@@ -1,14 +1,22 @@
 # ============================================================
-# 生命周期配置（定级默认组合 + 用户覆盖 + 熔断阈值）
+# 生命周期配置（定级差异化开关 + 用户覆盖 + 熔断阈值）
 # conductor 在 SIZING 阶段读取本文件写入 task_context.config；
 # 用户可在 prompt 显式声明覆盖（conductor 写入 custom_overrides）。
-# 本文件是唯一"定级→智能体组合"声明处，替代原 conductor.md §动态加载矩阵硬编码。
+# 本文件是唯一"定级→差异化智能体开关"声明处。
 # ============================================================
-# tier_defaults：按定级 T0/T1/T2/T3 声明本次任务要加载哪些智能体（布尔开关）
+# 挂载两种模式（新增智能体默认零配置）：
+#   1) 恒定挂载（默认，推荐）：frontmatter mount 无 when —— 图拓扑可达即加载。
+#      T0 不经 PLANNING/CHECKING/REVIEWING/FIXING，T3 走子图——拓扑即开关。
+#      新增智能体丢文件即用，**无需改本文件**。
+#   2) 开关挂载（仅"同阶段按 tier 差异化"的智能体）：frontmatter mount 有
+#      when: "config.agents.<key>" —— 需在下方 tier_defaults 声明开关。
+#      当前仅 reverse_auditor / side_checker / synthesizer_fusion 三个可选视角。
+#
+# tier_defaults：按定级 T0/T1/T2/T3 声明差异化开关（布尔值）
 #   - conductor 在 SIZING 阶段把对应 tier 的 agents 表写入 task_context.config.agents
 #   - agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值
 #       true  → 该 agent 在声明挂载点会被加载
-#       false → 跳过该 agent（不影响 required 必配角色——若该角色是节点 required 仍会 [ASSEMBLY_FAIL]）
+#       false/未定义 → 跳过该 agent
 #   - review_mode：none（无审查）/ full（四视角：正向+反向+侧向+审查）
 #   - provider：仅 T3 用，声明子图提供者（对应 graph.yaml MM_SUBGRAPH 节点 provider）
 #
@@ -17,28 +25,22 @@
 #   reverse-auditor.md → reverse_auditor
 #   side-checker.md    → side_checker
 #   synthesizer-fusion.md → synthesizer_fusion
-#   coder / planner / verifier / reviewer / fixer 等单词名直接用
 #   coder-a/b/c 不单独开关（由 T3 provider 隐含加载）
 # ============================================================
 version: 1
 
 tier_defaults:
   # T0 极速通道：INTENT → SIZING → EXECUTING → DELIVERING
-  # 只加载 coder，无设计门/验证/审查；适合一行命令能搞定的局部修改
+  # 无可选视角；恒定挂载智能体（coder）由图拓扑限定自动加载
   T0:
-    agents:
-      coder: true
+    agents: {}
     review_mode: none
 
   # T1 标准闭环
-  # 默认不开反向审计/侧向验证/融合（适合中等复杂度任务）
+  # 恒定挂载：planner/coder/verifier/reviewer/fixer（拓扑可达即加载）
+  # 可选视角默认全关（适合中等复杂度任务）
   T1:
     agents:
-      planner: true
-      coder: true
-      verifier: true
-      reviewer: true
-      fixer: true
       reverse_auditor: false      # T2+ 才开（需求追溯审计）
       side_checker: false         # T2+ 才开（运行时行为实测）
       synthesizer_fusion: false   # 仅 T3 multiModel 用
@@ -48,13 +50,8 @@ tier_defaults:
   # 适合复杂任务：架构变更、跨多文件重构、安全敏感改动
   T2:
     agents:
-      planner: true
-      coder: true
-      verifier: true
       reverse_auditor: true       # 需求追溯审计（从产物反推是否满足原始需求）
       side_checker: true          # 运行时行为视角验证（边界/安全/性能/兼容性实测）
-      reviewer: true
-      fixer: true
       synthesizer_fusion: false   # 仅 T3 multiModel 用
     review_mode: full
 
@@ -72,8 +69,8 @@ tier_defaults:
 # ============================================================
 overrides:
   # disabled_agents：全局禁用的智能体名列表
-  # 被禁用的 agent 不会被 bootstrap 注册；若该 agent 是某节点 required → [ASSEMBLY_FAIL]
-  # 例: [side-checker] → bootstrap 跳过注册 side-checker（但 REVIEWING 节点 required 是 reviewer，不受影响）
+  # 被禁用的 agent 不会被 bootstrap 注册；若该 agent 是某阶段 required_roles 唯一履行者 → [ASSEMBLY_FAIL]
+  # 例: [side-checker] → bootstrap 跳过注册 side-checker（REVIEWING 的 required_roles 是 reviewer，不受影响）
   disabled_agents: []
 
   # model_overrides：覆盖 kilo.json 的模型绑定
@@ -105,7 +102,10 @@ convergence:
 #                       超过 → [AGENT_TIMEOUT]（启动卡死）；不计入 stage 预算
 #   stage_default_s   — 主槽执行时间上限（启动后到智能体返回）；executor: conductor
 #                       内建阶段用此值守卫；per_agent_s 未覆盖的智能体回退此值
-#   per_agent_s       — 单智能体执行预算（启动后到返回）；按智能体名查表
+#   per_agent_s       — 单智能体执行预算（启动后到返回）；**可选覆盖**——
+#                       校验方向单向：每个键必须有对应 agent/*.md 文件（防幽灵键），
+#                       但 agent 文件不要求有键（缺省回退 stage_default_s）。
+#                       新增智能体零配置即可获得默认预算。
 #   实际预算          — per_agent_s[name] × per_tier_multiplier[tier]（缺 per_agent_s
 #                       回退 stage_default_s × multiplier）
 #
@@ -153,5 +153,5 @@ timeouts:
 #
 # 取值集（节点级 on_fail，与挂载点 mount[].on_fail 同名但取值不同，按字段位置区分）：
 #   节点级  on_fail ∈ {abort, retry_once, degrade, escalate, pause}  ← 主槽失败策略
-#   挂载点  mount[].on_fail ∈ {abort, warn, skip}                     ← pre:/post:/on: 失败
+#   挂载点  mount[].on_fail ∈ {abort, warn, skip, degrade}           ← pre:/post:/on:/可选视角失败
 # ============================================================

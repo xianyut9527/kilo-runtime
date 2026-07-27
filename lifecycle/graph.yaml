@@ -1,9 +1,10 @@
 # ============================================================
 # 主生命周期 DAG（单一真相来源：图结构）
-# 纯图定义：节点 + 边 + 流转条件。
+# 纯拓扑定义：节点 + 边 + 流转条件。本文件是**稳定大框架**——
+# 不出现任何智能体名/角色名，新增/删除/替换智能体永不改本文件。
 #   - 执行逻辑（输入/处理/输出信号）→ lifecycle/stages/<id-lower>.md（从节点 id 自动派生路径，无需 stage 字段）
+#   - 阶段必配角色契约              → lifecycle/stages/<id-lower>.md frontmatter `required_roles`
 #   - 智能体挂载（文件路由，唯一机制）→ agent/*.md frontmatter `mount` 字段自注册（v6 单源）
-#   - 阶段必配角色（结构层不变量）    → 节点 `required: [role...]`
 #   - 定级默认组合                    → lifecycle/config.yaml
 #   - 收敛熔断阈值                    → lifecycle/config.yaml convergence
 # 修改流转 = 改本文件 edges；新增阶段 = 加 node + edges + 丢一个 stages/<id-lower>.md。
@@ -20,8 +21,6 @@
 #               terminal  - 终态（如 DONE），无阶段文件、不挂载智能体
 #   executor  内建执行者（conductor 或 multiModel）；声明后该节点主槽不经 task 启动外部智能体
 #             未声明 executor 的节点 → 主槽由 frontmatter `mount: at: <NODE>` 注册的智能体填充
-#   required  主槽必配角色列表（结构层不变量）；bootstrap 静态预演——无 agent frontmatter
-#             在该节点挂载该角色 → [ASSEMBLY_FAIL] 启动报错
 #   provider  subgraph 节点的子图提供者（对应 agent/<provider>.md frontmatter type: lifecycle_provider）
 #   graph     subgraph 节点的子图 DAG 文件路径
 #   on_fail   阶段级失败策略（缺省按 lifecycle/config.yaml §on_fail 默认值规则求值）：
@@ -31,7 +30,9 @@
 #               escalate   - 升级：T1→T2 加视角，T2→人工；FIXING 连续失败→reviewer 根因分析
 #               pause      - 挂起 task_context，输出选项等用户决策
 #             节点 on_fail 在智能体 timeout/error/异常返回时触发；
-#             挂载点 mount[].on_fail（abort|warn|skip）覆盖 pre:/post:/on: 失败，二者互不干涉。
+#             挂载点 mount[].on_fail（abort|warn|skip|degrade）覆盖 pre:/post:/on:/可选视角失败：
+#               abort 中止流转 / warn 告警放行 / skip 静默跳过 / degrade 跳过+标 DEGRADED。
+#             二者互不干涉。
 #
 # 边字段说明：
 #   from / to    起止节点 ID
@@ -39,7 +40,6 @@
 #                常用变量：intent_type / tier / forward_result / reverse_result /
 #                          side_result / review_result / subgraph_status
 #   gate         质量门禁（硬门）；未通过不得流转：
-#                  DESIGN_GATE_PASS       - PLANNING → EXECUTING 设计门
 #                  MEMORY_WRITE_COMPLETE  - DELIVERING → DONE 记忆写入完成
 #                  FUSION_SELF_CHECK_10   - 子图融合自检（见 multimodel-graph.yaml）
 # ============================================================
@@ -52,8 +52,8 @@
 # 子图节点（MM_*）同样派生三挂载点。智能体在自身 agent/*.md frontmatter `mount` 声明挂载点 +
 # order/when/on_fail；同挂载点按 order 升序执行，无 order 默认并行（视角隔离场景
 # 必须保持并行，不得声明 order）。加智能体用中间号（如 15 插在 10/20 间）零改其他文件。
-# 节点 `required: [role...]` 声明该主槽必须覆盖的角色（结构层不变量）；加可选智能体
-# 不碰本文件，加必配智能体才动一行。
+# 阶段必配角色契约在 stages/<id-lower>.md frontmatter `required_roles`（阶段语义内聚）；
+# 本文件不声明任何角色——增删智能体、调整挂载、改顺序都不碰本文件。
 # ============================================================
 version: 1
 
@@ -74,37 +74,35 @@ nodes:
     executor: conductor        # conductor 内建；按 config.yaml tier_defaults 写 config.agents
     on_fail: pause
 
-  # 设计门：planner 做方案设计、拆单元 DAG、定义验收标准。T1/T2 必经，T0 跳过，T3 走子图
+  # 设计门：方案设计、拆单元 DAG、定义验收标准。T1/T2 必经，T0 跳过，T3 走子图
+  # 必配角色契约：stages/planning.md frontmatter required_roles
   - id: PLANNING
     type: stage
-    required: [planner]        # 必配角色；agent/planner.md frontmatter mount: PLANNING 覆盖
     on_fail: escalate          # 设计门失败 → 升级人工决策或补上下文
 
-  # 编码实现：coder 按 planner 方案写代码，输出 diff 与验收映射表
+  # 编码实现：按方案写代码，输出 diff 与验收映射表
+  # 必配角色契约：stages/executing.md frontmatter required_roles
   - id: EXECUTING
     type: stage
-    required: [coder]          # 必配角色；agent/coder.md frontmatter mount: EXECUTING 覆盖
-    on_fail: retry_once        # coder 异常/超时 → 重跑 1 次，再失败 escalate
+    on_fail: retry_once        # 主槽智能体异常/超时 → 重跑 1 次，再失败 escalate
 
-  # 正向验证：verifier 按验收标准逐条验证实现结果
-  # 可选挂载 reverse-auditor（when: config.agents.reverse_auditor）做反向审计
+  # 正向验证：按验收标准逐条验证实现结果；可选视角（反向审计）经 mount 条件挂载
+  # 必配角色契约：stages/checking.md frontmatter required_roles
   - id: CHECKING
     type: stage
-    required: [verifier]       # 必配角色；agent/verifier.md mount: CHECKING 覆盖
-    on_fail: escalate          # verifier 必配失败升级；可选视角（reverse-auditor）走 degrade（由挂载点 on_fail 处理）
+    on_fail: escalate          # 必配失败升级；可选视角走 degrade（由挂载点 on_fail 处理）
 
-  # 修复循环：fixer 根据 CHECKING/REVIEWING 反馈修复代码，修复后回流 CHECKING
+  # 修复循环：根据 CHECKING/REVIEWING 反馈修复代码，修复后回流 CHECKING
+  # 必配角色契约：stages/fixing.md frontmatter required_roles
   - id: FIXING
     type: stage
-    required: [fixer]          # 必配角色；agent/fixer.md mount: FIXING 覆盖
-    on_fail: escalate          # FIXING 连续失败 → 升级 reviewer 根因 / 人工
+    on_fail: escalate          # 连续失败 → 升级根因分析 / 人工
 
-  # 侧向验证+代码审查：reviewer 做安全/架构/简化/SCOPE_CREEP 四视角审查
-  # 可选挂载 side-checker（when: config.agents.side_checker）做边界/性能/兼容性验证
+  # 侧向验证+代码审查：四视角审查；可选视角（侧向验证）经 mount 条件挂载
+  # 必配角色契约：stages/reviewing.md frontmatter required_roles
   - id: REVIEWING
     type: stage
-    required: [reviewer]       # 必配角色；agent/reviewer.md mount: REVIEWING 覆盖
-    on_fail: escalate          # reviewer 必配失败升级；side-checker 走 degrade
+    on_fail: escalate          # 必配失败升级；可选视角走 degrade
 
   # 交付收尾：conductor 执行记忆写入(M4-M8)、git 分支收尾协议、输出闭环确认
   - id: DELIVERING
@@ -151,10 +149,8 @@ edges:
     to: MM_SUBGRAPH
     when: "tier == 'T3'"
 
-  # 设计门通过 → 进入编码；未过 → [DESIGN_GATE_MISS]，下游 verifier FAIL
-  - from: PLANNING
-    to: EXECUTING
-    gate: DESIGN_GATE_PASS
+  # 设计门完成 → 进入编码（post:PLANNING 挂载点审查失败经 mount on_fail: abort 中止流转，见头注释挂载点语义）
+  - { from: PLANNING, to: EXECUTING }
 
   # T0 编码完成 → 直接交付（无验证/审查）
   - from: EXECUTING

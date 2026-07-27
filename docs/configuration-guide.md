@@ -138,8 +138,8 @@ isolation:
   forbid_read: [execution.verification, fixing_history]   # 视角物理隔离
 
 # gate：本智能体输出须通过的质量门禁（对应 graph.yaml edge 的 gate 字段）
-# 仅 planner（DESIGN_GATE_PASS）和 synthesizer-fusion（FUSION_SELF_CHECK_10）使用
-# gate: DESIGN_GATE_PASS
+# 仅 synthesizer-fusion（FUSION_SELF_CHECK_10）使用
+# gate: FUSION_SELF_CHECK_10
 ---
 ```
 
@@ -388,7 +388,7 @@ edges:
   - from: PLANNING             # 起始节点 ID
     to: EXECUTING              # 目标节点 ID
     when: "tier in ['T1','T2']"  # 流转条件（对照 task_context 求值）；省略 = 无条件
-    gate: DESIGN_GATE_PASS     # 质量门禁（硬门）；未通过不得流转
+    gate: MEMORY_WRITE_COMPLETE  # 可选：质量门禁（硬门，如 DELIVERING→DONE 记忆写入门）；省略 = 无门禁
     note: 人类可读说明         # 可选
 ```
 
@@ -554,7 +554,7 @@ node validate-config.mjs
 
 | 错误码 | 含义 | 排查 |
 |--------|------|------|
-| `[ASSEMBLY_FAIL]` | 启动期装配失败 | 检查 agent frontmatter / kilo.json 模型绑定 / graph required 覆盖 |
+| `[ASSEMBLY_FAIL]` | 启动期装配失败 | 跑 `node scripts/lifecycle-doctor.mjs --verbose` 定位：agent frontmatter mount / stages required_roles 覆盖 / kilo.json 模型绑定 |
 | `[DIVERSITY_VIOLATION]` | 3 coder 模型不满足多样化 | 检查 kilo.json coder-a/b/c 模型的 (vendor, architecture) 是否两两不同（对照 docs/model-registry.md） |
 | `[PROCESS_VIOLATION]` | 流程违规（跳步/越权写） | 检查是否跳过必经阶段 / 是否越权写 execution.verification |
 | `[TRUST_TRANSFER]` | 信任传递 | 检查验证智能体是否引用了其他视角结论而非独立验证 |

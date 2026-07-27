@@ -6,7 +6,7 @@ keywords: workflow, orchestration, 任务定级, 单元编排, 闭环, 流程日
 
 # Workflow Core Rules
 
-> **生命周期驱动**：conductor 按 `lifecycle/graph.yaml` DAG（节点含 `required` 必配角色）+ `lifecycle/stages/*.md` 阶段文件驱动状态流转，按文件路由（`agent/*.md` frontmatter `mount` 声明 at/order/when/on_fail，v6 单源）加载智能体（planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel）。本文件以新术语描述流程规则。模型能力倾向唯一人类可读参考见 `docs/model-registry.md`（无机器可读副本，v6.1 删除 `lifecycle/capabilities.yaml`）。
+> **生命周期驱动**：conductor 按 `lifecycle/graph.yaml` DAG（纯拓扑，零智能体名）+ `lifecycle/stages/*.md` 阶段文件（执行逻辑 + frontmatter `required_roles` 契约）驱动状态流转，按文件路由（`agent/*.md` frontmatter `mount` 声明 at/order/when/on_fail，v6 单源）加载智能体（planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel）。本文件以新术语描述流程规则。模型能力倾向唯一人类可读参考见 `docs/model-registry.md`（无机器可读副本，v6.1 删除 `lifecycle/capabilities.yaml`）。
 
 ## 默认路由
 
@@ -60,7 +60,7 @@ conductor 加载智能体时，按任务复杂度选择模型：
 
 - **维持或上调**：默认放行
 - **拿不准就升档**（成本不对称）：阶段 A 判据不足以区分相邻等级时预估取高一级——高估仅多付流程开销，低估导致返工与质量逃逸
-- **下调**（如 T2 → T1）：必须同时满足以下全部硬条件：(1) 实际文件数 < 4；(2) 不跨模块；(3) 不命中安全敏感关键词；(4) planner 设计门已过 `[DESIGN_GATE_PASS]`。满足全部条件后，须显式标注 `[DOWNGRADE_AFTER_PLAN]` 并写明依据。任一条件不满足则不得下调
+- **下调**（如 T2 → T1）：必须同时满足以下全部硬条件：(1) 实际文件数 < 4；(2) 不跨模块；(3) 不命中安全敏感关键词；(4) PLANNING 阶段已正常完成（post:PLANNING 挂载点审查未中止流转）。满足全部条件后，须显式标注 `[DOWNGRADE_AFTER_PLAN]` 并写明依据。任一条件不满足则不得下调
 
 > 性能注：阶段 B 不触发额外 planner 调用，仅在已有设计门产物基础上做复核；T0 不进阶段 B（极速通道豁免）。
 
@@ -175,7 +175,7 @@ T1 / T2 / T3 → full（四视角：安全/架构/简化/SCOPE_CREEP）
 
 | 门禁 | 说明 | 失败标记 |
 |------|------|----------|
-| 设计门（T1+）| T1 短设计门、T2 完整规划未过不得进 coder；通过标记 `[DESIGN_GATE_PASS]`，未过/跳过标记 `[DESIGN_GATE_MISS]` | `[DESIGN_GATE_MISS]` |
+| 设计门（T1+）| T1 短设计门、T2 完整规划未过不得进 coder；方案放行由 post:PLANNING 挂载点独立审查（失败即 abort 中止流转）；绕过审查进 coder 由 verifier 拦截 | `[PLAN_REVIEW_MISS]` |
 | 不自验 | coder 不得自行验证 | `[PROCESS_VIOLATION]` |
 | 状态信号 | coder 必须输出 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED` | `[MISSING_STATUS_SIGNAL]` |
 | 双重 verifier | 正向（需求/语法/逻辑/边界）+ 反向（SCOPE_CREEP/调试残留/重复实现/局部补丁） | `[SCOPE_CREEP]` / `[MISSING_ACCEPTANCE_MAP]` / `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` |

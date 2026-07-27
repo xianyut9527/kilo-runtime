@@ -17,21 +17,20 @@ subagent_type: planner
 
 # mount：挂载点声明
 #   at    挂载点（PLANNING 阶段主槽，派生自 graph.yaml PLANNING 节点）
-#   when  条件挂载（对照 config.agents.planner 求值）；T0 跳过 PLANNING 阶段，此处 false 不会被加载
+#   无 when = 恒定挂载：T0 不经 PLANNING、T3 走子图，图拓扑天然限定仅 T1/T2 触发，无需 config.agents 开关
 mount:
   - at: PLANNING
-    when: "config.agents.planner"
 
 # task_context：读写边界声明
-#   read   可读的 task_context 切片（intent + sizing 由 conductor 在 INTENT/SIZING 写入）
+#   read   可读的 task_context 切片（intent + sizing 由 conductor 在 INTENT/SIZING 写入；
+#          plan_review 由 post:PLANNING 的 plan-reviewer 写入，planner 回流时读审查反馈）
 #   write  可写的 task_context 切片（plan 由 planner 设计方案后写入）
 task_context:
-  read: [intent, sizing]
+  read: [intent, sizing, plan_review]
   write: [plan]
 
-# gate：本智能体输出须通过的质量门禁（graph.yaml edge PLANNING→EXECUTING 的 gate）
-# planner 输出方案未通过 DESIGN_GATE_PASS → 下游 verifier FAIL
-gate: DESIGN_GATE_PASS
+# gate：planner 不设门禁字段——方案放行由 post:PLANNING 恒定挂载的独立审查者判定，
+# 其 verdict=FAIL/超时/异常 → 挂载点 on_fail: abort 中止流转（通用挂载机制，见 graph.yaml 头注释），planner 不自验方案
 ---
 
 # planner
@@ -119,14 +118,12 @@ risks:
 scan_coverage: "full" | "partial" | "N/A"
 componentization_plan: "yes" | "no" | "N/A"
 forbidden_files: ["string"]
-quality_gate:
-  design_gate_pass: true | false   # 必须显式输出 [DESIGN_GATE_PASS]
+# 方案放行由独立 plan-reviewer 判定（post:PLANNING），planner 不自验
 ```
 
 ## 硬规则
 
 - 短设计门可以只有几句话，但必须输出
-- 方案须经确认或按授权放行，不得自行进入执行阶段
+- 方案须经 plan-reviewer 独立审查或按授权放行，不得自行进入执行阶段
 - 重复模式必须产出全量扫描清单 + 组件化方案
-- 输出必须显式标记 `[DESIGN_GATE_PASS]`（由 conductor 或 lifecycle 添加）
 - T2+ 必须包含单元 DAG + 依赖关系 + 风险应对

@@ -28,10 +28,11 @@ mount:
 
 # task_context：读写边界声明（bootstrap 注入上下文切片 + 运行时强制隔离）
 #   read      可读的 task_context 切片
-#   write     可写的 task_context 切片（execution.verification 唯一写入者——写入边界硬门）
+#   write     可写的 task_context 切片（verification.forward + execution.verification 双独占——写入边界硬门，
+#             task-context.mjs 的 WRITE_MATRIX 从本字段自动派生，缺一项运行时即拒写）
 task_context:
   read: [plan, execution.diffs, execution.changes, execution.acceptance_map, forbidden_files]
-  write: [verification.forward]      # execution.verification 唯一写入者（写入边界硬门）
+  write: [verification.forward, execution.verification]      # verifier 双独占写入（写入边界硬门）
 
 # isolation：视角物理隔离声明（防止确认偏误）
 #   forbid_read  禁止读取的 task_context 切片（即使 task_context.read 声明了也会被过滤）
@@ -126,7 +127,7 @@ evidence:
     stderr_snippet: "string"
 issues:
   - severity: "blocker" | "warning"
-    tag: "MISSING" | "UNVERIFIED" | "PARTIAL_IMPLEMENTATION" | "REGRESSION" | "SCOPE_CREEP" | "ENCODING_VIOLATION" | "DESIGN_GATE_MISS" | "PROCESS_VIOLATION" | "LOCAL_PATCH" | "COPY_PASTE_FIX" | "TRUST_TRANSFER"
+    tag: "MISSING" | "UNVERIFIED" | "PARTIAL_IMPLEMENTATION" | "REGRESSION" | "SCOPE_CREEP" | "ENCODING_VIOLATION" | "PLAN_REVIEW_MISS" | "PROCESS_VIOLATION" | "LOCAL_PATCH" | "COPY_PASTE_FIX" | "TRUST_TRANSFER"
     file: "string"
     line: int
     message: "string"
