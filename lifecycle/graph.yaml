@@ -24,7 +24,6 @@
 #             在该节点挂载该角色 → [ASSEMBLY_FAIL] 启动报错
 #   provider  subgraph 节点的子图提供者（对应 agent/<provider>.md frontmatter type: lifecycle_provider）
 #   graph     subgraph 节点的子图 DAG 文件路径
-#   note      人类可读说明（可选）
 #   on_fail   阶段级失败策略（缺省按 lifecycle/config.yaml §on_fail 默认值规则求值）：
 #               abort      - 硬停，标 [STAGE_ABORT]，等用户决策
 #               retry_once - 同智能体重跑 1 次，再失败 escalate（耗尽见 config.yaml retry.*）
@@ -43,7 +42,6 @@
 #                  DESIGN_GATE_PASS       - PLANNING → EXECUTING 设计门
 #                  MEMORY_WRITE_COMPLETE  - DELIVERING → DONE 记忆写入完成
 #                  FUSION_SELF_CHECK_10   - 子图融合自检（见 multimodel-graph.yaml）
-#   note         人类可读说明（可选）
 # ============================================================
 # 挂载点（mount）命名空间（派生，零声明——节点存在即挂载点存在）：
 #   on:bootstrap   装配完成后、INTENT 前（任务启动挂载点）
@@ -60,126 +58,149 @@
 version: 1
 
 nodes:
+  # 虚拟入口，立即流转至 INTENT
   - id: START
     type: virtual
-    note: 会话初始化占位，无阶段文件
 
+  # 意图判定：区分咨询类(INQUIRY)与执行类(EXECUTION)
   - id: INTENT
     type: stage
     executor: conductor        # conductor 内建执行，不经 task 启动
-    on_fail: pause             # 内建阶段失败挂起等人（缺省即 pause，显式声明确认意图）
+    on_fail: pause             # 内建阶段失败挂起等人
 
+  # 任务定级：评估复杂度(T0-T3)，写入 config.agents 决定后续加载哪些智能体
   - id: SIZING
     type: stage
     executor: conductor        # conductor 内建；按 config.yaml tier_defaults 写 config.agents
     on_fail: pause
 
+  # 设计门：planner 做方案设计、拆单元 DAG、定义验收标准。T1/T2 必经，T0 跳过，T3 走子图
   - id: PLANNING
     type: stage
     required: [planner]        # 必配角色；agent/planner.md frontmatter mount: PLANNING 覆盖
     on_fail: escalate          # 设计门失败 → 升级人工决策或补上下文
 
+  # 编码实现：coder 按 planner 方案写代码，输出 diff 与验收映射表
   - id: EXECUTING
     type: stage
     required: [coder]          # 必配角色；agent/coder.md frontmatter mount: EXECUTING 覆盖
     on_fail: retry_once        # coder 异常/超时 → 重跑 1 次，再失败 escalate
 
+  # 正向验证：verifier 按验收标准逐条验证实现结果
+  # 可选挂载 reverse-auditor（when: config.agents.reverse_auditor）做反向审计
   - id: CHECKING
     type: stage
     required: [verifier]       # 必配角色；agent/verifier.md mount: CHECKING 覆盖
-                              # 可选挂载：reverse-auditor（when: config.agents.reverse_auditor）
     on_fail: escalate          # verifier 必配失败升级；可选视角（reverse-auditor）走 degrade（由挂载点 on_fail 处理）
 
+  # 修复循环：fixer 根据 CHECKING/REVIEWING 反馈修复代码，修复后回流 CHECKING
   - id: FIXING
     type: stage
     required: [fixer]          # 必配角色；agent/fixer.md mount: FIXING 覆盖
     on_fail: escalate          # FIXING 连续失败 → 升级 reviewer 根因 / 人工
 
+  # 侧向验证+代码审查：reviewer 做安全/架构/简化/SCOPE_CREEP 四视角审查
+  # 可选挂载 side-checker（when: config.agents.side_checker）做边界/性能/兼容性验证
   - id: REVIEWING
     type: stage
     required: [reviewer]       # 必配角色；agent/reviewer.md mount: REVIEWING 覆盖
-                              # 可选挂载：side-checker（when: config.agents.side_checker）
     on_fail: escalate          # reviewer 必配失败升级；side-checker 走 degrade
 
+  # 交付收尾：conductor 执行记忆写入(M4-M8)、git 分支收尾协议、输出闭环确认
   - id: DELIVERING
     type: stage
     executor: conductor        # conductor 内建；记忆写入 + 分支收尾协议
     on_fail: pause             # 内建阶段失败挂起（不自动 commit/push，等人决策）
 
+  # T3 多模型子图入口：multiModel 接管，内部调度 coder-a/b/c + synthesizer-fusion
   - id: MM_SUBGRAPH
     type: subgraph
     provider: multiModel
     graph: multimodel-graph.yaml
 
+  # 终态
   - id: DONE
     type: terminal
 
 edges:
+  # 虚拟入口 → 意图判定
   - { from: START, to: INTENT }
 
+  # 执行类 → 进入定级
   - from: INTENT
     to: SIZING
     when: "intent_type == 'EXECUTION'"
 
+  # 咨询类 → 直接结束（命中价值信号时先执行轻量 M4-M8 记忆写入再入 DONE，见 stages/intent.md）
   - from: INTENT
     to: DONE
     when: "intent_type == 'INQUIRY'"
-    note: 命中价值信号时先执行轻量 M4-M8 记忆写入再入 DONE（见 stages/intent.md）
 
+  # T0 极速通道：无设计门/验证/审查，SIZING 后直接编码
   - from: SIZING
     to: EXECUTING
     when: "tier == 'T0'"
-    note: 极速通道：无设计门/验证/审查
 
+  # T1/T2 → 进入设计门
   - from: SIZING
     to: PLANNING
     when: "tier in ['T1','T2']"
 
+  # T3 → 进入 multiModel 子图做生成+融合
   - from: SIZING
     to: MM_SUBGRAPH
     when: "tier == 'T3'"
 
+  # 设计门通过 → 进入编码；未过 → [DESIGN_GATE_MISS]，下游 verifier FAIL
   - from: PLANNING
     to: EXECUTING
     gate: DESIGN_GATE_PASS
-    note: 未过设计门 → [DESIGN_GATE_MISS]，下游 verifier FAIL
 
+  # T0 编码完成 → 直接交付（无验证/审查）
   - from: EXECUTING
     to: DELIVERING
     when: "tier == 'T0'"
 
+  # T1/T2 编码完成 → 进入验证
   - from: EXECUTING
     to: CHECKING
     when: "tier in ['T1','T2']"
 
+  # 验证 FAIL（正向或反向）→ 进入修复循环
+  # 进入前 total_rounds+1（conductor 写入）；任一视角 FAIL 都是硬门
   - from: CHECKING
     to: FIXING
     when: "forward_result == 'FAIL' or reverse_result == 'FAIL'"
-    note: 进入前 total_rounds+1（conductor 写入）；任一视角 FAIL 都是硬门
 
+  # 验证 PASS → 进入审查阶段
   - from: CHECKING
     to: REVIEWING
     when: "forward_result == 'PASS' and (reverse_result in ['PASS','N/A'])"
 
+  # 修复完成 → 回流重新验证
+  # round+1；round >= max_rounds（见 lifecycle/config.yaml convergence）单点 [CIRCUIT_BREAKER]
   - from: FIXING
     to: CHECKING
-    note: round+1；round >= max_rounds（见 lifecycle/config.yaml convergence）单点 [CIRCUIT_BREAKER]
 
+  # 审查 FAIL（侧向或审查）→ 回流修复
+  # 进入前 total_rounds+1；total_rounds >= max_total_rounds（见 lifecycle/config.yaml convergence）全局 [CIRCUIT_BREAKER]
   - from: REVIEWING
     to: FIXING
     when: "side_result == 'FAIL' or review_result == 'FAIL'"
-    note: 进入前 total_rounds+1；total_rounds >= max_total_rounds（见 lifecycle/config.yaml convergence）全局 [CIRCUIT_BREAKER]
 
+  # 审查通过 → 进入交付
   - from: REVIEWING
     to: DELIVERING
     when: "(side_result in ['PASS','N/A']) and (review_result in ['PASS','CONDITIONAL_PASS'])"
 
+  # 子图完成(融合自检通过+记忆写入就绪) → 进入交付
+  # 子图 MM_ARCHIVED 后 task_context 交还 conductor
   - from: MM_SUBGRAPH
     to: DELIVERING
     when: "subgraph_status == 'ready_for_delivery'"
-    note: 子图 MM_ARCHIVED 后 task_context 交还 conductor
 
+  # 交付完成 → 终态
+  # memory_write_status=DEGRADED 不阻塞；MISSING → [MISSING_MEMORY_WRITE]
   - from: DELIVERING
     to: DONE
     gate: MEMORY_WRITE_COMPLETE
-    note: memory_write_status=DEGRADED 不阻塞；MISSING → [MISSING_MEMORY_WRITE]

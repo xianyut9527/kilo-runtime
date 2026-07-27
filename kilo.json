@@ -54,7 +54,7 @@
     },
     "coder-c": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.7-code",
+      "model": "hx/deepseek-v4-flash",
       "description": "multiModel 代码生成派 coder，专精代码风格一致与最小改动",
       "prompt": "编码智能体（multiModel 并行-C / 代码生成派）。按方案实现代码，侧重代码风格一致、最小增量改动与可维护性。输出验收映射表+三件套、状态信号。端到端闭环。详见 agent/coder.md 与 agent/multiModel.md。"
     },
