@@ -387,6 +387,27 @@ for (const [id, n] of graph.nodes) {
   }
 }
 
+// A7. T3 回流守护：MM_SUBGRAPH 出边必须指向 CHECKING（回流主图验证闭环），不得直达 DELIVERING
+{
+  let mmOut = 0, mmToChecking = false, mmToDelivering = false;
+  for (const e of graph.edges) {
+    if (e.from === 'MM_SUBGRAPH') {
+      mmOut++;
+      if (e.to === 'CHECKING') mmToChecking = true;
+      if (e.to === 'DELIVERING') mmToDelivering = true;
+    }
+  }
+  if (mmOut === 0) {
+    fail('graph.t3回流', 'MM_SUBGRAPH 无出边');
+  } else if (mmToDelivering) {
+    fail('graph.t3回流', `MM_SUBGRAPH 出边指向 DELIVERING（应回流 CHECKING 走主图四视角验证闭环）`);
+  } else if (!mmToChecking) {
+    fail('graph.t3回流', `MM_SUBGRAPH 出边未指向 CHECKING（当前指向未知节点）`);
+  } else {
+    pass('graph.t3回流', `MM_SUBGRAPH → CHECKING（回流主图验证闭环，融合产物经 execution.diffs/changes/acceptance_map 供四视角读取）`);
+  }
+}
+
 // ============================================================
 // B. 挂载点校验
 // ============================================================

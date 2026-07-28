@@ -13,7 +13,7 @@
 version: 1
 provider: multiModel
 entry: MM_INIT
-exit: MM_ARCHIVED            # 到达 exit 后回主图 DELIVERING
+exit: MM_ARCHIVED            # 到达 exit 后交还 task_context 给 conductor，回流主图 CHECKING（不再直达 DELIVERING）
 
 nodes:
   - id: MM_INIT
@@ -35,7 +35,8 @@ nodes:
 
   - id: MM_FUSING
     required: [synthesizer-fusion]
-    note: 独立融合编辑；隔离硬门：不读拆分意图/模型身份/task_context.intent
+    note: 独立融合编辑；隔离硬门：不读拆分意图/模型身份/task_context.intent；
+          融合产物同步写入 execution.diffs/changes/acceptance_map（主图标准字段，供回流 CHECKING 时主图 verifier/reverse-auditor 读）
 
   - id: MM_FCHECK
     required: [verifier]
@@ -47,7 +48,8 @@ nodes:
 
   - id: MM_ARCHIVED
     type: terminal
-    note: 写 status=ready_for_delivery，交还 task_context 给 conductor
+    note: 写 status=ready_for_delivery，交还 task_context 给 conductor；
+          conductor 接手回流主图 CHECKING（不再直达 DELIVERING），融合产物经 execution.diffs/changes/acceptance_map 供主图四视角验证
 
 edges:
   - { from: MM_INIT, to: MM_INJECT }

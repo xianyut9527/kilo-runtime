@@ -62,6 +62,8 @@ tier_defaults:
     provider: multiModel
     agents:
       synthesizer_fusion: true    # 融合编辑智能体（隔离硬门：不读拆分意图/模型身份）
+      reverse_auditor: true       # 子图回流主图 CHECKING 后激活反向审计（T3 产物同样需需求追溯）
+      side_checker: true          # 子图回流主图 REVIEWING 后激活侧向验证（融合产物同样需运行时实测）
     review_mode: full
 
 # ============================================================

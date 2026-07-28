@@ -22,7 +22,8 @@ subagent_type: plan-reviewer
 #   on_fail 挂载点失败策略（abort|warn|skip）；plan-reviewer 是方案硬门审查者，失败用 abort 中止进入 EXECUTING
 mount:
   - at: post:PLANNING
-    on_fail: abort          # verdict=FAIL / 超时 / 异常 → [SLOT_ABORT] 中止进入 EXECUTING（不降级、不跳过方案门）
+    order: 0
+    on_fail: abort # verdict=FAIL / 超时 / 异常 → [SLOT_ABORT] 中止进入 EXECUTING（不降级、不跳过方案门）
 
 # task_context：读写边界声明
 #   read        可读切片（plan 方案内容；intent/sizing 上下文）
@@ -37,7 +38,7 @@ task_context:
 # planner 不再输出 design_gate_pass（已删除），但隔离声明保留防御：
 # 任何 planner 本地产出的"自判通过"字段都不进 plan-reviewer 视野
 isolation:
-  forbid_read: []            # planner 自验字段已删除，无需隔离；plan-reviewer 只读方案内容本身
+  forbid_read: [] # planner 自验字段已删除，无需隔离；plan-reviewer 只读方案内容本身
 ---
 
 # plan-reviewer
@@ -64,6 +65,7 @@ planner 产出方案，**不得自验方案是否可放行**。plan-reviewer 是
 > 降级不阻塞：memory.db 不可用时跳过，按当前 plan 审查。
 
 **召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
+
 - 同类方案的历史失败模式（`failure_db` MATCH task keywords，root_cause_level='plan'，LIMIT 5）— 避免放行重蹈覆辙的方案
 - 同类 anti-pattern（`fact_store` MATCH task keywords，category=ANTIPATTERN，LIMIT 5）— 规避已知反模式在方案中复现
 
@@ -105,23 +107,27 @@ plan:                             # planner 输出的方案（审查对象）
 ## 方案审查四步
 
 ### 1. 需求覆盖审查
+
 - 逐条对照 `intent.original_request` 与 `plan.acceptance_points` / `plan.task_dag`
 - 确认原始需求的每一点是否在方案中有对应单元覆盖
 - 标注 `[REQUIREMENT_GAP]`：需求点未被方案覆盖
 
 ### 2. 单元 DAG 合理性审查
+
 - 检查 `plan.task_dag` 依赖关系是否正确（无循环依赖、无断裂、无冗余）
 - 检查每个单元的 `acceptance_criteria` 是否可验证（能用一条命令证实/证伪）
 - 检查 `verification_method` 是否具体（不得"测试通过"等模糊措辞）
 - 标注 `[DAG_INVALID]` / `[UNVERIFIABLE_CRITERIA]`
 
 ### 3. 风险与扫描结论审查
+
 - 检查 `plan.risks` 是否覆盖已知失败模式（对照 memory_injection.plan_failures）
 - 检查 `plan.scan_coverage`：UI/样式/行为任务必须 full（全量扫描），partial 需说明理由
 - 检查 `plan.componentization_plan`：重复模式 ≥2 处必须有组件化方案
 - 标注 `[RISK_UNCOVERED]` / `[MISSING_SCAN]` / `[MISSING_COMPONENTIZATION]`
 
 ### 4. 边界与假设审查
+
 - 列出方案中隐含的假设（如"用户使用 X 版本""配置在 Y 路径"）
 - 检查 `plan.forbidden_files` 边界声明是否合理（不得过宽限制 coder，也不得过窄导致越界）
 - 标注 `[ASSUMPTION_UNVERIFIED]` / `[BOUNDARY_INVALID]`

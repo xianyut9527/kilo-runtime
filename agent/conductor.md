@@ -78,7 +78,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
   → T0: EXECUTING [coder] → DELIVERING
   → T1+: PLANNING [planner] → EXECUTING [coder] → CHECKING [verifier + reverse-auditor?]
          → REVIEWING [side-checker? + reviewer] → DELIVERING（conductor 内建）
-  → T3: MM_SUBGRAPH [multiModel 接管] → ... → MM_ARCHIVED → DELIVERING
+  → T3: MM_SUBGRAPH [multiModel 接管] → ... → MM_ARCHIVED → CHECKING ⇄ FIXING → REVIEWING ⇄ FIXING → DELIVERING
 ```
 
 ## task_context 共享机制
@@ -105,8 +105,8 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 | side-checker    | plan/execution/project_context                                            | verification.side                                                                                                                 | —                                                                      |
 | reviewer        | diff/plan/acceptance_criteria/project_context                             | verification.review                                                                                                               | —                                                                      |
 | fixer           | verification(issues)/plan/forbidden_files/fixing_history                  | fixing_history, execution.diffs                                                                                                   | execution.verification（修复后自验不入 context，由 verifier 独立重跑） |
-| synthesizer-fusion | execution.mm_outputs/verification.forward/acceptance_criteria/project_context | execution.fused_output                                                                                                        | —                                                                      |
-| multiModel      | 全部（子图编排者）                                                        | plan.subtasks, memory_injection, execution.mm_outputs, execution.fused_output, status, convergence, intent, sizing, config.agents.synthesizer_fusion | convergence.total_rounds（仅 conductor 可递增，经 status 信号交还） |
+| synthesizer-fusion | execution.mm_outputs/verification.forward/acceptance_criteria/project_context | execution.fused_output, execution.diffs, execution.changes, execution.acceptance_map                                        | —                                                                      |
+| multiModel      | 全部（子图编排者）                                                        | plan, plan.subtasks, memory_injection, execution.mm_outputs, execution.fused_output, execution.diffs, execution.changes, execution.acceptance_map, status, convergence, intent, sizing, config.agents.synthesizer_fusion | convergence.total_rounds（仅 conductor 可递增，经 status 信号交还） |
 
 > **写入边界硬门**：`execution.verification` 与 `verification.forward` 字段只能由 verifier 智能体写入；`convergence.total_rounds` 只能由 conductor 写入。coder/fixer 自验结果只能保留在智能体本地输出，**不得写入 task_context**。违反 → `[TRUST_TRANSFER]` / `[PROCESS_VIOLATION]`。
 >
@@ -209,6 +209,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 | 反向审计 PASS（条件加载）       | `CHECKING`             | FAIL → FIXING                  |
 | 侧向验证 PASS（条件加载）       | `REVIEWING`            | FAIL → FIXING                  |
 | 审查通过                        | `REVIEWING`            | FAIL → FIXING                  |
+| T3 子图回流验证                 | `MM_SUBGRAPH → CHECKING` | 子图融合产物回流主图标准四视角验证闭环（不再直达 DELIVERING） |
 | `[MISSING_MEMORY_WRITE]`        | `DELIVERING → DONE`    | 未执行阻塞交付                 |
 | 单点修复轮次 ≥ max_rounds       | `FIXING`               | `[CIRCUIT_BREAKER]` → 人工决策 |
 | 全局累计轮次 ≥ max_total_rounds | CHECKING/REVIEWING     | [CIRCUIT_BREAKER] → 人工决策   |

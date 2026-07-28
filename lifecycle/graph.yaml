@@ -189,10 +189,11 @@ edges:
     to: DELIVERING
     when: "(side_result in ['PASS','N/A']) and (review_result in ['PASS','CONDITIONAL_PASS'])"
 
-  # 子图完成(融合自检通过+记忆写入就绪) → 进入交付
-  # 子图 MM_ARCHIVED 后 task_context 交还 conductor
+  # 子图完成(融合自检通过) → 回流主图标准验证闭环（对称 T1/T2：EXECUTING→CHECKING→REVIEWING→DELIVERING）
+  # 子图 MM_ARCHIVED 后 task_context 交还 conductor；融合产物须已写入主图标准字段
+  # （execution.diffs/changes/acceptance_map），供主图 verifier/reverse-auditor/side-checker/reviewer 读
   - from: MM_SUBGRAPH
-    to: DELIVERING
+    to: CHECKING
     when: "subgraph_status == 'ready_for_delivery'"
 
   # 交付完成 → 终态

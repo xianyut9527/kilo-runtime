@@ -25,10 +25,11 @@ mount:
 
 # task_context：读写边界声明
 #   read   可读切片（mm_outputs 3 份 coder 输出；verification.forward verifier 报告；acceptance_criteria 验收标准）
-#   write  可写切片（execution.fused_output 融合后输出）
+#   write  可写切片（execution.fused_output 融合后输出；execution.diffs/changes/acceptance_map 主图标准字段，
+#                    供回流主图 CHECKING 时 verifier/reverse-auditor/side-checker/reviewer 读取）
 task_context:
   read: [execution.mm_outputs, verification.forward, acceptance_criteria, project_context]
-  write: [execution.fused_output]
+  write: [execution.fused_output, execution.diffs, execution.changes, execution.acceptance_map]
 
 # isolation：视角物理隔离声明（v3.1 融合隔离原则——反确认偏误）
 #   forbid_read  禁止读取的 task_context 切片

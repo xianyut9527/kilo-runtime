@@ -28,7 +28,7 @@ subgraph: multimodel-graph.yaml
 #   exit   退出条件（何时将 task_context 交还主图 conductor）
 handoff:
   enter: "SIZING 定级 T3 或用户手动选择；task_context 已由 conductor 初始化或自行初始化"
-  exit: "MM_ARCHIVED 写 status=ready_for_delivery，task_context 交还 conductor 继续 DELIVERING"
+  exit: "MM_ARCHIVED 写 status=ready_for_delivery，task_context 交还 conductor 回流主图 CHECKING（不再直达 DELIVERING）"
 
 # invariants：子图运行期间的不变量（违反 → [PROCESS_VIOLATION]）
 invariants:
@@ -37,11 +37,16 @@ invariants:
   - total_rounds 只能由 conductor 递增，multiModel 经 status 信号交还计数
 
 # task_context：读写边界声明（WRITE_MATRIX 经 task-context.mjs 从本字段自动派生）
-#   write  可写切片（子图编排者专属：plan.subtasks / memory_injection / execution.mm_outputs /
-#          execution.fused_output / status / convergence / intent / sizing /
+#   write  可写切片（子图编排者专属：plan / plan.subtasks / memory_injection / execution.mm_outputs /
+#          execution.fused_output / execution.diffs / execution.changes / execution.acceptance_map /
+#          status / convergence / intent / sizing /
 #          config.agents.synthesizer_fusion（MM_INIT 手动模式写入））
+#   plan：T3 不走主图 PLANNING，MM_INIT 子任务委派包作为设计方案等价物写入 plan，
+#          供回流主图 CHECKING/REVIEWING 时 verifier/reviewer/side-checker 读取核对范围
+#   execution.diffs/changes/acceptance_map：MM_FUSING 融合产物同步写入主图标准字段，
+#          供回流主图 CHECKING 时主图 verifier/reverse-auditor 读取
 task_context:
-  write: [plan.subtasks, memory_injection, execution.mm_outputs, execution.fused_output, status, convergence, intent, sizing, config.agents.synthesizer_fusion]
+  write: [plan, plan.subtasks, memory_injection, execution.mm_outputs, execution.fused_output, execution.diffs, execution.changes, execution.acceptance_map, status, convergence, intent, sizing, config.agents.synthesizer_fusion]
 ---
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
@@ -62,9 +67,12 @@ multiModel 是**独立生命周期消费者**（`type: lifecycle_provider`，fro
    子图（multimodel-graph.yaml）：MM_INIT → MM_INJECT → MM_EXECUTING(3×coder 并行)
                                         → MM_CHECKING(verifier) → MM_FUSING(synthesizer-fusion)
                                         → MM_FCHECK(verifier) → MM_DELIVERING → MM_ARCHIVED
+                                        ↓
+主图：CHECKING ⇄ FIXING → REVIEWING ⇄ FIXING → DELIVERING → DONE
+      （conductor 接手标准验证闭环：正向+反向+侧向+审查四视角 + 修复回环）
 ```
 
-multiModel 完成 `MM_ARCHIVED` 后，返回主生命周期的 `DELIVERING` 阶段。
+multiModel 完成 `MM_ARCHIVED` 后，task_context 交还 conductor，**回流主图 CHECKING**（融合产物经 `execution.diffs/changes/acceptance_map` 供主图四视角验证），不再直达 DELIVERING。子图内部 MM_CHECKING/MM_FCHECK 是"生成期内部质检"，主图 CHECKING/REVIEWING 是"交付前独立验证+审查"——两层正交，不重复。
 
 ## task*context 交接协议（MM*\* ↔ 主生命周期）
 
@@ -79,14 +87,14 @@ multiModel 期间产生的全部状态写入 `$env:TEMP/kilo/task_context_<task_
 
 | 阶段            | 读                                              | 写                                                                                                   |
 | --------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `MM_INIT`       | `intent` / `sizing`                             | `plan.subtasks`（1-3 个子任务委派包）                                                                |
+| `MM_INIT`       | `intent` / `sizing`                             | `plan` + `plan.subtasks`（1-3 个子任务委派包；plan 作为 T3 设计方案等价物供回流主图 verifier/reviewer 读取）                                                                |
 | `MM_INJECT`     | `memory_injection`                              | `memory_injection`（3 个 coder 相同内容，公平性原则；降级不阻塞）                                    |
 | `MM_EXECUTING`  | `plan` / `forbidden_files`                      | `execution.mm_outputs`（3 份 coder 输出摘要，**不含身份标签**）                                      |
 | `MM_CHECKING`   | `execution.mm_outputs`                          | `verification.forward`（由 verifier 写入；`execution.verification` 禁令同 conductor 规则）           |
-| `MM_FUSING`     | `execution.mm_outputs` / `verification.forward` | `execution.fused_output`（synthesizer-fusion 注入边界不变：不读 intent/拆分意图/模型身份）           |
+| `MM_FUSING`     | `execution.mm_outputs` / `verification.forward` | `execution.fused_output` + `execution.diffs` / `execution.changes` / `execution.acceptance_map`（融合产物同步写入主图标准字段，供回流 CHECKING 时主图 verifier/reverse-auditor 读；synthesizer-fusion 注入边界不变：不读 intent/拆分意图/模型身份） |
 | `MM_FCHECK`     | `execution.fused_output`                        | `verification.forward.fusion_check`（融合后验证）                                                    |
 | `MM_DELIVERING` | 全部                                            | `status` + `convergence.round` + 记忆溯源（M4-M8，dispatch_log / fact_store / model_calibration 等） |
-| `MM_ARCHIVED`   | 全部                                            | `status=ready_for_delivery`，task_context 交还 conductor 继续 `DELIVERING`                           |
+| `MM_ARCHIVED`   | 全部                                            | `status=ready_for_delivery`，task_context 交还 conductor 回流主图 `CHECKING`（融合产物已写入 execution.diffs/changes/acceptance_map） |
 
 ### 交接不变量
 
