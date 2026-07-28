@@ -189,11 +189,13 @@ edges:
     to: DELIVERING
     when: "(side_result in ['PASS','N/A']) and (review_result in ['PASS','CONDITIONAL_PASS'])"
 
-  # 子图完成(融合自检通过) → 回流主图 EXECUTING（由主图 coder 按融合方案实现代码），
-  # 然后走标准验证审查闭环 CHECKING→REVIEWING→DELIVERING（对称 T1/T2）
-  # 子图 MM_ARCHIVED 后 task_context 交还 conductor；融合方案已写入 plan + execution.fused_output
-  # （设计方案字段，非代码产物）；主图 coder 按方案实现代码后写入 execution.diffs/changes/acceptance_map，
-  # 供主图 verifier/reverse-auditor/side-checker/reviewer 读
+  # 子图完成(聚合产物就绪) → 回流主图 EXECUTING（由主图 coder 执行 git merge mm-<tid>-fusion 分支，
+  # 将聚合代码产物应用到主工作区），然后走标准验证审查闭环 CHECKING→REVIEWING→DELIVERING（对称 T1/T2，
+  # 验证 merge 后代码产物）
+  # 子图 MM_ARCHIVED 后 task_context 交还 conductor；聚合产物指针已写入 plan + execution.fused_output
+  # （fusion worktree 路径/分支/commit_sha，非代码本体）；主图 coder 执行 git merge fusion 分支后
+  # 写入 execution.diffs/changes/acceptance_map，供主图 verifier/reverse-auditor/side-checker/reviewer 读
+  # fusion worktree 由主图 DELIVERING 阶段清理（git worktree remove --force）
   - from: MM_SUBGRAPH
     to: EXECUTING
     when: "subgraph_status == 'ready_for_delivery'"

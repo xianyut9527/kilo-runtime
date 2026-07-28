@@ -86,8 +86,9 @@ memory_injection:
 - 任务 DAG（依赖+可并行/串行）
 - 影响面分析
 - 风险及应对
-- 重复点扫描结论（UI/样式/行为任务）
+- 重复点扫描结论（UI 与非 UI 同等适用，不限于样式/布局/交互）
 - 组件化/共享抽象方案（如适用）
+- 扩展点设计（高频变更领域必填：表单/列表/权限/数据获取/第三方集成/错误处理/日志/配置）
 
 ## 设计前 checklist
 
@@ -97,6 +98,9 @@ memory_injection:
 4. 边界值测试（每个方案至少一个边界场景验证）
 5. 交叉验证（用户声称的架构与实际代码矛盾时指出）
 6. **失败回溯**（M3）：查询 `failure_db` 同类失败模式，纳入风险应对
+7. **架构落点确认**：每个 unit 的目标文件所属层 + 依赖方向是否合规；跨层 unit 必须显式标注理由
+8. **复用前摄扫描**：grep/glob/gitnexus 扫描本次设计是否已有同类抽象可消费；已有 → 消费而非新建；新建 ≥1 个抽象 → 标注"新抽象待 review"
+9. **组件化前摄评估**：即使当前只有 1 处实现，若目标领域属高频变更（表单/列表/权限/数据获取/第三方集成/错误处理/日志/配置），必须产出"组件/抽象边界设计"——组件化不是事后发现重复才补救，而是前摄为未来同类需求留接口
 
 ## 输出接口（写入 task_context.plan）
 
@@ -117,6 +121,10 @@ risks:
     mitigation: "string"
 scan_coverage: "full" | "partial" | "N/A"
 componentization_plan: "yes" | "no" | "N/A"
+extension_points:                          # 高频变更领域必填，其他可 N/A
+  - domain: "string"                       # 如 form/list/auth/data-fetch/integration/error/log/config
+    mechanism: "string"                    # 如 strategy-interface/plugin/config-driven/slot
+    rationale: "string"
 forbidden_files: ["string"]
 # 方案放行由 post:PLANNING 的独立审查者判定，planner 不自验
 ```
@@ -125,5 +133,7 @@ forbidden_files: ["string"]
 
 - 短设计门可以只有几句话，但必须输出
 - 方案须经 post:PLANNING 独立审查或按授权放行，不得自行进入执行阶段
-- 重复模式必须产出全量扫描清单 + 组件化方案
+- 重复实现模式（UI 与非 UI 同等适用）必须产出全量扫描清单 + 组件化方案
+- 高频变更领域必须产出扩展点设计，即使当前只有 1 处实现
 - T2+ 必须包含单元 DAG + 依赖关系 + 风险应对
+- 跨层 unit 必须显式标注理由，不得默认放行

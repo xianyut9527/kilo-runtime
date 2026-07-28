@@ -18,7 +18,16 @@
 //   node scripts/task-context.mjs get <task_id> <dot.path>
 //   node scripts/task-context.mjs set <task_id> <dot.path> <json-value> --agent <name>
 //   node scripts/task-context.mjs validate <task_id>
+//   node scripts/task-context.mjs assert <task_id> <assertion-type> [args...]
 //   node scripts/task-context.mjs --help
+//
+// assert 子命令（运行时状态断言，供 conductor compaction 恢复后自检）：
+//   assert <task_id> current-stage <NODE>     断言 current_stage == <NODE>
+//   assert <task_id> tier <T0|T1|T2|T3>       断言 sizing.tier == <TIER>
+//   assert <task_id> convergence              断言 convergence 计数合法未熔断
+//   assert <task_id> gate <GATE_NAME>          断言 gate 条件满足
+//   assert <task_id> not-written <dot.path>    断言某字段未被写入（反自验辅助）
+//   exit 0=断言成立，1=断言失败（含具体差异），2=参数错误
 //
 // 文件位置：os.tmpdir()/kilo/task_context_<task_id>.json
 //
@@ -240,6 +249,14 @@ function usage() {
     '  node scripts/task-context.mjs get <task_id> <dot.path>',
     "  node scripts/task-context.mjs set <task_id> <dot.path> <json-value> --agent <name>",
     '  node scripts/task-context.mjs validate <task_id>',
+    '  node scripts/task-context.mjs assert <task_id> <type> [args...]',
+    '',
+    'Assert types:',
+    '  current-stage <NODE>   Assert current_stage == NODE',
+    '  tier <T0|T1|T2|T3>     Assert sizing.tier == TIER',
+    '  convergence            Assert convergence counters valid & not tripped',
+    '  gate <GATE_NAME>       Assert gate condition met (e.g. MEMORY_WRITE_COMPLETE)',
+    '  not-written <dot.path> Assert field is unset (anti-self-verify aid)',
     '  node scripts/task-context.mjs --help',
     '',
     'Subcommands:',
@@ -571,6 +588,96 @@ function cmdValidate(taskId) {
 }
 
 // ============================================================
+// assert 子命令：运行时状态断言（供 conductor compaction 恢复后自检）
+// 设计原则：注册式断言函数，新增断言只往 ASSERTIONS push 一项，零改其他代码。
+// 每个断言函数签名: (ctx, args) => { pass: boolean, detail: string }
+// ============================================================
+
+const ASSERTIONS = {
+  // 断言 current_stage == <NODE>
+  'current-stage': (ctx, args) => {
+    const expected = args[0];
+    if (!expected) return { pass: false, detail: 'usage: assert <task_id> current-stage <NODE>' };
+    const actual = ctx.current_stage;
+    return actual === expected
+      ? { pass: true, detail: `current_stage=${actual}` }
+      : { pass: false, detail: `current_stage="${actual ?? '(未设置)'}" ≠ expected="${expected}"` };
+  },
+
+  // 断言 sizing.tier == <TIER>
+  'tier': (ctx, args) => {
+    const expected = args[0];
+    if (!expected) return { pass: false, detail: 'usage: assert <task_id> tier <T0|T1|T2|T3>' };
+    const actual = ctx.sizing && ctx.sizing.tier;
+    return actual === expected
+      ? { pass: true, detail: `sizing.tier=${actual}` }
+      : { pass: false, detail: `sizing.tier="${actual ?? '(未设置)'}" ≠ expected="${expected}"` };
+  },
+
+  // 断言 convergence 计数合法 + 未熔断
+  'convergence': (ctx) => {
+    const c = ctx.convergence || {};
+    const { round, max_rounds, total_rounds, max_total_rounds } = c;
+    if (!Number.isInteger(round) || round < 0) return { pass: false, detail: `round=${round} 非非负整数` };
+    if (!Number.isInteger(total_rounds) || total_rounds < 0) return { pass: false, detail: `total_rounds=${total_rounds} 非非负整数` };
+    if (Number.isInteger(max_total_rounds) && total_rounds >= max_total_rounds) {
+      return { pass: false, detail: `[CIRCUIT_BREAKER] global total_rounds=${total_rounds} >= max=${max_total_rounds}` };
+    }
+    if (Number.isInteger(max_rounds) && round >= max_rounds) {
+      return { pass: false, detail: `[CIRCUIT_BREAKER] single-point round=${round} >= max=${max_rounds}` };
+    }
+    return { pass: true, detail: `round=${round}/${max_rounds} total=${total_rounds}/${max_total_rounds}` };
+  },
+
+  // 断言 gate 条件满足
+  'gate': (ctx, args) => {
+    const gate = args[0];
+    if (!gate) return { pass: false, detail: 'usage: assert <task_id> gate <GATE_NAME>' };
+    if (gate === 'MEMORY_WRITE_COMPLETE') {
+      const mws = ctx.memory_write_status;
+      if (mws === 'OK' || mws === 'DEGRADED' || ctx.memory_write_complete === true) {
+        return { pass: true, detail: `memory_write_status=${mws}` };
+      }
+      return { pass: false, detail: `[MISSING_MEMORY_WRITE] memory_write_status=${mws || '(未设置)'}` };
+    }
+    return { pass: false, detail: `unknown gate "${gate}"` };
+  },
+
+  // 断言某字段未被写入（反自验辅助，检测 conductor 漂移）
+  'not-written': (ctx, args) => {
+    const dotPath = args[0];
+    if (!dotPath) return { pass: false, detail: 'usage: assert <task_id> not-written <dot.path>' };
+    const v = getByPath(ctx, dotPath);
+    if (v === undefined || v === null) {
+      return { pass: true, detail: `${dotPath} 未写入` };
+    }
+    return { pass: false, detail: `${dotPath} 已被写入（值=${JSON.stringify(v).slice(0, 80)}）——可能违反写入边界` };
+  },
+};
+
+function cmdAssert(taskId, assertionType, args) {
+  assertValidTaskId(taskId);
+  const fn = ASSERTIONS[assertionType];
+  if (!fn) {
+    die(2, `Error: unknown assertion "${assertionType}". Available: ${Object.keys(ASSERTIONS).join(', ')}`);
+  }
+  const { ctx } = readContext(taskId);
+  let result;
+  try {
+    result = fn(ctx, args);
+  } catch (e) {
+    die(1, `Error: assertion "${assertionType}" threw: ${e.message}`);
+  }
+  if (result.pass) {
+    process.stdout.write(`PASS assert ${assertionType} — ${result.detail}\n`);
+    process.exit(0);
+  } else {
+    process.stderr.write(`FAIL assert ${assertionType} — ${result.detail}\n`);
+    process.exit(1);
+  }
+}
+
+// ============================================================
 // 入口
 // ============================================================
 
@@ -602,6 +709,13 @@ function main() {
   if (sub === 'validate') {
     if (args.length !== 2) die(2, 'Error: validate requires <task_id>');
     cmdValidate(args[1]);
+  }
+  if (sub === 'assert') {
+    // assert <task_id> <assertion-type> [args...]
+    if (args.length < 3) {
+      die(2, `Error: assert requires <task_id> <assertion-type> [args...]. Available: ${Object.keys(ASSERTIONS).join(', ')}`);
+    }
+    cmdAssert(args[1], args[2], args.slice(3));
   }
   die(2, `Error: unknown subcommand "${sub}". Use --help.`);
 }

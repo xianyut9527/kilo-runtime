@@ -26,6 +26,7 @@
 #   side-checker.md    → side_checker
 #   synthesizer-fusion.md → synthesizer_fusion
 #   coder-a/b/c 不单独开关（由 T3 provider 隐含加载）
+#   例外：multiModel 行为开关（如 mm_worktree）也可在此声明，不对应 agent 文件
 # ============================================================
 version: 1
 
@@ -64,6 +65,7 @@ tier_defaults:
       synthesizer_fusion: true    # 融合编辑智能体（隔离硬门：不读拆分意图/模型身份）
       reverse_auditor: true       # T3 走主图 EXECUTING→CHECKING→REVIEWING 后激活反向审计（按融合方案实现的代码同样需需求追溯）
       side_checker: true          # T3 走主图 EXECUTING→CHECKING→REVIEWING 后激活侧向验证（按融合方案实现的代码同样需运行时实测）
+      mm_worktree: true           # worktree 隔离默认启用（产物级聚合）；用户可通过 condition_overrides 设 false 关闭走 plan_level 方案级融合
     review_mode: full
 
 # ============================================================
@@ -91,8 +93,9 @@ overrides:
 # 达到阈值 → [CIRCUIT_BREAKER] 停止修复，输出选项等用户决策
 # ============================================================
 convergence:
-  max_rounds: 5        # FIXING 单点熔断（同一验证失败点的修复轮次上限）
-  max_total_rounds: 7  # CHECKING+REVIEWING 累计进入次数全局熔断
+  max_rounds: 5              # FIXING 单点熔断（同一验证失败点的修复轮次上限）
+  max_total_rounds: 7        # CHECKING+REVIEWING 累计进入次数全局熔断
+  mm_fusion_max_rounds: 3    # T3 子图内部熔断：MM_FCHECK 打回 synthesizer-fusion 重新聚合的轮次上限
 
 # ============================================================
 # timeouts：阶段/智能体级时间预算（唯一真相来源）

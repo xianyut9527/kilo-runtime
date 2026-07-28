@@ -414,6 +414,8 @@ function main() {
     die(3, `[CIRCUIT_BREAKER] single-point round=${conv.round} >= max_rounds=${maxR}（同一失败点修复轮次耗尽，task_context.status=PAUSED 等用户决策）`);
   }
 
+  // 写回 task_context：同步 current_stage + 计数器
+  ctx.current_stage = TO;
   writeContext(taskId, ctx);
   process.stdout.write(`PASS transition ${FROM} -> ${TO} (when=${edge.when || 'none'}${edge.gate ? ` gate=${edge.gate}` : ''} | total_rounds=${conv.total_rounds} round=${conv.round})\n`);
   process.exit(0);

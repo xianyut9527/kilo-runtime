@@ -97,6 +97,10 @@ plan:                             # planner 输出的方案（审查对象）
       mitigation: "string"
   scan_coverage: "full" | "partial" | "N/A"
   componentization_plan: "yes" | "no" | "N/A"
+  extension_points:                          # 高频变更领域必填，其他可 N/A
+    - domain: "string"
+      mechanism: "string"
+      rationale: "string"
   forbidden_files: ["string"]
   memory_injection:               # planner 召回的历史经验（供审查参考）
     failures: [...]
@@ -122,9 +126,10 @@ plan:                             # planner 输出的方案（审查对象）
 ### 3. 风险与扫描结论审查
 
 - 检查 `plan.risks` 是否覆盖已知失败模式（对照 memory_injection.plan_failures）
-- 检查 `plan.scan_coverage`：UI/样式/行为任务必须 full（全量扫描），partial 需说明理由
-- 检查 `plan.componentization_plan`：重复模式 ≥2 处必须有组件化方案
-- 标注 `[RISK_UNCOVERED]` / `[MISSING_SCAN]` / `[MISSING_COMPONENTIZATION]`
+- 检查 `plan.scan_coverage`：UI 与非 UI 任务同等要求全量扫描，partial 需说明理由（不限于样式/布局/交互）
+- 检查 `plan.componentization_plan`：重复实现模式 ≥2 处必须有组件化方案（UI 与非 UI 同等适用）
+- 检查 `plan.extension_points`：高频变更领域（表单/列表/权限/数据获取/第三方集成/错误处理/日志/配置）必须产出扩展点设计，即使当前只有 1 处实现；缺失 → `[MISSING_EXTENSION_DESIGN]`
+- 标注 `[RISK_UNCOVERED]` / `[MISSING_SCAN]` / `[MISSING_COMPONENTIZATION]` / `[MISSING_EXTENSION_DESIGN]`
 
 ### 4. 边界与假设审查
 
@@ -152,6 +157,8 @@ scan_review:
   coverage: "full" | "partial" | "N/A"
   componentization_required: bool
   componentization_present: bool
+  extension_points_required: bool
+  extension_points_present: bool
 assumptions:
   - assumption: "string"
     verified: bool

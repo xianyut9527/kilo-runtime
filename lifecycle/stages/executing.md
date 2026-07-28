@@ -14,7 +14,7 @@ required_roles: [coder]
 
 - `PLANNING` 输出的任务 DAG（T1/T2）或用户请求（T0）
 - 设计门方案（T1/T2）
-- **T3 回流场景**：`plan`（融合方案）+ `execution.fused_output`（融合后完整方案），由 multiModel 子图 MM_ARCHIVED 后回流；coder 按融合方案实现代码，不读取 `execution.mm_outputs`（子图原始 3 份输出）
+- **T3 回流场景**：`plan`（聚合方案等价物）+ `execution.fused_output`（聚合产物指针：fusion worktree 路径/分支/commit_sha），由 multiModel 子图 MM_ARCHIVED 后回流；coder 执行 `git merge mm-<tid>-fusion` 分支将聚合代码产物应用到主工作区，不读取 `execution.mm_outputs`/`mm_artifacts`（子图原始 3 份产物）
 - 验收标准清单
 - 已知失败模式（来自 `fact_store` / `failure_db`，M1 注入）
 - 禁止触碰的边界声明（`forbidden_files`）
@@ -51,7 +51,7 @@ quality_gate:
 - `DONE` → T1+ 进入 `CHECKING`；T0 直达 `DELIVERING`
 - `DONE_WITH_CONCERNS` → 附带风险说明进入 `CHECKING`
 - `NEEDS_CONTEXT` / `BLOCKED` → 停止并回传，不推进
-- **T3 回流**：`MM_SUBGRAPH → EXECUTING`（`subgraph_status == 'ready_for_delivery'`），编码完成后走标准 `CHECKING ⇄ FIXING → REVIEWING ⇄ FIXING → DELIVERING`
+- **T3 回流**：`MM_SUBGRAPH → EXECUTING`（`subgraph_status == 'ready_for_delivery'`），coder 执行 `git merge mm-\u003ctid\u003e-fusion` 应用聚合代码产物到主工作区，然后走标准 `CHECKING ⇄ FIXING → REVIEWING ⇄ FIXING → DELIVERING`（验证 merge 后代码产物）
 
 ## 硬规则
 
@@ -59,4 +59,7 @@ quality_gate:
 - **禁止信任传递**：不得以"agent X 报告成功"替代独立验证。
 - **编码健康度扫描**：对修改过的文件跑 `node scripts/scan-encoding.mjs`。
 - **组件化拦截**：涉及 UI/样式/行为且同类症状 ≥2 处时，必须按 `component-driven-fixes` skill 执行。
-- **T3 隔离原则**：主图 coder 不读取 `execution.mm_outputs`（子图原始 3 份 coder 输出），只读取 `plan` + `execution.fused_output`（融合方案）
+- **T3 隔离原则**：主图 coder 不读取 `execution.mm_outputs`/`execution.mm_artifacts`（子图原始 3 份 coder 产物），只读取 `plan` + `execution.fused_output`（聚合产物指针：fusion worktree 路径/分支）；主操作为 `git merge mm-<tid>-fusion` 分支 + 解决残留冲突 + 运行验证
+- **T3 产物级场景**：multiModel 子图 v2 产物级聚合模式下，主图 EXECUTING coder 主操作为 `git merge <fusion_branch>` + 解决冲突 + 运行验证；fusion worktree 由主图 DELIVERING 阶段清理（`git worktree remove --force`）
+- **T3 产物级场景（merge 前预检）**：coder 执行 `git merge mm-<tid>-fusion` 前，可先执行 `git merge --no-commit --no-ff mm-<tid>-fusion` 预演，检查冲突；若冲突不可解决，立即 abort（`git merge --abort`）并回传 `BLOCKED`。这是 multiModel 子图 MM_FCHECK「预 merge 验证」安全增强的主图落地动作。
+- **worktree 注册表失效**：fusion worktree 由主图 DELIVERING 清理后，`execution.mm_worktrees` 注册表状态不再更新（子图已退出，注册表失效）。

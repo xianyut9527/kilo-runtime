@@ -88,7 +88,8 @@ plan:                                   # planner 输出
 2. **编码前知识获取**：
    - T0：读取目标文件，简短搜索确认范围。
    - T1+：优先用 GitNexus 分析执行流、调用链和影响面。
-   - 重复模式扫描：涉及 UI/样式/布局/交互时，扫描同类症状；命中 ≥2 处走组件化。
+   - 架构意识 6 项检查（见 §架构意识）：落点/依赖方向/影响面/复用/扩展点/组件化前摄扫描。
+   - 重复模式扫描：编码前 grep/glob 扫描本次改动模式在代码库的同类实现（UI 与非 UI 同等适用，不限于样式/布局）；命中 ≥2 处走组件化。
 3. **编码**：最小改动，遵循现有风格，修改后搜索调用方确认兼容性。
 4. **自测自修**：改代码 → 跑测试 → 修复 → 再跑。
    - TDD 模板（有测试套件时）：红→绿→重构
@@ -118,11 +119,22 @@ encoding_scan: "PASS" | "FAIL" | "N/A"
 # 自验声明（commands/exit_code/stdout）保留在本地输出，不写入 task_context.execution.verification
 ```
 
+## 架构意识（编码前必过，T1+ 硬门；T0 可简化但不得跳过落点识别）
+
+> 架构思维不是事后审查的兜底，而是编码前的前摄约束。违反以下任一项 → 停下，回 planner 确认，不得凭"最小改动"绕过。
+
+1. **落点识别**：编码前识别目标文件所属层（如 domain/service/infra/ui/adaptor/repository），确认本次变更落点与该层职责一致；跨层变更（如 ui 直连 infra、service 反向调用 ui）必须先回 planner 确认，不得自行越层
+2. **依赖方向**：检查新代码的 import/调用方向是否符合项目既有分层方向（如 ui→service→infra，不反向）；违反 → 停下，回 planner
+3. **影响面分析**（T1+）：用 GitNexus query/context 看改动符号的上下游调用方，确认接口契约不破坏；高扇入符号（被 ≥3 处调用）改动必须显式列影响清单写入 `risks`
+4. **复用优先**：编码前 grep/glob 扫描是否已有同类抽象（util/hook/component/service/repository/mixin），已有则消费而非新建；无则新建但写入 `risks` 标注"新抽象待 review"
+5. **扩展点评估**：若改动属于高频变更领域（表单/列表/权限/数据获取/第三方集成/错误处理/日志/配置），评估是否应留扩展点（slot/策略接口/配置驱动/插件化），写入 `acceptance_map.edge_cases`；写死分支链且领域高频 → 回 planner
+6. **组件化前摄扫描**：编码前 grep/glob 扫描本次改动模式是否在代码库已存在 ≥1 处同类实现；命中 ≥2 处 → 强制按 `component-driven-fixes` skill 执行（UI 与非 UI 同等适用，见 skill 更新后的触发域）；命中 1 处但属高频变更领域 → 评估是否 preemptively 抽象
+
 ## 硬规则
 
 - **完成声明三件套**：命令 + exit code（数字） + stdout/stderr 关键行（≤5 行）
 - **禁止信任传递**：不得以其他 agent 的"成功"替代独立验证
 - **禁止模糊措辞**："应该""大概""似乎""差不多" → 视为未验证
 - **编码健康度扫描**：对修改过的文件跑 `node scripts/scan-encoding.mjs`
-- **组件化拦截**：同类症状 ≥2 处时，必须按 `component-driven-fixes` skill 执行
+- **组件化拦截**：同类实现模式 ≥2 处时（UI 与非 UI 同等适用），必须按 `component-driven-fixes` skill 执行
 - **不自验放行**：自测通过不等于 verifier 放行，必须经 verifier 独立验证

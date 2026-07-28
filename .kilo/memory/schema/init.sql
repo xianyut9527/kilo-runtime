@@ -351,15 +351,15 @@ INSERT OR IGNORE INTO project_context (context_id, category, title, content, sou
  'AGENTS.md', 1,
  '["process","hard-gate","violation-marker","workflow"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
 
-('PC-005', 'BUSINESS_RULE', 'T1+ planner → coder → verifier → fixer 闭环',
- 'T1+ 任务单元级闭环：coder 输出不自行验证（不自验），过 verifier；verifier FAIL → fixer 修复 → 重新 verifier；fixer 连续 2 轮同症状升级 reviewer；Circuit Breaker 连续 3 次无法收敛则停止。T0 极速通道豁免。',
- '.kilo/instructions/workflow-core.md', 2,
- '["workflow","tier","unit-closure","verifier","fixer"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
+('PC-005', 'BUSINESS_RULE', 'T1+ 单元闭环与熔断阈值',
+  'T1+ 任务单元级闭环：coder → verifier（不自验）→ fixer（verifier FAIL 时）→ 重新 verifier；fixer 连续 2 轮同症状升级 reviewer 根因分析。Circuit Breaker：FIXING 单点 max_rounds=5（同一验证失败点修复轮次上限），CHECKING+REVIEWING 全局累计 max_total_rounds=7，任一达到即触发 [CIRCUIT_BREAKER] 暂停等人决策。T0 极速通道豁免。',
+  '.kilo/instructions/workflow-core.md', 2,
+  '["workflow","tier","unit-closure","verifier","fixer","circuit-breaker"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
 
 ('PC-006', 'BUSINESS_RULE', 'review_mode 决策表',
- 'T0 → none（无 reviewer）；T1 单文件/2-3 文件 → lightweight（架构 + SCOPE_CREEP）；T1 ≥4 文件 / 跨模块 / 安全敏感 → full（自动升级，安全+架构+简化+SCOPE_CREEP 四视角）；T2/T3 → full。升级必须在阶段 B 输出 [REVIEW_MODE_UPGRADED] 标记。',
- '.kilo/instructions/workflow-core.md', 3,
- '["review","review-mode","lightweight","full","upgrade-trigger"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
+  'T0 → none（无 reviewer）；T1/T2/T3 → full（四视角完整审查：安全/架构/简化/SCOPE_CREEP）。不采用 lightweight 档位——质量门禁不打折。review_mode 统一由 lifecycle/config.yaml tier_defaults 声明（唯一真相），conductor 在 SIZING 阶段写入 task_context.config。',
+  '.kilo/instructions/workflow-core.md', 3,
+  '["review","review-mode","full","four-perspective"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
 
 ('PC-007', 'BUSINESS_RULE', 'Schema 变更三文件同步（铁律 2/3）',
  '记忆模块 schema 变更必须同时改 3 个文件（缺一即破坏模块完整性）：(1) schema/init.sql（DDL 唯一源）;(2) contracts/health_check.sql（表名/索引名/视图名同步）;(3) policy/*.md 对应文档（业务规则同步）。',

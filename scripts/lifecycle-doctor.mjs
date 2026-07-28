@@ -2,21 +2,27 @@
 // lifecycle-doctor.mjs
 // 生命周期装配校验器 — conductor.md §启动期装配 第 4 条的机械化实现。
 //
+// 两种模式（正交，互不依赖）：
+//   默认模式（静态）：校验 lifecycle/ + agent/ 文件互相一致——零运行时状态依赖。
+//     node scripts/lifecycle-doctor.mjs [--verbose]
+//   --runtime 模式（运行时探针）：扫描 $TEMP/kilo/task_context_*.json，对每个活跃
+//     task_context 做静态契约 × 运行时状态交叉验证——发现"LLM 漂移"最早信号。
+//     node scripts/lifecycle-doctor.mjs --runtime [--verbose]
+//     退出码：0=全 PASS（含 runtime 扫描无活跃 context 时报 PASS 空），1=有 FAIL
+//
 // 架构正交三层：
 //   lifecycle/graph.yaml        纯拓扑（节点 id/type/executor/on_fail + 边）——稳定大框架，零智能体名
 //   lifecycle/stages/<id>.md    阶段语义（执行逻辑 + frontmatter required_roles 契约）
 //   agent/<name>.md             智能体（行为 + frontmatter mount/role/task_context）——丢文件即注册
 //
-// 用法：
-//   node scripts/lifecycle-doctor.mjs [--verbose]
-// 退出码：
-//   0 = 全 PASS（WARN 不阻塞）
-//   1 = 有 FAIL（对应 [ASSEMBLY_FAIL]）
+// --runtime 检测项注册式扩展：新增检测只需 runtimeChecks.push({ name, run(ctx, ...) })。
+// 每个 run 返回 { level: 'PASS'|'FAIL'|'WARN', detail }。单数职责，互不依赖。
 //
 // 仅使用 Node 内置模块；Windows PowerShell + Linux bash 兼容。
 // 与 task-context.mjs 共享 frontmatter 解析逻辑（本地副本，脚本自包含）。
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +36,8 @@ const STAGES_DIR = path.join(ROOT, 'lifecycle', 'stages');
 const AGENT_DIR = path.join(ROOT, 'agent');
 
 const VERBOSE = process.argv.includes('--verbose');
+const RUNTIME = process.argv.includes('--runtime');
+
 
 const NODE_ON_FAIL = new Set(['abort', 'retry_once', 'degrade', 'escalate', 'pause']);
 // 挂载点 on_fail：abort 中止流转 / warn 告警放行 / skip 静默跳过 / degrade 跳过+标 DEGRADED（可选视角）
@@ -291,6 +299,233 @@ function parseConfig(text) {
     }
   }
   return cfg;
+}
+
+// ============================================================
+// 运行时模式（--runtime）：task_context 运行时状态探针
+// 扫描 $TEMP/kilo/task_context_*.json，对每个活跃 task_context 做静态契约 ×
+// 运行时状态交叉验证--发现"LLM 漂移"最早信号。
+//
+// 注册式检测项（举一反三扩展点）：新增检测只往 runtimeChecks 数组 push 一个函数，
+// 零改其他代码。每个函数签名: (ctx, env, rtCheck) => void
+//   ctx     task_context 对象（已解析）
+//   env     { graph, taskId, filePath } 静态上下文
+//   rtCheck (level, name, detail) => void  结果输出函数
+// 检测项独立、无副作用、异常隔离（try/catch 包裹，单项失败不阻塞其他项）。
+// ============================================================
+
+// R1: status 字段合法
+function rtCheckStatus(ctx, env, rtCheck) {
+  const valid = new Set(['initialized', 'RUNNING', 'PAUSED', 'DEGRADED', 'DONE', 'FAILED']);
+  const s = ctx.status;
+  if (valid.has(s)) {
+    rtCheck('PASS', 'runtime.status', `status=${s}`);
+  } else {
+    rtCheck('FAIL', 'runtime.status', `status="${s}" ∉ {${[...valid].join(',')}}`);
+  }
+}
+
+// R2: current_stage 在 graph 节点集合里（阶段合法性）
+function rtCheckCurrentStage(ctx, env, rtCheck) {
+  const stage = ctx.current_stage;
+  if (!stage) {
+    rtCheck('WARN', 'runtime.current_stage', 'current_stage 未设置（可能尚未流转或漏调 transition-check）');
+    return;
+  }
+  if (env.graph.nodes.has(stage)) {
+    rtCheck('PASS', 'runtime.current_stage', `current_stage=${stage}`);
+  } else {
+    rtCheck('FAIL', 'runtime.current_stage', `current_stage="${stage}" 不在 graph.yaml 节点集合`);
+  }
+}
+
+// R3: convergence 计数合法（非负整数 + 不超阈值）
+function rtCheckConvergence(ctx, env, rtCheck) {
+  const c = ctx.convergence || {};
+  const { round, max_rounds, total_rounds, max_total_rounds } = c;
+  let ok = true;
+  const parts = [`round=${round}/${max_rounds} total=${total_rounds}/${max_total_rounds}`];
+  if (!Number.isInteger(round) || round < 0) { ok = false; parts.push('round 非非负整数'); }
+  if (!Number.isInteger(total_rounds) || total_rounds < 0) { ok = false; parts.push('total_rounds 非非负整数'); }
+  if (Number.isInteger(max_rounds) && round > max_rounds) { ok = false; parts.push('round 超阈值'); }
+  if (Number.isInteger(max_total_rounds) && total_rounds > max_total_rounds) { ok = false; parts.push('total_rounds 超阈值'); }
+  rtCheck(ok ? 'PASS' : 'FAIL', 'runtime.convergence', parts.join(' | '));
+}
+
+// R4: 熔断接近性（>=80% 预警，>=100% 已触发）
+function rtCheckBreaker(ctx, env, rtCheck) {
+  const c = ctx.convergence || {};
+  const tr = c.total_rounds || 0;
+  const mtr = c.max_total_rounds || 7;
+  const r = c.round || 0;
+  const mr = c.max_rounds || 5;
+  const gPct = Math.round((tr / mtr) * 100);
+  const sPct = Math.round((r / mr) * 100);
+  if (gPct >= 100 || sPct >= 100) {
+    rtCheck('FAIL', 'runtime.breaker', `已触发熔断 global=${tr}/${mtr}(${gPct}%) single=${r}/${mr}(${sPct}%)`);
+  } else if (gPct >= 80 || sPct >= 80) {
+    rtCheck('WARN', 'runtime.breaker', `接近熔断 global=${gPct}% single=${sPct}%（建议人工介入）`);
+  } else {
+    rtCheck('PASS', 'runtime.breaker', `熔断安全 global=${gPct}% single=${sPct}%`);
+  }
+}
+
+// R5: transition_log 与 current_stage 一致（漏调 transition-check 检测）
+function rtCheckTransitionLog(ctx, env, rtCheck) {
+  const log = ctx.transition_log;
+  const stage = ctx.current_stage;
+  if (!Array.isArray(log) || log.length === 0) {
+    if (stage) {
+      rtCheck('WARN', 'runtime.transition_log', `current_stage=${stage} 但 transition_log 空（可能漏调 transition-check 或手工 set current_stage）`);
+    } else {
+      rtCheck('PASS', 'runtime.transition_log', '无流转记录（初始状态）');
+    }
+    return;
+  }
+  const last = log[log.length - 1];
+  if (stage && last.to !== stage) {
+    rtCheck('FAIL', 'runtime.transition_log', `transition_log 末条 to=${last.to} ≠ current_stage=${stage}（状态漂移）`);
+  } else {
+    rtCheck('PASS', 'runtime.transition_log', `${log.length} 条流转，最近: ${last.from}->${last.to}`);
+  }
+}
+
+// R6: config.agents 与 sizing.tier 存在性一致性
+function rtCheckTier(ctx, env, rtCheck) {
+  const tier = ctx.sizing && ctx.sizing.tier;
+  if (!tier) {
+    rtCheck('WARN', 'runtime.tier', 'sizing.tier 未设置（可能尚未 SIZING）');
+    return;
+  }
+  const agents = ctx.config && ctx.config.agents;
+  if (!agents || typeof agents !== 'object') {
+    rtCheck('FAIL', 'runtime.tier', `tier=${tier} 但 config.agents 缺失`);
+    return;
+  }
+  // 检测开关键是否为布尔值
+  const bad = Object.entries(agents).filter(([, v]) => typeof v !== 'boolean');
+  if (bad.length > 0) {
+    rtCheck('FAIL', 'runtime.tier', `config.agents 非布尔键: ${bad.map(([k]) => k).join(', ')}`);
+  } else {
+    rtCheck('PASS', 'runtime.tier', `tier=${tier} agents={${Object.entries(agents).map(([k,v]) => `${k}:${v}`).join(',')}}`);
+  }
+}
+
+// R7: 阶段产物完整性（CHECKING 后要求 verification.forward 已填充）
+function rtCheckVerification(ctx, env, rtCheck) {
+  const stage = ctx.current_stage;
+  const postChecking = ['REVIEWING', 'FIXING', 'DELIVERING', 'DONE'];
+  if (!stage || !postChecking.includes(stage)) {
+    rtCheck('PASS', 'runtime.verification', `current_stage=${stage || '(未设置)'} 不要求 verification`);
+    return;
+  }
+  const fwd = ctx.verification && ctx.verification.forward;
+  if (!fwd || !fwd.verdict) {
+    rtCheck('FAIL', 'runtime.verification', `current_stage=${stage} 但 verification.forward.verdict 未填充`);
+  } else {
+    rtCheck('PASS', 'runtime.verification', `forward.verdict=${fwd.verdict}`);
+  }
+}
+
+// R8: gate 状态（DELIVERING/DONE 要求 memory_write_status）
+function rtCheckGate(ctx, env, rtCheck) {
+  const stage = ctx.current_stage;
+  if (stage !== 'DELIVERING' && stage !== 'DONE') {
+    rtCheck('PASS', 'runtime.gate', `current_stage=${stage || '(未设置)'} 不要求 gate`);
+    return;
+  }
+  const mws = ctx.memory_write_status;
+  if (mws === 'OK' || mws === 'DEGRADED') {
+    rtCheck('PASS', 'runtime.gate', `memory_write_status=${mws} 满足 MEMORY_WRITE_COMPLETE`);
+  } else {
+    rtCheck('FAIL', 'runtime.gate', `current_stage=${stage} 但 memory_write_status=${mws || '(未设置)'}（须先执行 M4-M8 记忆写入）`);
+  }
+}
+
+// 注册表：新增检测项只在此 push 一个函数（扩展点单一）
+const runtimeChecks = [
+  rtCheckStatus,
+  rtCheckCurrentStage,
+  rtCheckConvergence,
+  rtCheckBreaker,
+  rtCheckTransitionLog,
+  rtCheckTier,
+  rtCheckVerification,
+  rtCheckGate,
+];
+
+function runRuntimeChecksForTask(filePath, taskId, graph) {
+  const runtimeResults = [];
+  const rtCheck = (level, name, detail = '') => runtimeResults.push({ level, name, detail });
+
+  let ctx;
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    ctx = JSON.parse(raw);
+    rtCheck('PASS', 'runtime.json_parse', 'task_context 可解析');
+  } catch (e) {
+    rtCheck('FAIL', 'runtime.json_parse', e.message);
+    return runtimeResults;
+  }
+
+  const env = { graph, taskId, filePath };
+  for (const check of runtimeChecks) {
+    try {
+      check(ctx, env, rtCheck);
+    } catch (e) {
+      rtCheck('FAIL', `runtime.${check.name}`, `检测异常: ${e.message}`);
+    }
+  }
+  return runtimeResults;
+}
+
+function runRuntimeMode() {
+  const tmpDir = path.join(os.tmpdir(), 'kilo');
+  let files = [];
+  try {
+    files = fs.readdirSync(tmpDir)
+      .filter((f) => f.startsWith('task_context_') && f.endsWith('.json'));
+  } catch {
+    // 目录不存在
+  }
+
+  if (files.length === 0) {
+    process.stdout.write('RUNTIME: 无活跃 task_context 文件\n');
+    process.stdout.write('SUMMARY: 0 active tasks / 0 FAIL\n');
+    return;
+  }
+
+  // 加载 graph.yaml（复用已有 parseGraphFile + readText）
+  const graphText = readText(GRAPH_PATH);
+  const graph = graphText ? parseGraphFile(graphText) : { nodes: new Map(), edges: [] };
+
+  let totalPass = 0, totalFail = 0, totalWarn = 0;
+
+  for (const file of files) {
+    const taskId = file.replace(/^task_context_/, '').replace(/\.json$/, '');
+    const filePath = path.join(tmpDir, file);
+    const results = runRuntimeChecksForTask(filePath, taskId, graph);
+
+    process.stdout.write(`\n=== task ${taskId} ===\n`);
+    for (const r of results) {
+      process.stdout.write(`${r.level} ${r.name}${r.detail ? ' - ' + r.detail : ''}\n`);
+      if (r.level === 'PASS') totalPass++;
+      if (r.level === 'FAIL') totalFail++;
+      if (r.level === 'WARN') totalWarn++;
+    }
+  }
+
+  process.stdout.write(`\nSUMMARY: ${files.length} active tasks / ${totalPass} PASS / ${totalFail} FAIL / ${totalWarn} WARN\n`);
+  if (totalFail > 0) {
+    process.stderr.write('[RUNTIME_VIOLATION] 检测到运行时状态违规，见上述 FAIL\n');
+    process.exit(1);
+  }
+}
+
+
+if (RUNTIME) {
+  runRuntimeMode();
+  process.exit(0);
 }
 
 // ============================================================
@@ -565,8 +800,10 @@ if (cfg) {
     if (bad.length === 0) pass('config.tier.keys', 'tier 键全部合法');
     for (const t of bad) fail('config.tier.keys', `"${t}" ⊄ {T0,T1,T2,T3}`);
   }
-  // D4. tier 开关键应对应"带 when 的智能体"（防僵尸开关）
-  {
+    // D4. tier 开关键应对应"带 when 的智能体"（防僵尸开关）
+    // 例外白名单：multiModel 主控行为开关（非智能体挂载开关，无对应 agent when 引用）
+    const TIER_BEHAVIOR_KEYS = new Set(['mm_worktree']);
+    {
     const whenKeys = new Set();
     for (const [, a] of agents) {
       for (const m of a.mount) {
@@ -577,12 +814,13 @@ if (cfg) {
     }
     for (const [tier, keys] of cfg.tierAgents) {
       for (const k of keys) {
+        if (TIER_BEHAVIOR_KEYS.has(k)) continue;  // 行为开关豁免
         if (!whenKeys.has(k)) {
           warn(`config.tier.${tier}.${k}`, `无任何智能体 when 引用 config.agents.${k}（僵尸开关）`);
         }
       }
     }
-  }
+    }
 }
 
 // ============================================================

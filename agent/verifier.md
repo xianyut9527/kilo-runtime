@@ -92,7 +92,7 @@ verification_commands: [{ cmd, expected_exit_code }]
 ## 分层验证
 
 ### L1（语法/编译/格式/编码）
-- 运行测试、构建、类型、Lint
+- 运行测试、构建、类型、lint
 - 编码扫描：BOM / U+FFFD / GBK 残留
 - 无法运行 → `[VERIFY_PENDING]`
 
