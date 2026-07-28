@@ -337,7 +337,7 @@ INSERT OR IGNORE INTO project_context (context_id, category, title, content, sou
  '["architecture","seven-layer","brain","evolution"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 
 ('PC-002', 'TECH_STACK', '模型与 MCP 配置（kilo.json）',
-  '主模型 hx/MiniMax-M3（conductor + coder）；架构/审查 kimi-k3 + glm-5.2；verifier/reverse-auditor glm-5.2；fixer kimi-k2.7-code/deepseek-v4-flash。MCP：context7（文档）+ gitnexus（代码图谱）+ playwright（浏览器自动化，谨慎用）。记忆通道：python scripts/memory.py 主通道（v2.6，Python stdlib sqlite3 封装，跨平台免安装）；sqlite3 CLI 为可选替代；备用 memory-mcp（v3.0，kilo.json enabled:false 默认关闭）。已移除 ddg-search / 第三方 sqlite MCP（内存爆炸风险）。compaction auto，threshold 65%，tail_turns 25，preserve_recent_tokens 60K。',
+  '主模型 conductor=hx/kimi-k3，coder=hx/kimi-k2.7-code，verifier=hx/kimi-k2.6，reverse-auditor=hx/MiniMax-M3，side-checker=hx/glm-5.2，reviewer=hx/glm-5.2，fixer=hx/MiniMax-M3。MCP：context7（文档）+ gitnexus（代码图谱）+ playwright（浏览器自动化，谨慎用）。记忆通道：python scripts/memory.py 主通道（v2.6，Python stdlib sqlite3 封装，跨平台免安装）；sqlite3 CLI 为可选替代；备用 memory-mcp（v3.0，kilo.json enabled:false 默认关闭）。compaction：auto=true, prune=true, tail_turns=5, preserve_recent_tokens=40000, reserved=8000。',
  'kilo.json', 3,
  '["config","model","mcp","compaction","kilo-json"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 

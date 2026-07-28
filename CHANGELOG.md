@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+- **2026-07-28**: v2.6.4 记忆通道兜底闭环 — check17 探测链与 install 初始化补齐 python memory.py 分支（查漏补缺失）。
+  - **背景**：v2.6 已将记忆主通道切为 `python scripts/memory.py`，但两处运行时链路仍只认 sqlite3 CLI：① validate-config.mjs check17 探测链为 better-sqlite3 → sqlite3 CLI（含 winget 探测），python-only 机器会被误报 `[MEMORY_RUNTIME_UNAVAILABLE]`（主通道实际可用）；② install.ps1/install.sh 的 memory.db 初始化仅依赖 sqlite3 CLI，python-only 机器 memory.db 永不建表，主通道装好即残。
+  - **validate-config.mjs**：check17 探测链末尾新增 python memory.py 分支（仅 CLI 缺失时进入，掩盖不了契约真实 FAIL）；经 `memory.py check` 一次调用完成 7 表存在性 + 行数解析，AP-/PAT- 迁移行数经 `query` 补查；dispatch_log=0 内联 `[MEMORY_LAYER_HOLLOW]` 提示；db 缺失 / 全通道不可用两处修复文案改为"memory.py exec-file（免安装）/ sqlite3 CLI"双路径。
+  - **install.ps1 / install.sh**：Step 2 新增 python 回退——sqlite3 CLI 不可用时探测 python/python3 + `scripts/memory.py`，`touch` 空 db 文件后 `exec-file init.sql` 建表（memory.py 要求 db 文件预存在，空文件对 sqlite 即合法空库），并用 `memory.py check` 做健康验证；Step 1 提示文案同步声明回退存在。
+  - **验证**：python 回退路径实测（临时 db exec-file init.sql → 30 表/视图/索引对象建成 + check 输出 7 核心表）；validate-config 29/29 PASS（本机 better-sqlite3 分支不受影响）；lifecycle-doctor 42 PASS；e2e-smoke 44 PASS。
+- **2026-07-27**: v2.6.3 稳定性加固六建议落地 — 流转裁判 + e2e 回归 + doctor 守护 + 记忆通道切换 + 模型升级 + compaction 恢复协议。
+  - **scripts/transition-check.mjs**（新增 434 行）：阶段流转机械裁判，读 graph.yaml 边定义 + task_context 求值 when/gate，exit 0/1/2/3；convergence 机械递增（CHECKING/REVIEWING 进入时 total_rounds+1，FIXING 进入时 round+1），熔断 exit 3；`MEMORY_WRITE_COMPLETE` 硬门（memory_write_status ∈ {OK, DEGRADED}）。
+  - **scripts/e2e-smoke.mjs**（新增）：44 场景端到端回归（T0 极速通道 / T1 / T2 全链路含 FIXING 回流 / T3 子图闭环 / 单点+全局熔断 / gate 拒绝），全绿。
+  - **scripts/memory.py**（新增）：Python stdlib sqlite3 封装主通道（check/query/exec/exec-file，--db/KILO_MEMORY_DB 覆盖），解决 sqlite3 CLI 本机缺失导致 M1-M8 全断的问题；10 个 agent/*.md 召回接口 + AGENTS.md/README/core.md/.kilo/memory 文档统一切换。
+  - **kilo.json 模型绑定升级**：conductor→hx/kimi-k3、verifier→hx/kimi-k2.6、reviewer→hx/glm-5.2；docs/model-registry.md 补能力矩阵。
+  - **agent/conductor.md**：机械流转段（transition-check 调用时机）+ compaction 后 task_context 恢复协议 + WRITE_MATRIX 标记；init.sql 340/345 种子叙事更新为 v2.6 措辞。
+  - **验证**：lifecycle-doctor 42 PASS / 0 FAIL / 0 WARN；e2e-smoke 44 PASS；grep 全仓无旧通道措辞残留（历史 CHANGELOG 条目除外）。
 - **2026-07-24**: ensemble → multiModel 重构 + 配置硬编码清理（B 档修复）。
   - **背景**：原 `ensemble.md`（投票选优模式）与新建的 `multiModel.md`（融合编辑模式）语义重叠，配置混乱；agent 文件 `synthesizer-fusion.md` 与 `kilo.json` 配的 `synthesizer` 命名不一致（Kilo 按文件名加载，会导致 `multiModel` 阶段 4 调用 `synthesizer-fusion` 找不到 agent → FAIL）；`multiModel.md` 多处硬编码具体模型名（`MiniMax-M3` / `glm-5.2` / `kimi-k2.6` / `kimi-k2.7-code`），配置变更后 agent 文档漂移。
   - **统一术语**：删除 `agent/ensemble.md` 与 `agent/synthesizer.md`（旧投票版），全仓术语改为 `multiModel` + `synthesizer-fusion`（`workflow-core.md` / `output-schema.md` / `skill-usage-tracking.md` / `README.md` / `hermes-migration/SKILL.md` 同步更新；新增 `MULTIMODEL_DEGRADED` / `MULTIMODEL_ABANDONED` 状态信号）

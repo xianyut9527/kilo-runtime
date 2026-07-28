@@ -198,10 +198,11 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     }
 
     # ============================================================
-    # Memory layer setup (sqlite3 CLI + memory.db)
-    # When missing, prompt the user; on consent, auto-install sqlite3 and init memory.db.
-    # When sqlite3 is unavailable, the memory layer degrades silently
-    # (no errors, no writes; the self-evolution loop is inactive).
+    # Memory layer setup (sqlite3 CLI / python memory.py + memory.db)
+    # When sqlite3 CLI is missing, prompt the user; on consent, auto-install sqlite3.
+    # Step 2 falls back to python scripts/memory.py (v2.6 main channel) when sqlite3
+    # CLI stays unavailable. When both are unavailable, the memory layer degrades
+    # silently (no errors, no writes; the self-evolution loop is inactive).
     # ============================================================
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Cyan
@@ -249,8 +250,9 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
     if (-not $SqliteExe) {
         Write-Host "[CHECK]  sqlite3 CLI not detected" -ForegroundColor Yellow
-        Write-Host "The memory layer (experience / error / model-calibration / skill-upgrade) depends on sqlite3." -ForegroundColor Gray
-        Write-Host "When missing, the memory layer degrades silently: no errors, no writes; self-evolution loop is inactive." -ForegroundColor Gray
+        Write-Host "The memory layer (experience / error / model-calibration / skill-upgrade) uses sqlite3." -ForegroundColor Gray
+        Write-Host "Note: python scripts/memory.py (v2.6 main channel) will be tried as init fallback in Step 2." -ForegroundColor Gray
+        Write-Host "If both are missing, the memory layer degrades silently: no errors, no writes; self-evolution loop is inactive." -ForegroundColor Gray
         Write-Host ""
         $Choice = Read-Host "Install sqlite3 now? (winget install SQLite.SQLite) [Y/n]"
 
@@ -285,7 +287,7 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
         Write-Host "[CHECK]  sqlite3 CLI already installed: $($SqliteExe.Source)" -ForegroundColor Green
     }
 
-    # --- Step 2: Initialize memory.db (when sqlite3 is available) ---
+    # --- Step 2: Initialize memory.db (sqlite3 CLI preferred; python memory.py fallback, v2.6.4) ---
     if ($SqliteExe) {
         # Create data directory
         if (-not (Test-Path $DbDir)) {
@@ -312,8 +314,36 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
             Write-Host "[VERIFY] Tables: $Tables" -ForegroundColor Gray
         }
     } else {
-        Write-Host "[WARN]   sqlite3 CLI unavailable, memory.db not initialized" -ForegroundColor Yellow
-        Write-Host "         Memory layer degrades silently. After installing sqlite3, re-run install.ps1 to init." -ForegroundColor Gray
+        # v2.6.4 fallback: python scripts/memory.py (v2.6 main channel; Python stdlib sqlite3,
+        # cross-platform, no extra install) can initialize memory.db without sqlite3 CLI.
+        $PythonExe = Get-Command python -ErrorAction SilentlyContinue
+        if (-not $PythonExe) { $PythonExe = Get-Command python3 -ErrorAction SilentlyContinue }
+        $MemPy = Join-Path $PSScriptRoot "scripts\memory.py"
+        if ($PythonExe -and (Test-Path $MemPy) -and -not (Test-Path $DbPath)) {
+            if (-not (Test-Path $DbDir)) {
+                New-Item -ItemType Directory -Path $DbDir -Force | Out-Null
+                Write-Host "[CREATE] $DbDir" -ForegroundColor Green
+            }
+            if (Test-Path $InitSql) {
+                Write-Host "[INIT]   sqlite3 CLI unavailable; using python memory.py fallback..." -ForegroundColor Cyan
+                # memory.py requires the db file to exist; an empty file is a valid empty sqlite db
+                New-Item -ItemType File -Path $DbPath -Force | Out-Null
+                & $PythonExe.Source $MemPy --db $DbPath exec-file $InitSql 2>&1 | ForEach-Object { Write-Host $_ }
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "[OK]     memory.db schema initialized via python memory.py: $DbPath" -ForegroundColor Green
+                    & $PythonExe.Source $MemPy --db $DbPath check 2>&1 | ForEach-Object { Write-Host "[VERIFY] $_" -ForegroundColor Gray }
+                } else {
+                    Write-Host "[WARN]   python memory.py init failed (exit $LASTEXITCODE)" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "[WARN]   schema/init.sql not found ($InitSql), skip table creation" -ForegroundColor Yellow
+            }
+        } elseif (Test-Path $DbPath) {
+            Write-Host "[SKIP]   memory.db already exists, skip init: $DbPath" -ForegroundColor Gray
+        } else {
+            Write-Host "[WARN]   sqlite3 CLI and python both unavailable, memory.db not initialized" -ForegroundColor Yellow
+            Write-Host "         Memory layer degrades silently. After installing sqlite3 or python, re-run install.ps1 to init." -ForegroundColor Gray
+        }
     }
 
     Write-Host ""

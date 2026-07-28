@@ -18,7 +18,7 @@
     "conductor": {
       "mode": "primary",
       "model": "hx/kimi-k3",
-      "prompt": "你是工作流编排者（conductor）。按 lifecycle/ 阶段加载智能体，管理 task_context，执行交叉验证门禁。"
+      "prompt": "你是工作流编排者（conductor）。先做意图判定（咨询类/执行类）与定级（T0-T3），按 lifecycle/ 阶段加载智能体，管理 task_context，执行交叉验证门禁；compaction 后按 task_context 恢复流转。"
     },
     "multiModel": {
       "mode": "primary",

@@ -1320,11 +1320,11 @@ function check17MemoryDbHealth() {
     return {
       name,
       pass: true,
-      detail: `${warnTag}${dbPath} 不存在${commitHint}。修复路径：重新运行 install.ps1（Windows）或 install.sh（macOS/Linux）— 脚本会提示安装 sqlite3 并自动初始化 memory.db。或手动执行 \`sqlite3 ~/.config/kilo-data/memory.db < .kilo/memory/schema/init.sql\` 建表。${warnTag ? '缺失 sqlite 通道时记忆层静默降级，不报错但不写入，自我进化闭环不生效。' : ''}`,
+      detail: `${warnTag}${dbPath} 不存在${commitHint}。修复路径：重新运行 install.ps1（Windows）或 install.sh（macOS/Linux）— 脚本会提示安装 sqlite3 并自动初始化 memory.db。或手动初始化（任一即可）：① \`python scripts/memory.py exec-file .kilo/memory/schema/init.sql\`（免安装，v2.6 主通道，需先 touch 空 db 文件）② 安装 sqlite3 CLI 后执行 \`sqlite3 ~/.config/kilo-data/memory.db < .kilo/memory/schema/init.sql\`。${warnTag ? '缺失 sqlite 通道时记忆层静默降级，不报错但不写入，自我进化闭环不生效。' : ''}`,
     };
   }
 
-  // 用 better-sqlite3 / sqlite3 CLI / 自实现轻量 header 检测 三选一
+  // 探测链：better-sqlite3 → sqlite3 CLI（含 winget 目录探测）→ python scripts/memory.py（v2.6 主通道）
   // 优先尝试 better-sqlite3（已在 node_modules 中），其次 sqlite3 CLI
   // v2.5：7 表（fact_store / failure_db / dispatch_log / project_context / model_calibration / skill_upgrade_log / skill_usage_events）
   const REQUIRED_TABLES = ['fact_store', 'failure_db', 'dispatch_log', 'project_context', 'model_calibration', 'skill_upgrade_log', 'skill_usage_events'];
@@ -1493,11 +1493,56 @@ function check17MemoryDbHealth() {
           }
         }
       }
+      // v2.6.4：sqlite3 CLI 缺失时，退化为 python scripts/memory.py 探测（v2.6 起记忆主通道，
+      // Python stdlib sqlite3 封装，跨平台免安装）。主通道自身可用即不应报 [MEMORY_RUNTIME_UNAVAILABLE]。
+      // 仅在 CLI 缺失（isMissing）时进入；CLI 存在但契约失败属于真实 FAIL，不由本分支掩盖。
       if (isMissing) {
+        const memPy = path.resolve(ROOT, 'scripts', 'memory.py');
+        if (fs.existsSync(memPy)) {
+          for (const pyBin of ['python', 'python3']) {
+            try {
+              // memory.py check 输出：[OK] 行 + "tables:" + 每行 "  <name>\t<count>"
+              const out = execFileSync(pyBin, [memPy, '--db', dbPath, 'check'], { encoding: 'utf8', timeout: 8000 });
+              const found = {};
+              for (const line of out.split(/\r?\n/)) {
+                const m = line.match(/^\s+(\S+)\t(\d+|\?)\s*$/);
+                if (m) found[m[1]] = m[2] === '?' ? 0 : parseInt(m[2], 10);
+              }
+              const missingTables = REQUIRED_TABLES.filter((t) => !(t in found));
+              if (missingTables.length > 0) {
+                return {
+                  name,
+                  pass: false,
+                  detail: `memory.db 存在但缺失表: [${missingTables.join(', ')}]（python memory.py 通道检出），需执行 \`python scripts/memory.py exec-file .kilo/memory/schema/init.sql\` 建表`,
+                };
+              }
+              tableRows = {};
+              for (const t of REQUIRED_TABLES) tableRows[t] = found[t];
+              try {
+                const mig = execFileSync(
+                  pyBin,
+                  [memPy, '--db', dbPath, 'query', "SELECT COUNT(*) FROM fact_store WHERE fact_id LIKE 'AP-%' OR fact_id LIKE 'PAT-%'"],
+                  { encoding: 'utf8', timeout: 5000 }
+                );
+                tableRows.__migratedFacts = parseInt(mig.trim(), 10) || 0;
+              } catch { /* 补查失败不影响主结论 */ }
+              const dispPy = tableRows.dispatch_log || 0;
+              const hollowHint = dispPy === 0 ? ' ⚠️ [MEMORY_LAYER_HOLLOW] dispatch_log=0 → M6 闭环从未闭合' : '';
+              return {
+                name,
+                pass: true,
+                detail: `memory.db 健康度校验通过（python memory.py 通道，${pyBin}；better-sqlite3/sqlite3 CLI 均不可用）; dispatch_log=${dispPy}, fact_store=${tableRows.fact_store || 0}${hollowHint}`,
+              };
+            } catch (pyErr) {
+              if (pyErr && pyErr.code === 'ENOENT') continue; // 该 python 解释器不存在，试下一个
+              break; // python 存在但执行失败（如 db 损坏），不再尝试其他解释器
+            }
+          }
+        }
         return {
           name,
           pass: true,
-          detail: `[MEMORY_RUNTIME_UNAVAILABLE] ⚠️ better-sqlite3 与 sqlite3 CLI 均不可用（会话 PATH 可能未刷新），记忆层静默失效（经验/错误/校准零写入，自我进化闭环不生效）。修复路径：重新运行 install.ps1（Windows）或 install.sh（macOS/Linux）— 脚本会提示安装 sqlite3 并自动初始化 memory.db；或手动安装 sqlite3 CLI（winget install SQLite.SQLite / brew install sqlite / apt-get install sqlite3）+ 执行 \`sqlite3 ~/.config/kilo-data/memory.db < .kilo/memory/schema/init.sql\` 建表`,
+          detail: `[MEMORY_RUNTIME_UNAVAILABLE] ⚠️ better-sqlite3、sqlite3 CLI 与 python memory.py 均不可用（会话 PATH 可能未刷新），记忆层静默失效（经验/错误/校准零写入，自我进化闭环不生效）。修复路径：重新运行 install.ps1（Windows）或 install.sh（macOS/Linux）— 脚本会提示安装 sqlite3 并自动初始化 memory.db；或手动初始化（任一即可）：① \`python scripts/memory.py exec-file .kilo/memory/schema/init.sql\`（免安装，v2.6 主通道）② 安装 sqlite3 CLI（winget install SQLite.SQLite / brew install sqlite / apt-get install sqlite3）+ 执行 \`sqlite3 ~/.config/kilo-data/memory.db < .kilo/memory/schema/init.sql\``,
         };
       }
       return {

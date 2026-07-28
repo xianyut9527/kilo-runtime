@@ -211,9 +211,10 @@ else
 fi
 
 # ============================================================
-# Memory 层初始化（sqlite3 CLI + memory.db）
-# 检测到缺失时提示用户，同意则自动安装 sqlite3 + 初始化 memory.db
-# 缺失时记忆层静默降级（不报错但不写入，自我进化闭环不生效）
+# Memory 层初始化（sqlite3 CLI / python memory.py + memory.db）
+# 检测到 sqlite3 CLI 缺失时提示用户，同意则自动安装；
+# Step 2 在 CLI 不可用时回退 python scripts/memory.py（v2.6 主通道）初始化。
+# 两者均缺失时记忆层静默降级（不报错但不写入，自我进化闭环不生效）
 # ============================================================
 echo ""
 echo "========================================"
@@ -230,8 +231,9 @@ INIT_SQL="${TARGET_DIR}/.kilo/memory/schema/init.sql"
 # --- Step 1: 检测 sqlite3 CLI ---
 if ! command -v sqlite3 &> /dev/null; then
     echo "[CHECK]  sqlite3 CLI 未检测到"
-    echo "记忆层（经验沉淀/错误总结/模型校准/skill 升级）依赖 sqlite3。"
-    echo "缺失时记忆层静默降级：不报错但不写入，自我进化闭环不生效。"
+    echo "记忆层（经验沉淀/错误总结/模型校准/skill 升级）使用 sqlite3。"
+    echo "注意：Step 2 会尝试 python scripts/memory.py（v2.6 主通道）回退初始化。"
+    echo "两者均缺失时记忆层静默降级：不报错但不写入，自我进化闭环不生效。"
     echo ""
     # 检测可用的包管理器并推荐安装命令
     INSTALL_CMD=""
@@ -284,7 +286,7 @@ else
     echo "[CHECK]  sqlite3 CLI 已安装: $(command -v sqlite3)"
 fi
 
-# --- Step 2: 初始化 memory.db（sqlite3 可用时）---
+# --- Step 2: 初始化 memory.db（sqlite3 优先；python memory.py 回退，v2.6.4）---
 if command -v sqlite3 &> /dev/null; then
     # 建数据目录
     mkdir -p "${DB_DIR}"
@@ -308,8 +310,37 @@ if command -v sqlite3 &> /dev/null; then
         echo "[VERIFY] 表清单: ${TABLES}"
     fi
 else
-    echo "[WARN]   sqlite3 CLI 不可用，memory.db 未初始化"
-    echo "         记忆层静默降级。安装 sqlite3 后重新运行 install.sh 即可补初始化。"
+    # v2.6.4 回退：python scripts/memory.py（v2.6 主通道，Python stdlib sqlite3，跨平台免安装）
+    # 无 sqlite3 CLI 也能初始化 memory.db
+    PYTHON_BIN=""
+    if command -v python3 &> /dev/null; then
+        PYTHON_BIN="python3"
+    elif command -v python &> /dev/null; then
+        PYTHON_BIN="python"
+    fi
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    MEM_PY="${SCRIPT_DIR}/scripts/memory.py"
+    if [ -n "${PYTHON_BIN}" ] && [ -f "${MEM_PY}" ] && [ ! -f "${DB_PATH}" ]; then
+        mkdir -p "${DB_DIR}"
+        if [ -f "${INIT_SQL}" ]; then
+            echo "[INIT]   sqlite3 CLI 不可用，使用 python memory.py 回退建表..."
+            # memory.py 要求 db 文件已存在；空文件对 sqlite 即合法空库
+            touch "${DB_PATH}"
+            if "${PYTHON_BIN}" "${MEM_PY}" --db "${DB_PATH}" exec-file "${INIT_SQL}"; then
+                echo "[OK]     memory.db 表结构初始化完成（python memory.py）: ${DB_PATH}"
+                "${PYTHON_BIN}" "${MEM_PY}" --db "${DB_PATH}" check | sed 's/^/[VERIFY] /'
+            else
+                echo "[WARN]   python memory.py 初始化失败（exit code $?）"
+            fi
+        else
+            echo "[WARN]   schema/init.sql 未找到（${INIT_SQL}），跳过建表"
+        fi
+    elif [ -f "${DB_PATH}" ]; then
+        echo "[SKIP]   memory.db 已存在，跳过初始化: ${DB_PATH}"
+    else
+        echo "[WARN]   sqlite3 CLI 与 python 均不可用，memory.db 未初始化"
+        echo "         记忆层静默降级。安装 sqlite3 或 python 后重新运行 install.sh 即可补初始化。"
+    fi
 fi
 
 echo ""
