@@ -19,6 +19,7 @@ Thumbs.db
 *.tmp
 *.swp
 *.swo
+__pycache__/
 
 # kilo.json 备份文件（install 脚本修改前自动生成，不应提交）
 kilo.json.bak.*

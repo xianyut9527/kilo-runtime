@@ -106,7 +106,7 @@ memory_context_injected: "string"  # 注入的上下文摘要（≤ 2000 tokens�
 
 - `memory.db` 不存在 → `DEGRADED`，首次输出提示，后续静默，不阻塞主流程
 - SQL 失败 → `ERROR`，输出警告行，继续执行
-- sqlite3 CLI 未安装 → `DEGRADED`，提示用户运行 install 脚本
+- sqlite3 CLI 未安装 → `DEGRADED`，提示用户运行 install 脚本；若暂无法安装，可降级使用 `python -c "import sqlite3"` 作为临时通道（install.ps1 / install.sh 已自动处理 sqlite3 CLI 安装）
 
 ## 硬规则
 

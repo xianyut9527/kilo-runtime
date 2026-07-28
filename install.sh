@@ -38,6 +38,7 @@ RECURSIVE_EXCLUDE=(
     ".tmp"
     "worktrees"
     ".pytest_cache"
+    "__pycache__"
 )
 
 COPIED_FILES=0
@@ -201,6 +202,7 @@ KILO_JSON_PATH="${TARGET_DIR}/kilo.json"
 if [ -f "${KILO_JSON_PATH}" ]; then
     sed -i.bak \
         -e "s|\${KILO_CONFIG_DIR}|${TARGET_DIR}|g" \
+        -e "s|\${HOME}|${HOME}|g" \
         "${KILO_JSON_PATH}" \
         && rm -f "${KILO_JSON_PATH}.bak"
     echo "[WRITE] kilo.json path placeholders substituted (KILO_CONFIG_DIR=${TARGET_DIR})"

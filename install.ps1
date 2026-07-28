@@ -25,7 +25,8 @@ $RecursiveExclude = @(
     "agent-manager.json",
     ".tmp",
     "worktrees",
-    ".pytest_cache"
+    ".pytest_cache",
+    "__pycache__"
 )
 
 Write-Host "========================================" -ForegroundColor Cyan
@@ -181,6 +182,7 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     if (Test-Path $KiloJsonPath) {
         $JsonContent = Get-Content -Path $KiloJsonPath -Raw -Encoding UTF8
         $JsonContent = $JsonContent -replace '\$\{KILO_CONFIG_DIR\}', ($Target -replace '\\', '\\')
+        $JsonContent = $JsonContent -replace '\$\{HOME\}', ($env:USERPROFILE -replace '\\', '\\')
         # Note: memory.db path uses ${HOME}/.config/kilo-data/memory.db, accessed directly
         # by bash + sqlite3 CLI (v2.5- main channel); not substituted at install time.
         # Note: memory-mcp (v3.0 standby channel) was removed in v2.6.2 cleanup along

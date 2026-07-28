@@ -1,0 +1,15 @@
+#!/bin/sh
+# Kilo: 配置提交后部署提醒（防部署漂移复发）
+# 根因案例：v6.2 提交(9cd92cc)后漏跑 install.ps1，全局目录长期运行旧代际配置，
+# 导致会话未按项目源设计的编排工作流执行（failure_db: fail-20260727-partial-migration，已复发 2 次）。
+#
+# 使用方式：
+#   cp tools/hooks/post-commit .git/hooks/post-commit
+#   chmod +x .git/hooks/post-commit
+if git diff-tree --no-commit-id --name-only -r HEAD | grep -qE '^(agent/|lifecycle/|\.kilo/|kilo\.json|AGENTS\.md|docs/model-registry\.md)'; then
+  echo ""
+  echo "[kilo][DEPLOY-REMINDER] 配置变更已提交，全局目录 (~/.config/kilo) 不会自动同步。"
+  echo "[kilo][DEPLOY-REMINDER] 请运行: pwsh -File install.ps1   （部署后重启 Kilo 生效）"
+  echo "[kilo][DEPLOY-REMINDER] 漏跑会导致全局运行旧代际配置（见 failure_db: fail-20260727-partial-migration）。"
+fi
+exit 0
