@@ -183,7 +183,7 @@ when: "config.agents.reverse_auditor"
 
 | 取值 | 行为 | 适用场景 |
 |------|------|----------|
-| `abort` | 标记 `[SLOT_ABORT]`，**中止进入该阶段主槽** | `post:PLANNING` 方案硬门审查（plan-reviewer） |
+| `abort` | 标记 `[SLOT_ABORT]`，**中止进入该阶段主槽** | `post:PLANNING` 方案硬门审查 |
 | `warn` | 输出警告，**继续执行** | `pre:`/`post:`/`on:` 钩子的默认行为 |
 | `skip` | 静默跳过该智能体 | 非关键辅助智能体 |
 | `degrade` | 标记 `DEGRADED`，跳过该视角，**主流程继续** | 可选视角（reverse-auditor / side-checker） |
@@ -239,7 +239,7 @@ tier_defaults:
 控制**单个智能体**在该挂载点的失败行为：
 
 ```yaml
-# plan-reviewer：方案审查 FAIL 必须中止进入 EXECUTING
+# post:PLANNING 方案审查 FAIL 必须中止进入 EXECUTING
 mount:
   - at: post:PLANNING
     order: 0
@@ -289,7 +289,7 @@ mount:
 
 ### 示例 B：钩子挂载（阶段前后）
 
-`agent/plan-reviewer.md`：
+`agent/<custom-reviewer>.md`：
 
 ```yaml
 mount:
@@ -359,7 +359,7 @@ mount:
 | `verifier` | `CHECKING`, `MM_CHECKING`, `MM_FCHECK` | 主槽+子图×2 | 无 | 默认 | 正向验证（3 点） |
 | `reviewer` | `REVIEWING` | 主槽 | 无 | 默认 | 代码审查 |
 | `fixer` | `FIXING` | 主槽 | 无 | 默认 | 定向修复 |
-| `plan-reviewer` | `post:PLANNING` | 后钩子 | 无 | `abort` | 方案硬门审查 |
+| `<custom-reviewer>` | `post:PLANNING` | 后钩子 | 无 | `abort` | 方案硬门审查 |
 | `reverse-auditor` | `CHECKING` | 主槽 | `config.agents.reverse_auditor` | `degrade` | 反向审计（可选） |
 | `side-checker` | `REVIEWING` | 主槽 | `config.agents.side_checker` | `degrade` | 侧向验证（可选） |
 | `coder-a` | `MM_EXECUTING` | 子图主槽 | 无 | 默认 | 逻辑推理派 |
@@ -400,7 +400,7 @@ mountPoint PLANNING: [planner(order:10)]
 mountPoint EXECUTING: [coder]
 mountPoint CHECKING: [verifier, reverse-auditor(when:config.agents.reverse_auditor)]
 mountPoint REVIEWING: [reviewer, side-checker(when:config.agents.side_checker)]
-mountPoint post:PLANNING: [plan-reviewer(order:0,on_fail:abort)]
+mountPoint post:PLANNING: [<custom-reviewer>(order:0,on_fail:abort)]
 ```
 
 ### 部署后 blob 级验证
@@ -423,7 +423,7 @@ foreach ($f in $files) {
 |------|------|------|
 | `[ASSEMBLY_FAIL]` mount[].at 无效 | `at` 不在派生挂载点全集内 | 对照 §2 挂载点全集修正名称 |
 | `[ASSEMBLY_FAIL]` 角色无人履行 | 某 `required_roles` 角色无智能体在主槽注册 | 创建 `agent/<role>.md` 并挂载到对应主槽 |
-| `[SLOT_ABORT]` | `post:PLANNING` 的 `on_fail: abort` 触发 | 检查 plan-reviewer 输出，修复方案后重试 |
+| `[SLOT_ABORT]` | `post:PLANNING` 的 `on_fail: abort` 触发 | 检查方案审查输出，修复方案后重试 |
 | `[AGENT_TIMEOUT]` | wall-clock 超过 `timeout_s` | 检查 `config.yaml timeouts.per_agent_s` 是否过小 |
 | `[DIVERSITY_VIOLATION]` | T3 coder-a/b/c 模型 (vendor, architecture) 不两两不同 | 在 `kilo.json` 绑定不同 vendor 的模型 |
 | `DEGRADED` | 可选视角（reverse-auditor/side-checker）挂载失败 | 检查模型可用性或降级为单机模式 |

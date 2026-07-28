@@ -29,7 +29,7 @@
 |----|----------|------|------------------|----------|------|-------------|
 | 0 | **conductor** | 生命周期编排者：意图判定、定级、阶段流转、智能体加载调度、上下文传递、门禁管理、记忆写入 | 全阶段（不亲自执行） | `kilo.json` `agent.conductor.model` | primary | `agent/conductor.md` |
 | 1 | **planner** | 规划智能体：设计门、方案设计、单元 DAG 拆分、验收点定义、全量扫描清单 | PLANNING | `kilo.json` `agent.planner.model` | subagent | `agent/planner.md` |
-| 2 | **plan-reviewer** | 方案审查智能体：独立审查 planner 输出的方案（需求覆盖/单元 DAG/风险扫描/边界假设），输出 PASS/FAIL verdict——反自检自查，planner 不自验方案 | post:PLANNING | `kilo.json` `agent.plan-reviewer.model` | subagent | `agent/plan-reviewer.md` |
+
 | 3 | **coder** | 编码智能体：按方案实现代码、输出验收映射表+三件套、状态信号 | EXECUTING | `kilo.json` `agent.coder.model` | subagent | `agent/coder.md` |
 | 4 | **verifier** | 正向验证智能体：按验收标准逐条验证、L1/L2/L3 分层、5元组证据、独立重跑 | CHECKING（正向） | `kilo.json` `agent.verifier.model` | subagent | `agent/verifier.md` |
 | 5 | **reverse-auditor** | 反向审计智能体：从产物反推是否满足原始需求、追溯假设、发现隐性遗漏 | CHECKING（反向） | `kilo.json` `agent.reverse-auditor.model` | subagent | `agent/reverse-auditor.md` |
@@ -48,7 +48,7 @@
 |--------|--------------------------|------|
 | conductor | `fast-reasoning` / 通用 reasoning | 200K 上下文容纳全流程编排 |
 | planner | `deep-reasoning` | 架构分析、长上下文、复杂推理最强 |
-| plan-reviewer | `strict-verification` | 方案审查、逻辑推理、架构分析（反自检自查；与 planner 异模型保证判定独立性） |
+
 | coder | `code-generation` | Code-tuned，编码专精 |
 | verifier | `strict-verification` | 安全敏感、边界敏感、逻辑审查强 |
 | reverse-auditor | `strict-verification` | 同 verifier，反向推理需要严谨逻辑 |
@@ -82,7 +82,6 @@
       "prompt": "多模型融合编辑智能体。详见 agent/synthesizer-fusion.md。"
     },
     "planner":     { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
-    "plan-reviewer": { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
     "coder":       { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
     "verifier":    { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
     "reverse-auditor": { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
@@ -94,7 +93,7 @@
 > 注：此为结构示例，模型 ID 实际绑定以仓库 `kilo.json` 为单一真相来源（v3.1 方案1）。
 ```
 
-> **subagent 智能体不在 kilo.json 中声明**：planner/plan-reviewer/coder/verifier 等 8 个职能智能体通过 conductor 的 `task` 工具按需启动（`subagent_type` 参数指向对应 agent/*.md），不需要在 kilo.json 注册。这与 Kilo 的 subagent 机制一致——只有 primary agent 需要在 kilo.json 声明。
+> **subagent 智能体不在 kilo.json 中声明**：planner/coder/verifier 等职能智能体通过 conductor 的 `task` 工具按需启动（`subagent_type` 参数指向对应 agent/*.md），不需要在 kilo.json 注册。这与 Kilo 的 subagent 机制一致——只有 primary agent 需要在 kilo.json 声明。
 
 ---
 
@@ -176,7 +175,7 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 
 > **T0 直达**：conductor 直接加载 coder 执行，无 planner/verifier/reviewer，与现有 workflow-core.md §T0 直达一致。
 >
-> **post:PLANNING 钩子（非定级配置）**：plan-reviewer 经自身 frontmatter `mount: at: post:PLANNING`（无 `when`，恒定挂载）独立审查方案——verdict=FAIL/超时/异常 → 挂载点 `on_fail: abort` 中止流转。它属文件路由挂载机制而非 tier_defaults 定级组合，故不在上表按定级列出；T0 不经 PLANNING、T3 走子图，图拓扑天然限定仅 T1/T2 触发。
+> **post:PLANNING 钩子（非定级配置）**：`post:PLANNING` 挂载点可挂载方案审查等后处理智能体——`on_fail: abort` 可中止进入 EXECUTING。它属文件路由挂载机制而非 tier_defaults 定级组合，故不在上表按定级列出；T0 不经 PLANNING、T3 走子图，图拓扑天然限定仅 T1/T2 触发。
 
 ---
 
@@ -254,7 +253,7 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 |--------|------|------|
 | conductor | 全部 | intent/sizing/status/convergence/memory_injection |
 | planner | intent/sizing/plan_review | plan |
-| plan-reviewer | intent/sizing/plan | plan_review |
+
 | coder | plan/execution/forbidden_files/memory_injection | execution.diffs[current_unit] |
 | verifier | plan/execution.diffs[current_unit] | verification.forward |
 | reverse-auditor | intent/plan/execution | verification.reverse |
@@ -460,7 +459,7 @@ REVIEWING
 
 | 检查项 | 说明 |
 |--------|------|
-| check23 | 智能体文件完整性：`agent/` 下 9 个智能体 .md 文件存在（conductor/planner/plan-reviewer/coder/verifier/reverse-auditor/side-checker/reviewer/fixer） |
+| check23 | 智能体文件完整性：`agent/` 下所有声明 `mount` 的智能体 .md 文件存在 |
 | check24 | lifecycle 阶段文件 `agents` frontmatter 字段声明的智能体全部存在 |
 | check25 | task_context 读写规则一致性：lifecycle 阶段文件声明的智能体在 `agent/` 下有对应 .md |
 

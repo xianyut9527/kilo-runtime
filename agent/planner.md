@@ -23,7 +23,7 @@ mount:
 
 # task_context：读写边界声明
 #   read   可读的 task_context 切片（intent + sizing 由 conductor 在 INTENT/SIZING 写入；
-#          plan_review 由 post:PLANNING 的 plan-reviewer 写入，planner 回流时读审查反馈）
+#          plan_review 由 post:PLANNING 的审查者写入，planner 回流时读审查反馈）
 #   write  可写的 task_context 切片（plan 由 planner 设计方案后写入）
 task_context:
   read: [intent, sizing, plan_review]
@@ -118,12 +118,12 @@ risks:
 scan_coverage: "full" | "partial" | "N/A"
 componentization_plan: "yes" | "no" | "N/A"
 forbidden_files: ["string"]
-# 方案放行由独立 plan-reviewer 判定（post:PLANNING），planner 不自验
+# 方案放行由 post:PLANNING 的独立审查者判定，planner 不自验
 ```
 
 ## 硬规则
 
 - 短设计门可以只有几句话，但必须输出
-- 方案须经 plan-reviewer 独立审查或按授权放行，不得自行进入执行阶段
+- 方案须经 post:PLANNING 独立审查或按授权放行，不得自行进入执行阶段
 - 重复模式必须产出全量扫描清单 + 组件化方案
 - T2+ 必须包含单元 DAG + 依赖关系 + 风险应对

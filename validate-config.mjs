@@ -24,7 +24,7 @@
 //   [20/29] 能力插件文件完整性（已废弃 — capabilities/ 已合并入智能体文件）
 //   [21/29] 模型能力矩阵文档存在性（v6.1：agent/models/registry.md 已迁移至 docs/model-registry.md）
 //   [22/29] 生命周期 ↔ 能力插件映射一致性（已废弃 — capabilities/ 已合并入智能体文件）
-//   [23/29] 智能体文件完整性（agent/ 下 9 个智能体 .md：conductor/planner/plan-reviewer/coder/verifier/reverse-auditor/side-checker/reviewer/fixer）
+//   [23/29] 智能体文件完整性（agent/ 下所有声明 mount 的智能体 .md 文件存在）
 //   [24/29] lifecycle 阶段文件 frontmatter 最小契约校验（v6.1：文件名派生节点 ID + description/model_capability/token_budget；stage_id 已废弃）
 //   [25/29] 文件路由注册与角色契约覆盖校验（v6.2：agent/*.md frontmatter mount 注册 + stages frontmatter required_roles 覆盖 + graph 纯拓扑守护 + 子图 required 覆盖；capabilities_required 已删除）
 //   [26/29] 智能体视角物理隔离校验（reverse-auditor 禁读 plan / side-checker 禁读 verification / reviewer 禁读 verifier_report / coder+fixer 禁写 execution.verification）
@@ -1687,8 +1687,7 @@ function check22LifecycleCapabilityMapping() {
 
 // ---------- Check 23: 智能体文件完整性 ----------
 // v3.0 多智能体生命周期架构：验证 agent/ 下 9 个核心智能体 .md 文件存在。
-// 9 智能体清单（来源：docs/multi-agent-lifecycle-architecture.md §智能体清单）：
-//   conductor / planner / plan-reviewer / coder / verifier / reverse-auditor / side-checker / reviewer / fixer
+// 智能体清单由 agent/ 目录动态扫描获得（v6 文件路由自注册，零硬编码清单）。
 // multiModel.md 是 T3 触发的备选 primary 智能体，不在 9 智能体清单中，由 check2 覆盖。
 function check23AgentIntegrity() {
   const name = '智能体文件完整性';

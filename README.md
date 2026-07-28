@@ -68,7 +68,6 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   ├── conductor.md           # 生命周期编排者（type: primary，内建执行 INTENT/SIZING/DELIVERING）
 │   ├── multiModel.md             # T3 子图编排者（type: lifecycle_provider，自带子图）
 │   ├── planner.md                # 规划智能体（mount: PLANNING；设计门、DAG、验收点）
-│   ├── plan-reviewer.md          # 方案审查智能体（mount: post:PLANNING；独立审查方案，反自检自查）
 │   ├── coder.md                  # 编码智能体（mount: EXECUTING；实现、自测、三件套）
 │   ├── coder-a.md                # multiModel 并行 coder-A / 逻辑推理派（mount: MM_EXECUTING）
 │   ├── coder-b.md                # multiModel 并行 coder-B / 安全边界派（mount: MM_EXECUTING）
