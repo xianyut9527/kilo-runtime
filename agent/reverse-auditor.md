@@ -56,7 +56,7 @@ isolation:
 > **记忆下沉**：reverse-auditor 在 CHECKING 反向审计前**自行调用 memory.db** 召回历史隐性遗漏模式，用于补审已知易漏点。不再依赖 conductor 集中注入。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 intent + execution 审计。
 
-**召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
+**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
 - 历史隐性遗漏模式（`failure_db` MATCH，root_cause_level='demand'，scope=当前项目，LIMIT 5）— 补审需求层遗漏
 - 同类 anti-pattern（`fact_store` MATCH，category=ANTIPATTERN，LIMIT 5）— 补审已知反模式是否复现
 

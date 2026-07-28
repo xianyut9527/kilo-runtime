@@ -626,7 +626,13 @@ if (cfg) {
     }
   }
   if (drift === 0 && checked > 0) pass('matrix.drift', `${checked} 个智能体矩阵表与 frontmatter 一致`);
-  if (checked === 0) warn('matrix.drift', 'conductor.md 未找到可校验的矩阵表行（格式应为 | name | read | w1, w2 | forbid |）');
+  if (checked === 0) {
+    if (/matrix-table:\s*none/.test(conductorText)) {
+      pass('matrix.drift', '矩阵表经声明显式省略（matrix-table: none），frontmatter 为单一真相');
+    } else {
+      warn('matrix.drift', 'conductor.md 未找到可校验的矩阵表行（格式应为 | name | read | w1, w2 | forbid |）');
+    }
+  }
 }
 
 // ============================================================

@@ -51,7 +51,7 @@ task_context:
 > **记忆下沉**：fixer 在 FIXING 修复前**自行调用 memory.db** 召回同类 symptom 的历史修复策略（M3 失败回溯），不再依赖 conductor 集中注入。这是"避免防空转"的关键——同症状修复失败 2 轮时，必须查历史是否已有成功修复策略。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 blockers 修复。
 
-**召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M3 查询）：
+**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M3 查询）：
 - 同 symptom 历史修复策略（`failure_db` MATCH blockers[0].message 关键词，symptom 相似度匹配，LIMIT 5）— 复用已验证修复策略
 - 同 symptom 历史失败修复（`failure_db` MATCH，fix_strategy 字段非空 AND root_cause_level != 'demand'，LIMIT 3）— 避免重复踩坑
 

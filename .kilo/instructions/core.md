@@ -43,7 +43,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 记忆系统采用 **全局 sqlite 优先 + 项目 md 兜底** 架构：
 
-**sqlite 层**（全局共享，`~/.config/kilo-data/memory.db`，通过 **bash + `sqlite3` CLI** 访问（v2.5 起主通道，SQL 模板见 `docs/memory-ops-reference.md`）；备用 memory-mcp 在 `kilo.json` 预埋 `enabled:false`；数据目录独立于配置目录，install 同步不会清除）：
+**sqlite 层**（全局共享，`~/.config/kilo-data/memory.db`，通过 **`python scripts/memory.py`** 访问（v2.6 主通道，Python stdlib sqlite3 封装，跨平台免安装；sqlite3 CLI 可选替代）；备用 memory-mcp 在 `kilo.json` 预埋 `enabled:false`；数据目录独立于配置目录，install 同步不会清除）：
 - `fact_store`：结构化经验教训（PATTERN / ANTIPATTERN / RECIPE / WARNING）
 - `failure_db`：失败案例库（含根因、修复策略、复发次数）
 - `dispatch_log`：全链路任务日志

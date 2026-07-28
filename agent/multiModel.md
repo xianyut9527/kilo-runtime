@@ -20,10 +20,10 @@ type: lifecycle_provider # 特殊 primary：自带子图，接管 T3 任务（�
 # fast-reasoning 倾向：multiModel 作为子图编排者，需要快速编排决策（类比主图 conductor）
 
 # subgraph：子图 DAG 文件路径（相对于 lifecycle/ 目录）
-# multiModel 内部状态机是与主生命周期并行的子图，结构定义在 lifecycle/multimodel-graph.yaml
+# multiModel 内部状态机是与主图并行的子图，结构定义在 lifecycle/multimodel-graph.yaml
 subgraph: multimodel-graph.yaml
 
-# handoff：与主生命周期的交接协议
+# handoff：与主图的交接协议
 #   enter  进入条件（何时从主图接管 task_context）
 #   exit   退出条件（何时将 task_context 交还主图 conductor）
 handoff:
@@ -61,7 +61,7 @@ invariants:
 
 ## 生命周期定位
 
-multiModel 是**独立生命周期消费者**（`type: lifecycle_provider`，frontmatter 声明，subgraph 指向 `lifecycle/multimodel-graph.yaml`），其内部状态机是与主生命周期并行的子图。**子图结构（节点/边/流转条件）的单一真相来源是 `lifecycle/multimodel-graph.yaml`**，本节只做定位说明：
+multiModel 是**独立子图编排者**（`type: lifecycle_provider`，frontmatter 声明，subgraph 指向 `lifecycle/multimodel-graph.yaml`），其内部状态机是与主图并行的子图。**子图结构（节点/边/流转条件）的单一真相来源是 `lifecycle/multimodel-graph.yaml`**，本节只做定位说明：
 
 ```
 主图：INTENT → SIZING(T3) ──→ MM_SUBGRAPH（multiModel 接管）
@@ -76,7 +76,7 @@ multiModel 是**独立生命周期消费者**（`type: lifecycle_provider`，fro
 
 multiModel 完成 `MM_ARCHIVED` 后，task_context 交还 conductor，**回流主图 EXECUTING**（由主图 coder 按 `plan` + `execution.fused_output` 中的融合方案实现代码，并写入 `execution.diffs/changes/acceptance_map`），然后走标准 `CHECKING ⇄ FIXING → REVIEWING ⇄ FIXING → DELIVERING`（主图四视角验证的是**代码产物**，不是方案本身）。子图内部 MM_CHECKING/MM_FCHECK 是"生成期内部质检"（验证各家方案 + 融合方案自洽性），主图 CHECKING/REVIEWING 是"交付前独立验证+审查"（验证按方案实现的代码）——两层正交，不重复。
 
-## task*context 交接协议（MM*\* ↔ 主生命周期）
+## task*context 交接协议（MM*\* ↔ 主图）
 
 multiModel 期间产生的全部状态写入 `$env:TEMP/kilo/task_context_<task_id>.json`（Unix: `/tmp/kilo/task_context_<task_id>.json`），与 conductor 共享同一份上下文。**完整读写权限矩阵、字段语义、`[TRUST_TRANSFER]` 禁令详见 `agent/conductor.md` §task_context 共享机制**，本节只列 multiModel 专属映射，禁止整表复制。
 
@@ -260,7 +260,7 @@ multiModel（多模型融合模式）
 
 ## skill 使用记录
 
-`.kilo/memory/` 目录存在且包含有效记忆文件时，完成任务或反思触发后，通过 bash 调用 sqlite3 CLI 向 `skill_usage_events` 表 INSERT 一行。
+`.kilo/memory/` 目录存在且包含有效记忆文件时，完成任务或反思触发后，通过 `python scripts/memory.py exec` 向 `skill_usage_events` 表 INSERT 一行。
 
 ## 加载的 skills
 

@@ -6,10 +6,10 @@
   "snapshot": true,
   "compaction": {
     "auto": true,
-    "threshold_percent": 65,
-    "tail_turns": 25,
-    "preserve_recent_tokens": 60000,
-    "prune": true
+    "prune": true,
+    "tail_turns": 5,
+    "preserve_recent_tokens": 40000,
+    "reserved": 8000
   },
   "commit_message": {
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
@@ -17,76 +17,76 @@
   "agent": {
     "conductor": {
       "mode": "primary",
-      "model": "hx/kimi-k2.6",
-      "prompt": "生命周期编排者：意图判定→定级(T0-T3)→按 lifecycle/ 阶段加载智能体→管理 task_context 共享→交叉验证门禁→记忆写入。compaction 保留锚点。详见 agent/conductor.md。"
+      "model": "hx/kimi-k3",
+      "prompt": "你是工作流编排者（conductor）。按 lifecycle/ 阶段加载智能体，管理 task_context，执行交叉验证门禁。"
     },
     "multiModel": {
       "mode": "primary",
       "model": "hx/kimi-k2.6",
-      "prompt": "多模型并行生命周期编排（T3）。3 coder + verifier + synthesizer-fusion 按 lifecycle 阶段执行。详见 agent/multiModel.md 与 docs/model-registry.md。"
+      "prompt": "你是多模型编排者（multiModel）。调度 3 coder + verifier + synthesizer-fusion 执行 T3 子图。"
     },
     "synthesizer-fusion": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
-      "prompt": "多模型融合编辑智能体。读取 3 个 coder 输出 + verifier 验证结果，取长补短生成综合最优方案。只融合不推理不验证。详见 agent/synthesizer-fusion.md。"
+      "prompt": "你是融合编辑智能体（synthesizer-fusion）。整合多 coder 输出与验证结果，生成最优方案。只融合，不推理，不验证。"
     },
     "planner": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
-      "prompt": "规划智能体。设计门、方案设计、单元 DAG 拆分、验收点定义、全量扫描清单。只输出设计方案，不写代码。详见 agent/planner.md。"
+      "prompt": "你是规划智能体（planner）。输出设计方案（含 DAG、验收点、扫描清单）。只设计，不写代码，不执行。"
     },
     "plan-reviewer": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
-      "prompt": "方案审查智能体。独立审查 planner 输出的方案，反自检自查——planner 不自验方案。只审查方案，不修复、不重写。详见 agent/plan-reviewer.md。"
+      "prompt": "你是方案审查智能体（plan-reviewer）。独立审查 planner 方案。只审查，不修复，不重写。"
     },
     "coder": {
       "mode": "subagent",
       "model": "hx/kimi-k2.7-code",
-      "prompt": "编码智能体。按方案实现代码、输出验收映射表+三件套、状态信号。端到端闭环。详见 agent/coder.md。"
+      "prompt": "你是编码智能体（coder）。按方案实现代码，输出验收映射表+三件套。端到端闭环。不设计，不审查，不审计。"
     },
     "coder-a": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
       "description": "multiModel 逻辑推理派 coder，专精复杂推理与边界发现",
-      "prompt": "编码智能体（multiModel 并行-A / 逻辑推理派）。按方案实现代码，侧重逻辑完备性、边界条件与异常路径。输出验收映射表+三件套、状态信号。端到端闭环。详见 agent/coder.md 与 agent/multiModel.md。"
+      "prompt": "你是编码智能体 coder-a（逻辑推理派）。侧重逻辑完备与边界条件。按方案实现，输出三件套。不设计，不审查，不审计。"
     },
     "coder-b": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
       "description": "multiModel 安全边界派 coder，专精防御性编程与风险识别",
-      "prompt": "编码智能体（multiModel 并行-B / 安全边界派）。按方案实现代码，侧重安全边界、输入校验、防御性编程与最小权限。输出验收映射表+三件套、状态信号。端到端闭环。详见 agent/coder.md 与 agent/multiModel.md。"
+      "prompt": "你是编码智能体 coder-b（安全边界派）。侧重安全边界与防御性编程。按方案实现，输出三件套。不设计，不审查，不审计。"
     },
     "coder-c": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
       "description": "multiModel 代码生成派 coder，专精代码风格一致与最小改动",
-      "prompt": "编码智能体（multiModel 并行-C / 代码生成派）。按方案实现代码，侧重代码风格一致、最小增量改动与可维护性。输出验收映射表+三件套、状态信号。端到端闭环。详见 agent/coder.md 与 agent/multiModel.md。"
+      "prompt": "你是编码智能体 coder-c（代码生成派）。侧重风格一致与最小改动。按方案实现，输出三件套。不设计，不审查，不审计。"
     },
     "verifier": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
-      "prompt": "正向验证智能体。按验收标准逐条验证、L1/L2/L3 分层、5元组证据、独立重跑。只验证不修复。详见 agent/verifier.md。"
+      "model": "hx/kimi-k2.6",
+      "prompt": "你是正向验证智能体（verifier）。逐条验证验收标准，输出 L1/L2/L3 五元组证据。只验证，不修复。"
     },
     "reverse-auditor": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
-      "prompt": "反向审计智能体。从产物反推是否满足原始需求、追溯假设、发现隐性遗漏。只审计不修复。详见 agent/reverse-auditor.md。"
+      "prompt": "你是反向审计智能体（reverse-auditor）。反推需求满足度，追溯假设，发现遗漏。只审计，不修复。"
     },
     "side-checker": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
-      "prompt": "运行时行为视角验证智能体。通过实际执行/构造输入/实测对比验证边界/安全/性能/兼容性。只验证不修复。详见 agent/side-checker.md。"
+      "prompt": "你是侧向验证智能体（side-checker）。实测验证边界、安全、性能、兼容性。只验证，不修复。"
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
-      "prompt": "静态代码审查智能体。通过阅读代码审查安全编码模式/架构/简化/SCOPE_CREEP 四视角。只审查不修复。详见 agent/reviewer.md。"
+      "model": "hx/glm-5.2",
+      "prompt": "你是代码审查智能体（reviewer）。审查安全/架构/简化/SCOPE_CREEP 四视角。只审查，不修复。"
     },
     "fixer": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
-      "prompt": "修复智能体。定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题。详见 agent/fixer.md。"
+      "prompt": "你是修复智能体（fixer）。定向修复阻塞问题。修复后不自验。"
     }
   },
   "skills": {

@@ -64,7 +64,7 @@ planner 产出方案，**不得自验方案是否可放行**。plan-reviewer 是
 > **记忆下沉**：plan-reviewer 在审查前**自行调用 memory.db** 召回同类方案的历史失败模式，避免放行已知有问题的方案设计。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 plan 审查。
 
-**召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
+**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
 
 - 同类方案的历史失败模式（`failure_db` MATCH task keywords，root_cause_level='plan'，LIMIT 5）— 避免放行重蹈覆辙的方案
 - 同类 anti-pattern（`fact_store` MATCH task keywords，category=ANTIPATTERN，LIMIT 5）— 规避已知反模式在方案中复现

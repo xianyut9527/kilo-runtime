@@ -29,11 +29,11 @@
 8. **memory / skills / 自进化合规**：`.kilo/memory/` 模块（v2.6）由该目录内 README.md / AGENTS.md 统一管理，conductor **按模块入口按需注入**，不硬编码规则。
    - 模块入口：`.kilo/memory/README.md`（公共 API 文档）
    - 模块对 agent 入口：`.kilo/memory/AGENTS.md`（运行时注入）
-   - 主通道：bash + `sqlite3` CLI 直连 `${HOME}/.config/kilo-data/memory.db`（SQL 模板见 `docs/memory-ops-reference.md`）；备用通道 `memory-mcp`（v3.0）已在 kilo.json 预埋 `enabled:false`，启用前须 `node test.js` + `node test-stability.js` 双绿
+   - 主通道：`python scripts/memory.py`（stdlib sqlite3 封装，跨平台免安装）；sqlite3 CLI 为可选替代。优先用 `exec-file`/`query`/`exec` 子命令操作 `${HOME}/.config/kilo-data/memory.db`（SQL 模板见 `docs/memory-ops-reference.md`）；备用通道 `memory-mcp`（v3.0）已在 kilo.json 预埋 `enabled:false`，启用前须 `node test.js` + `node test-stability.js` 双绿
    - skill 使用频次写入 SQLite `skill_usage_events` 表，禁止 md append（v2.5 铁律）
    - 兼容策略文件：`.kilo/memory/memory-strategy.md`（保留为指针文件，便于 `strategy: "memory-strategy.md"` 仍可命中）
    - skills 的加载由 `skill` 工具触发（按需），不受本条约束。AGENTS.md 回写与经验回写（经闭环验证）不受影响
-   - **生命周期驱动后**：记忆写入是 conductor 在 `DELIVERING` 阶段的内建职责（调用 sqlite3 CLI），SQL 模板见 `docs/memory-ops-reference.md`
+   - **生命周期驱动后**：记忆写入是 conductor 在 `DELIVERING` 阶段的内建职责（调用 `python scripts/memory.py`），SQL 模板见 `docs/memory-ops-reference.md`
 9. **流程违规即停**：发现跳步立即标 `[PROCESS_VIOLATION]` 并暂停。
 10. **临时文件**：写入 `$env:TEMP` / `/tmp/`，禁止污染项目目录。
 11. **组件化与重复模式治理**：UI/样式/行为问题跨页面/组件出现时，按 `core.md` + `workflow-core.md` + `component-driven-fixes` skill 执行，禁止逐页复制粘贴式补丁。

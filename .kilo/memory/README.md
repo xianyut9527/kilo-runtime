@@ -35,7 +35,7 @@
 
 ### 铁律 1：**唯一入口**
 
-> **其他模块通过 bash 调用 sqlite3 CLI 与记忆交互**（v2.5-过渡版主通道）。
+> **其他模块通过 `python scripts/memory.py` 与记忆交互**（主通道；sqlite3 CLI 为可选替代）。
 >
 > - ✅ 引用 `docs/memory-ops-reference.md` 查找 SQL 模板
 > - ✅ 引用 `.kilo/memory/schema/init.sql` 了解表结构
@@ -124,7 +124,7 @@
 | `agent/*.md` | 智能体 prompt 不直接引用 SQL；通过 lifecycle 阶段文件加载智能体，conductor 在 S16 查阅 `docs/memory-ops-reference.md` |
 | `docs/memory-ops-reference.md` | 生命周期驱动后唯一业务规则与 SQL 模板入口 |
 | `validate-config.mjs` | check17 通过 contracts/health_check.sql 校验模块；check14 校验模块入口文件存在 |
-| `kilo.json` | 记忆主通道 = bash + sqlite3 CLI（v2.5-过渡版）；数据库文件 `~/.config/kilo-data/memory.db` |
+| `kilo.json` | 记忆主通道 = `python scripts/memory.py`（sqlite3 CLI 可选替代）；数据库文件 `~/.config/kilo-data/memory.db` |
 
 ## 升级路径
 
@@ -140,7 +140,7 @@
 | v2.6.1 | 修复 v_failure_patterns 视图 GROUP_CONCAT DISTINCT 语法 / health_check VIEWS_QUERYABLE_OK / test.js temp DB 隔离 / 删除死表 mcp_config |
 | v2.6.2 | M1 query A+A' 原子化 UPDATE...RETURNING / health_check FEEDBACK_RATE_LOW / **精简：删除 policy/ + api/ + api/mcp/（业务规则统一到 `docs/memory-ops-reference.md`）** |
 | v2.7（schema 当前） | project_context.scope / project_name 列（跨项目隔离，对齐 fact_store v2.3）/ idx_project_scope 复合索引 / v_active_project_context 视图加 scope 列 / 8 条种子回填 scope / health_check #19 #20 / 业务规则入口统一为 `docs/memory-ops-reference.md` |
-| v3.0（未来） | 可选自建 MCP server（kilo.json `mcp` 段按需启用）；当前 v2.5 主通道为 bash + sqlite3 CLI |
+| v3.0（未来） | 可选自建 MCP server（kilo.json `mcp` 段按需启用）；当前主通道为 `python scripts/memory.py`（sqlite3 CLI 可选替代） |
 
 > **稳定原则**：不在 v2 稳定前触碰 v3 设计。
 

@@ -27,7 +27,7 @@
 
 | ID | 智能体名 | 职责 | 对应生命周期阶段 | 模型绑定 | mode | prompt 锚点 |
 |----|----------|------|------------------|----------|------|-------------|
-| 0 | **conductor** | 生命周期编排者：意图判定、定级、阶段流转、智能体加载调度、上下文传递、门禁管理、记忆写入 | 全阶段（不亲自执行） | `kilo.json` `agent.conductor.model` | primary | `agent/conductor.md` |
+| 0 | **conductor** | 工作流编排者：意图判定、定级、阶段流转、智能体加载调度、上下文传递、门禁管理、记忆写入 | 全阶段（不亲自执行） | `kilo.json` `agent.conductor.model` | primary | `agent/conductor.md` |
 | 1 | **planner** | 规划智能体：设计门、方案设计、单元 DAG 拆分、验收点定义、全量扫描清单 | PLANNING | `kilo.json` `agent.planner.model` | subagent | `agent/planner.md` |
 
 | 3 | **coder** | 编码智能体：按方案实现代码、输出验收映射表+三件套、状态信号 | EXECUTING | `kilo.json` `agent.coder.model` | subagent | `agent/coder.md` |
@@ -38,7 +38,7 @@
 | 8 | **fixer** | 修复智能体：定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题 | FIXING | `kilo.json` `agent.fixer.model` | subagent | `agent/fixer.md` |
 | 9 | **synthesizer-fusion**（v3.1 恢复） | 多模型融合编辑智能体：读取 3 个 coder 输出 + verifier 验证结果，取长补短生成综合最优方案 | MM_FUSING（multiModel 专属） | `kilo.json` `agent.synthesizer-fusion.model` | subagent | `agent/synthesizer-fusion.md` |
 
-> **memory-ops 不作为独立智能体**：记忆写入是 conductor 在 DELIVERING 阶段的内建职责（调用 sqlite3 CLI），不需要独立 context window。`docs/memory-ops-reference.md` 保留作为记忆操作的 SQL 模板参考。
+> **memory-ops 不作为独立智能体**：记忆写入是 conductor 在 DELIVERING 阶段的内建职责（调用 `python scripts/memory.py`），不需要独立 context window。`docs/memory-ops-reference.md` 保留作为记忆操作的 SQL 模板参考。
 
 ### 模型选择策略（v3.1 方案1：模型统一在 kilo.json）
 
@@ -69,7 +69,7 @@
     "conductor": {
       "mode": "primary",
       "model": "<见 kilo.json 实际绑定>",
-      "prompt": "生命周期编排者：意图判定→定级→按 lifecycle/ 加载智能体→管理上下文传递→门禁管理→记忆写入。详见 agent/conductor.md。"
+      "prompt": "工作流编排者：意图判定→定级→按 lifecycle/ 加载智能体→管理上下文传递→门禁管理→记忆写入。详见 agent/conductor.md。"
     },
     "multiModel": {
       "mode": "primary",

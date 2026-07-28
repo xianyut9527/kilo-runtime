@@ -1283,7 +1283,7 @@ function check17MemoryDbHealth() {
     }
   }
   // v2.5-过渡版：sqlite MCP 已移除（第三方实现内存爆炸），改用默认路径兜底
-  // 主通道 = bash + sqlite3 CLI；check17 仍需独立校验 memory.db 健康度
+  // 主通道 = python scripts/memory.py（stdlib sqlite3 封装）；check17 仍需独立校验 memory.db 健康度
   if (!dbPath) {
     const home = process.env.HOME || process.env.USERPROFILE || '';
     if (home) {
@@ -1590,7 +1590,7 @@ function check18AgentInstructionsDrift() {
       const lines = content.split('\n');
       lines.forEach((line, i) => {
         if (/skill-usage\.log.*追加|追加.*skill-usage\.log/.test(line)) {
-          drifts.push(`${f}:L${i + 1} 含 "向 .kilo/memory/skill-usage.log 追加" 旧指令，应改为 "通过 bash 调用 sqlite3 CLI 向 skill_usage_events 表 INSERT"`);
+          drifts.push(`${f}:L${i + 1} 含 "向 .kilo/memory/skill-usage.log 追加" 旧指令，应改为 "调用 python scripts/memory.py 向 skill_usage_events 表 INSERT"`);
         }
       });
     }

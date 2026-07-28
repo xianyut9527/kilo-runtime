@@ -196,7 +196,7 @@ echo ""
 # kilo.json 路径占位符替换（保证 skills.external_dirs 跨平台可移植）
 # ============================================================
 echo "Substituting kilo.json path placeholders..."
-# 注意：memory.db 路径使用 ${HOME}/.config/kilo-data/memory.db，由 bash + sqlite3 CLI 直接访问（v2.5-过渡版主通道），install 阶段不替换
+# 注意：memory.db 路径使用 ${HOME}/.config/kilo-data/memory.db，主通道 = python scripts/memory.py（v2.6 主通道，Python stdlib sqlite3 封装，跨平台免安装）；sqlite3 CLI 为可选替代。install 阶段不替换
 # 注意：memory-mcp（v3.0 备用通道）已在 v2.6.2 精简中随 api/ 目录删除，kilo.json 不再引用 memory-mcp.js，此处无需替换 mcp 路径
 KILO_JSON_PATH="${TARGET_DIR}/kilo.json"
 if [ -f "${KILO_JSON_PATH}" ]; then

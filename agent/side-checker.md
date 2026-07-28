@@ -56,7 +56,7 @@ isolation:
 > **记忆下沉**：side-checker 在 REVIEWING 侧向验证前**自行调用 memory.db** 召回历史边界/安全/性能失效模式，用于补验已知易错点。不再依赖 conductor 集中注入。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 plan + execution 验证。
 
-**召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
+**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
 - 历史边界失效模式（`failure_db` MATCH，symptom LIKE '%边界%' OR '%空输入%' OR '%并发%'，scope=当前项目，LIMIT 5）
 - 历史安全失效模式（`failure_db` MATCH，symptom LIKE '%注入%' OR '%越权%' OR '%泄漏%'，LIMIT 5）
 - 同类 anti-pattern（`fact_store` MATCH，category=ANTIPATTERN，keywords LIKE '%安全%' OR '%边界%' OR '%性能%'，LIMIT 10）

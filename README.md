@@ -65,7 +65,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │       ├── schema/               # DDL 唯一源（init.sql = 7 表 + 26 索引 + 4 视图 + 2 FTS5 trigram 虚表）
 │       └── contracts/            # 跨层契约（health_check.sql，被 validate-config.mjs check17 调用）
 ├── agent/                        # Kilo 智能体定义（v6 单源：一智能体一文件，frontmatter 自注册生命周期路由）
-│   ├── conductor.md           # 生命周期编排者（type: primary，内建执行 INTENT/SIZING/DELIVERING）
+│   ├── conductor.md           # 工作流编排者（type: primary，内建执行 INTENT/SIZING/DELIVERING）
 │   ├── multiModel.md             # T3 子图编排者（type: lifecycle_provider，自带子图）
 │   ├── planner.md                # 规划智能体（mount: PLANNING；设计门、DAG、验收点）
 │   ├── coder.md                  # 编码智能体（mount: EXECUTING；实现、自测、三件套）
@@ -174,7 +174,7 @@ diff -rq . ~/.config/kilo \
 
 1. **结构化记忆全部入全局 sqlite**（7 表 + 2 FTS5 trigram 虚表 + 4 视图）：经验教训 `fact_store`、失败案例 `failure_db`、调度日志 `dispatch_log`、项目上下文 `project_context`、模型校准 `model_calibration`、skill 升级审计 `skill_upgrade_log`、skill 使用时序 `skill_usage_events`
 2. **md 文件仅作静态兜底**：当前模块边界只保留 `README.md`（公共 API）与 `AGENTS.md`（agent 入口）；**禁止** md 累积经验/日志/时序数据
-3. **访问通道**：agent 通过 bash 调用 `sqlite3` CLI 读写（SQL 模板见 `docs/memory-ops-reference.md`）；备用 memory-mcp 在 `kilo.json` 预埋 `enabled:false`
+3. **访问通道**：主通道 = `python scripts/memory.py`（Python stdlib sqlite3 封装，跨平台免安装）；sqlite3 CLI 为可选替代；备用 memory-mcp 在 `kilo.json` 预埋 `enabled:false`
 4. **首次部署/初始化**：运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）会自动检测 `sqlite3` CLI，缺失时提示用户并自动安装（winget/apt/brew 等）+ 初始化 `memory.db`（执行 `schema/init.sql` + 迁移 bootstrap 经验 + 补种 `project_context`）；跳过安装则记忆层静默降级。
 5. **禁用记忆**：删除或清空 `${HOME}/.config/kilo-data/memory.db` 即可优雅降级，不报错、不删除规则
 

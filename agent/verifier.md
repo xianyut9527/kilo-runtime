@@ -66,7 +66,7 @@ isolation:
 > **记忆下沉**：verifier 在 CHECKING 验证前**自行调用 memory.db** 召回历史 anti-pattern，用于补验已知易错点。不再依赖 conductor 集中注入。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 acceptance_criteria 验证。
 
-**召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
+**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
 - 同类 anti-pattern（`fact_store` MATCH execution.keywords + changed_files 函数名，category=ANTIPATTERN，LIMIT 10）— 补验已知反模式是否重现
 - 同类历史失败（`failure_db` MATCH，scope=当前项目，LIMIT 5）— 补验历史踩坑点
 

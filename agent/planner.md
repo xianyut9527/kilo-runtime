@@ -52,7 +52,7 @@ task_context:
 > **记忆下沉**：planner 在 PLANNING 规划前**自行调用 memory.db** 召回同类任务历史，不再依赖 conductor 在 INTENT/SIZING 的集中注入。这避免 conductor 上下文压力 + 让规划直接触达历史经验。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 task_context 规划。
 
-**召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
+**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
 - 同类任务历史失败模式（`failure_db` MATCH task keywords，LIMIT 5）— 避免重蹈覆辙
 - 同类 pattern（`fact_store` MATCH task keywords，category=PATTERN，LIMIT 10）— 复用已验证设计模式
 - 同类 anti-pattern（`fact_store` MATCH task keywords，category=ANTIPATTERN，LIMIT 5）— 规避已知反模式

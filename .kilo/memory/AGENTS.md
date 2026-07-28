@@ -11,12 +11,12 @@
 - **版本**：`2.6.2`
 - **策略**：`sqlite-first-md-fallback + bash-cli-channel + fts5-trigram + scope-isolation + helpful-rate-mandatory-feedback`
 - **数据库路径**：`${HOME}/.config/kilo-data/memory.db`
-- **访问通道**：主通道 = bash + sqlite3 CLI；备用通道 = 自建 memory-mcp（v3.0，`kilo.json` 中 `enabled:false` 默认关闭）
+- **访问通道**：主通道 = `python scripts/memory.py`（stdlib sqlite3 封装，跨平台免安装）；sqlite3 CLI 为可选替代；备用通道 = 自建 memory-mcp（v3.0，`kilo.json` 中 `enabled:false` 默认关闭）
 - **生命周期集成**：记忆操作统一由 `docs/memory-ops-reference.md` 定义，不再分散在各 agent 文件中
 
 ## 核心原则
 
-1. **sqlite 唯一记忆**：所有结构化记忆（fact、failure、dispatch、project_context、calibration、skill_upgrade、skill_usage）优先查询 sqlite。**v2.5 起强制**：禁止 md 文件累积时序数据；md 文件仅保留静态规则 / 模板 / 指针。**访问方式**：通过 Kilo `bash` 工具调用 `sqlite3` CLI 读写 `~/.config/kilo-data/memory.db`。
+1. **sqlite 唯一记忆**：所有结构化记忆（fact、failure、dispatch、project_context、calibration、skill_upgrade、skill_usage）优先查询 sqlite。**v2.5 起强制**：禁止 md 文件累积时序数据；md 文件仅保留静态规则 / 模板 / 指针。**访问方式**：通过 Kilo `bash` 工具执行 `python scripts/memory.py` 读写 `~/.config/kilo-data/memory.db`（sqlite3 CLI 为可选替代）。
 2. **FTS5 镜像加速**：v2.4 起 fact_store / failure_db 维护 FTS5 虚表，query B 从 `LIKE` 改为 `MATCH`（效率 +++）；v2.6 起分词器 trigram（中文 ≥3 字符子串可命中）。
 3. **helpful_rate 反馈（v2.6 强制）**：M6 节点**必须**输出 `[memory:helpful=...]` / `[memory:misleading=...]` 标记（无反馈显式 `[memory:helpful=none]`，禁止静默省略），反向校准 confidence（质量 +++）。
 3b. **A' use_count 硬门（v2.6.2 原子化）**：M1 注入 project_context 必须执行 **query A+A' 单条 `UPDATE...RETURNING` SQL**（选中注入集 + use_count+1 + 返回内容一步完成，sqlite3 ≥3.35），RETURNING 新值即 A' 证据；`[memory:recall]` 提示直接引用。

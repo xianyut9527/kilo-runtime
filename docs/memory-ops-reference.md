@@ -1,16 +1,16 @@
 ---
-description: 记忆操作 SQL 模板参考。sqlite 优先，md 仅作索引兜底。conductor 在 DELIVERING 阶段查阅。
+description: 记忆操作 SQL 模板参考。sqlite 优先，md 仅作索引兜底。conductor 在 DELIVERING 阶段查阅。主通道为 `python scripts/memory.py`（Python stdlib sqlite3 封装）。
 ---
 
 # docs/memory-ops-reference
 
-> **定位**：本文件是从原 `agent/capabilities/memory-ops.md` 迁移而来的 SQL 模板参考文档。记忆写入是 conductor 在 `DELIVERING` 阶段的内建职责（调用 sqlite3 CLI），不需要独立智能体。本文件保留作为 SQL 模板参考。
+> **定位**：本文件是从原 `agent/capabilities/memory-ops.md` 迁移而来的 SQL 模板参考文档。记忆写入是 conductor 在 `DELIVERING` 阶段的内建职责（调用 `python scripts/memory.py` 封装），不需要独立智能体。本文件保留作为 SQL 模板参考。
 
 ## 能力定位
 
 **生命周期阶段**：`DELIVERING`（conductor 内建）+ `INTENT` / `EXECUTING` 按需注入
 
-**做什么**：通过 bash + `sqlite3` CLI 操作 `~/.config/kilo-data/memory.db`。
+**做什么**：通过 `python scripts/memory.py` 操作 `~/.config/kilo-data/memory.db`。
 
 **不做什么**：不替代主流程、不阻塞执行、不直接执行主任务。
 
@@ -66,31 +66,32 @@ dispatch_record:
   token_usage: int
 ```
 
-## SQL 模板（bash + sqlite3 CLI）
+## SQL 模板（`python scripts/memory.py`）
+
+环境变量 `KILO_MEMORY_DB` 可覆盖默认数据库路径；命令行 `--db <path>` 优先级更高。在 Windows PowerShell 中，SQL 含双引号时外层可用单引号，或改用 `exec-file <path>` 将 SQL 写入临时 `.sql` 文件以避免转义问题。
 
 ### M1 查询
 ```bash
-sqlite3 "${HOME}/.config/kilo-data/memory.db" "
-SELECT context_id, title, content FROM project_context WHERE scope='global' OR (scope='project' AND project_name='PROJECT_NAME') ORDER BY priority ASC, use_count DESC LIMIT 5;
-SELECT f.fact_id, f.trigger, f.action, f.confidence FROM fact_store f JOIN fact_fts ft ON f.rowid=ft.rowid WHERE ft.fact_fts MATCH 'keyword1 OR keyword2' AND f.archived=0 ORDER BY f.confidence DESC LIMIT 10;
-SELECT fd.failure_id, fd.symptom, fd.fix_strategy FROM failure_db fd JOIN failure_fts ft ON fd.rowid=ft.rowid WHERE ft.failure_fts MATCH 'keyword1' ORDER BY fd.created_at DESC LIMIT 5;
-"
+# 方式 A：单条查询（Linux / macOS）
+python scripts/memory.py query "SELECT context_id, title, content FROM project_context WHERE scope='global' OR (scope='project' AND project_name='PROJECT_NAME') ORDER BY priority ASC, use_count DESC LIMIT 5;"
+
+# 方式 B：Windows PowerShell 推荐用单引号包裹外层 SQL
+python scripts/memory.py query 'SELECT f.fact_id, f.trigger, f.action, f.confidence FROM fact_store f JOIN fact_fts ft ON f.rowid=ft.rowid WHERE ft.fact_fts MATCH '"'"'keyword1 OR keyword2'"'"' AND f.archived=0 ORDER BY f.confidence DESC LIMIT 10;'
+
+# 方式 C：复杂查询写入临时文件后执行
+python scripts/memory.py exec-file /tmp/m1_recall.sql
 ```
 
 ### M5 写入
 ```bash
-sqlite3 "${HOME}/.config/kilo-data/memory.db" "
-INSERT INTO fact_store (fact_id, category, trigger, action, confidence, hit_count, tags, scope, project_name, created_at, updated_at)
-VALUES ('AP-' || hex(randomblob(4)), 'ANTIPATTERN', 'trigger text', 'action text', 0.6, 1, '[\"kw1\",\"kw2\"]', 'project', 'PROJECT_NAME', datetime('now'), datetime('now'));
-"
+python scripts/memory.py exec "INSERT INTO fact_store (fact_id, category, trigger, action, confidence, hit_count, tags, scope, project_name, created_at, updated_at)
+VALUES ('AP-' || hex(randomblob(4)), 'ANTIPATTERN', 'trigger text', 'action text', 0.6, 1, '[\"kw1\",\"kw2\"]', 'project', 'PROJECT_NAME', datetime('now'), datetime('now'));"
 ```
 
 ### M8 写入
 ```bash
-sqlite3 "${HOME}/.config/kilo-data/memory.db" "
-INSERT INTO dispatch_log (dispatch_id, thread_id, agent, task_summary, tier, status, duration_ms, input_tokens, output_tokens, created_at)
-VALUES ('disp-YYYYMMDD-NNN', 'thread-id', 'coder', 'summary', 'T1', 'DONE', 120000, 5000, 3000, datetime('now'));
-"
+python scripts/memory.py exec "INSERT INTO dispatch_log (dispatch_id, thread_id, agent, task_summary, initial_tier, final_tier, tier, review_mode, tier_deviation, model, status, duration_ms, input_tokens, output_tokens, created_at)
+VALUES ('disp-YYYYMMDD-NNN', 'thread-id', 'coder', 'summary', 'T1', 'T1', 'T1', 'full', 'maintain', 'model-id', 'DONE', 120000, 5000, 3000, datetime('now'));"
 ```
 
 ## 输出接口
@@ -106,7 +107,8 @@ memory_context_injected: "string"  # 注入的上下文摘要（≤ 2000 tokens�
 
 - `memory.db` 不存在 → `DEGRADED`，首次输出提示，后续静默，不阻塞主流程
 - SQL 失败 → `ERROR`，输出警告行，继续执行
-- sqlite3 CLI 未安装 → `DEGRADED`，提示用户运行 install 脚本；若暂无法安装，可降级使用 `python -c "import sqlite3"` 作为临时通道（install.ps1 / install.sh 已自动处理 sqlite3 CLI 安装）
+- **主通道**：`python scripts/memory.py`（Python stdlib sqlite3 封装，跨平台，免额外安装）。sqlite3 CLI 可作为可选替代；若两者都不可用 → `DEGRADED`。
+- 健康检查：`python scripts/memory.py check`；写操作：`exec` / `exec-file`；读操作：`query`
 
 ## 硬规则
 

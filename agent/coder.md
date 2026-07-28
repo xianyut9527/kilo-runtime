@@ -51,7 +51,7 @@ task_context:
 > **记忆下沉**：coder 在 EXECUTING 编码前**自行调用 memory.db** 召回同类 pattern/anti-pattern，不再依赖 conductor 集中注入。让编码直接触达历史经验，避免重复造轮子。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 plan 编码。
 
-**召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
+**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
 - 同类 pattern（`fact_store` MATCH plan.keywords + plan.target_files 函数名，category=PATTERN，LIMIT 10）— 复用已验证实现模式
 - 同类 anti-pattern（`fact_store` MATCH，category=ANTIPATTERN，LIMIT 5）— 规避已知反模式
 - planner 已召回的 failures/patterns 从 `task_context.plan.memory_injection` 读取（不重复召回）

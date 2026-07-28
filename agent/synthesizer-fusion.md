@@ -55,13 +55,13 @@ gate: FUSION_SELF_CHECK_10
 
 ## 智能体定位
 
-**生命周期阶段**：`MM_FUSING`（multiModel 专属生命周期，详见 `agent/multiModel.md`）
+**生命周期阶段**：`MM_FUSING`（multiModel 专属子图，详见 `agent/multiModel.md`）
 **加载条件**：T3（multiModel 模式），verifier 对 3 份方案分别验证后触发
 **模型**：见 `kilo.json` `agent.synthesizer-fusion.model`（能力倾向 `long-context-synthesis`，见 `docs/model-registry.md` §multiModel 并行）
 
 **做什么**：读取 3 个 coder 的独立输出 + verifier 对每份的验证报告，**执行融合编辑**——吸收各家之长、查漏补缺、消除矛盾，输出一份**新的综合最优方案**。
 
-**不做什么**：不重新推理（coder 负责）、不验证（verifier 负责）、不拆分任务（multiModel 负责）、不参与主生命周期（仅 multiModel 生命周期消费者）。
+**不做什么**：不重新推理（coder 负责）、不验证（verifier 负责）、不拆分任务（multiModel 负责）、不参与主图流程（仅 multiModel 子图消费者）。
 
 ## 视角物理隔离
 

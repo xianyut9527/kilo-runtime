@@ -1,6 +1,6 @@
 -- kilo memory system schema
 -- 模块位置：.kilo/memory/schema/init.sql（DDL 唯一源）
--- 初始化命令: 通过 bash 调用 sqlite3 CLI 执行本文件的 CREATE TABLE 语句（v2.5-过渡版主通道）
+-- 初始化命令: 首选 `python scripts/memory.py exec-file .kilo/memory/schema/init.sql`（跨平台免安装）；或通过 bash 调用 sqlite3 CLI 执行本文件的 CREATE TABLE 语句
 -- 全局数据库路径: ${HOME}/.config/kilo-data/memory.db
 --
 -- 初始化示例:
@@ -337,12 +337,12 @@ INSERT OR IGNORE INTO project_context (context_id, category, title, content, sou
  '["architecture","seven-layer","brain","evolution"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 
 ('PC-002', 'TECH_STACK', '模型与 MCP 配置（kilo.json）',
- '主模型 hx/MiniMax-M3（conductor + coder）；架构/审查 kimi-k3 + glm-5.2；verifier/reverse-auditor glm-5.2；fixer kimi-k2.7-code/deepseek-v4-flash。MCP：context7（文档）+ gitnexus（代码图谱）+ playwright（浏览器自动化，谨慎用）。记忆通道：bash + sqlite3 CLI 主通道（v2.5-过渡版）；可选 memory-mcp（v3.0，kilo.json enabled:false 默认关闭）。已移除 ddg-search / 第三方 sqlite MCP（内存爆炸风险）。compaction auto，threshold 65%，tail_turns 25，preserve_recent_tokens 60K。',
+  '主模型 hx/MiniMax-M3（conductor + coder）；架构/审查 kimi-k3 + glm-5.2；verifier/reverse-auditor glm-5.2；fixer kimi-k2.7-code/deepseek-v4-flash。MCP：context7（文档）+ gitnexus（代码图谱）+ playwright（浏览器自动化，谨慎用）。记忆通道：python scripts/memory.py 主通道（v2.6，Python stdlib sqlite3 封装，跨平台免安装）；sqlite3 CLI 为可选替代；备用 memory-mcp（v3.0，kilo.json enabled:false 默认关闭）。已移除 ddg-search / 第三方 sqlite MCP（内存爆炸风险）。compaction auto，threshold 65%，tail_turns 25，preserve_recent_tokens 60K。',
  'kilo.json', 3,
  '["config","model","mcp","compaction","kilo-json"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 
 ('PC-003', 'CONSTRAINT', '强制 sqlite 优先 + md 兜底',
- '记忆系统采用全局 sqlite 优先（~/.config/kilo-data/memory.db，7 表 + 26 索引 + 4 视图 + 2 FTS5 虚表（trigram 分词，v2.6））+ 项目 md 兜底（MEMORY.md ≤ 1500 字符 + USER.md ≤ 1375 字符）。其他模块通过 bash 调用 sqlite3 CLI 与记忆交互（v2.5-过渡版主通道），禁止直接操作 memory.db 文件。',
+  '记忆系统采用全局 sqlite 优先（~/.config/kilo-data/memory.db，7 表 + 26 索引 + 4 视图 + 2 FTS5 虚表（trigram 分词，v2.6））+ 项目 md 兜底（MEMORY.md ≤ 1500 字符 + USER.md ≤ 1375 字符）。其他模块调用 python scripts/memory.py 与记忆交互（v2.6 主通道，Python stdlib sqlite3 封装），sqlite3 CLI 为可选替代；禁止直接操作 memory.db 文件。',
  '.kilo/memory/README.md', 1,
  '["memory","sqlite","md-fallback","invariant"]', 0, NULL, 'project', 'kilo_config', '2026-07-19', '2026-07-19'),
 

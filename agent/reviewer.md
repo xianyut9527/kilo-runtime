@@ -53,7 +53,7 @@ isolation:
 > **记忆下沉**：reviewer 在 REVIEWING 审查前**自行调用 memory.db** 召回历史架构反模式，用于补审已知架构问题。不再依赖 conductor 集中注入。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 diff + plan 审查。
 
-**召回内容**（bash + sqlite3 CLI，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
+**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
 - 历史架构反模式（`fact_store` MATCH，category=ANTIPATTERN，keywords LIKE '%架构%' OR '%耦合%' OR '%循环依赖%'，LIMIT 10）
 - 同类 SCOPE_CREEP 历史（`failure_db` MATCH，symptom LIKE '%SCOPE_CREEP%' OR '%范围蔓延%'，LIMIT 5）
 
