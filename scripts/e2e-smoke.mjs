@@ -212,6 +212,93 @@ function main() {
     try { fs.unlinkSync(contextPath(id)); } catch {}
   }
 
+  // ---------- 场景 17：T2 全链路（PLANNING→…→DONE，验证 tier=T2 放行） ----------
+  {
+    const id = `e2ee${process.pid}`;
+    tc(['init', id]);
+    patchContext(id, (ctx) => {
+      ctx.intent = { intent_type: 'EXECUTION' };
+      ctx.sizing = { tier: 'T2' };
+    });
+    // SIZING -> PLANNING（when: tier in ['T1','T2'] → T2 放行）
+    const r17a = tr(id, 'SIZING', 'PLANNING');
+    check('s17a.sizing-planning', r17a.code === 0, r17a.out);
+    // SIZING -> EXECUTING 拒绝（T2 不走 T0 极速通道）
+    const r17b = tr(id, 'SIZING', 'EXECUTING');
+    check('s17b.sizing-executing.reject', r17b.code === 1, `exit=${r17b.code}`);
+    // PLANNING -> EXECUTING
+    const r17c = tr(id, 'PLANNING', 'EXECUTING');
+    check('s17c.planning-executing', r17c.code === 0, r17c.out);
+    // EXECUTING -> CHECKING（when: tier in ['T1','T2','T3'] → T2 放行）total=1
+    const r17d = tr(id, 'EXECUTING', 'CHECKING');
+    check('s17d.executing-checking', r17d.code === 0 && counterOf(id).total_rounds === 1, r17d.out);
+    // forward=FAIL → CHECKING -> FIXING round=1
+    tc(['set', id, 'verification.forward', '{"forward_result":"FAIL"}', '--agent', 'verifier']);
+    const r17e = tr(id, 'CHECKING', 'FIXING');
+    check('s17e.checking-fixing', r17e.code === 0 && counterOf(id).round === 1, r17e.out);
+    // FIXING -> CHECKING total=2
+    const r17f = tr(id, 'FIXING', 'CHECKING');
+    check('s17f.fixing-checking', r17f.code === 0 && counterOf(id).total_rounds === 2, r17f.out);
+    // forward=PASS + reverse=PASS（T2 反向审计挂载）→ CHECKING -> REVIEWING total=3 round=0
+    tc(['set', id, 'verification.forward', '{"forward_result":"PASS"}', '--agent', 'verifier']);
+    tc(['set', id, 'verification.reverse', '{"reverse_result":"PASS"}', '--agent', 'reverse-auditor']);
+    const r17g = tr(id, 'CHECKING', 'REVIEWING');
+    const c17 = counterOf(id);
+    check('s17g.checking-reviewing', r17g.code === 0 && c17.total_rounds === 3 && c17.round === 0, `${r17g.out} | ${JSON.stringify(c17)}`);
+    // side=PASS + review=PASS（T2 侧向验证挂载）→ REVIEWING -> DELIVERING
+    patchContext(id, (ctx) => {
+      ctx.verification.side = { side_result: 'PASS' };
+      ctx.verification.review = { review_result: 'PASS' };
+    });
+    const r17h = tr(id, 'REVIEWING', 'DELIVERING');
+    check('s17h.reviewing-delivering', r17h.code === 0, r17h.out);
+    // DELIVERING -> DONE gate
+    tc(['set', id, 'memory_write_status', '"OK"', '--agent', 'conductor']);
+    const r17i = tr(id, 'DELIVERING', 'DONE');
+    check('s17i.delivering-done', r17i.code === 0, r17i.out);
+    try { fs.unlinkSync(contextPath(id)); } catch {}
+  }
+
+  // ---------- 场景 18：全局熔断（total_rounds >= max_total_rounds=7） ----------
+  // 构造交替进入 CHECKING/REVIEWING 的序列，使 total_rounds 持续递增而 round 不超 5：
+  //   CHECKING(1) → FIXING(r1) → CHECKING(2) → REVIEWING(3,r0) → FIXING(r1) → CHECKING(4) → REVIEWING(5,r0)
+  //   → FIXING(r1) → CHECKING(6) → REVIEWING(7,r0) — REVIEWING 入口 total=7 → 全局熔断
+  {
+    const id = `e2ef${process.pid}`;
+    tc(['init', id]);
+    patchContext(id, (ctx) => {
+      ctx.intent = { intent_type: 'EXECUTION' };
+      ctx.sizing = { tier: 'T1' };
+    });
+    // EXECUTING → CHECKING (total=1)
+    tr(id, 'EXECUTING', 'CHECKING');
+    // 1) CHECKING → FIXING (round=1)
+    tc(['set', id, 'verification.forward', '{"forward_result":"FAIL"}', '--agent', 'verifier']);
+    tr(id, 'CHECKING', 'FIXING');
+    // 2) FIXING → CHECKING (total=2, round=1)
+    tr(id, 'FIXING', 'CHECKING');
+    // 3) CHECKING → REVIEWING (total=3, round 重置 0) — 需 forward=PASS
+    tc(['set', id, 'verification.forward', '{"forward_result":"PASS"}', '--agent', 'verifier']);
+    tr(id, 'CHECKING', 'REVIEWING');
+    // 4) REVIEWING → FIXING (round=1) — 需 side=FAIL 或 review=FAIL
+    patchContext(id, (ctx) => { ctx.verification.review = { review_result: 'FAIL' }; });
+    tr(id, 'REVIEWING', 'FIXING');
+    // 5) FIXING → CHECKING (total=4, round=1)
+    tr(id, 'FIXING', 'CHECKING');
+    // 6) CHECKING → REVIEWING (total=5, round 重置 0)
+    tc(['set', id, 'verification.forward', '{"forward_result":"PASS"}', '--agent', 'verifier']);
+    tr(id, 'CHECKING', 'REVIEWING');
+    // 7) REVIEWING → FIXING (round=1)
+    tr(id, 'REVIEWING', 'FIXING');
+    // 8) FIXING → CHECKING (total=6, round=1)
+    tr(id, 'FIXING', 'CHECKING');
+    // 9) CHECKING → REVIEWING (total=7, round 重置 0) — 全局熔断入口
+    tc(['set', id, 'verification.forward', '{"forward_result":"PASS"}', '--agent', 'verifier']);
+    const r18 = tr(id, 'CHECKING', 'REVIEWING');
+    check('s18.global-circuit-breaker', r18.code === 3 && /CIRCUIT_BREAKER/.test(r18.out) && /total_rounds=7/.test(r18.out), `exit=${r18.code} | ${r18.out}`);
+    try { fs.unlinkSync(contextPath(id)); } catch {}
+  }
+
   // ---------- 场景 16：T3 子图入口 + 回流主图闭环 ----------
   {
     const id = `e2ed${process.pid}`;
