@@ -25,7 +25,7 @@ required_roles: [coder]
 2. **编码前知识获取**：
    - T0：读取目标文件，简短搜索确认范围。
    - T1+：优先用 GitNexus 分析执行流、调用链和影响面；涉及 API 时用 `gitnexus_api_impact`。
-   - 重复模式扫描：涉及 UI/样式/布局/交互时，用 grep/glob 扫描同类症状；命中 ≥2 处必须走组件化/共享抽象方案。
+   - 重复模式扫描：用 grep/glob 扫描本次改动模式在代码库的同类实现（UI 与非 UI 同等适用，不限于样式/布局/交互）；命中 ≥2 处必须走组件化/共享抽象方案。
 3. **编码**：最小改动原则，遵循现有代码风格，修改后搜索调用方确认兼容性。
 4. **自测自修**：改代码 → 跑测试 → 修复 → 再跑。TDD 模板：红→绿→重构。
 5. **运行验证**：测试、构建、类型检查、Lint、编码扫描（`node scripts/scan-encoding.mjs`）。
@@ -58,7 +58,7 @@ quality_gate:
 - **完成声明三件套**：每条"通过/修复/完成"声明 MUST 同时附：完整命令字符串、数字 exit code、stdout/stderr 关键行截取 ≤5 行。
 - **禁止信任传递**：不得以"agent X 报告成功"替代独立验证。
 - **编码健康度扫描**：对修改过的文件跑 `node scripts/scan-encoding.mjs`。
-- **组件化拦截**：涉及 UI/样式/行为且同类症状 ≥2 处时，必须按 `component-driven-fixes` skill 执行。
+- **架构意识（编码前必过）**：落点识别（目标文件所属层，不越层）→ 依赖方向（符合项目既有分层方向）→ 影响面分析（高扇入符号改动列影响清单）→ 复用优先（先扫描同类抽象再新建）→ 扩展点评估（高频变更领域留扩展点/slot/策略接口/配置驱动）→ 组件化前摄扫描（grep/glob 同类实现 ≥1 处命中需评估）。违反任一项 → 输出 `BLOCKED`/`NEEDS_CONTEXT`，由 conductor 判断是否回流 PLANNING 阶段。
 - **T3 隔离原则**：主图 coder 不读取 `execution.mm_outputs`/`execution.mm_artifacts`（子图原始 3 份 coder 产物），只读取 `plan` + `execution.fused_output`（聚合产物指针：fusion worktree 路径/分支）；主操作为 `git merge mm-<tid>-fusion` 分支 + 解决残留冲突 + 运行验证
 - **T3 产物级场景**：multiModel 子图 v2 产物级聚合模式下，主图 EXECUTING coder 主操作为 `git merge <fusion_branch>` + 解决冲突 + 运行验证；fusion worktree 由主图 DELIVERING 阶段清理（`git worktree remove --force`）
 - **T3 产物级场景（merge 前预检）**：coder 执行 `git merge mm-<tid>-fusion` 前，可先执行 `git merge --no-commit --no-ff mm-<tid>-fusion` 预演，检查冲突；若冲突不可解决，立即 abort（`git merge --abort`）并回传 `BLOCKED`。这是 multiModel 子图 MM_FCHECK「预 merge 验证」安全增强的主图落地动作。

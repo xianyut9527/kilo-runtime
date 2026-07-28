@@ -179,7 +179,7 @@ T1 / T2 / T3 → full（四视角：安全/架构/简化/SCOPE_CREEP）
 | 不自验 | coder 不得自行验证 | `[PROCESS_VIOLATION]` |
 | 状态信号 | coder 必须输出 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED` | `[MISSING_STATUS_SIGNAL]` |
 | 双重 verifier | 正向（需求/语法/逻辑/边界）+ 反向（SCOPE_CREEP/调试残留/重复实现/局部补丁） | `[SCOPE_CREEP]` / `[MISSING_ACCEPTANCE_MAP]` / `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` |
-| 局部补丁拦截 | 重复模式未走组件化/共享抽象，逐页复制样式 | `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` |
+| 局部补丁拦截 | 重复模式未走组件化/共享抽象，逐处复制粘贴（UI 与非 UI 同等适用） | `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` |
 | 扫描与防复发交付门 | coder 交付必须含全量同类点扫描清单 + 至少一项防复发产物 | `[MISSING_SCAN]` / `[MISSING_PREVENTION]` |
 | 同症状防空转 | 连续 2 轮 fixer 同症状 → 升级 reviewer | `[NEEDS_REVIEW]` |
 | Circuit Breaker | 连续 3 次无法收敛 → 停止 | `[CIRCUIT_BREAKER]` |

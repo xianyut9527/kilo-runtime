@@ -169,7 +169,7 @@ multiModel（产物级聚合模式，v2）
   - **越界即终止**：一旦 verifier SCOPE_CREEP 检测出越界，该 coder 产物不得进入聚合，multiModel 主控立即将其从聚合候选中移除（详见下方「越界检测与止损」）。
   - 实现完成后：`git add -A && git commit -m "mm-<tid>-coder-<x> implementation"`（在 worktree 内）。
 - multiModel 主控**串行收齐** 3 个 coder 输出后统一写入 task_context 的 `mm_outputs` 和 `mm_artifacts` 字段（避免 task_context.json 并发写竞争）。
-- **mm_outputs 写入 key 隔离**：3 coder 各写自己的数组元素（`mm_outputs[0]`/`[1]`/`[2]` 或按 `coder_id` 键），避免竞争。
+- **mm_outputs 写入 key 隔离**：multiModel 主控分配固定数组索引——`mm_outputs[0]` 对应 coder-a、`mm_outputs[1]` 对应 coder-b、`mm_outputs[2]` 对应 coder-c。coder 严格按分配索引写入，不自定义键名。
 
 **越界检测与止损**（强化事后止损机制，弥补 bash workdir 非 sandbox 的隔离弱点）：
 
@@ -201,13 +201,7 @@ multiModel（产物级聚合模式，v2）
 - **强制自检**：synthesizer-fusion 输出前逐项检查 **11 项**自检清单（详见 `agent/synthesizer-fusion.md`）。
 - **产物边界**：聚合产物指针写入 `execution.fused_output`（fusion worktree 路径/分支/commit_sha/聚合 diff 摘要/基底选择/冲突裁决）；**不写** `execution.diffs/changes/acceptance_map`——由主图 coder git merge 后写入。
 
-**聚合规则（优先级降序，由 synthesizer-fusion 执行）**：
-
-1. 正确性优先：verifier 验证通过的方案优先作为基底；"正确性" = 逻辑正确+边界覆盖+风格一致+验收覆盖（verifier 方案级验证维度，非运行时测试）
-2. 完整性优先：吸收各家验证通过的边界处理、异常处理
-3. 风格一致性优先：以项目现有代码风格为准
-4. 变动最小化：同等质量下优先改动范围更小的实现
-5. 消除矛盾：关键逻辑矛盾选择有测试/验证支撑的一方
+**聚合规则（优先级降序）**：详见 `agent/synthesizer-fusion.md` §融合规则——由 synthesizer-fusion 在 fusion worktree 中执行产物聚合，multiModel 主控不重复定义规则。
 
 **输出格式（四段式，由 synthesizer-fusion 输出）**：
 

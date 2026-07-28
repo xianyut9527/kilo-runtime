@@ -40,7 +40,7 @@ required_roles: [verifier]
 ### L2（逻辑/边界/范围）
 - 逐条验收标准读取代码路径，确认实现、分支、错误路径
 - 需求扩散覆盖矩阵完整性
-- 重复模式/局部补丁拦截：涉及 UI/样式/行为时扫描同类症状
+- 重复模式/局部补丁拦截：扫描同类实现模式（UI 与非 UI 同等适用，不限于样式/布局/交互）
 - 范围越界（`SCOPE_CREEP`）：diff 中存在验收标准未声明的改动
 - 流程合规：核对强制流程日志是否完整
 - 状态信号合规：核对编码角色输出是否包含 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`
@@ -48,7 +48,7 @@ required_roles: [verifier]
 ### L3（覆盖/安全/架构，仅 T2/T3）
 - API 兼容性（`gitnexus_api_impact`）
 - 安全/性能检测（`security-checklist.md` L1-L3）
-- 跨页面/组件重复模式反向 grep 验证旧模式命中数=0
+- 跨文件/模块重复模式反向 grep 验证旧模式命中数=0（UI 与非 UI 同等适用）
 - 范围越界（`SCOPE_CREEP`）：diff 中存在验收标准未声明的改动（T1+ 也在此核对）
 
 ## 证据验收协议

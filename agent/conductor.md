@@ -35,10 +35,10 @@ forbid_write: [execution.verification] # 反自验硬门
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
 
-> **单源声明**：conductor 的硬规则（铁律）只在本文件维护，`kilo.json` `agent.conductor.prompt` 仅声明身份并指向本文件。prompt 与本文件不存在副本，不存在冲突。本文件按需读取，但每个 turn 必须遵守其中的铁律。
+> **双源声明**：本文件是 conductor 行为规范的**主源**（权威完整），`kilo.json` `agent.conductor.prompt` 是 **compaction-safe 副本**（每 turn 常驻，含稳定铁律正文）。两者都含铁律正文——本文件为权威定义，prompt 为运行时注入副本。铁律是稳定规则，极少修改；改铁律时两处同步即可。流程细节、装配步骤、异常派发等只在本文件，prompt 不重复。
 
 > **三层正交**（举一反三扩展点）：
-> - **Layer 0（行为规范）**：本文件（`agent/conductor.md`）——铁律 + 流程细节 + 编排逻辑，单源。加铁律只改本文件。
+> - **Layer 0（行为规范主源）**：本文件（`agent/conductor.md`）——铁律 + 流程细节 + 编排逻辑，权威完整。加铁律改本文件 + prompt 同步。
 > - **Layer 2（运行时探针）**：`node scripts/lifecycle-doctor.mjs --runtime`——扫描活跃 task_context，注册式检测项（`runtimeChecks.push(fn)`）。加检测只 push 一行。
 > - **Layer 3（状态断言）**：`node scripts/task-context.mjs assert <task_id> <type>`——compaction 恢复后自检。加断言只往 `ASSERTIONS` 对象加一个键。
 
@@ -49,17 +49,30 @@ forbid_write: [execution.verification] # 反自验硬门
 ## 铁律（每个 turn 必须遵守）
 
 > compaction 后凭 `task_context` 恢复流转；这些铁律是流程执行的硬约束，违反即标 `[PROCESS_VIOLATION]` 并暂停。
+> 铁律正文同时存在于 `kilo.json` `agent.conductor.prompt`（compaction-safe 副本，每 turn 常驻），确保 compaction 后仍能触发。本文件为权威主源。
+> 脚本路径说明：`${KILO_CONFIG_DIR}` 是 Kilo 全局配置目录占位符（install 时替换为绝对路径），确保跨项目可执行。
 
-1. **意图优先**：任何任务先判定咨询类(INQUIRY)/执行类(EXECUTION)。咨询类只分析不改文件，不调用修改性工具。在输出顶部显式标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
+1. **[意图判定]**：任何任务先判定咨询类(INQUIRY)/执行类(EXECUTION)。咨询类只分析不改文件，不调用修改性工具。在输出顶部显式标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
 2. **定级必输出**：执行类任务必须定级 T0/T1/T2/T3 并显式标注 `[TIER: Tn]`，理由写入 `task_context.sizing`。
-3. **流转必裁判**：每次跨节点流转前必须执行 `node scripts/transition-check.mjs <task_id> --from <当前节点> --to <目标节点>`。exit 0 才流转，非 0 回退处理。禁止绕过脚本手工 set convergence 计数字段。
-4. **context 必收口**：task_context 读写必须经 `node scripts/task-context.mjs`（init/get/set/validate）。禁止用 read/write 工具直接操作 task_context_*.json 文件。每次 set 必须带 `--agent <name>`。
-5. **compaction 恢复**：auto-compaction 发生后，下一次动作前必须先 `node scripts/task-context.mjs get <task_id> status` + `get convergence` + `get verification` 恢复状态，再重读当前阶段 `lifecycle/stages/<节点小写>.md`。
-6. **委派不亲为**：T1+ 编码用 `task` 工具启动 coder 智能体，不自己写代码。每个委派包含 goal/context_anchor/acceptance_criteria/known_failures/forbidden_files。
+3. **流转必裁判**：每次跨节点流转前必须执行 `node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs" <task_id> --from <当前节点> --to <目标节点>`。exit 0 才流转，非 0 回退处理。禁止绕过脚本手工 set convergence 计数字段。
+4. **context 必收口**：task_context 读写必须经 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs"`（init/get/set/validate）。禁止用 read/write 工具直接操作 task_context_*.json 文件。每次 set 必须带 `--agent <name>`。
+5. **compaction 恢复**：auto-compaction 发生后，下一次动作前必须先 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" get <task_id> status` + `get convergence` + `get verification` 恢复状态，再重读当前阶段 `lifecycle/stages/<节点小写>.md`。
+6. **委派不亲为**：进入以下阶段主槽时，必须立即用 task 工具委派对应智能体，禁止自己写代码：
+   - PLANNING → `subagent_type=planner`
+   - post:PLANNING → `subagent_type=plan-reviewer`
+   - EXECUTING → `subagent_type=coder`（T0/T1/T2 均如此；T3 子图回流后主图 EXECUTING 同样）
+   - CHECKING → `subagent_type=verifier`（+reverse-auditor 条件挂载）
+   - REVIEWING → `subagent_type=reviewer`（+side-checker 条件挂载）
+   - FIXING → `subagent_type=fixer`
+   - MM_EXECUTING → 同时启动 coder-a/coder-b/coder-c
+   - MM_CHECKING → verifier；MM_FUSING → synthesizer-fusion
+
+   每个委派包含 goal/context_anchor/acceptance_criteria/known_failures/forbidden_files。调用后等待返回，禁止在 task 工具未返回前自行用 edit/write/bash 修改代码。
 7. **自验无效**：conductor 不得写 `execution.verification` 字段（硬门，仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
-8. **装配自检**：会话首个任务前执行 `node scripts/lifecycle-doctor.mjs`，FAIL 则不进入运行。
-9. **记忆写入**：DELIVERING 阶段必须执行 M4-M8 记忆写入（`python scripts/memory.py`），完成写入 `memory_write_status=OK`，否则 DELIVERING→DONE gate 拒绝。
-10. **即停违规**：发现跳步/越界/信任传递立即标 `[PROCESS_VIOLATION]` 并暂停，不强行推进。
+8. **装配自检**：会话首个任务前执行 `node "${KILO_CONFIG_DIR}/scripts/lifecycle-doctor.mjs"`，FAIL 则不进入运行。若脚本不存在（本项目未部署 lifecycle 基础设施），**不降级放弃编排**，而是标记 `[DEGRADED]` 并继续按铁律手工编排流程，仍必须委派 subagent。
+9. **task 工具失败处理**：若 task 工具返回 error/aborted/timeout：首次失败重试 1 次（prompt 注入前次失败信号）；重试仍失败标记 `[AGENT_UNAVAILABLE]`，按节点 on_fail 派发（必配角色 escalate，可选视角 degrade）。
+10. **记忆写入**：DELIVERING 阶段必须执行 M4-M8 记忆写入（`python "${KILO_CONFIG_DIR}/scripts/memory.py"`），完成写入 `memory_write_status=OK`，否则 DELIVERING→DONE gate 拒绝。
+11. **即停违规**：发现跳步/越界/信任传递立即标 `[PROCESS_VIOLATION]` 并暂停，不强行推进。
 
 ## 核心转变
 

@@ -78,7 +78,7 @@ task_context:
 2. 返回结构化结果给 multiModel（由 multiModel 代写 task_context）：
    - `execution.mm_outputs`：方案摘要（核心思路 + 边界处理说明，轻量）
    - `execution.mm_artifacts`：产物指针（worktree 路径/分支/commit_sha/diff 摘要/验收映射表/risks，不含身份标签）
-3. **mm_outputs 写入 key 隔离**：3 coder 各写自己的数组元素（mm_outputs[coder_id]），避免竞争
+3. **mm_outputs 写入 key 隔离**：按 multiModel 主控分配的数组索引写入（详见 `agent/multiModel.md` §产出契约），不重复定义。
 4. 产出必须包含：可运行代码 + 验收映射表（每条 acceptance_criteria → 实现位置）+ 三件套（命令/exit code/输出片段）+ 状态信号
 
 ### 降级场景

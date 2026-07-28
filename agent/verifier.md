@@ -99,7 +99,7 @@ verification_commands: [{ cmd, expected_exit_code }]
 ### L2（逻辑/边界/范围）
 - 逐条验收标准读取代码路径
 - 需求扩散覆盖矩阵完整性
-- 重复模式扫描（UI/样式/行为任务）
+- 重复模式扫描（UI 与非 UI 同等适用，不限于样式/布局/交互）
 - `SCOPE_CREEP`：diff 中超出验收标准的改动
 - 流程合规：强制流程日志完整性
 - 状态信号合规：coder 输出是否含 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`
@@ -107,7 +107,7 @@ verification_commands: [{ cmd, expected_exit_code }]
 ### L3（覆盖/安全/架构，仅 T2/T3）
 - API 兼容性（`gitnexus_api_impact`）
 - 安全/性能检测（`security-checklist.md`）
-- 跨页面/组件重复模式反向 grep
+- 跨文件/模块重复模式反向 grep（UI 与非 UI 同等适用）
 
 ## 5 元组证据（禁止信任传递）
 

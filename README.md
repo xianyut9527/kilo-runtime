@@ -54,7 +54,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   │   ├── tdd-execution/        # TDD 执行
 │   │   ├── verification-before-completion/  # 完工前验证
 │   │   ├── using-git-worktrees/  # git worktree 隔离
-│   │   ├── component-driven-fixes/  # 重复 UI/样式/行为问题的组件化修复
+│   │   ├── component-driven-fixes/  # 重复实现模式组件化修复（UI 与非 UI 通用）
 │   │   ├── ui-shadcn/            # shadcn/ui 组件库（含 ui-color / ui-animation / ui-frontend 等 12 个子库）
 │   │   └── hermes-migration/     # Kilo→Hermes 迁移工具包
 │   └── memory/                   # 程序化记忆模块（v2.6.2；主通道 SQLite，md 仅静态兜底）
