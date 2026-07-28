@@ -47,11 +47,11 @@ componentization_plan: "yes" | "no" | "N/A"
 - 主槽输出方案 → 执行 `post:PLANNING` 挂载点（挂载机制见 graph.yaml 头注释）
 - 挂载点审查通过 → 阶段完成，经 `PLANNING → EXECUTING` 边进入 `EXECUTING`
 - 挂载点审查失败/超时/异常 → 挂载点 `on_fail: abort` → `[SLOT_ABORT]`，停在 PLANNING 等用户决策（不自动回流）
-- 绕过审查直接进入编码 → 下游 verifier 标 `[PLAN_REVIEW_MISS]` FAIL（见 stages/checking.md）
+- 绕过审查直接进入编码 → 下游正向验证角色标 `[PLAN_REVIEW_MISS]` FAIL（见 stages/checking.md）
 
 ## 反模式
 
 - ❌ "太简单不需要设计" — 简单任务正是未审视假设造成返工的高发区。
-- ❌ 未包含重复模式扫描清单就放行 coder。
+- ❌ 未包含重复模式扫描清单就放行编码角色。
 - ❌ 主槽智能体自验方案通过并自行进入执行阶段（方案放行由 post:PLANNING 挂载点独立审查判定）。
 - ❌ 未经 post:PLANNING 挂载点审查放行即进入执行阶段。

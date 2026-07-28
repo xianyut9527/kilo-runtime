@@ -13,7 +13,7 @@
 version: 1
 provider: multiModel
 entry: MM_INIT
-exit: MM_ARCHIVED            # 到达 exit 后交还 task_context 给 conductor，回流主图 CHECKING（不再直达 DELIVERING）
+exit: MM_ARCHIVED            # 到达 exit 后交还 task_context 给 conductor，回流主图 EXECUTING（由主图 coder 按融合方案实现代码），然后走标准 CHECKING→REVIEWING→DELIVERING
 
 nodes:
   - id: MM_INIT
@@ -35,8 +35,9 @@ nodes:
 
   - id: MM_FUSING
     required: [synthesizer-fusion]
-    note: 独立融合编辑；隔离硬门：不读拆分意图/模型身份/task_context.intent；
-          融合产物同步写入 execution.diffs/changes/acceptance_map（主图标准字段，供回流 CHECKING 时主图 verifier/reverse-auditor 读）
+    note: 独立融合编辑（产出方案，不产出代码）；隔离硬门：不读拆分意图/模型身份/task_context.intent；
+          融合方案写入 plan + execution.fused_output（设计方案等价物，供主图 EXECUTING 阶段 coder 按方案实现；
+          execution.diffs/changes/acceptance_map 由主图 coder 实现代码后写入，子图不碰这些代码产物字段）
 
   - id: MM_FCHECK
     required: [verifier]
@@ -48,8 +49,9 @@ nodes:
 
   - id: MM_ARCHIVED
     type: terminal
-    note: 写 status=ready_for_delivery，交还 task_context 给 conductor；
-          conductor 接手回流主图 CHECKING（不再直达 DELIVERING），融合产物经 execution.diffs/changes/acceptance_map 供主图四视角验证
+    note: 写 subgraph_status=ready_for_delivery（供 graph.yaml MM_SUBGRAPH→EXECUTING 边条件求值；status 保持 RUNNING 交还 conductor 后接管），
+          task_context 交还 conductor 回流主图 EXECUTING（由主图 coder 按融合方案实现代码，写入 execution.diffs/changes/acceptance_map），
+          然后走标准 CHECKING→REVIEWING→DELIVERING（主图四视角验证代码产物，不是验证方案）
 
 edges:
   - { from: MM_INIT, to: MM_INJECT }

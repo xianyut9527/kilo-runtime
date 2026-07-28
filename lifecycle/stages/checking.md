@@ -8,29 +8,29 @@ required_roles: [verifier]
 
 # lifecycle/stages/checking
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（纯拓扑）；必配角色契约见本文件 frontmatter `required_roles`。挂载：verifier 必加载（恒定挂载，reachability 即开关），reverse-auditor 经 frontmatter `mount` 条件挂载（`config.agents.reverse_auditor=true`，默认 T2，见 `lifecycle/config.yaml`）。
+> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（纯拓扑）；必配角色契约见本文件 frontmatter `required_roles`；智能体经 frontmatter `mount` 自注册挂载。本阶段主槽必配角色：正向验证（`required_roles: [verifier]` 角色）；可选视角（反向审计）由 `config.agents` 开关条件挂载。
 
 ## 输入
 
-> **视角物理隔离**：verifier 只读 `plan + execution.diffs/changes/acceptance_map + forbidden_files + acceptance_criteria`，**禁止读 `execution.verification / fixing_history`**。reverse-auditor 只读 `intent + execution.diffs/changes/acceptance_map`，**禁止读 `plan`**。
+> **视角物理隔离**：正向验证视角只读 `plan + execution.diffs/changes/acceptance_map + forbidden_files + acceptance_criteria`，**禁止读 `execution.verification / fixing_history`**。反向审计视角只读 `intent + execution.diffs/changes/acceptance_map`，**禁止读 `plan`**。
 
-- coder 输出的变更摘要 + 验收映射表（**不含 coder 自验声明**）
+- 编码角色输出的变更摘要 + 验收映射表（**不含编码角色自验声明**）
 - 原始验收标准清单
 - diff（`git diff` 或实际文件变更）
-- 设计门方案（T1+，仅 verifier 用于核对范围）
-- 原始意图（reverse-auditor 用，**不传 plan**）
+- 设计门方案（T1+，仅正向验证角色用于核对范围）
+- 原始意图（反向审计角色用，**不传 plan**）
 
-## 双视角交叉验证（verifier 正向 + reverse-auditor 反向，条件并行）
+## 双视角交叉验证（正向验证 + 反向审计，条件并行）
 
-### 正向验证（verifier）
-按验收标准逐条验证产物，L1/L2/L3 分层，5 元组证据，独立重跑。详见 `agent/verifier.md`。
+### 正向验证（必配角色）
+按验收标准逐条验证产物，L1/L2/L3 分层，5 元组证据，独立重跑。详见 `agent/verifier.md`（履行正向验证角色的智能体）。
 
-### 反向审计（reverse-auditor，条件加载）
-从产物反推是否满足原始需求，追溯假设，发现隐性遗漏和过度实现。详见 `agent/reverse-auditor.md`。
+### 反向审计（条件加载）
+从产物反推是否满足原始需求，追溯假设，发现隐性遗漏和过度实现。详见 `agent/reverse-auditor.md`（履行反向审计角色的智能体，默认 T2 加载）。
 
 > 两者并行执行，各自独立 context window，不互相参考。组合判定：任一 FAIL → FIXING。
 
-## 分层验证（verifier 正向）
+## 分层验证（正向验证角色）
 
 ### L1（语法/编译/格式/编码）
 - 运行测试、构建、类型、Lint
@@ -43,7 +43,7 @@ required_roles: [verifier]
 - 重复模式/局部补丁拦截：涉及 UI/样式/行为时扫描同类症状
 - 范围越界（`SCOPE_CREEP`）：diff 中存在验收标准未声明的改动
 - 流程合规：核对强制流程日志是否完整
-- 状态信号合规：核对 coder 输出是否包含 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`
+- 状态信号合规：核对编码角色输出是否包含 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`
 
 ### L3（覆盖/安全/架构，仅 T2/T3）
 - API 兼容性（`gitnexus_api_impact`）
@@ -53,8 +53,8 @@ required_roles: [verifier]
 
 ## 证据验收协议
 
-1. **枚举声明**：列出 coder 输出的每条完成/通过/修复声明。
-2. **本轮重跑**：对每条声明，本轮重新运行证明命令（不复用 coder 输出）。
+1. **枚举声明**：列出编码角色输出的每条完成/通过/修复声明。
+2. **本轮重跑**：对每条声明，本轮重新运行证明命令（不复用编码角色输出）。
 3. **完整读取**：读 stdout+stderr+exit code 全文，不截断。
 4. **声明 → 证据比对**：声明"通过"→ exit code=0 且无新失败；声明"修复"→ 原失败转绿且无回归。
 5. **附证据结论**：每条声明输出"声明 X / 证据 Y / 结论 [证实|证伪|未验证]"。
@@ -71,8 +71,8 @@ transition_context:
   l2_pass: true | false
   l3_pass: true | false | "N/A"
 quality_gate:
-  forward_result: "PASS" | "FAIL"     # verifier 正向
-  reverse_result: "PASS" | "FAIL" | "N/A"  # reverse-auditor 反向（条件加载，未加载时 N/A）
+  forward_result: "PASS" | "FAIL"     # 正向验证角色
+  reverse_result: "PASS" | "FAIL" | "N/A"  # 反向审计角色（条件加载，未加载时 N/A）
   unverified_items: ["string"]
   blockers: [{ source, severity, file, line, message }]
 ```

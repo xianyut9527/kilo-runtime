@@ -28,7 +28,7 @@ subgraph: multimodel-graph.yaml
 #   exit   退出条件（何时将 task_context 交还主图 conductor）
 handoff:
   enter: "SIZING 定级 T3 或用户手动选择；task_context 已由 conductor 初始化或自行初始化"
-  exit: "MM_ARCHIVED 写 status=ready_for_delivery，task_context 交还 conductor 回流主图 CHECKING（不再直达 DELIVERING）"
+  exit: "MM_ARCHIVED 写 subgraph_status=ready_for_delivery（供 graph.yaml MM_SUBGRAPH→EXECUTING 边条件求值）+ status=RUNNING（交还 conductor 后由 conductor 接管），task_context 交还 conductor 回流主图 EXECUTING（由主图 coder 按融合方案实现代码，写入 execution.diffs/changes/acceptance_map），然后走标准 CHECKING→REVIEWING→DELIVERING"
 
 # invariants：子图运行期间的不变量（违反 → [PROCESS_VIOLATION]）
 invariants:
@@ -36,17 +36,19 @@ invariants:
   - MM_* 期间 conductor 不并发写 task_context（单写者原则）
   - total_rounds 只能由 conductor 递增，multiModel 经 status 信号交还计数
 
-# task_context：读写边界声明（WRITE_MATRIX 经 task-context.mjs 从本字段自动派生）
-#   write  可写切片（子图编排者专属：plan / plan.subtasks / memory_injection / execution.mm_outputs /
-#          execution.fused_output / execution.diffs / execution.changes / execution.acceptance_map /
-#          status / convergence / intent / sizing /
-#          config.agents.synthesizer_fusion（MM_INIT 手动模式写入））
-#   plan：T3 不走主图 PLANNING，MM_INIT 子任务委派包作为设计方案等价物写入 plan，
-#          供回流主图 CHECKING/REVIEWING 时 verifier/reviewer/side-checker 读取核对范围
-#   execution.diffs/changes/acceptance_map：MM_FUSING 融合产物同步写入主图标准字段，
-#          供回流主图 CHECKING 时主图 verifier/reverse-auditor 读取
-task_context:
-  write: [plan, plan.subtasks, memory_injection, execution.mm_outputs, execution.fused_output, execution.diffs, execution.changes, execution.acceptance_map, status, convergence, intent, sizing, config.agents.synthesizer_fusion]
+  # task_context：读写边界声明（WRITE_MATRIX 经 task-context.mjs 从本字段自动派生）
+  #   write  可写切片（子图编排者专属：plan / plan.subtasks / memory_injection / execution.mm_outputs /
+  #          execution.fused_output / subgraph_status /
+  #          status / convergence / intent / sizing /
+  #          config.agents.synthesizer_fusion（MM_INIT 手动模式写入））
+  #   plan：T3 不走主图 PLANNING，MM_INIT 子任务委派包 + MM_FUSING 融合方案作为设计方案等价物写入 plan，
+  #          供主图 EXECUTING 阶段 coder 读取并按方案实现代码
+  #   execution.fused_output：融合后完整方案（设计方案，非代码），供主图 EXECUTING 阶段 coder 读取
+  #   subgraph_status：子图出口信号（ready_for_delivery），供 graph.yaml MM_SUBGRAPH→EXECUTING 边条件求值
+  #   status：子图运行期间状态（RUNNING/PAUSED/DEGRADED），MM_ARCHIVED 后由 conductor 接管
+  #   execution.diffs/changes/acceptance_map：由主图 EXECUTING 阶段 coder 实现代码后写入，子图不碰这些代码产物字段
+  task_context:
+    write: [plan, plan.subtasks, memory_injection, execution.mm_outputs, execution.fused_output, subgraph_status, status, convergence, intent, sizing, config.agents.synthesizer_fusion]
 ---
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
@@ -68,11 +70,11 @@ multiModel 是**独立生命周期消费者**（`type: lifecycle_provider`，fro
                                         → MM_CHECKING(verifier) → MM_FUSING(synthesizer-fusion)
                                         → MM_FCHECK(verifier) → MM_DELIVERING → MM_ARCHIVED
                                         ↓
-主图：CHECKING ⇄ FIXING → REVIEWING ⇄ FIXING → DELIVERING → DONE
+主图：EXECUTING → CHECKING ⇄ FIXING → REVIEWING ⇄ FIXING → DELIVERING → DONE
       （conductor 接手标准验证闭环：正向+反向+侧向+审查四视角 + 修复回环）
 ```
 
-multiModel 完成 `MM_ARCHIVED` 后，task_context 交还 conductor，**回流主图 CHECKING**（融合产物经 `execution.diffs/changes/acceptance_map` 供主图四视角验证），不再直达 DELIVERING。子图内部 MM_CHECKING/MM_FCHECK 是"生成期内部质检"，主图 CHECKING/REVIEWING 是"交付前独立验证+审查"——两层正交，不重复。
+multiModel 完成 `MM_ARCHIVED` 后，task_context 交还 conductor，**回流主图 EXECUTING**（由主图 coder 按 `plan` + `execution.fused_output` 中的融合方案实现代码，并写入 `execution.diffs/changes/acceptance_map`），然后走标准 `CHECKING ⇄ FIXING → REVIEWING ⇄ FIXING → DELIVERING`（主图四视角验证的是**代码产物**，不是方案本身）。子图内部 MM_CHECKING/MM_FCHECK 是"生成期内部质检"（验证各家方案 + 融合方案自洽性），主图 CHECKING/REVIEWING 是"交付前独立验证+审查"（验证按方案实现的代码）——两层正交，不重复。
 
 ## task*context 交接协议（MM*\* ↔ 主生命周期）
 
@@ -91,10 +93,10 @@ multiModel 期间产生的全部状态写入 `$env:TEMP/kilo/task_context_<task_
 | `MM_INJECT`     | `memory_injection`                              | `memory_injection`（3 个 coder 相同内容，公平性原则；降级不阻塞）                                    |
 | `MM_EXECUTING`  | `plan` / `forbidden_files`                      | `execution.mm_outputs`（3 份 coder 输出摘要，**不含身份标签**）                                      |
 | `MM_CHECKING`   | `execution.mm_outputs`                          | `verification.forward`（由 verifier 写入；`execution.verification` 禁令同 conductor 规则）           |
-| `MM_FUSING`     | `execution.mm_outputs` / `verification.forward` | `execution.fused_output` + `execution.diffs` / `execution.changes` / `execution.acceptance_map`（融合产物同步写入主图标准字段，供回流 CHECKING 时主图 verifier/reverse-auditor 读；synthesizer-fusion 注入边界不变：不读 intent/拆分意图/模型身份） |
-| `MM_FCHECK`     | `execution.fused_output`                        | `verification.forward.fusion_check`（融合后验证）                                                    |
+| `MM_FUSING`     | `execution.mm_outputs` / `verification.forward` | `execution.fused_output` + `plan`（融合**方案**，非代码；写入设计方案字段供主图 EXECUTING 阶段 coder 按方案实现；synthesizer-fusion 注入边界不变：不读 intent/拆分意图/模型身份；**不写** execution.diffs/changes/acceptance_map——这些是代码产物字段，由主图 coder 实现代码后写入） |
+| `MM_FCHECK`     | `execution.fused_output`                        | `verification.forward.fusion_check`（融合方案自洽性验证，非代码验证）                                                    |
 | `MM_DELIVERING` | 全部                                            | `status` + `convergence.round` + 记忆溯源（M4-M8，dispatch_log / fact_store / model_calibration 等） |
-| `MM_ARCHIVED`   | 全部                                            | `status=ready_for_delivery`，task_context 交还 conductor 回流主图 `CHECKING`（融合产物已写入 execution.diffs/changes/acceptance_map） |
+| `MM_ARCHIVED`   | 全部                                            | `subgraph_status=ready_for_delivery`（供 graph.yaml MM_SUBGRAPH→EXECUTING 边条件求值）+ `status=RUNNING`（交还 conductor 后由 conductor 管理），task_context 交还 conductor 回流主图 `EXECUTING`（融合**方案**已写入 plan + execution.fused_output；由主图 coder 按方案实现代码并写入 execution.diffs/changes/acceptance_map，然后走标准 CHECKING→REVIEWING→DELIVERING 验证代码产物） |
 
 ### 交接不变量
 
@@ -134,7 +136,7 @@ multiModel（多模型融合模式）
 
 - 通过 `task` 工具同时启动 3 个独立 coder 智能体：`coder-a`（逻辑推理派）、`coder-b`（安全边界派）、`coder-c`（代码生成派）。**互不知晓彼此存在**。
 - 每个 coder 独立阅读上下文、独立推理、独立输出完整方案。
-- 要求输出必须包含：核心思路概述、完整代码/方案、边界处理说明、与现有代码风格自评。
+- 要求输出必须包含：核心思路概述、**详细方案**（可含关键代码示意/伪代码——非最终代码产物，代码实现由主图 EXECUTING 阶段 coder 按融合方案完成）、边界处理说明、与现有代码风格自评。
 
 ### 阶段 3：交叉验证（verifier）
 
@@ -146,8 +148,9 @@ multiModel（多模型融合模式）
 
 - multiModel 调用 `task` 工具启动 `synthesizer-fusion` 智能体（`subagent_type: synthesizer-fusion`）。
 - **注入边界**：只传 3 份 coder 输出 + verifier 报告 + acceptance_criteria + project_context，**不传拆分意图、不传模型身份、不传 task_context.intent**。
-- synthesizer-fusion 角色定位是**编辑**，不是裁判——必须输出一份**新的融合方案**。
+- synthesizer-fusion 角色定位是**编辑**，不是裁判——必须输出一份**新的融合方案**（设计方案，非代码实现）。
 - **强制自检**：synthesizer-fusion 输出前逐项检查 **10 项**自检清单（详见 `agent/synthesizer-fusion.md`）。
+- **产物边界**：融合方案写入 `plan` + `execution.fused_output`（设计方案等价物）；**不写** `execution.diffs/changes/acceptance_map`——这些是代码产物字段，由主图 EXECUTING 阶段 coder 按融合方案实现代码后写入。
 
 **融合规则（优先级降序，由 synthesizer-fusion 执行）**：
 
@@ -171,14 +174,14 @@ multiModel（多模型融合模式）
 
 ### 阶段 4B：融合后验证（verifier）
 
-- synthesizer-fusion 输出后，multiModel **必须**再次调用 verifier 验证融合方案本身。
+- synthesizer-fusion 输出后，multiModel **必须**再次调用 verifier 验证融合方案本身（方案自洽性，非代码验证）。
 - 验证重点：逻辑自洽性、吸收完整性、风格统一正确性、矛盾消除质量、新增问题。
 - PASS → 阶段 5；FAIL → 返回 synthesizer-fusion 重新编辑或标注"融合失败"由用户决策。
 
-### 阶段 5：执行与交付 + 记忆溯源
+### 阶段 5：交付准备 + 记忆溯源
 
 - 再次核对融合方案是否满足所有 acceptance_criteria。
-- 直接执行代码变更或交付最终答案。
+- **子图不执行代码变更**——代码实现由主图 EXECUTING 阶段 coder 按融合方案执行。
 - **记忆溯源写入**：调用 memory.db（M4-M8，SQL 模板见 `docs/memory-ops-reference.md`）：
   - dispatch_log 写入（multiModel 专属，记录 token 3-5 倍消耗）
   - 融合溯源：更新被引用 fact 的 evidence + hit_count+1
@@ -196,7 +199,7 @@ multiModel（多模型融合模式）
 | coder-B            | 安全/边界敏感，擅长防御性编程    | `kilo.json` `agent.coder-b.model`（strict-verification 倾向） |
 | coder-C            | 代码生成专精                     | `kilo.json` `agent.coder-c.model`（code-generation 倾向）     |
 | verifier           | 严格验证，发现边界问题和逻辑漏洞 | 见 `kilo.json` `agent.verifier.model`                         |
-| synthesizer-fusion | 长上下文整合，代码风格统一       | 见 `kilo.json` `agent.synthesizer-fusion.model`               |
+| synthesizer-fusion | 长上下文整合，方案风格统一       | 见 `kilo.json` `agent.synthesizer-fusion.model`               |
 | multiModel（主控） | 拆分/委派/调度，不参与融合       | 见 `kilo.json` `agent.multiModel.model`                       |
 
 > **3 个 coder 多样化原则**：必须选**不同架构/不同厂商**模型。`kilo.json` 已分别声明 `coder-a`、`coder-b`、`coder-c` 三个 subagent，并绑定不同模型；multiModel 启动 3 个副本时应直接调用对应名称的 agent，不得复用单一 `coder` 模型。

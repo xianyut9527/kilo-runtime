@@ -387,24 +387,24 @@ for (const [id, n] of graph.nodes) {
   }
 }
 
-// A7. T3 回流守护：MM_SUBGRAPH 出边必须指向 CHECKING（回流主图验证闭环），不得直达 DELIVERING
+// A7. T3 回流守护：MM_SUBGRAPH 出边必须指向 EXECUTING（融合方案由主图 coder 实现），然后走标准验证审查闭环，不得直达 DELIVERING
 {
-  let mmOut = 0, mmToChecking = false, mmToDelivering = false;
+  let mmOut = 0, mmToExecuting = false, mmToDelivering = false;
   for (const e of graph.edges) {
     if (e.from === 'MM_SUBGRAPH') {
       mmOut++;
-      if (e.to === 'CHECKING') mmToChecking = true;
+      if (e.to === 'EXECUTING') mmToExecuting = true;
       if (e.to === 'DELIVERING') mmToDelivering = true;
     }
   }
   if (mmOut === 0) {
     fail('graph.t3回流', 'MM_SUBGRAPH 无出边');
   } else if (mmToDelivering) {
-    fail('graph.t3回流', `MM_SUBGRAPH 出边指向 DELIVERING（应回流 CHECKING 走主图四视角验证闭环）`);
-  } else if (!mmToChecking) {
-    fail('graph.t3回流', `MM_SUBGRAPH 出边未指向 CHECKING（当前指向未知节点）`);
+    fail('graph.t3回流', `MM_SUBGRAPH 出边指向 DELIVERING（应回流 EXECUTING 由主图 coder 按融合方案实现后走标准验证审查闭环）`);
+  } else if (!mmToExecuting) {
+    fail('graph.t3回流', `MM_SUBGRAPH 出边未指向 EXECUTING（当前指向未知节点）`);
   } else {
-    pass('graph.t3回流', `MM_SUBGRAPH → CHECKING（回流主图验证闭环，融合产物经 execution.diffs/changes/acceptance_map 供四视角读取）`);
+    pass('graph.t3回流', `MM_SUBGRAPH → EXECUTING（融合方案由主图 coder 实现后走标准 CHECKING→REVIEWING→DELIVERING 闭环）`);
   }
 }
 
@@ -627,6 +627,42 @@ if (cfg) {
   }
   if (drift === 0 && checked > 0) pass('matrix.drift', `${checked} 个智能体矩阵表与 frontmatter 一致`);
   if (checked === 0) warn('matrix.drift', 'conductor.md 未找到可校验的矩阵表行（格式应为 | name | read | w1, w2 | forbid |）');
+}
+
+// ============================================================
+// F. stages 正文硬编码智能体名检测（[DOC_DRIFT]）
+// ============================================================
+
+// 框架级名称（executor / provider），非硬编码
+const FRAMEWORK_NAMES = new Set(['conductor', 'multiModel']);
+
+{
+  const stageFiles = fs.readdirSync(STAGES_DIR).filter((f) => f.endsWith('.md') && f !== 'README.md');
+  let driftFound = 0;
+  for (const file of stageFiles) {
+    const filePath = path.join(STAGES_DIR, file);
+    const text = readText(filePath) ?? '';
+    const fm = extractFrontmatter(text);
+    const roles = fm ? parseStageFrontmatter(fm) : [];
+    const allowedInBody = new Set([...roles, ...FRAMEWORK_NAMES]);
+
+    let cleaned = text.replace(/^---[\s\S]*?---/, ''); // 去掉 frontmatter
+    // 去掉代码块、行内代码
+    cleaned = cleaned
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/`[^`]+`/g, '');
+
+    for (const [name] of agents) {
+      if (allowedInBody.has(name)) continue; // required_roles 角色名 + 框架名允许出现
+      const regex = new RegExp(`(?<!\/)\\b${name.replace(/-/g, '[-_]')}\\b`, 'g');
+      const hits = [...cleaned.matchAll(regex)];
+      if (hits.length > 0) {
+        driftFound++;
+        fail('doc.drift', `${file}: 正文硬编码智能体名 "${name}"（应改用角色语义）`);
+      }
+    }
+  }
+  if (driftFound === 0) pass('doc.drift', `${stageFiles.length} 个 stage 文件正文无硬编码可选智能体名`);
 }
 
 // ============================================================

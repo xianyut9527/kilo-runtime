@@ -259,10 +259,10 @@ nodes:
 
 edges:
   ...
-  # 改原边 EXECUTING→CHECKING 为 EXECUTING→UNIT_TEST→CHECKING
+  # 改原边 EXECUTING→CHECKING 为 EXECUTING→UNIT_TEST→CHECKING（T1-T3 都需单元测试）
   - from: EXECUTING
     to: UNIT_TEST
-    when: "tier in ['T1','T2']"
+    when: "tier in ['T1','T2','T3']"
   - from: UNIT_TEST
     to: CHECKING
     when: "unit_test_result == 'PASS'"
@@ -387,7 +387,7 @@ nodes:
 edges:
   - from: PLANNING             # 起始节点 ID
     to: EXECUTING              # 目标节点 ID
-    when: "tier in ['T1','T2']"  # 流转条件（对照 task_context 求值）；省略 = 无条件
+    when: "tier in ['T1','T2','T3']"  # 流转条件（对照 task_context 求值）；省略 = 无条件
     gate: MEMORY_WRITE_COMPLETE  # 可选：质量门禁（硬门，如 DELIVERING→DONE 记忆写入门）；省略 = 无门禁
     note: 人类可读说明         # 可选
 ```
@@ -508,8 +508,8 @@ bootstrap 校验 coder-a/b/c 在 kilo.json 绑定模型的 `(vendor, architectur
 | `execution.diffs` | coder/fixer | 变更 diff |
 | `execution.changes` | coder | 变更清单 |
 | `execution.acceptance_map` | coder | 验收映射表 |
-| `execution.mm_outputs` | coder-a/b/c | multiModel 3 份输出 |
-| `execution.fused_output` | synthesizer-fusion | 融合后输出 |
+| `execution.mm_outputs` | coder-a/b/c | multiModel 3 份方案输出（详细方案，非代码产物） |
+| `execution.fused_output` | synthesizer-fusion | 融合后方案（设计方案，非代码；供主图 EXECUTING 阶段 coder 按方案实现） |
 | `execution.verification` | verifier | 验证结论（写入边界硬门：唯一写入者） |
 | `verification.forward` | verifier | 正向验证结论 |
 | `verification.reverse` | reverse-auditor | 反向审计结论 |

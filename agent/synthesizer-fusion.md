@@ -24,12 +24,16 @@ mount:
     when: "config.agents.synthesizer_fusion"
 
 # task_context：读写边界声明
-#   read   可读切片（mm_outputs 3 份 coder 输出；verification.forward verifier 报告；acceptance_criteria 验收标准）
-#   write  可写切片（execution.fused_output 融合后输出；execution.diffs/changes/acceptance_map 主图标准字段，
-#                    供回流主图 CHECKING 时 verifier/reverse-auditor/side-checker/reviewer 读取）
+#   read   可读切片（mm_outputs 3 份 coder 输出；verification.forward verifier 报告；
+#                    plan 原始任务目标与方案——用于确保融合方案不偏离原始意图；
+#                    acceptance_criteria 验收标准；project_context 技术栈）
+#   write  可写切片（plan 融合方案——等价于主图 PLANNING 阶段输出的 design_gate_plan；
+#                    execution.fused_output 融合后完整方案，供主图 EXECUTING 阶段 coder 读取并按方案实现）
+#   注意：synthesizer-fusion 只产出方案/设计/计划，不直接产出代码 diff；
+#         execution.diffs/changes/acceptance_map 由主图 EXECUTING 阶段 coder 实现后写入
 task_context:
-  read: [execution.mm_outputs, verification.forward, acceptance_criteria, project_context]
-  write: [execution.fused_output, execution.diffs, execution.changes, execution.acceptance_map]
+  read: [execution.mm_outputs, verification.forward, plan, acceptance_criteria, project_context]
+  write: [plan, execution.fused_output]
 
 # isolation：视角物理隔离声明（v3.1 融合隔离原则——反确认偏误）
 #   forbid_read  禁止读取的 task_context 切片
@@ -64,7 +68,7 @@ gate: FUSION_SELF_CHECK_10
 > **独立 fusion 智能体的核心价值**（v3.1 恢复独立智能体的根因）：v3.0 让 multiModel 自身融合存在确认偏误——multiModel 同时承担"拆分任务"和"融合输出"两个角色，自身上下文持有拆分意图，会偏向"符合拆分意图的方案"而非"客观最优方案"。独立 fusion 智能体只读 3 份输出 + verifier 报告，**不知道拆分意图、不知道各家用了什么模型、不知道 multiModel 的偏好**，纯粹按方案质量融合。
 
 **输入边界**：
-- ✅ 读取：3 份 coder 输出（方案 + 代码 + 边界处理）+ verifier 对每份的 PASS/FAIL + 问题清单 + acceptance_criteria
+- ✅ 读取：3 份 coder 输出（方案详述（可含代码示意）+ 边界处理）+ verifier 对每份的 PASS/FAIL + 问题清单 + acceptance_criteria
 - ❌ 禁止读取：multiModel 的拆分意图、各 coder 的模型身份、task_context.intent（避免被原始意图框定而放松验收）、fixing_history
 
 ## 输入接口（从 multiModel 注入，不复用主 task_context）
@@ -74,7 +78,7 @@ acceptance_criteria: ["string"]
 coder_outputs:
   - coder_id: "A" | "B" | "C"        # 仅编号，不含模型身份
     solution_summary: "string"
-    code: "string"
+    solution_detail: "string"        # 方案详述（可含关键代码示意/伪代码，非最终代码产物）
     boundary_handling: "string"
     style_self_assessment: "string"
 verifier_reports:
@@ -105,7 +109,7 @@ project_context:
 4. [ ] 边界处理取自 verifier PASS 的方案，而非主观补充
 5. [ ] 风格与 project_context.existing_patterns 一致
 6. [ ] 无矛盾残留（关键逻辑分歧已明确选择并标注理由）
-7. [ ] 融合方案本身逻辑自洽（无自相矛盾的代码路径）
+7. [ ] 融合方案本身逻辑自洽（无自相矛盾的逻辑路径）
 8. [ ] 未泄露 coder 模型身份到最终方案
 9. [ ] 改动范围 ≤ 最大 coder 方案范围
 10. [ ] 输出格式为四段式（各家分析 / 融合决策 / 自检清单 / 最终融合方案）
@@ -124,7 +128,7 @@ self_check:
     note: "string"
 final_solution:
   summary: "string"
-  code: "string"
+  solution_detail: "string"   # 融合方案详述（可含关键代码示意/伪代码；最终代码由主图 EXECUTING 阶段 coder 实现）
   boundary_handling: "string"
   acceptance_coverage:
     - criterion: "string"

@@ -165,8 +165,8 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 |------|----|----|----|----|
 | INTENT | conductor | conductor | conductor | conductor |
 | SIZING | conductor | conductor | conductor | conductor |
-| PLANNING | — | planner（短设计门） | planner（完整规划） | planner（完整规划） |
-| EXECUTING | coder | coder | coder（按 DAG） | 3×coder（multiModel） |
+| PLANNING | — | planner（短设计门） | planner（完整规划） | —（T3 不走主图 PLANNING；MM_INIT 子图拆分写 plan） |
+| EXECUTING | coder | coder | coder（按 DAG） | coder（按 MM_SUBGRAPH 回流的融合方案实现代码；方案由子图 3×coder + synthesizer-fusion 产出） |
 | CHECKING（正向） | — | verifier | verifier | verifier |
 | CHECKING（反向） | — | — | reverse-auditor | reverse-auditor |
 | FIXING | — | fixer | fixer | fixer |

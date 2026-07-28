@@ -1,5 +1,5 @@
 ---
-description: 生命周期阶段 FIXING — 修复。定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题。
+description: 生命周期阶段 FIXING — 修复。定向修复各验证/审查视角指出的阻塞问题。
 model_capability: code-generation
 token_budget: 8000
 # required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
@@ -12,7 +12,7 @@ required_roles: [fixer]
 
 ## 输入
 
-- verifier/reverse-auditor/side-checker/reviewer 给出的阻塞问题清单（含证据片段 + 可操作修复建议）
+- 各验证/审查视角给出的阻塞问题清单（含证据片段 + 可操作修复建议）
 - 原始 diff
 - 验收标准清单
 - 失败模式分类（确定性/间歇性、回归/新缺陷、局部/系统性）
@@ -46,12 +46,12 @@ quality_gate:
 ## 路由规则（边定义见 graph.yaml）
 
 - `DONE` → 回到 `CHECKING`（重新验证）
-- `BLOCKED` / 连续 2 轮同症状 → 停止修复，升级 reviewer 或人工决策
+- `BLOCKED` / 连续 2 轮同症状 → 停止修复，升级审查角色或人工决策
 - 同一状态循环 ≥ max_rounds（单点熔断；阈值见 `lifecycle/config.yaml` convergence）→ `[CIRCUIT_BREAKER]` → 停止修复
 - CHECKING+REVIEWING 累计进入次数 ≥ max_total_rounds（全局熔断；阈值见 `lifecycle/config.yaml` convergence）→ `[CIRCUIT_BREAKER]` → 停止修复
 
 ## 硬规则
 
-- 修复后同样适用 coder 的「完成声明三件套」（命令+exit code+关键输出片段）。
-- 连续 2 轮假设都证伪 → 不再换假设，升级 reviewer 并标记方法层失败。
+- 修复后同样适用编码角色的「完成声明三件套」（命令+exit code+关键输出片段）。
+- 连续 2 轮假设都证伪 → 不再换假设，升级审查角色并标记方法层失败。
 - `[PARTIAL_IMPLEMENTATION]` 必须回到需求扩散包补齐同类点，不得只治症状。

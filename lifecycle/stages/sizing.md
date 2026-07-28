@@ -21,15 +21,15 @@ token_budget: 4000
 
 ```
 T0: ≤2 行改动 / 单一文件 / 无跨模块影响 / 无测试/类型检查需求
-     → 直达执行，无设计门，无 reviewer
+     → 直达执行，无设计门，无审查
 
 T1: 多文件但单一目标 / 有测试需求 / 需简单验证
-     → 短设计门（1-3 句）→ planner → coder → verifier → reviewer(full)
+     → 短设计门（1-3 句）→ 设计门角色 → 编码角色 → 验证角色 → 审查角色(full)
 
 T2: 多模块影响 / 需架构决策 / 有需求扩散风险 / 需完整 DAG
-     → 完整设计门 → 单元 DAG → planner → coder → verifier → reviewer(full)
+     → 完整设计门 → 单元 DAG → 设计门角色 → 编码角色 → 验证角色 → 审查角色(full)
 
-T3: 核心逻辑 / 安全敏感 / 用户明确要求 multiModel
+T3: 核心逻辑 / 安全敏感 / 用户明确要求多模型并行生命周期
      → multiModel 并行生命周期（子图 lifecycle/multimodel-graph.yaml）
 ```
 
@@ -51,12 +51,12 @@ quality_gate:
 
 ## 路由规则（边定义见 graph.yaml）
 
-| task_type | 下一节点 | 设计门 | reviewer |
-|-----------|----------|--------|----------|
+| task_type | 下一节点 | 设计门 | 审查 |
+|-----------|----------|--------|------|
 | T0 | `EXECUTING` | 否 | N/A |
 | T1 | `PLANNING`（短）→ `EXECUTING` | 短设计门 | full |
 | T2 | `PLANNING`（完整）→ `EXECUTING` | 完整设计门 | full |
-| T3 | `MM_SUBGRAPH`（multiModel 子图） | 完整设计门 | full |
+| T3 | `MM_SUBGRAPH`（多模型子图） | 完整设计门 | full |
 
 ## 阶段 B·校准（后置）
 
@@ -66,6 +66,6 @@ quality_gate:
 
 ## 硬规则
 
-- **设计门硬门**：T1+ 编码前必须过 planner 设计门。"太简单不需要设计"是反模式。
+- **设计门硬门**：T1+ 编码前必须过设计门角色。"太简单不需要设计"是反模式。
 - **重复模式硬门**：涉及 UI/样式/行为且症状可能跨页面/组件时，定级必须包含「全量扫描清单 + 组件化/共享抽象方案」评估。
-- **multiModel 配额降级硬门**：触发 multiModel 前必扫 `dispatch_log` 查过去 24h T3 失败率（≥30% → 跳过 multiModel 降级 single-coder）。
+- **多模型配额降级硬门**：触发多模型子图前必扫 `dispatch_log` 查过去 24h T3 失败率（≥30% → 跳过多模型子图降级为单路编码）。

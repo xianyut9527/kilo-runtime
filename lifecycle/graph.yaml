@@ -157,10 +157,10 @@ edges:
     to: DELIVERING
     when: "tier == 'T0'"
 
-  # T1/T2 编码完成 → 进入验证
+  # T1/T2/T3 编码完成 → 进入验证（T3 从子图回流 EXECUTING 后同样需验证审查）
   - from: EXECUTING
     to: CHECKING
-    when: "tier in ['T1','T2']"
+    when: "tier in ['T1','T2','T3']"
 
   # 验证 FAIL（正向或反向）→ 进入修复循环
   # 进入前 total_rounds+1（conductor 写入）；任一视角 FAIL 都是硬门
@@ -189,11 +189,13 @@ edges:
     to: DELIVERING
     when: "(side_result in ['PASS','N/A']) and (review_result in ['PASS','CONDITIONAL_PASS'])"
 
-  # 子图完成(融合自检通过) → 回流主图标准验证闭环（对称 T1/T2：EXECUTING→CHECKING→REVIEWING→DELIVERING）
-  # 子图 MM_ARCHIVED 后 task_context 交还 conductor；融合产物须已写入主图标准字段
-  # （execution.diffs/changes/acceptance_map），供主图 verifier/reverse-auditor/side-checker/reviewer 读
+  # 子图完成(融合自检通过) → 回流主图 EXECUTING（由主图 coder 按融合方案实现代码），
+  # 然后走标准验证审查闭环 CHECKING→REVIEWING→DELIVERING（对称 T1/T2）
+  # 子图 MM_ARCHIVED 后 task_context 交还 conductor；融合方案已写入 plan + execution.fused_output
+  # （设计方案字段，非代码产物）；主图 coder 按方案实现代码后写入 execution.diffs/changes/acceptance_map，
+  # 供主图 verifier/reverse-auditor/side-checker/reviewer 读
   - from: MM_SUBGRAPH
-    to: CHECKING
+    to: EXECUTING
     when: "subgraph_status == 'ready_for_delivery'"
 
   # 交付完成 → 终态

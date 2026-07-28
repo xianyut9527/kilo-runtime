@@ -22,11 +22,12 @@ mount:
   - at: EXECUTING
 
 # task_context：读写边界声明
-#   read        可读切片（plan 由 planner 写入；forbidden_files 边界声明；memory_injection 记忆召回）
+#   read        可读切片（plan 设计方案；execution.diffs/changes/acceptance_map 当前代码产物——修复循环时读取；
+#                    execution.fused_output T3 回流后融合方案；forbidden_files 边界声明；memory_injection 记忆召回）
 #   write       可写切片（diffs/changes/acceptance_map）
 #   forbid_write 禁写切片（execution.verification 写入边界硬门——自验声明不入 context，由 verifier 独立重跑）
 task_context:
-  read: [plan, execution, forbidden_files, memory_injection]
+  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, execution.fused_output, forbidden_files, memory_injection]
   write: [execution.diffs, execution.changes, execution.acceptance_map]
   forbid_write: [execution.verification]   # 自验声明不入 context，由 verifier 独立重跑
 ---

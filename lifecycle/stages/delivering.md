@@ -12,8 +12,8 @@ token_budget: 6000
 ## 输入
 
 - 所有已完成单元的变更摘要 + 验收映射表
-- verifier 正向验证报告 + reverse-auditor 反向审计报告（T2+）
-- side-checker 侧向验证报告（T2+）+ reviewer 审查报告（T1+ 统一 full）
+- 正向验证报告 + 反向审计报告（T2+）
+- 侧向验证报告（T2+）+ 审查报告（T1+ 统一 full）
 - 强制流程日志（完整生命周期节点）
 - 本次任务中引用的 fact_id / failure_id 列表
 - task_context.json（完整任务上下文）

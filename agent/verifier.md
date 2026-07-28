@@ -27,11 +27,14 @@ mount:
   - at: MM_FCHECK
 
 # task_context：读写边界声明（bootstrap 注入上下文切片 + 运行时强制隔离）
-#   read      可读的 task_context 切片
+#   read      可读的 task_context 切片（plan 核对范围；execution.diffs/changes/acceptance_map 验证代码产物；
+#             execution.mm_outputs multiModel 子图 3 份 coder 输出；
+#             execution.fused_output multiModel 子图融合方案（MM_FCHECK 验证对象）；
+#             forbidden_files 边界）
 #   write     可写的 task_context 切片（verification.forward + execution.verification 双独占——写入边界硬门，
 #             task-context.mjs 的 WRITE_MATRIX 从本字段自动派生，缺一项运行时即拒写）
 task_context:
-  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, forbidden_files]
+  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, execution.mm_outputs, execution.fused_output, forbidden_files]
   write: [verification.forward, execution.verification]      # verifier 双独占写入（写入边界硬门）
 
 # isolation：视角物理隔离声明（防止确认偏误）
@@ -53,6 +56,10 @@ isolation:
 **做什么**：独立验证 coder 的输出，确认验收标准满足、无回归、无越界。
 
 **不做什么**：不修复问题、不写新代码、不执行设计门、不做反向审计（reverse-auditor 负责）。
+
+> **双上下文验证对象**：
+> - 主图 `CHECKING`：验证**代码产物**（`execution.diffs/changes/acceptance_map`），L1-L3 全量（含运行测试/构建）。
+> - 子图 `MM_CHECKING` / `MM_FCHECK`：验证**方案**（`execution.mm_outputs` / `execution.fused_output`）——方案级验证：推理正确性、边界覆盖、逻辑自洽、验收覆盖、SCOPE_CREEP（方案超出委派包范围）。**L1 运行类验证不适用**——子图无代码产物（代码由主图 EXECUTING 阶段 coder 按融合方案实现后，于主图 CHECKING 全量验证）。
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 

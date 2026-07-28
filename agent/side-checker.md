@@ -24,10 +24,11 @@ mount:
     on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED（不阻塞主流程）
 
 # task_context：读写边界声明
-#   read   可读切片（plan 执行方案；execution 实际产物；project_context 项目级约束）
+#   read   可读切片（plan 执行方案；execution.diffs 代码产物；execution.changes 变更清单；
+#                    execution.acceptance_map 验收映射；project_context 项目级约束）
 #   write  可写切片（verification.side 侧向验证结论）
 task_context:
-  read: [plan, execution, project_context]
+  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, project_context]
   write: [verification.side]
 
 # isolation：视角物理隔离声明（侧向验证不见正向/反向结论，独立实测）
@@ -64,16 +65,15 @@ isolation:
 
 ## 输入接口（从 task_context 注入）
 
-> **视角物理隔离**：side-checker 只读 `plan + execution + project_context`，**禁止读 `verification.forward/reverse`**——非主路径视角一旦看到正向结论 PASS，会锚定"正向已通过"而倾向不再质疑，产生从众偏误。
+> **视角物理隔离**：side-checker 只读 `plan + execution.diffs/changes/acceptance_map + project_context`，**禁止读 `verification.forward/reverse`**——非主路径视角一旦看到正向结论 PASS，会锚定"正向已通过"而倾向不再质疑，产生从众偏误。
 
 ```yaml
 plan:
   scheme_summary: "string"
   acceptance_criteria: ["string"]
-execution:
-  changes: [...]
-  diff: "string"
-  acceptance_map: [...]
+execution.diffs: "string"
+execution.changes: [...]
+execution.acceptance_map: [...]
 project_context:
   tech_stack: ["string"]
   security_keywords: ["string"]

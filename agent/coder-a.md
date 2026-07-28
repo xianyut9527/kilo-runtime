@@ -28,11 +28,11 @@ mount:
 diversity_role: 逻辑推理派        # 与 coder-b/c 的模型 vendor/architecture 两两不同
 
 # task_context：读写边界声明
-#   read        可读切片（plan/execution/forbidden_files/memory_injection）
+#   read        可读切片（plan 任务目标与方案；forbidden_files 边界声明；memory_injection 记忆召回）
 #   write       可写切片（execution.mm_outputs 3 份输出之一，不含身份标签——融合者不知哪家）
 #   forbid_write 禁写切片（execution.verification 写入边界硬门）
 task_context:
-  read: [plan, execution, forbidden_files, memory_injection]
+  read: [plan, forbidden_files, memory_injection]
   write: [execution.mm_outputs]  # 不含身份标签
   forbid_write: [execution.verification]
 ---
