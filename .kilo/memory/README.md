@@ -26,7 +26,7 @@
 | 入口 | 触发方 | 用途 |
 |---|---|---|
 | `schema/init.sql` | install / 首次部署 | 建表（7 表 + 索引 + 视图 + 2 FTS5 虚表）+ 8 条 project_context 自动种子 |
-| `docs/memory-ops-reference.md` | lifecycle `S01` / `S16` 阶段 | M1 注入查询模板 + M4-M8 写入模板 + 降级处理（conductor 在 S16 内建调用） |
+| `docs/memory-ops-reference.md` | lifecycle DELIVERING 阶段 | M1 注入查询模板 + M4-M8 写入模板 + 降级处理（conductor 在 DELIVERING 内建调用） |
 | `.kilo/instructions/workflow-core.md` §收尾自检 | conductor 收尾 | 10 条硬门 checklist（M4-M8 SQL 模板内联） |
 | `contracts/health_check.sql` | validate-config.mjs check17 | 18 项健康度查询（v2.6.2 含反馈执行率 soft-warn） |
 | `AGENTS.md` | 运行时自动注入 | 模块对 agent 的核心原则 + Token Budget + 必读规则 |
@@ -121,7 +121,7 @@
 |---|---|
 | `.kilo/instructions/` | `workflow-core.md` §收尾自检定义 10 条硬门；不重复定义 SQL |
 | `.kilo/skills/` | skill 是 sqlite fact_store 的固化产物（满足 confidence/hit_count 门槛后触发草稿） |
-| `agent/*.md` | 智能体 prompt 不直接引用 SQL；通过 lifecycle 阶段文件加载智能体，conductor 在 S16 查阅 `docs/memory-ops-reference.md` |
+| `agent/*.md` | 智能体 prompt 不直接引用 SQL；通过 lifecycle 阶段文件加载智能体，conductor 在 DELIVERING 查阅 `docs/memory-ops-reference.md` |
 | `docs/memory-ops-reference.md` | 生命周期驱动后唯一业务规则与 SQL 模板入口 |
 | `validate-config.mjs` | check17 通过 contracts/health_check.sql 校验模块；check14 校验模块入口文件存在 |
 | `kilo.json` | 记忆主通道 = `python scripts/memory.py`（sqlite3 CLI 可选替代）；数据库文件 `~/.config/kilo-data/memory.db` |

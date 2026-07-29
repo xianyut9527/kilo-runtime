@@ -19,10 +19,9 @@ subagent_type: plan-reviewer
 # mount：挂载点声明（纯钩子，不进编排层/配置层——无 graph 门禁、无 tier_defaults 开关）
 #   at    挂载点（post:PLANNING，planner 主槽后、edges 流转前）
 #   无 when = 恒定挂载：T0 不经 PLANNING、T3 走子图，图拓扑天然限定仅 T1/T2 触发，无需 config.agents 开关
-#   on_fail 挂载点失败策略（abort|warn|skip）；plan-reviewer 是方案硬门审查者，失败用 abort 中止进入 EXECUTING
+#   on_fail 挂载点失败策略（abort|warn|skip|degrade）；plan-reviewer 是方案硬门审查者，失败用 abort 中止进入 EXECUTING
 mount:
   - at: post:PLANNING
-    order: 0
     on_fail: abort # verdict=FAIL / 超时 / 异常 → [SLOT_ABORT] 中止进入 EXECUTING（不降级、不跳过方案门）
 
 # task_context：读写边界声明

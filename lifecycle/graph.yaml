@@ -27,7 +27,7 @@
 #               abort      - 硬停，标 [STAGE_ABORT]，等用户决策
 #               retry_once - 同智能体重跑 1 次，再失败 escalate（耗尽见 config.yaml retry.*）
 #               degrade    - 跳过该视角 + DEGRADED（仅可选视角节点）
-#               escalate   - 升级：T1→T2 加视角，T2→人工；FIXING 连续失败→reviewer 根因分析
+#               escalate   - 升级：T1→T2 加视角，T2→人工；QUALITY 连续失败→reviewer 根因分析
 #               pause      - 挂起 task_context，输出选项等用户决策
 #             节点 on_fail 在智能体 timeout/error/异常返回时触发；
 #             挂载点 mount[].on_fail（abort|warn|skip|degrade）覆盖 pre:/post:/on:/可选视角失败：
@@ -37,8 +37,7 @@
 # 边字段说明：
 #   from / to    起止节点 ID
 #   when         流转条件表达式（对照 task_context 求值）；省略 = 无条件流转
-#                常用变量：intent_type / tier / forward_result / reverse_result /
-#                          side_result / review_result / subgraph_status
+#                常用变量：intent_type / tier / quality_verdict / subgraph_status
 #   gate         质量门禁（硬门）；未通过不得流转：
 #                  MEMORY_WRITE_COMPLETE  - DELIVERING → DONE 记忆写入完成
 #                  FUSION_SELF_CHECK_10   - 子图融合自检（见 multimodel-graph.yaml）
@@ -50,12 +49,19 @@
 #   <NODE>         节点主槽（阶段本体；executor 内建阶段由 conductor/multiModel 占据）
 #   post:<NODE>    节点主槽执行后、edges 流转前
 # 子图节点（MM_*）同样派生三挂载点。智能体在自身 agent/*.md frontmatter `mount` 声明挂载点 +
-# order/when/on_fail；同挂载点按 order 升序执行，无 order 默认并行（视角隔离场景
-# 必须保持并行，不得声明 order）。加智能体用中间号（如 15 插在 10/20 间）零改其他文件。
+# hook/after/when/on_fail；同 hook 类型默认并行（视角隔离场景必须保持并行，不得声明 after）。
+# 需要顺序时声明 after: [agent-name]（相对依赖，只引用前驱），框架自动 topo-sort。
 # 阶段必配角色契约在 stages/<id-lower>.md frontmatter `required_roles`（阶段语义内聚）；
 # 本文件不声明任何角色——增删智能体、调整挂载、改顺序都不碰本文件。
 # ============================================================
-version: 1
+# v2 响应式 Hooks 架构（方案 B）
+# 核心变化：
+#   - CHECKING + REVIEWING + FIXING 合并为 QUALITY（数据驱动，hooks 自动循环）
+#   - 8 stage → 6 stage（INTENT/SIZING/PLANNING/EXECUTING/QUALITY/DELIVERING）
+#   - QUALITY 内部 hooks 挂载替代阶段级回流（verify → fix → review → fix 自动循环）
+#   - conductor 角色从"工厂领班"退化为"Reconciler"，只处理异常
+# ============================================================
+version: 2
 
 nodes:
   # 虚拟入口，立即流转至 INTENT
@@ -86,23 +92,16 @@ nodes:
     type: stage
     on_fail: retry_once        # 主槽智能体异常/超时 → 重跑 1 次，再失败 escalate
 
-  # 正向验证：按验收标准逐条验证实现结果；可选视角（反向审计）经 mount 条件挂载
-  # 必配角色契约：stages/checking.md frontmatter required_roles
-  - id: CHECKING
-    type: stage
-    on_fail: escalate          # 必配失败升级；可选视角走 degrade（由挂载点 on_fail 处理）
-
-  # 修复循环：根据 CHECKING/REVIEWING 反馈修复代码，修复后回流 CHECKING
-  # 必配角色契约：stages/fixing.md frontmatter required_roles
-  - id: FIXING
+  # 质量保障：响应式 Hooks 阶段（合并原 CHECKING + REVIEWING + FIXING）
+  # 内部 hooks（hook 类型定义顺序，不需要绝对编号）：
+  #   hook: verify → verify hooks（verifier + reverse_auditor? 并行组，无 after = 并行）
+  #   hook: fix → fix hooks（fixer, trigger: onFail，任一 verify/review FAIL 时自动触发）
+  #   hook: review → review hooks（reviewer + side_checker? 并行组, trigger: afterPass）
+  # 循环逻辑：代码变化 → 自动触发 verify hooks → 结果变化 → 自动触发 review/fix hooks
+  # 必配角色契约：stages/quality.md frontmatter required_roles
+  - id: QUALITY
     type: stage
     on_fail: escalate          # 连续失败 → 升级根因分析 / 人工
-
-  # 侧向验证+代码审查：四视角审查；可选视角（侧向验证）经 mount 条件挂载
-  # 必配角色契约：stages/reviewing.md frontmatter required_roles
-  - id: REVIEWING
-    type: stage
-    on_fail: escalate          # 必配失败升级；可选视角走 degrade
 
   # 交付收尾：conductor 执行记忆写入(M4-M8)、git 分支收尾协议、输出闭环确认
   - id: DELIVERING
@@ -157,44 +156,27 @@ edges:
     to: DELIVERING
     when: "tier == 'T0'"
 
-  # T1/T2/T3 编码完成 → 进入验证（T3 从子图回流 EXECUTING 后同样需验证审查）
+  # T1/T2/T3 编码完成 → 进入质量保障（T3 从子图回流 EXECUTING 后同样需 QUALITY）
   - from: EXECUTING
-    to: CHECKING
+    to: QUALITY
     when: "tier in ['T1','T2','T3']"
 
-  # 验证 FAIL（正向或反向）→ 进入修复循环
-  # 进入前 total_rounds+1（conductor 写入）；任一视角 FAIL 都是硬门
-  - from: CHECKING
-    to: FIXING
-    when: "forward_result == 'FAIL' or reverse_result == 'FAIL'"
-
-  # 验证 PASS → 进入审查阶段
-  - from: CHECKING
-    to: REVIEWING
-    when: "forward_result == 'PASS' and (reverse_result in ['PASS','N/A'])"
-
-  # 修复完成 → 回流重新验证
-  # round+1；round >= max_rounds（见 lifecycle/config.yaml convergence）单点 [CIRCUIT_BREAKER]
-  - from: FIXING
-    to: CHECKING
-
-  # 审查 FAIL（侧向或审查）→ 回流修复
-  # 进入前 total_rounds+1；total_rounds >= max_total_rounds（见 lifecycle/config.yaml convergence）全局 [CIRCUIT_BREAKER]
-  - from: REVIEWING
-    to: FIXING
-    when: "side_result == 'FAIL' or review_result == 'FAIL'"
-
-  # 审查通过 → 进入交付
-  - from: REVIEWING
+  # QUALITY 通过 → 进入交付
+  - from: QUALITY
     to: DELIVERING
-    when: "(side_result in ['PASS','N/A']) and (review_result in ['PASS','CONDITIONAL_PASS'])"
+    when: "quality_verdict == 'PASS'"
+
+  # QUALITY 全局熔断 → 挂起等人决策
+  - from: QUALITY
+    to: DELIVERING
+    when: "quality_verdict == 'CIRCUIT_BREAKER'"
 
   # 子图完成(聚合产物就绪) → 回流主图 EXECUTING（由主图 coder 执行 git merge mm-<tid>-fusion 分支，
-  # 将聚合代码产物应用到主工作区），然后走标准验证审查闭环 CHECKING→REVIEWING→DELIVERING（对称 T1/T2，
+  # 将聚合代码产物应用到主工作区），然后走标准质量保障闭环 QUALITY → DELIVERING（对称 T1/T2，
   # 验证 merge 后代码产物）
   # 子图 MM_ARCHIVED 后 task_context 交还 conductor；聚合产物指针已写入 plan + execution.fused_output
   # （fusion worktree 路径/分支/commit_sha，非代码本体）；主图 coder 执行 git merge fusion 分支后
-  # 写入 execution.diffs/changes/acceptance_map，供主图 verifier/reverse-auditor/side-checker/reviewer 读
+  # 写入 execution.diffs/changes/acceptance_map，供主图 hooks 读取
   # fusion worktree 由主图 DELIVERING 阶段清理（git worktree remove --force）
   - from: MM_SUBGRAPH
     to: EXECUTING

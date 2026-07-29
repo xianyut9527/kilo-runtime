@@ -339,34 +339,37 @@ function rtCheckCurrentStage(ctx, env, rtCheck) {
   }
 }
 
-// R3: convergence 计数合法（非负整数 + 不超阈值）
+// R3: quality / mm_fusion 计数合法（非负整数 + 不超阈值）
 function rtCheckConvergence(ctx, env, rtCheck) {
+  const q = ctx.quality || {};
   const c = ctx.convergence || {};
-  const { round, max_rounds, total_rounds, max_total_rounds } = c;
+  const { round, max_rounds } = q;
+  const { mm_fusion_rounds, mm_fusion_max_rounds } = c;
   let ok = true;
-  const parts = [`round=${round}/${max_rounds} total=${total_rounds}/${max_total_rounds}`];
-  if (!Number.isInteger(round) || round < 0) { ok = false; parts.push('round 非非负整数'); }
-  if (!Number.isInteger(total_rounds) || total_rounds < 0) { ok = false; parts.push('total_rounds 非非负整数'); }
-  if (Number.isInteger(max_rounds) && round > max_rounds) { ok = false; parts.push('round 超阈值'); }
-  if (Number.isInteger(max_total_rounds) && total_rounds > max_total_rounds) { ok = false; parts.push('total_rounds 超阈值'); }
+  const parts = [`quality=${round}/${max_rounds} mm_fusion=${mm_fusion_rounds}/${mm_fusion_max_rounds}`];
+  if (!Number.isInteger(round) || round < 0) { ok = false; parts.push('quality.round 非非负整数'); }
+  if (Number.isInteger(max_rounds) && round > max_rounds) { ok = false; parts.push('quality.round 超阈值'); }
+  if (!Number.isInteger(mm_fusion_rounds) || mm_fusion_rounds < 0) { ok = false; parts.push('mm_fusion_rounds 非非负整数'); }
+  if (Number.isInteger(mm_fusion_max_rounds) && mm_fusion_rounds > mm_fusion_max_rounds) { ok = false; parts.push('mm_fusion_rounds 超阈值'); }
   rtCheck(ok ? 'PASS' : 'FAIL', 'runtime.convergence', parts.join(' | '));
 }
 
 // R4: 熔断接近性（>=80% 预警，>=100% 已触发）
 function rtCheckBreaker(ctx, env, rtCheck) {
+  const q = ctx.quality || {};
   const c = ctx.convergence || {};
-  const tr = c.total_rounds || 0;
-  const mtr = c.max_total_rounds || 7;
-  const r = c.round || 0;
-  const mr = c.max_rounds || 5;
-  const gPct = Math.round((tr / mtr) * 100);
-  const sPct = Math.round((r / mr) * 100);
-  if (gPct >= 100 || sPct >= 100) {
-    rtCheck('FAIL', 'runtime.breaker', `已触发熔断 global=${tr}/${mtr}(${gPct}%) single=${r}/${mr}(${sPct}%)`);
-  } else if (gPct >= 80 || sPct >= 80) {
-    rtCheck('WARN', 'runtime.breaker', `接近熔断 global=${gPct}% single=${sPct}%（建议人工介入）`);
+  const qr = q.round || 0;
+  const qm = q.max_rounds || 7;
+  const fr = c.mm_fusion_rounds || 0;
+  const fm = c.mm_fusion_max_rounds || 3;
+  const qPct = Math.round((qr / qm) * 100);
+  const fPct = Math.round((fr / fm) * 100);
+  if (qPct >= 100 || fPct >= 100) {
+    rtCheck('FAIL', 'runtime.breaker', `已触发熔断 quality=${qr}/${qm}(${qPct}%) mm_fusion=${fr}/${fm}(${fPct}%)`);
+  } else if (qPct >= 80 || fPct >= 80) {
+    rtCheck('WARN', 'runtime.breaker', `接近熔断 quality=${qPct}% mm_fusion=${fPct}%（建议人工介入）`);
   } else {
-    rtCheck('PASS', 'runtime.breaker', `熔断安全 global=${gPct}% single=${sPct}%`);
+    rtCheck('PASS', 'runtime.breaker', `熔断安全 quality=${qPct}% mm_fusion=${fPct}%`);
   }
 }
 
@@ -411,19 +414,22 @@ function rtCheckTier(ctx, env, rtCheck) {
   }
 }
 
-// R7: 阶段产物完整性（CHECKING 后要求 verification.forward 已填充）
+// R7: 阶段产物完整性（QUALITY 后要求 quality.verify.forward 已填充；同时保留 verification.forward 向后兼容）
 function rtCheckVerification(ctx, env, rtCheck) {
   const stage = ctx.current_stage;
-  const postChecking = ['REVIEWING', 'FIXING', 'DELIVERING', 'DONE'];
-  if (!stage || !postChecking.includes(stage)) {
+  const postQuality = ['DELIVERING', 'DONE'];
+  if (!stage || !postQuality.includes(stage)) {
     rtCheck('PASS', 'runtime.verification', `current_stage=${stage || '(未设置)'} 不要求 verification`);
     return;
   }
-  const fwd = ctx.verification && ctx.verification.forward;
-  if (!fwd || !fwd.verdict) {
-    rtCheck('FAIL', 'runtime.verification', `current_stage=${stage} 但 verification.forward.verdict 未填充`);
+  const qFwd = ctx.quality && ctx.quality.verify && ctx.quality.verify.forward;
+  const vFwd = ctx.verification && ctx.verification.forward;
+  const fwd = qFwd || vFwd;
+  if (!fwd || (typeof fwd === 'object' && !fwd.verdict)) {
+    rtCheck('FAIL', 'runtime.verification', `current_stage=${stage} 但 quality.verify.forward.verdict / verification.forward.verdict 未填充`);
   } else {
-    rtCheck('PASS', 'runtime.verification', `forward.verdict=${fwd.verdict}`);
+    const verdict = (fwd && fwd.verdict) || (qFwd && qFwd.verdict) || (vFwd && vFwd.verdict);
+    rtCheck('PASS', 'runtime.verification', `forward.verdict=${verdict}`);
   }
 }
 
@@ -639,7 +645,7 @@ for (const [id, n] of graph.nodes) {
   } else if (!mmToExecuting) {
     fail('graph.t3回流', `MM_SUBGRAPH 出边未指向 EXECUTING（当前指向未知节点）`);
   } else {
-    pass('graph.t3回流', `MM_SUBGRAPH → EXECUTING（融合方案由主图 coder 实现后走标准 CHECKING→REVIEWING→DELIVERING 闭环）`);
+    pass('graph.t3回流', `MM_SUBGRAPH → EXECUTING（融合方案由主图 coder 实现后走标准 QUALITY→DELIVERING 闭环）`);
   }
 }
 
@@ -668,17 +674,68 @@ for (const [name, a] of agents) {
     }
     // B2. on_fail 取值集
     if (m.on_fail && !MOUNT_ON_FAIL.has(m.on_fail)) {
-      fail(`agent.${name}.mount.on_fail`, `"${m.on_fail}" ∉ {abort,warn,skip}`);
+      fail(`agent.${name}.mount.on_fail`, `"${m.on_fail}" ∉ {abort,warn,skip,degrade}`);
     }
-    // B3. order 是数字
-    if (m.order !== undefined && !/^\d+$/.test(m.order)) {
-      fail(`agent.${name}.mount.order`, `"${m.order}" 非数字`);
+    // B3a. after 引用的 agent 必须已注册（防引用不存在的 agent）
+    if (m.after) {
+      const deps = Array.isArray(m.after) ? m.after : [m.after];
+      for (const dep of deps) {
+        if (!agents.has(dep)) {
+          fail(`agent.${name}.mount.after`, `"${dep}" 未注册为 agent（after 只能引用已存在的 agent 名）`);
+        }
+      }
+    }
+    // B3b. 旧 order 字段已废弃——忽略不报错（v2.1 迁移兼容）
+    // B3c. hook 取值集（QUALITY 阶段内部 hooks）
+    if (m.hook && !['verify', 'fix', 'review'].includes(m.hook)) {
+      fail(`agent.${name}.mount.hook`, `"${m.hook}" ∉ {verify,fix,review}`);
     }
   }
   if (a.mount.length > 0) {
     const bad = a.mount.filter((m) => !mountPoints.has(m.at) || (m.on_fail && !MOUNT_ON_FAIL.has(m.on_fail)));
     if (bad.length === 0) pass(`agent.${name}.mount`, `${a.mount.length} 个挂载条目合法`);
   }
+}
+
+// B3d. after 依赖环检测（按挂载点 + hook 分组做拓扑排序）
+{
+  // 收集每个 (at, hook) 分组的 agent → after 映射
+  const groups = new Map(); // key: "at|hook" → Map(agentName → [after deps])
+  for (const [name, a] of agents) {
+    for (const m of a.mount) {
+      if (m.after && m.after.length > 0) {
+        const key = m.hook ? `${m.at}|${m.hook}` : m.at;
+        if (!groups.has(key)) groups.set(key, new Map());
+        groups.get(key).set(name, Array.isArray(m.after) ? m.after : [m.after]);
+      }
+    }
+  }
+  // 每组做环检测（DFS）
+  for (const [key, depMap] of groups) {
+    const visited = new Set();
+    const stack = new Set();
+    function dfs(node) {
+      if (stack.has(node)) {
+        fail(`agent.${key}.after.cycle`, `${node} → ... → ${node} 存在 after 环依赖（拓扑排序无法收敛）`);
+        return true;
+      }
+      if (visited.has(node)) return false;
+      visited.add(node);
+      stack.add(node);
+      const deps = depMap.get(node) || [];
+      for (const d of deps) {
+        if (dfs(d)) return true;
+      }
+      stack.delete(node);
+      return false;
+    }
+    let hasCycle = false;
+    for (const [agent] of depMap) {
+      if (dfs(agent)) { hasCycle = true; break; }
+    }
+    if (!hasCycle) pass(`agent.${key}.after.topo`, `after 依赖无环（${depMap.size} 个有 after 声明的 agent）`);
+  }
+  if (groups.size === 0) pass('agent.after.topo', '无 after 声明（全部并行组，无需拓扑排序）');
 }
 
 // B4. when 引用的 config.agents.<key> 至少在任一 tier_defaults 声明（防孤儿开关）

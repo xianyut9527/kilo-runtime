@@ -17,12 +17,15 @@ subagent_type: reverse-auditor
 # 边界敏感、逻辑审查、反向推理能力倾向（从产物反推是否满足原始需求）
 
 # mount：挂载点声明
-#   at    挂载点（CHECKING 阶段，与 verifier 同槽并行）
+#   at    挂载点（QUALITY 阶段 verify hook，与 verifier 并行）
 #   when  条件挂载（对照 config.agents.reverse_auditor 求值）；T2+ 默认 true，T0/T1 false
 mount:
-  - at: CHECKING
+  # v2 响应式 Hooks：QUALITY 阶段 verify hook，与 verifier 并行（无 after = 并行组成员）
+  - at: QUALITY
+    hook: verify
+    deps: ["execution.code", "intent"]
     when: "config.agents.reverse_auditor"
-    on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED（不阻塞主流程）
+    on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED
 
 # task_context：读写边界声明
 #   read   可读切片（intent 原始需求；execution.diffs 实际产物；changes 变更清单；acceptance_map 验收映射）
@@ -43,7 +46,7 @@ isolation:
 
 ## 智能体定位
 
-**生命周期阶段**：`CHECKING`（反向，与 verifier 并行；条件加载 `?config.agents.reverse_auditor`）
+**生命周期阶段**：`QUALITY`（verify hook，反向审计，与 verifier 并行；条件加载 `?config.agents.reverse_auditor`）
 **加载条件**：T2+（T0/T1 不加载）
 **模型**：见 `kilo.json` `agent.reverse-auditor.model`（严谨逻辑、反向推理能力需求）
 
@@ -53,7 +56,7 @@ isolation:
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 
-> **记忆下沉**：reverse-auditor 在 CHECKING 反向审计前**自行调用 memory.db** 召回历史隐性遗漏模式，用于补审已知易漏点。不再依赖 conductor 集中注入。
+> **记忆下沉**：reverse-auditor 在 QUALITY verify hook 反向审计前**自行调用 memory.db** 召回历史隐性遗漏模式，用于补审已知易漏点。不再依赖 conductor 集中注入。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 intent + execution 审计。
 
 **召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：

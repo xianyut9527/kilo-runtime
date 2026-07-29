@@ -26,7 +26,9 @@ $RecursiveExclude = @(
     ".tmp",
     "worktrees",
     ".pytest_cache",
-    "__pycache__"
+    "__pycache__",
+    ".kilo_tmp",
+    ".playwright-mcp"
 )
 
 Write-Host "========================================" -ForegroundColor Cyan

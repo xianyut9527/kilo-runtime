@@ -6,7 +6,7 @@
 # ============================================================
 # 挂载两种模式（新增智能体默认零配置）：
 #   1) 恒定挂载（默认，推荐）：frontmatter mount 无 when —— 图拓扑可达即加载。
-#      T0 不经 PLANNING/CHECKING/REVIEWING/FIXING，T3 走子图——拓扑即开关。
+#      T0 不经 PLANNING/QUALITY，T3 走子图——拓扑即开关。
 #      新增智能体丢文件即用，**无需改本文件**。
 #   2) 开关挂载（仅"同阶段按 tier 差异化"的智能体）：frontmatter mount 有
 #      when: "config.agents.<key>" —— 需在下方 tier_defaults 声明开关。
@@ -59,12 +59,13 @@ tier_defaults:
   # T3 多模型并行融合：交给 multiModel 子图（lifecycle/multimodel-graph.yaml）
   # 3 个不同厂商/架构的 coder 并行实现，verifier 交叉验证，synthesizer-fusion 独立融合
   # 适合高难度任务：架构设计、关键算法、需要多家之长
+  # 子图回流后走 QUALITY hooks 自动循环验证（替代原 CHECKING+REVIEWING）
   T3:
     provider: multiModel
     agents:
       synthesizer_fusion: true    # 融合编辑智能体（隔离硬门：不读拆分意图/模型身份）
-      reverse_auditor: true       # T3 走主图 EXECUTING→CHECKING→REVIEWING 后激活反向审计（按融合方案实现的代码同样需需求追溯）
-      side_checker: true          # T3 走主图 EXECUTING→CHECKING→REVIEWING 后激活侧向验证（按融合方案实现的代码同样需运行时实测）
+      reverse_auditor: true       # T3 走主图 QUALITY 后激活反向审计（按融合方案实现的代码同样需需求追溯）
+      side_checker: true          # T3 走主图 QUALITY 后激活侧向验证（按融合方案实现的代码同样需运行时实测）
       mm_worktree: true           # worktree 隔离默认启用（产物级聚合）；用户可通过 condition_overrides 设 false 关闭走 plan_level 方案级融合
     review_mode: full
 
@@ -74,7 +75,7 @@ tier_defaults:
 overrides:
   # disabled_agents：全局禁用的智能体名列表
   # 被禁用的 agent 不会被 bootstrap 注册；若该 agent 是某阶段 required_roles 唯一履行者 → [ASSEMBLY_FAIL]
-  # 例: [side-checker] → bootstrap 跳过注册 side-checker（REVIEWING 的 required_roles 是 reviewer，不受影响）
+  # 例: [side-checker] → bootstrap 跳过注册 side-checker（QUALITY 的 required_roles 是 verifier+reviewer，不受影响）
   disabled_agents: []
 
   # model_overrides：覆盖 kilo.json 的模型绑定
@@ -89,13 +90,23 @@ overrides:
 
 # ============================================================
 # convergence：收敛熔断阈值（唯一真相来源）
-# conductor 在进入 CHECKING/REVIEWING 前递增 total_rounds
-# 达到阈值 → [CIRCUIT_BREAKER] 停止修复，输出选项等用户决策
+# v2 响应式 Hooks 架构：
+#   - 旧版 max_rounds/max_total_rounds 迁移到 hooks.quality
+#   - 保留 mm_fusion_max_rounds 子图内部熔断
 # ============================================================
 convergence:
-  max_rounds: 5              # FIXING 单点熔断（同一验证失败点的修复轮次上限）
-  max_total_rounds: 7        # CHECKING+REVIEWING 累计进入次数全局熔断
   mm_fusion_max_rounds: 3    # T3 子图内部熔断：MM_FCHECK 打回 synthesizer-fusion 重新聚合的轮次上限
+
+# ============================================================
+# hooks：响应式 Hooks 级熔断（v2 新增）
+# QUALITY 阶段内部 hooks 自动循环的熔断阈值
+# ============================================================
+hooks:
+  quality:
+    max_verify_retries: 5      # verify hooks 失败重试上限（替代原 max_rounds）
+    max_review_retries: 3      # review hooks 失败重试上限
+    max_total_cycles: 7          # QUALITY 总轮次上限（替代原 max_total_rounds）
+    auto_fix: true              # 自动触发 fix hooks（false = 人工确认后修复）
 
 # ============================================================
 # timeouts：阶段/智能体级时间预算（唯一真相来源）
@@ -122,7 +133,7 @@ convergence:
 #     在 agent/multiModel.md §异常处理，不适用主图 on_fail 派发）
 # ============================================================
 timeouts:
-  agent_startup_s: 30      # task 工具启动智能体，30s 未响应 → [AGENT_TIMEOUT]（启动卡死）
+  agent_startup_s: 60      # task 工具启动智能体，60s 未响应 → [AGENT_TIMEOUT]（启动卡死）
   stage_default_s: 600     # 单阶段默认预算（主槽执行时间上限；内建阶段守卫值）
   per_agent_s:
     coder: 1800            # coder 写代码可能较长，给 30min

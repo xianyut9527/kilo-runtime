@@ -10,7 +10,7 @@
 //
 // 安全硬门保留硬编码（框架级安全不变量，显式、稳定、不随 frontmatter 派生）：
 //   硬门 1：verification.forward / execution.verification 仅 verifier 可写
-//   硬门 2：convergence.total_rounds 仅 conductor 可写
+//   硬门 2：quality.round 仅 conductor 可写（v2 响应式 Hooks，替代旧 convergence.total_rounds）
 // 即使某智能体自声明 write 包含上述字段，硬门仍会拒绝（fail-closed）。
 //
 // 用法：
@@ -24,7 +24,8 @@
 // assert 子命令（运行时状态断言，供 conductor compaction 恢复后自检）：
 //   assert <task_id> current-stage <NODE>     断言 current_stage == <NODE>
 //   assert <task_id> tier <T0|T1|T2|T3>       断言 sizing.tier == <TIER>
-//   assert <task_id> convergence              断言 convergence 计数合法未熔断
+//   assert <task_id> quality                   断言 quality 计数合法未熔断（v2 主图）
+//   assert <task_id> convergence              断言 mm_fusion 计数合法未熔断（子图，向后兼容别名）
 //   assert <task_id> gate <GATE_NAME>          断言 gate 条件满足
 //   assert <task_id> not-written <dot.path>    断言某字段未被写入（反自验辅助）
 //   exit 0=断言成立，1=断言失败（含具体差异），2=参数错误
@@ -47,7 +48,7 @@ import { fileURLToPath } from 'node:url';
 
 // 脚本所在目录（ESM 无 __dirname）
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// 收敛阈值权威来源：lifecycle/config.yaml
+// 阈值权威来源：lifecycle/config.yaml（v2 quality.max_total_cycles 来自 hooks.quality）
 const CONVERGENCE_SOURCE = path.resolve(__dirname, '..', 'lifecycle', 'config.yaml');
 
 // ============================================================
@@ -160,8 +161,11 @@ const VERIFICATION_FIELDS = Object.freeze([
   'verification.forward',
 ]);
 
-// 硬门 2：convergence.total_rounds 仅 conductor 可写
+// 硬门 2：quality.round 仅 conductor 可写
 // 其他 agent 写入 → [PROCESS_VIOLATION] + exit 1
+const QUALITY_ROUND_FIELD = 'quality.round';
+
+// 向后兼容别名：旧 assert convergence 仍接受，但内部检查已迁移到 quality/mm_fusion
 const TOTAL_ROUNDS_FIELD = 'convergence.total_rounds';
 
 // 文件位置：$env:TEMP/kilo/task_context_<task_id>.json（Windows）
@@ -177,26 +181,37 @@ function assertValidTaskId(taskId) {
   }
 }
 
-// 从 lifecycle/config.yaml 读取收敛阈值（纯 YAML 子集正则解析；失败降级到 5/7）
+// 从 lifecycle/config.yaml 读取响应式 Hooks 阈值（v2：hooks.quality.max_total_cycles）
+// 失败降级到 7
+function readHooksFromConfig() {
+  try {
+    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
+    const mtc = text.match(/max_total_cycles:\s*(\d+)/);
+    return {
+      max_total_cycles: mtc ? parseInt(mtc[1], 10) : 7,
+    };
+  } catch {
+    return { max_total_cycles: 7 };
+  }
+}
+
+// 从 lifecycle/config.yaml 读取子图融合阈值（保留 convergence.mm_fusion_max_rounds）
 function readConvergenceFromConfig() {
   try {
     const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
-    // max_rounds / max_total_rounds 在 config.yaml 中唯一出现，直接匹配即可
-    const mr = text.match(/^\s*max_rounds:\s*(\d+)/m);
-    const mtr = text.match(/^\s*max_total_rounds:\s*(\d+)/m);
+    const mm = text.match(/mm_fusion_max_rounds:\s*(\d+)/);
     return {
-      max_rounds: mr ? parseInt(mr[1], 10) : 5,
-      max_total_rounds: mtr ? parseInt(mtr[1], 10) : 7,
+      mm_fusion_max_rounds: mm ? parseInt(mm[1], 10) : 3,
     };
   } catch {
-    // 降级：config.yaml 不存在或格式异常时不阻塞 init
-    return { max_rounds: 5, max_total_rounds: 7 };
+    return { mm_fusion_max_rounds: 3 };
   }
 }
 
 // 初始 task_context 结构（按 conductor.md §task_context 结构摘要）
 function buildInitialContext(taskId) {
   const conv = readConvergenceFromConfig();
+  const hooks = readHooksFromConfig();
   return {
     task_id: taskId,
     intent: {},
@@ -221,14 +236,21 @@ function buildInitialContext(taskId) {
       side: null,
       review: null,
     },
+    quality: {
+      round: 0,
+      max_rounds: hooks.max_total_cycles,
+      status: 'running',
+      verify: { forward: {}, reverse: {} },
+      review: { result: {}, side: {} },
+      fix: { round: 0, issues_fixed: [], issues_remaining: [] },
+      verdict: 'PENDING',
+    },
     fixing_history: [],
     memory_injection: {},
     status: 'initialized',
     convergence: {
-      round: 0,
-      max_rounds: conv.max_rounds,
-      total_rounds: 0,
-      max_total_rounds: conv.max_total_rounds,
+      mm_fusion_rounds: 0,
+      mm_fusion_max_rounds: conv.mm_fusion_max_rounds,
     },
   };
 }
@@ -253,8 +275,9 @@ function usage() {
     '',
     'Assert types:',
     '  current-stage <NODE>   Assert current_stage == NODE',
-    '  tier <T0|T1|T2|T3>     Assert sizing.tier == TIER',
-    '  convergence            Assert convergence counters valid & not tripped',
+    "  tier <T0|T1|T2|T3>     Assert sizing.tier == TIER",
+    '  quality                Assert quality counters valid & not tripped',
+    '  convergence            Assert mm_fusion counters valid & not tripped (alias/backward compat)',
     '  gate <GATE_NAME>       Assert gate condition met (e.g. MEMORY_WRITE_COMPLETE)',
     '  not-written <dot.path> Assert field is unset (anti-self-verify aid)',
     '  node scripts/task-context.mjs --help',
@@ -263,7 +286,7 @@ function usage() {
     '  init     Create task_context_<task_id>.json under os.tmpdir()/kilo/.',
     '  get      Print value at dot.path (JSON).',
     '  set      Write JSON value to dot.path. Enforces write matrix.',
-    '  validate Check required top-level fields and convergence integer range.',
+    '  validate Check required top-level fields, quality integers, and convergence mm_fusion integers.',
     '',
     'Agents in write matrix: ' + Object.keys(WRITE_MATRIX).join(', '),
     '',
@@ -313,6 +336,10 @@ function readContext(taskId) {
     raw = fs.readFileSync(p, 'utf8');
   } catch (e) {
     die(1, `Error: cannot read task_context for task_id=${taskId}: ${e.message}`);
+  }
+  // 剥离 UTF-8 BOM（外部工具可能以 UTF-8 with BOM 写入）
+  if (raw.charCodeAt(0) === 0xFEFF) {
+    raw = raw.slice(1);
   }
   try {
     return { ctx: JSON.parse(raw), path: p };
@@ -498,13 +525,13 @@ function cmdSet(taskId, dotPath, rawValue, agent) {
     }
   }
 
-  // 硬门 2：convergence.total_rounds 仅 conductor 可写
-  if (pathAllowedBy(dotPath, TOTAL_ROUNDS_FIELD)) {
+  // 硬门 2：quality.round 仅 conductor 可写
+  if (pathAllowedBy(dotPath, QUALITY_ROUND_FIELD)) {
     if (agent !== 'conductor') {
       die(
         1,
         `[PROCESS_VIOLATION] agent "${agent}" is not allowed to write "${dotPath}". ` +
-          'convergence.total_rounds is reserved for conductor only.'
+          'quality.round is reserved for conductor only.'
       );
     }
   }
@@ -521,11 +548,14 @@ function cmdSet(taskId, dotPath, rawValue, agent) {
   }
 
   // 解析 JSON 值
+  // 优先 JSON.parse；失败时将裸字符串视为 JSON 字符串（友好降级）
+  // （PowerShell 传递 "PASS" 时外层引号被剥离 → node 收到 PASS → JSON.parse 失败）
   let value;
   try {
     value = JSON.parse(rawValue);
   } catch (e) {
-    die(2, `Error: invalid JSON value: ${e.message}`);
+    // 裸字符串降级：将 rawValue 原样作为字符串值
+    value = rawValue;
   }
 
   const { ctx } = readContext(taskId);
@@ -548,6 +578,7 @@ function cmdValidate(taskId) {
     'plan_review',
     'execution',
     'verification',
+    'quality',
     'fixing_history',
     'memory_injection',
     'status',
@@ -562,12 +593,22 @@ function cmdValidate(taskId) {
         : `missing top-level field "${k}"`,
     });
   }
-  // convergence 数值字段非负整数
+  // quality 数值字段非负整数
+  const q = ctx.quality || {};
+  for (const f of ['round', 'max_rounds']) {
+    const v = q[f];
+    const ok = typeof v === 'number' && Number.isInteger(v) && v >= 0;
+    checks.push({
+      name: `quality.${f}`,
+      pass: ok,
+      detail: ok ? '' : `expected non-negative integer, got ${JSON.stringify(v)}`,
+    });
+  }
+  // convergence 数值字段非负整数（v2 仅 mm_fusion 计数）
   const conv = ctx.convergence || {};
-  for (const f of ['round', 'max_rounds', 'total_rounds', 'max_total_rounds']) {
+  for (const f of ['mm_fusion_rounds', 'mm_fusion_max_rounds']) {
     const v = conv[f];
-    const ok =
-      typeof v === 'number' && Number.isInteger(v) && v >= 0;
+    const ok = typeof v === 'number' && Number.isInteger(v) && v >= 0;
     checks.push({
       name: `convergence.${f}`,
       pass: ok,
@@ -614,19 +655,27 @@ const ASSERTIONS = {
       : { pass: false, detail: `sizing.tier="${actual ?? '(未设置)'}" ≠ expected="${expected}"` };
   },
 
-  // 断言 convergence 计数合法 + 未熔断
+  // 断言 quality 计数合法 + 未熔断；同时保留旧 assert convergence 别名
+  // 检查 mm_fusion 子图字段
   'convergence': (ctx) => {
     const c = ctx.convergence || {};
-    const { round, max_rounds, total_rounds, max_total_rounds } = c;
-    if (!Number.isInteger(round) || round < 0) return { pass: false, detail: `round=${round} 非非负整数` };
-    if (!Number.isInteger(total_rounds) || total_rounds < 0) return { pass: false, detail: `total_rounds=${total_rounds} 非非负整数` };
-    if (Number.isInteger(max_total_rounds) && total_rounds >= max_total_rounds) {
-      return { pass: false, detail: `[CIRCUIT_BREAKER] global total_rounds=${total_rounds} >= max=${max_total_rounds}` };
+    const { mm_fusion_rounds, mm_fusion_max_rounds } = c;
+    if (!Number.isInteger(mm_fusion_rounds) || mm_fusion_rounds < 0) return { pass: false, detail: `mm_fusion_rounds=${mm_fusion_rounds} 非非负整数` };
+    if (Number.isInteger(mm_fusion_max_rounds) && mm_fusion_rounds > mm_fusion_max_rounds) {
+      return { pass: false, detail: `[CIRCUIT_BREAKER] mm_fusion mm_fusion_rounds=${mm_fusion_rounds} >= max=${mm_fusion_max_rounds}` };
     }
+    return { pass: true, detail: `mm_fusion=${mm_fusion_rounds}/${mm_fusion_max_rounds}` };
+  },
+
+  // 断言 quality 计数合法 + 未熔断（v2 主图熔断）
+  'quality': (ctx) => {
+    const q = ctx.quality || {};
+    const { round, max_rounds } = q;
+    if (!Number.isInteger(round) || round < 0) return { pass: false, detail: `quality.round=${round} 非非负整数` };
     if (Number.isInteger(max_rounds) && round >= max_rounds) {
-      return { pass: false, detail: `[CIRCUIT_BREAKER] single-point round=${round} >= max=${max_rounds}` };
+      return { pass: false, detail: `[CIRCUIT_BREAKER] quality round=${round} >= max=${max_rounds}` };
     }
-    return { pass: true, detail: `round=${round}/${max_rounds} total=${total_rounds}/${max_total_rounds}` };
+    return { pass: true, detail: `quality.round=${round}/${max_rounds}` };
   },
 
   // 断言 gate 条件满足
@@ -728,6 +777,7 @@ export {
   WRITE_MATRIX,
   VERIFICATION_FIELDS,
   TOTAL_ROUNDS_FIELD,
+  QUALITY_ROUND_FIELD,
   contextPath,
   buildInitialContext,
   readContext,
@@ -736,6 +786,7 @@ export {
   setByPath,
   pathAllowedBy,
   pathPrefix,
+  readHooksFromConfig,
 };
 
 // ============================================================

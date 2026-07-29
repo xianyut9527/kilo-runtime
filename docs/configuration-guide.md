@@ -32,11 +32,11 @@ kilo_config/
 │   ├── multiModel.md                      #   T3 子图编排者（type: lifecycle_provider，无 mount）
 │   ├── planner.md                         #   规划（mount: PLANNING）
 │   ├── coder.md                           #   编码（mount: EXECUTING）
-│   ├── verifier.md                        #   正向验证（mount: CHECKING + MM_CHECKING + MM_FCHECK）
-│   ├── reverse-auditor.md                 #   反向审计（mount: CHECKING, when: ...）
-│   ├── side-checker.md                    #   侧向验证（mount: REVIEWING, when: ...）
-│   ├── reviewer.md                        #   静态审查（mount: REVIEWING）
-│   ├── fixer.md                           #   修复（mount: FIXING, when: ...）
+│   ├── verifier.md                        #   正向验证（mount: QUALITY hook:verify + MM_CHECKING + MM_FCHECK）
+│   ├── reverse-auditor.md                 #   反向审计（mount: QUALITY hook:verify, when: T2+）
+│   ├── side-checker.md                    #   侧向验证（mount: QUALITY hook:review, when: T2+）
+│   ├── reviewer.md                        #   静态审查（mount: QUALITY hook:review）
+│   ├── fixer.md                           #   修复（mount: QUALITY hook:fix, auto-trigger）
 │   ├── coder-a.md                         #   multiModel 逻辑推理派（mount: MM_EXECUTING）
 │   ├── coder-b.md                         #   multiModel 安全边界派（mount: MM_EXECUTING）
 │   ├── coder-c.md                         #   multiModel 代码生成派（mount: MM_EXECUTING）
@@ -50,16 +50,14 @@ kilo_config/
 │       ├── sizing.md                      #   任务定级 → SIZING
 │       ├── planning.md                    #   设计门 → PLANNING
 │       ├── executing.md                   #   实现 → EXECUTING
-│       ├── checking.md                    #   正向+反向验证 → CHECKING
-│       ├── fixing.md                      #   修复 → FIXING
-│       ├── reviewing.md                   #   侧向+审查 → REVIEWING
+│       ├── quality.md                      #   响应式 Hooks → QUALITY（合并原 CHECKING+REVIEWING+FIXING）
 │       └── delivering.md                  #   交付（记忆写入 + 分支收尾）→ DELIVERING
 ├── docs/
 │   ├── configuration-guide.md             # ← 本文件
 │   ├── multi-agent-lifecycle-architecture.md  # 架构设计文档（历史 + 现状）
 │   ├── model-registry.md                  # 模型能力倾向人类可读版（人工维护）
 │   └── memory-ops-reference.md            # 记忆操作 SQL 模板
-└── validate-config.mjs                    # 配置校验脚本（29 项检查）
+└── lifecycle-doctor.mjs                    # 配置校验脚本（56 项检查）
 ```
 
 ### 信息归属表（单一真相原则）
@@ -116,11 +114,16 @@ subagent_type: verifier     # task 工具的 subagent_type 参数值
 #   每个条目是一个挂载点，字段：
 #     at       挂载点名称（派生自 graph.yaml 节点，见下方"挂载点命名空间"）
 #     when     可选条件挂载（对照 task_context.config.agents.<key> 求值）
-#              省略 = 必加载（但受阶段可达性约束——T0 不经过 CHECKING，verifier 自然不加载）
-#     order    可选顺序号（同挂载点升序执行）；省略 = 并行组成员
-#     on_fail  可选失败策略（abort|warn|skip）；pre:/post:/on: 默认 warn
+#              省略 = 必加载（但受阶段可达性约束——T0 不经过 QUALITY，verifier 自然不加载）
+#     hook     v2 响应式 Hooks 专用：verify | fix | review（QUALITY 阶段内部挂载）
+#     trigger  v2 hook 触发条件：onFail（FAIL 时）| afterPass（全 PASS 后）| onChange（deps 变化，默认）
+#     deps     v2 hook 依赖声明：deps 变化时自动触发该 hook（类似 useEffect deps）
+#     after    可选相对依赖（声明在哪些 agent 之后执行）；省略 = 与同 hook 类型其他 agent 并行
+#              v2 废弃 order 数字编号，改用 hook 类型内置顺序 + after 相对依赖
 mount:
-  - at: CHECKING               # 无条件：CHECKING 仅 T1+ 可达（可达性即开关）
+  - at: QUALITY                # v2 响应式 Hooks 阶段（合并原 CHECKING+REVIEWING+FIXING）
+    hook: verify               # verify hook：与 reverse-auditor 默认并行
+    deps: [execution.code, plan]
   - at: MM_CHECKING            # 一智能体可挂载多槽（同时在 multiModel 子图挂载）
   - at: MM_FCHECK
 
@@ -157,11 +160,12 @@ isolation:
 
 > **主槽占用规则**：`executor: conductor` 或 `executor: multiModel` 的节点，主槽由编排者内建占据，外部智能体只能挂 `pre:`/`post:`。其他节点主槽由 `mount: at: <NODE>` 的智能体填充。
 
-### order 与并行
+### 顺序与并行
 
-- 同挂载点多个智能体 **默认并行**（不声明 order）
-- 声明 `order: <数字>` 则按升序执行；加新智能体用中间号（如 15 插在 10/20 间）零改其他文件
-- **视角隔离场景必须并行**（如 3 个 coder、verifier + reverse-auditor），不得声明 order
+- 同挂载点 / 同 hook 类型多个智能体 **默认并行**（省略 `after`）
+- v2 不再使用 `order: <数字>` 绝对编号；QUALITY 内部顺序由 `hook` 类型内置定义：`verify → fix → review → fix`
+- 需要控制同 hook 内相对顺序时，声明 `after: [agent-name]`（只引用前驱，零改其他文件）
+- **视角隔离场景必须并行**（如 3 个 coder、verifier + reverse-auditor），不得声明 `after`
 
 ---
 
@@ -169,7 +173,7 @@ isolation:
 
 ### 场景 A：新增一个智能体
 
-**需求**：新增一个 `security-auditor` 智能体，在 REVIEWING 阶段做安全专项审计，仅 T2+ 加载。
+**需求**：新增一个 `security-auditor` 智能体，在 QUALITY review hook 做安全专项审计，仅 T2+ 加载。
 
 **步骤**：
 
@@ -195,8 +199,10 @@ subagent_type: security-auditor
 # 模型绑定在 kilo.json agent.security-auditor.model；能力倾向参考 docs/model-registry.md
 
 mount:
-  - at: REVIEWING
+  - at: QUALITY
+    hook: review                    # v2 响应式 Hooks：review hook
     when: "config.agents.security_auditor"     # 条件挂载
+    # 与 reviewer / side-checker 同 hook 类型默认并行；如需 reviewer 之后执行可写 after: [reviewer]
 
 task_context:
   read: [execution.diffs, plan, project_context]
@@ -233,17 +239,17 @@ T2:
     security_auditor: true      # ← 加这一行
 ```
 
-4. **运行校验**：`node validate-config.mjs`
+4. **运行校验**：`node scripts/lifecycle-doctor.mjs`
 
-**不需要动**：`graph.yaml`（REVIEWING 节点已存在，挂载点派生即可用）、其他 agent .md。
+**不需要动**：`graph.yaml`（QUALITY 节点已存在，挂载点派生即可用）、其他 agent .md。
 
-> 如果该智能体是 REVIEWING 的**必配**角色（而非可选），才需要在 `graph.yaml` REVIEWING 节点 `required: [reviewer, security-auditor]` 加一行。
+> 如果该智能体是 QUALITY review hook 的**必配**角色（而非可选），才需要在 `stages/quality.md` frontmatter `required_roles` 加一行。
 
 ---
 
 ### 场景 B：新增一个生命周期阶段
 
-**需求**：在 EXECUTING 和 CHECKING 之间加一个 `UNIT_TEST` 阶段。
+**需求**：在 EXECUTING 和 QUALITY 之间加一个 `UNIT_TEST` 阶段。
 
 **步骤**：
 
@@ -255,27 +261,28 @@ nodes:
   - id: UNIT_TEST
     type: stage
     # 阶段文件路径自动派生：stages/unit-test.md（文件名 = 节点 ID 小写）
-    required: [tester]          # 如果有必配智能体
+    # required_roles 在 stages/unit-test.md frontmatter 声明
 
 edges:
   ...
-  # 改原边 EXECUTING→CHECKING 为 EXECUTING→UNIT_TEST→CHECKING（T1-T3 都需单元测试）
+  # 改原边 EXECUTING→QUALITY 为 EXECUTING→UNIT_TEST→QUALITY（T1-T3 都需单元测试）
   - from: EXECUTING
     to: UNIT_TEST
     when: "tier in ['T1','T2','T3']"
   - from: UNIT_TEST
-    to: CHECKING
+    to: QUALITY
     when: "unit_test_result == 'PASS'"
   - from: UNIT_TEST
-    to: FIXING
+    to: QUALITY
     when: "unit_test_result == 'FAIL'"
+    # 注意：v2 中 CHECKING/REVIEWING/FIXING 已合并入 QUALITY，FAIL 时也进入 QUALITY（fix hooks 自动触发）
 ```
 
 2. **创建阶段文件** `lifecycle/stages/unit-test.md`（文件名派生节点 ID `UNIT_TEST`，写执行逻辑：输入/处理/输出信号）
 
 3. **如果有新智能体**：按场景 A 创建 `agent/tester.md` + kilo.json 绑定
 
-4. **运行校验**：`node validate-config.mjs`
+4. **运行校验**：`node scripts/lifecycle-doctor.mjs`
 
 ---
 
@@ -310,7 +317,7 @@ edges:
 }
 ```
 
-4. **运行校验**：`node validate-config.mjs`
+4. **运行校验**：`node scripts/lifecycle-doctor.mjs`
 
 **不需要动**：`agent/coder.md`、`graph.yaml`、`config.yaml`。
 
@@ -358,9 +365,10 @@ overrides:
 **步骤**：改 `lifecycle/config.yaml`（**唯一真相**）：
 
 ```yaml
-convergence:
-  max_rounds: 3                # ← 从 5 改为 3
-  max_total_rounds: 7
+hooks:
+  quality:
+    max_verify_retries: 3        # ← 从 5 改为 3
+    max_total_cycles: 7
 ```
 
 `graph.yaml` 不再重复声明 convergence（v6.1 删除展示副本）。
@@ -443,10 +451,12 @@ overrides:
   model_overrides: {}          # 覆盖 kilo.json 模型绑定
   condition_overrides: {}      # 强制覆盖 config.agents 开关
 
-# convergence：收敛熔断阈值（唯一真相）
-convergence:
-  max_rounds: 5                # FIXING 单点熔断
-  max_total_rounds: 7          # CHECKING+REVIEWING 累计全局熔断
+# hooks.quality：响应式 Hooks 熔断阈值（v2 唯一真相）
+hooks:
+  quality:
+    max_verify_retries: 5      # verify 失败重试上限
+    max_review_retries: 3      # review 失败重试上限
+    max_total_cycles: 7        # QUALITY 总轮次上限
 ```
 
 ### tier_defaults.agents 的 key 命名规则（自动派生）
@@ -533,7 +543,7 @@ bootstrap 校验 coder-a/b/c 在 kilo.json 绑定模型的 `(vendor, architectur
 ## 8. 校验脚本
 
 ```bash
-node validate-config.mjs
+node scripts/lifecycle-doctor.mjs
 ```
 
 29 项检查覆盖：
@@ -571,8 +581,8 @@ node validate-config.mjs
 3. **单一真相**：每条信息只在一处声明，其他位置只能引用；`capabilities.yaml` 因纯声明无机械校验已删除
 4. **按定级批量声明**：`config.yaml` `tier_defaults` 一次声明整个组合，不"傻傻一个个配"
 5. **零重复解析**：bootstrap 装配完成后生成 resolved 视图缓存，运行时查表
-6. **语义 ID**：节点 ID 语义命名（`INTENT`/`CHECKING`），禁数字前缀——插入中间节点不存在"占号"问题
-7. **order 自包含排序**：加新智能体用中间号（15 插在 10/20 间）零改其他文件
+6. **语义 ID**：节点 ID 语义命名（`INTENT`/`QUALITY`），禁数字前缀——插入中间节点不存在"占号"问题
+7. **相对依赖排序**：加新智能体用 `after: [agent-name]` 声明前驱，零改其他文件；框架自动拓扑排序，环依赖报错
 8. **视角物理隔离**：`isolation.forbid_read` 防止确认偏误——各验证智能体不见其他视角结论
 9. **写入边界硬门**：`execution.verification` 唯一写入者，反自验
 10. **机械汇总判定**：conductor 组合判定只读各视角 verdict 做 AND 运算，不主观判定

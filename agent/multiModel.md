@@ -28,13 +28,13 @@ subgraph: multimodel-graph.yaml
 #   exit   退出条件（何时将 task_context 交还主图 conductor）
 handoff:
   enter: "SIZING 定级 T3 或用户手动选择；task_context 已由 conductor 初始化或自行初始化"
-  exit: "MM_ARCHIVED 写 subgraph_status=ready_for_delivery（fusion 分支已就绪）+ status=RUNNING（交还 conductor 后由 conductor 接管），task_context 交还 conductor 回流主图 EXECUTING（由主图 coder 执行 git merge mm-<tid>-fusion 分支将聚合代码产物应用到主工作区，写入 execution.diffs/changes/acceptance_map），然后走标准 CHECKING→REVIEWING→DELIVERING（主图四视角验证 merge 后代码产物）"
+  exit: "MM_ARCHIVED 写 subgraph_status=ready_for_delivery（fusion 分支已就绪）+ status=RUNNING（交还 conductor 后由 conductor 接管），task_context 交还 conductor 回流主图 EXECUTING（由主图 coder 执行 git merge mm-<tid>-fusion 分支将聚合代码产物应用到主工作区，写入 execution.diffs/changes/acceptance_map），然后走标准 QUALITY→DELIVERING（主图 hooks 自动循环验证 merge 后代码产物）"
 
 # invariants：子图运行期间的不变量（违反 → [PROCESS_VIOLATION]）
 invariants:
   - task_id 全链一致
   - MM_* 期间 conductor 不并发写 task_context（单写者原则）
-  - total_rounds 只能由 conductor 递增，multiModel 经 status 信号交还计数
+  - quality.round 只能由 conductor 递增，multiModel 经 status 信号交还计数
 
   # task_context：读写边界声明（WRITE_MATRIX 经 task-context.mjs 从本字段自动派生）
   #   write  可写切片（子图编排者专属：plan / plan.subtasks / memory_injection /
@@ -79,11 +79,11 @@ multiModel 是**独立子图编排者**（`type: lifecycle_provider`，frontmatt
                                         → MM_FCHECK(verifier fusion worktree 验证)
                                         → MM_DELIVERING(记忆溯源 + 清理 coder worktree) → MM_ARCHIVED
                                         ↓
-主图：EXECUTING(git merge fusion 分支) → CHECKING ⇄ FIXING → REVIEWING ⇄ FIXING → DELIVERING(清理 fusion worktree) → DONE
-      （conductor 接手标准验证闭环：正向+反向+侧向+审查四视角 + 修复回环，验证 merge 后代码产物）
+主图：EXECUTING(git merge fusion 分支) → QUALITY(hooks 自动循环 verify→fix→review→fix) → DELIVERING(清理 fusion worktree) → DONE
+      （conductor 接手标准验证闭环：QUALITY hooks 自动循环验证+修复 merge 后代码产物）
 ```
 
-multiModel 完成 `MM_ARCHIVED` 后，task_context 交还 conductor，**回流主图 EXECUTING**（由主图 coder 执行 `git merge mm-<tid>-fusion` 将聚合代码产物应用到主工作区，写入 `execution.diffs/changes/acceptance_map`），然后走标准 `CHECKING ⇄ FIXING → REVIEWING ⇄ FIXING → DELIVERING`。子图内部 MM_CHECKING/MM_FCHECK 是"产物期内部质检"（各 worktree 方案级验证 + fusion worktree 聚合产物验证），主图 CHECKING/REVIEWING 是"交付前独立验证+审查"（验证 merge 后代码）——两层正交，不重复。
+multiModel 完成 `MM_ARCHIVED` 后，task_context 交还 conductor，**回流主图 EXECUTING**（由主图 coder 执行 `git merge mm-<tid>-fusion` 将聚合代码产物应用到主工作区，写入 `execution.diffs/changes/acceptance_map`），然后走标准 `QUALITY → DELIVERING`。子图内部 MM_CHECKING/MM_FCHECK 是"产物期内部质检"（各 worktree 方案级验证 + fusion worktree 聚合产物验证），主图 QUALITY 是"交付前独立验证+审查"（验证 merge 后代码）——两层正交，不重复。
 
 ## task*context 交接协议（MM*\* ↔ 主图）
 
@@ -105,15 +105,16 @@ multiModel 期间产生的全部状态写入 `$env:TEMP/kilo/task_context_<task_
 | `MM_CHECKING`   | `execution.mm_artifacts` / `execution.mm_worktrees` | `verification.forward`（verifier 在各 worktree 方案级验证后写入）                                    |
 | `MM_FUSING`     | `execution.mm_artifacts` / `execution.mm_outputs` / `verification.forward` / `execution.mm_worktrees` | `execution.fused_output`（聚合产物指针：fusion worktree 路径/分支/commit_sha/聚合 diff 摘要/基底选择/冲突裁决）+ `plan`（聚合方案等价物供主图 verifier/reviewer 读取）；synthesizer-fusion 注入边界不变：不读 intent/拆分意图/模型身份；不写 execution.diffs/changes/acceptance_map |
 | `MM_FCHECK`     | `execution.fused_output` / `execution.mm_worktrees` | `verification.forward.fusion_check`（fusion worktree 方案级验证 + 聚合自洽性）                       |
-| `MM_DELIVERING` | 全部                                            | `status` + `convergence.round` + 记忆溯源（M4-M8）+ 清理 3 个 coder worktree（fusion worktree 保留待主图 merge） |
+| `MM_DELIVERING` | 全部                                            | `status` + `convergence.mm_fusion_rounds` + 记忆溯源（M4-M8）+ 清理 3 个 coder worktree（fusion worktree 保留待主图 merge） |
 | `MM_ARCHIVED`   | 全部                                            | `subgraph_status=ready_for_delivery` + `status=RUNNING`，task_context 交还 conductor 回流主图 EXECUTING（coder 执行 git merge fusion 分支） |
 
 ### 交接不变量
 
 - `task_id` 全链一致：multiModel 接管到 `MM_ARCHIVED` 期间不变。
 - **单写者原则**：`MM_*` 期间 conductor 不并发写 task_context，避免与 multiModel 状态机冲突；MM_EXECUTING 期间 multiModel 是 task_context 的唯一写者（coder 输出经 multiModel 中转后统一写入）。
-- 熔断计数沿用 `convergence.round` / `total_rounds` 字段语义（详见 conductor.md 字段语义块）。`total_rounds` 只能由 conductor 递增——multiModel 在 `MM_CHECKING` / `MM_FCHECK` 触发重试时**不直接写 `total_rounds`**，通过 `status` 信号交还 conductor 计数。
-- 新增 `convergence.mm_fusion_rounds` 字段：专用于追踪 MM_FCHECK 打回 synthesizer-fusion 重新聚合的轮次，不污染 `total_rounds`（子图 invariant 规定 `total_rounds` 只能由 conductor 递增）。
+- 熔断计数：主图 v2 QUALITY 阶段使用 `quality.round` / `quality.max_rounds`（见 conductor.md 字段语义块）。子图内部使用 `convergence.mm_fusion_rounds` 独立计数——multiModel 在 `MM_CHECKING` / `MM_FCHECK` 触发重试时**不直接写主图 `quality.round`**，通过 `status` 信号交还 conductor 处理。
+- `convergence.mm_fusion_rounds` 字段：专用于追踪 MM_FCHECK 打回 synthesizer-fusion 重新聚合的轮次，与主图 `quality.round` 正交（子图 invariant 规定主图计数只能由 conductor/框架递增）。
+- v2 响应式 Hooks 架构下，主图 QUALITY 阶段使用 `hooks.quality.max_*` 熔断阈值（替代原 `convergence.round`/`total_rounds` 计数）；子图内部仍使用 `mm_fusion_rounds` 独立计数。
 - `[TRUST_TRANSFER]` / `[PROCESS_VIOLATION]` 边界与 conductor.md 保持一致，违反即整阶段降级 FAIL。
 - **subgraph_status 语义**：MM_ARCHIVED 写入 `subgraph_status=ready_for_delivery` 仅当融合产物成功就绪；若 3 份全 FAIL 或聚合失败（FUSION_FAILED），`subgraph_status` 保持未定义或写入 `fusion_failed`，主图 MM_SUBGRAPH→EXECUTING 边条件不满足，不会误执行 git merge。
 
@@ -186,7 +187,7 @@ multiModel（产物级聚合模式，v2）
   3. **SCOPE_CREEP**：`git diff <base_branch>..<worktree_branch> --name-only` 检查只触及 forbidden_files 允许范围
   4. **风格一致性**：代码风格视觉一致（缩进/命名/结构对照现有代码，不执行 lint）
   5. **验收标准**：逐条核对 acceptance_criteria 是否被代码覆盖
-- **注意**：子图阶段不执行运行时测试（npm test/build/lint）——运行时验证由主图 CHECKING 阶段在 merge 后的主工作区执行
+- **注意**：子图阶段不执行运行时测试（npm test/build/lint）——运行时验证由主图 QUALITY 阶段在 merge 后的主工作区执行
 - 输出每份 PASS/FAIL + 问题清单 → 写入 `verification.forward`
 
 ### 阶段 4：产物聚合（MM_FUSING，synthesizer-fusion 在 fusion worktree）
@@ -222,11 +223,11 @@ multiModel（产物级聚合模式，v2）
   2. 风格一致性
   3. 验收标准全覆盖
   4. 矛盾消除质量
-- **注意**：子图阶段不执行运行时测试——运行时验证由主图 CHECKING 阶段在 merge 后的主工作区执行
+- **注意**：子图阶段不执行运行时测试——运行时验证由主图 QUALITY 阶段在 merge 后的主工作区执行
 - **预 merge 验证（安全增强）**：在回流主图 EXECUTING 之前，multiModel 可在 fusion worktree 中执行 `git merge --no-commit --no-ff <基底分支>` 预演，检测 merge 冲突。若存在不可解决冲突，提前标 `FUSION_FAILED` 并阻止回流，避免污染主工作区。实际操作由主图 EXECUTING coder 在 `lifecycle/stages/executing.md` 硬规则「T3 产物级场景（merge 前预检）」中执行。
-- **标准 git 工作流说明**：MM_SUBGRAPH→EXECUTING→CHECKING 的顺序是标准 feature-branch → merge → CI 验证流程。子图 MM_FCHECK 确保方案级质量（融合自洽、风格、验收覆盖），主图 CHECKING 做运行时验证（npm test/build/lint）。git merge 操作本身可回滚（`git reset --merge` / `git merge --abort`），不会污染主工作区——这是 feature-branch 工作流的固有安全特性。
+- **标准 git 工作流说明**：MM_SUBGRAPH→EXECUTING→QUALITY 的顺序是标准 feature-branch → merge → CI 验证流程。子图 MM_FCHECK 确保方案级质量（融合自洽、风格、验收覆盖），主图 QUALITY 做运行时验证（npm test/build/lint）。git merge 操作本身可回滚（`git reset --merge` / `git merge --abort`），不会污染主工作区——这是 feature-branch 工作流的固有安全特性。
 - PASS → 阶段 5；FAIL → 返回 synthesizer-fusion 重新聚合或标注"聚合失败"由用户决策。
-- **fusion 失败轮次记录**：在 `convergence.mm_fusion_rounds`（新增字段）追踪，达到 `convergence.mm_fusion_max_rounds`（阈值来源：lifecycle/config.yaml）后停止聚合等用户决策；不污染 `total_rounds`（子图 invariant 规定 `total_rounds` 只能由 conductor 递增）。
+- **fusion 失败轮次记录**：在 `convergence.mm_fusion_rounds`（v2 字段）追踪，达到 `convergence.mm_fusion_max_rounds`（阈值来源：lifecycle/config.yaml）后停止聚合等用户决策；不污染 `quality.round`（子图 invariant 规定主图计数只能由 conductor 递增）。
 
 ### 阶段 5：交付准备 + 记忆溯源 + worktree 清理（MM_DELIVERING）
 

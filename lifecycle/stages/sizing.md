@@ -60,7 +60,7 @@ quality_gate:
 
 ## 阶段 B·校准（后置）
 
-在 `REVIEWING` 阶段，基于实际执行的 unit DAG 和变更范围，复核实际等级：
+在 `QUALITY` 阶段，基于实际执行的 unit DAG 和变更范围，复核实际等级：
 - 若实际单元数 > 预估 50% → 升级 task_type 并标注 `[LEVEL_UP]`
 - 若实际未触发需求扩散 → 降级并标注 `[LEVEL_DOWN]`（极少发生）
 

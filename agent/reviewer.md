@@ -16,10 +16,15 @@ subagent_type: reviewer
 # 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
 
 # mount：挂载点声明
-#   at    挂载点（REVIEWING 阶段主槽，派生自 graph.yaml REVIEWING 节点）
-#   when  省略 = 必加载（REVIEWING 仅 T1+ 可达，可达性即开关）
+#   at    挂载点（QUALITY 阶段 review hook，派生自 graph.yaml QUALITY 节点）
+#   when  省略 = 必加载（QUALITY 仅 T1+ 可达，可达性即开关）
 mount:
-  - at: REVIEWING              # 无条件：REVIEWING 仅 T1+ 可达
+  # v2 响应式 Hooks：QUALITY 阶段 review hook，verify 全 PASS 后自动触发
+  # 无 after = 与同 hook: review 的其他 agent 并行（视角隔离：各自独立判断）
+  - at: QUALITY
+    hook: review
+    trigger: afterPass
+    deps: ["execution.code", "plan"]
 
 # task_context：读写边界声明
 #   read   可读切片（diff 审查对象；plan 验收标准；project_context 项目级约束）
@@ -40,7 +45,7 @@ isolation:
 
 ## 智能体定位
 
-**生命周期阶段**：`REVIEWING`（审查，与 side-checker 并行）
+**生命周期阶段**：`QUALITY`（review hook，审查，与 side-checker 并行）
 **加载条件**：T1+（T0 不加载）
 **模型**：见 `kilo.json` `agent.reviewer.model`（架构视角审查需要强 reasoning 能力需求）
 
@@ -50,7 +55,7 @@ isolation:
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 
-> **记忆下沉**：reviewer 在 REVIEWING 审查前**自行调用 memory.db** 召回历史架构反模式，用于补审已知架构问题。不再依赖 conductor 集中注入。
+> **记忆下沉**：reviewer 在 QUALITY review hook 审查前**自行调用 memory.db** 召回历史架构反模式，用于补审已知架构问题。不再依赖 conductor 集中注入。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 diff + plan 审查。
 
 **召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：

@@ -39,6 +39,8 @@ RECURSIVE_EXCLUDE=(
     "worktrees"
     ".pytest_cache"
     "__pycache__"
+    ".kilo_tmp"
+    ".playwright-mcp"
 )
 
 COPIED_FILES=0

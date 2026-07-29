@@ -352,7 +352,7 @@ INSERT OR IGNORE INTO project_context (context_id, category, title, content, sou
  '["process","hard-gate","violation-marker","workflow"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
 
 ('PC-005', 'BUSINESS_RULE', 'T1+ 单元闭环与熔断阈值',
-  'T1+ 任务单元级闭环：coder → verifier（不自验）→ fixer（verifier FAIL 时）→ 重新 verifier；fixer 连续 2 轮同症状升级 reviewer 根因分析。Circuit Breaker：FIXING 单点 max_rounds=5（同一验证失败点修复轮次上限），CHECKING+REVIEWING 全局累计 max_total_rounds=7，任一达到即触发 [CIRCUIT_BREAKER] 暂停等人决策。T0 极速通道豁免。',
+  'T1+ 任务单元级闭环：coder → verifier（不自验）→ fixer（verifier FAIL 时）→ 重新 verifier；fixer 连续 2 轮同症状升级 reviewer 根因分析。Circuit Breaker：QUALITY hooks verify 失败重试上限 max_verify_retries=5，review 失败重试上限 max_review_retries=3，QUALITY 总轮次上限 max_total_cycles=7，任一达到即触发 [CIRCUIT_BREAKER] 暂停等人决策。T0 极速通道豁免。',
   '.kilo/instructions/workflow-core.md', 2,
   '["workflow","tier","unit-closure","verifier","fixer","circuit-breaker"]', 0, NULL, 'global', NULL, '2026-07-19', '2026-07-19'),
 

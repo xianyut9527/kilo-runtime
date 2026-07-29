@@ -42,11 +42,11 @@ description: 模型能力倾向矩阵（人类可读版）+ 按智能体能力�
 | `conductor` | `INTENT` / `SIZING` / `DELIVERING` | `fast-reasoning` | 低延迟、轻量判定、记忆写入 |
 | `planner` | `PLANNING` | `deep-reasoning` | 架构分析、长上下文、复杂推理 |
 | `coder` | `EXECUTING` | `code-generation` | 编码专精、风格一致、最小改动 |
-| `verifier` | `CHECKING`（正向） | `strict-verification` | 边界敏感、逻辑审查、安全敏感 |
-| `reverse-auditor` | `CHECKING`（反向） | `strict-verification` | 严谨逻辑、反向推理 |
-| `side-checker` | `REVIEWING`（侧向） | `deep-reasoning` | 边界/安全/性能多角度强推理 |
-| `reviewer` | `REVIEWING`（审查） | `deep-reasoning` | 架构视角、安全视角、强 reasoning |
-| `fixer` | `FIXING` | `code-generation` | 快速修复、最小改动、假设驱动调试 |
+| `verifier` | `QUALITY`（verify hook） | `strict-verification` | 边界敏感、逻辑审查、安全敏感 |
+| `reverse-auditor` | `QUALITY`（verify hook, T2+） | `strict-verification` | 严谨逻辑、反向推理 |
+| `side-checker` | `QUALITY`（review hook, T2+） | `deep-reasoning` | 边界/安全/性能多角度强推理 |
+| `reviewer` | `QUALITY`（review hook） | `deep-reasoning` | 架构视角、安全视角、强 reasoning |
+| `fixer` | `QUALITY`（fix hook, auto-trigger） | `code-generation` | 快速修复、最小改动、假设驱动调试 |
 
 ### multiModel 并行（3 coder + 1 fusion）
 

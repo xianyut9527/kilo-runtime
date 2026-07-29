@@ -17,19 +17,27 @@ subagent_type: fixer
 # 快速修复能力倾向（按 verifier/reviewer 指出的问题定向修复）
 
 # mount：挂载点声明
-#   at    挂载点（FIXING 阶段主槽，派生自 graph.yaml FIXING 节点）
-#   无 when = 恒定挂载：T0 不经 FIXING（T0 无验证/修复循环），图拓扑天然限定仅 T1/T2 触发
+#   at    挂载点（QUALITY 阶段 fix hook，派生自 graph.yaml QUALITY 节点）
+#   无 when = 恒定挂载：T0 不经 QUALITY（T0 无验证/修复循环），图拓扑天然限定仅 T1/T2 触发
 mount:
-  - at: FIXING
+  # v2 响应式 Hooks：QUALITY 阶段 fix hook，自动在任一 verify/review hook FAIL 时触发
+  # 单一挂载条目覆盖 verify FAIL 和 review FAIL（trigger: onFail 响应所有 FAIL 信号）
+  - at: QUALITY
+    hook: fix
+    trigger: onFail
+    deps: ["execution.quality.issues"]
+  # 无 when = 恒定挂载：T0 不经 QUALITY（T0 无验证/修复），图拓扑天然限定仅 T1/T2/T3 触发
 
 # task_context：读写边界声明
-#   read        可读切片（verification 各视角 FAIL 原因；plan 修复参考；forbidden_files 边界；fixing_history 修复历史防重复）
-#   write       可写切片（fixing_history 修复记录；execution.diffs 修复后 diff）
-#   forbid_write 禁写切片（execution.verification 写入边界硬门——修复后自验不入 context，由 verifier 独立重跑）
+#   read      可读的 task_context 切片（blockers + 代码产物 + 验收标准 + 修复历史）
+#   write     可写的 task_context 切片（fixing_history + execution.diffs——修复产物）
 task_context:
-  read: [verification, plan, forbidden_files, fixing_history]
+  read: [execution.diffs, execution.changes, execution.acceptance_map, fixing_history, forbidden_files]
   write: [fixing_history, execution.diffs]
-  forbid_write: [execution.verification]   # 修复后自验不入 context，由 verifier 独立重跑
+
+# isolation：视角物理隔离（避免被前序验证结论锚定）
+isolation:
+  forbid_read: [verification.forward, verification.reverse, verification.side, verification.review, execution.verification]
 ---
 
 # fixer
@@ -38,7 +46,7 @@ task_context:
 
 ## 智能体定位
 
-**生命周期阶段**：`FIXING`（见 `lifecycle/graph.yaml` + `lifecycle/stages/fixing.md`）
+**生命周期阶段**：`QUALITY`（fix hook，见 `lifecycle/graph.yaml` + `lifecycle/stages/quality.md`）
 **加载条件**：T1+（T0 不加载），任一验证视角 FAIL 时触发
 **模型**：见 `kilo.json` `agent.fixer.model`（快速修复能力需求）
 
@@ -48,7 +56,7 @@ task_context:
 
 ## 记忆召回接口（M3-sub，subagent 自召回失败回溯）
 
-> **记忆下沉**：fixer 在 FIXING 修复前**自行调用 memory.db** 召回同类 symptom 的历史修复策略（M3 失败回溯），不再依赖 conductor 集中注入。这是"避免防空转"的关键——同症状修复失败 2 轮时，必须查历史是否已有成功修复策略。
+> **记忆下沉**：fixer 在 QUALITY fix hook 修复前**自行调用 memory.db** 召回同类 symptom 的历史修复策略（M3 失败回溯），不再依赖 conductor 集中注入。这是"避免防空转"的关键——同症状修复失败 2 轮时，必须查历史是否已有成功修复策略。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 blockers 修复。
 
 **召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M3 查询）：
@@ -77,9 +85,9 @@ acceptance_criteria: ["string"]
 known_failures: [{ strategy, reason }]
 forbidden_files: ["string"]
 fixing_history: [...]              # 前几轮修复历史（避免重复）
-convergence:
+quality:
   round: int
-  max_rounds: 5  # 阈值来源：lifecycle/config.yaml convergence
+  max_rounds: 7  # 阈值来源：lifecycle/config.yaml hooks.quality.max_total_cycles
 # 禁止读取：verification.forward / verification.reverse / verification.side / verification.review（避免被前序结论锚定）
 # 禁止写入：task_context.execution.verification（避免污染下一轮 verifier）
 ```
@@ -129,4 +137,4 @@ same_symptom_recurring: true | false
 - 同一状态循环 ≥3 次 → `[CIRCUIT_BREAKER]`
 - `[PARTIAL_IMPLEMENTATION]` 必须回到需求扩散包补齐同类点
 - 修复后同样适用「完成声明三件套」
-- 修复后必须回 EXECUTING（coder 重跑变更单元）→ CHECKING（verifier 重新验证），不跳过验证
+- 修复后自动触发 QUALITY verify hooks 重新验证（不跳过验证）

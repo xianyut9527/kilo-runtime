@@ -52,7 +52,7 @@ forbidden_files: ["string"]
 - 主槽输出方案 → 执行 `post:PLANNING` 挂载点（挂载机制见 graph.yaml 头注释）
 - 挂载点审查通过 → 阶段完成，经 `PLANNING → EXECUTING` 边进入 `EXECUTING`
 - 挂载点审查失败/超时/异常 → 挂载点 `on_fail: abort` → `[SLOT_ABORT]`，停在 PLANNING 等用户决策（不自动回流）
-- 绕过审查直接进入编码 → 下游正向验证角色标 `[PLAN_REVIEW_MISS]` FAIL（见 stages/checking.md）
+- 绕过审查直接进入编码 → 下游正向验证角色标 `[PLAN_REVIEW_MISS]` FAIL（见 stages/quality.md）
 
 ## 反模式
 

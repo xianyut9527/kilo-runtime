@@ -10,7 +10,7 @@
   - **install.ps1 / install.sh**：Step 2 新增 python 回退——sqlite3 CLI 不可用时探测 python/python3 + `scripts/memory.py`，`touch` 空 db 文件后 `exec-file init.sql` 建表（memory.py 要求 db 文件预存在，空文件对 sqlite 即合法空库），并用 `memory.py check` 做健康验证；Step 1 提示文案同步声明回退存在。
   - **验证**：python 回退路径实测（临时 db exec-file init.sql → 30 表/视图/索引对象建成 + check 输出 7 核心表）；validate-config 29/29 PASS（本机 better-sqlite3 分支不受影响）；lifecycle-doctor 42 PASS；e2e-smoke 44 PASS。
 - **2026-07-27**: v2.6.3 稳定性加固六建议落地 — 流转裁判 + e2e 回归 + doctor 守护 + 记忆通道切换 + 模型升级 + compaction 恢复协议。
-  - **scripts/transition-check.mjs**（新增 434 行）：阶段流转机械裁判，读 graph.yaml 边定义 + task_context 求值 when/gate，exit 0/1/2/3；convergence 机械递增（CHECKING/REVIEWING 进入时 total_rounds+1，FIXING 进入时 round+1），熔断 exit 3；`MEMORY_WRITE_COMPLETE` 硬门（memory_write_status ∈ {OK, DEGRADED}）。
+  - **scripts/transition-check.mjs**（新增 434 行）：阶段流转机械裁判，读 graph.yaml 边定义 + task_context 求值 when/gate，exit 0/1/2/3；v2 quality.round 机械递增（进入 QUALITY 时 +1），熔断 exit 3；`MEMORY_WRITE_COMPLETE` 硬门（memory_write_status ∈ {OK, DEGRADED}）。
   - **scripts/e2e-smoke.mjs**（新增）：44 场景端到端回归（T0 极速通道 / T1 / T2 全链路含 FIXING 回流 / T3 子图闭环 / 单点+全局熔断 / gate 拒绝），全绿。
   - **scripts/memory.py**（新增）：Python stdlib sqlite3 封装主通道（check/query/exec/exec-file，--db/KILO_MEMORY_DB 覆盖），解决 sqlite3 CLI 本机缺失导致 M1-M8 全断的问题；10 个 agent/*.md 召回接口 + AGENTS.md/README/core.md/.kilo/memory 文档统一切换。
   - **kilo.json 模型绑定升级**：conductor→hx/kimi-k3、verifier→hx/kimi-k2.6、reviewer→hx/glm-5.2；docs/model-registry.md 补能力矩阵。

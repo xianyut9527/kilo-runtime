@@ -18,12 +18,20 @@ subagent_type: verifier
 
 # mount：挂载点声明（可挂一个或多个点；每个条目是一个挂载点）
 #   at       挂载点（派生自 graph.yaml 节点：on:bootstrap/on:done/pre:N/N/post:N）
+#   hook     hook 类型（verify/fix/review）；同 hook 类型默认并行组（视角隔离场景必须如此）
 #   when     可选条件挂载（对照 task_context.config.agents.<key> 求值）；省略 = 必加载
-#   order    可选顺序号（同挂载点升序执行）；省略 = 并行组成员
-#   on_fail  可选失败策略（abort|warn|skip）；pre:/post:/on: 默认 warn
+#   after    可选顺序依赖（声明在哪些 agent 之后执行）；省略 = 并行组成员（与同 hook 的其他 agent 并行）
+#   deps     可选响应式依赖（task_context 字段路径；deps 变化才触发，避免重复执行）
+#   trigger  可选触发条件（onFail = 任一 hook FAIL 时触发；afterPass = 上游 hook 全 PASS 后触发）
+#   on_fail  可选失败策略（abort|warn|skip|degrade）；pre:/post:/on: 默认 warn
 mount:
-  - at: CHECKING               # 无条件：CHECKING 仅 T1+ 可达（reachability 即开关）
-  - at: MM_CHECKING            # 一智能体可挂载多槽（同时在 multiModel 子图挂载）
+  # v2 响应式 Hooks：QUALITY 阶段 verify hook，deps 驱动自动触发
+  # 无 after = 与同 hook: verify 的其他 agent 并行（视角隔离：各自独立判断）
+  - at: QUALITY
+    hook: verify
+    deps: ["execution.code", "plan"]
+  # multiModel 子图保留传统挂载（子图内部暂不改造 hooks）
+  - at: MM_CHECKING
   - at: MM_FCHECK
 
 # task_context：读写边界声明（bootstrap 注入上下文切片 + 运行时强制隔离）
@@ -49,7 +57,7 @@ isolation:
 
 ## 智能体定位
 
-**生命周期阶段**：`CHECKING`（正向；另在 multiModel 子图 `MM_CHECKING` / `MM_FCHECK` 加载，见 `lifecycle/multimodel-graph.yaml`）
+**生命周期阶段**：`QUALITY`（verify hook；另在 multiModel 子图 `MM_CHECKING` / `MM_FCHECK` 加载，见 `lifecycle/multimodel-graph.yaml`）
 **加载条件**：T1+（T0 不加载）
 **模型**：见 `kilo.json` `agent.verifier.model`（边界敏感、逻辑审查、安全敏感能力需求）
 
@@ -58,12 +66,12 @@ isolation:
 **不做什么**：不修复问题、不写新代码、不执行设计门、不做反向审计（reverse-auditor 负责）。
 
 > **双上下文验证对象**：
-> - 主图 `CHECKING`：验证**代码产物**（`execution.diffs/changes/acceptance_map`），L1-L3 全量（含运行测试/构建）。
-> - 子图 `MM_CHECKING` / `MM_FCHECK`：验证**方案**（`execution.mm_outputs` / `execution.fused_output`）——方案级验证：推理正确性、边界覆盖、逻辑自洽、验收覆盖、SCOPE_CREEP（方案超出委派包范围）。**L1 运行类验证不适用**——子图无代码产物（代码由主图 EXECUTING 阶段 coder 按融合方案实现后，于主图 CHECKING 全量验证）。
+> - 主图 `QUALITY`（verify hook）：验证**代码产物**（`execution.diffs/changes/acceptance_map`），L1-L3 全量（含运行测试/构建）。
+> - 子图 `MM_CHECKING` / `MM_FCHECK`：验证**方案**（`execution.mm_outputs` / `execution.fused_output`）——方案级验证：推理正确性、边界覆盖、逻辑自洽、验收覆盖、SCOPE_CREEP（方案超出委派包范围）。**L1 运行类验证不适用**——子图无代码产物（代码由主图 EXECUTING 阶段 coder 按融合方案实现后，于主图 QUALITY verify hooks 全量验证）。
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 
-> **记忆下沉**：verifier 在 CHECKING 验证前**自行调用 memory.db** 召回历史 anti-pattern，用于补验已知易错点。不再依赖 conductor 集中注入。
+> **记忆下沉**：verifier 在 QUALITY verify hook 验证前**自行调用 memory.db** 召回历史 anti-pattern，用于补验已知易错点。不再依赖 conductor 集中注入。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 acceptance_criteria 验证。
 
 **召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：

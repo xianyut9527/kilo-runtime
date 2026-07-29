@@ -16,12 +16,17 @@ subagent_type: side-checker
 # 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
 
 # mount：挂载点声明
-#   at    挂载点（REVIEWING 阶段，与 reviewer 同槽并行）
+#   at    挂载点（QUALITY 阶段 review hook，与 reviewer 并行）
 #   when  条件挂载（对照 config.agents.side_checker 求值）；T2+ 默认 true，T0/T1 false
 mount:
-  - at: REVIEWING
+  # v2 响应式 Hooks：QUALITY 阶段 review hook，verify 全 PASS 后与 reviewer 并行
+  # 无 after = 与同 hook: review 的其他 agent 并行（视角隔离：各自独立判断）
+  - at: QUALITY
+    hook: review
+    trigger: afterPass
+    deps: ["execution.code", "project_context"]
     when: "config.agents.side_checker"
-    on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED（不阻塞主流程）
+    on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED
 
 # task_context：读写边界声明
 #   read   可读切片（plan 执行方案；execution.diffs 代码产物；execution.changes 变更清单；
@@ -43,7 +48,7 @@ isolation:
 
 ## 智能体定位
 
-**生命周期阶段**：`REVIEWING`（侧向，与 reviewer 并行；条件加载 `?config.agents.side_checker`）
+**生命周期阶段**：`QUALITY`（review hook，侧向验证，与 reviewer 并行；条件加载 `?config.agents.side_checker`）
 **加载条件**：T2+（T0/T1 不加载）
 **模型**：见 `kilo.json` `agent.side-checker.model`（边界/安全/性能多角度需要强推理能力需求）
 
@@ -53,7 +58,7 @@ isolation:
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 
-> **记忆下沉**：side-checker 在 REVIEWING 侧向验证前**自行调用 memory.db** 召回历史边界/安全/性能失效模式，用于补验已知易错点。不再依赖 conductor 集中注入。
+> **记忆下沉**：side-checker 在 QUALITY review hook 侧向验证前**自行调用 memory.db** 召回历史边界/安全/性能失效模式，用于补验已知易错点。不再依赖 conductor 集中注入。
 > 降级不阻塞：memory.db 不可用时跳过，按当前 plan + execution 验证。
 
 **召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // transition-check.mjs
-// 运行时流转校验器 — graph.yaml DAG 流转的机械裁判 + 收敛计数器机械递增。
+// 运行时流转校验器 — graph.yaml DAG 流转的机械裁判 + quality 轮次机械递增。
 //
 // 定位：conductor 每次跨节点流转前必须调用本脚本校验合法性。
 // "模型提议流转、脚本裁判合法性"——把软约束（提示词）变为硬约束（退出码）。
-// 计数器（convergence.total_rounds / round）由本脚本机械递增，是 conductor
+// quality.round 由本脚本在进入 QUALITY 时机械递增，是 conductor
 // 专属写权限的机械执行臂；coder/fixer/subagents 禁止使用本脚本，
-// conductor 也不得绕过本脚本手工 set convergence 计数字段（[PROCESS_VIOLATION]）。
+// conductor 也不得绕过本脚本手工 set quality.round（[PROCESS_VIOLATION]）。
 //
 // 用法：
 //   node scripts/transition-check.mjs <task_id> --from <NODE> --to <NODE>
@@ -21,6 +21,7 @@
 // when 变量 → task_context 路径映射（按序取首个非 undefined/null）：
 //   intent_type     → intent.intent_type ?? intent.transition_context.intent_type
 //   tier            → sizing.tier
+//   quality_verdict → quality.verdict
 //   forward_result  → verification.forward.forward_result ?? verification.forward.verdict
 //   reverse_result  → verification.reverse.reverse_result ?? verification.reverse.verdict ?? 'N/A'
 //   side_result     → verification.side.side_result ?? verification.side.verdict ?? 'N/A'
@@ -28,12 +29,10 @@
 //   subgraph_status → subgraph_status（顶层）
 // 变量为 undefined/null 时 ==/!=/in 比较结果恒为 false（条件不满足，流转拒绝）。
 //
-// 计数器规则（when/gate 校验通过后执行；触发熔断也先持久化再退出）：
-//   to ∈ {CHECKING, REVIEWING}  → total_rounds += 1
-//   to ∈ {REVIEWING, DELIVERING} → round = 0（前序失败点已消除）
-//   to == FIXING                → round += 1
-//   total_rounds >= max_total_rounds → exit 3 [CIRCUIT_BREAKER] global
-//   round >= max_rounds              → exit 3 [CIRCUIT_BREAKER] single-point
+// 计数器规则（v2 响应式 Hooks：CHECKING+REVIEWING+FIXING 合并为 QUALITY）：
+//   进入 QUALITY  → quality.round += 1
+//   quality.round >= quality.max_rounds → exit 3 [CIRCUIT_BREAKER] global
+//   quality.max_rounds 来源：config.yaml hooks.quality.max_total_cycles
 //
 // gate 语义：
 //   MEMORY_WRITE_COMPLETE → memory_write_status ∈ {OK, DEGRADED} 或 memory_write_complete === true
@@ -46,7 +45,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { readContext, writeContext } from './task-context.mjs';
+import { readContext, writeContext, readHooksFromConfig as tcReadHooks } from './task-context.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
@@ -62,21 +61,21 @@ function die(code, msg) {
 }
 
 function usage() {
-  const txt = [
-    'Usage:',
-    '  node scripts/transition-check.mjs <task_id> --from <NODE> --to <NODE>',
-    '  node scripts/transition-check.mjs --help',
-    '',
-    'Mechanical DAG transition judge + convergence counter clerk (conductor-only).',
-    '',
-    'Exit codes:',
-    '  0 = legal transition (counters incremented & persisted)',
-    '  1 = illegal transition / gate failed ([PROCESS_VIOLATION] / [MISSING_MEMORY_WRITE])',
-    '  2 = usage error',
-    '  3 = [CIRCUIT_BREAKER] (counters persisted before exit)',
-    '',
-    'when variables: intent_type tier forward_result reverse_result side_result review_result subgraph_status',
-  ].join('\n');
+    const txt = [
+      'Usage:',
+      '  node scripts/transition-check.mjs <task_id> --from <NODE> --to <NODE>',
+      '  node scripts/transition-check.mjs --help',
+      '',
+      'Mechanical DAG transition judge + quality round clerk (conductor-only).',
+      '',
+      'Exit codes:',
+      '  0 = legal transition (counters incremented & persisted)',
+      '  1 = illegal transition / gate failed ([PROCESS_VIOLATION] / [MISSING_MEMORY_WRITE])',
+      '  2 = usage error',
+      '  3 = [CIRCUIT_BREAKER] (counters persisted before exit)',
+      '',
+      'when variables: intent_type tier quality_verdict forward_result reverse_result side_result review_result subgraph_status',
+    ].join('\n');
   process.stdout.write(txt + '\n');
   process.exit(0);
 }
@@ -161,18 +160,18 @@ function parseGraphFile(text) {
   return { nodes, edges, top };
 }
 
-// 从 lifecycle/config.yaml 读取收敛阈值（task-context.mjs 本地副本；失败降级 5/7）
-function readConvergenceFromConfig() {
+// 从 lifecycle/config.yaml 读取 hooks.quality.max_total_cycles（本脚本本地副本；失败降级 7）
+// task-context.mjs 也导出同名函数，作为被 import 方提供标准实现；
+// 本脚本独立运行时为自包含，保留本地副本。
+function readHooksFromConfig() {
   try {
     const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
-    const mr = text.match(/^\s*max_rounds:\s*(\d+)/m);
-    const mtr = text.match(/^\s*max_total_rounds:\s*(\d+)/m);
+    const mtc = text.match(/max_total_cycles:\s*(\d+)/);
     return {
-      max_rounds: mr ? parseInt(mr[1], 10) : 5,
-      max_total_rounds: mtr ? parseInt(mtr[1], 10) : 7,
+      max_total_cycles: mtc ? parseInt(mtc[1], 10) : 7,
     };
   } catch {
-    return { max_rounds: 5, max_total_rounds: 7 };
+    return { max_total_cycles: 7 };
   }
 }
 
@@ -310,6 +309,7 @@ function resolveVars(ctx) {
   return {
     intent_type: pick(intent.intent_type, intent.transition_context && intent.transition_context.intent_type),
     tier: pick(sizing.tier),
+    quality_verdict: pick(ctx.quality && ctx.quality.verdict),
     forward_result: pick(fwd.forward_result, fwd.verdict),
     reverse_result: pick(rev.reverse_result, rev.verdict, 'N/A'),
     side_result: pick(side.side_result, side.verdict, 'N/A'),
@@ -353,9 +353,9 @@ function main() {
     }
   }
 
-  // 查边
-  const edge = graph.edges.find((e) => e.from === FROM && e.to === TO);
-  if (!edge) {
+  // 查边：同一 from→to 可能有多条边（不同 when 条件），逐条求值找第一条满足的
+  const candidateEdges = graph.edges.filter((e) => e.from === FROM && e.to === TO);
+  if (candidateEdges.length === 0) {
     const outs = graph.edges.filter((e) => e.from === FROM)
       .map((e) => `${FROM} -> ${e.to}${e.when ? ` (when: ${e.when})` : ''}${e.gate ? ` (gate: ${e.gate})` : ''}`);
     die(1, `[PROCESS_VIOLATION] no edge ${FROM} -> ${TO} in graph.yaml. 合法出边:\n  ${outs.join('\n  ') || '(无出边——终态节点)'}`);
@@ -365,18 +365,25 @@ function main() {
   const { ctx } = readContext(taskId);
   const vars = resolveVars(ctx);
 
-  // when 求值
-  if (edge.when) {
+  // 多边求值：找第一条 when 满足的边；无 when 的边直接匹配
+  let edge = null;
+  let lastFailEdge = candidateEdges[0]; // 用于错误信息
+  for (const e of candidateEdges) {
+    if (!e.when) { edge = e; break; }
     let ok = false;
     try {
-      ok = evalAst(parseExpr(tokenize(edge.when), edge.when), vars);
-    } catch (e) {
-      die(1, `[PROCESS_VIOLATION] when 表达式解析失败: ${e.message}`);
+      ok = evalAst(parseExpr(tokenize(e.when), e.when), vars);
+    } catch (err) {
+      die(1, `[PROCESS_VIOLATION] when 表达式解析失败: ${err.message}`);
     }
-    if (!ok) {
-      const dump = Object.keys(vars).map((k) => `${k}=${JSON.stringify(vars[k])}`).join(' ');
-      die(1, `[PROCESS_VIOLATION] transition ${FROM} -> ${TO} rejected by when: ${edge.when}\n  current: ${dump}`);
-    }
+    if (ok) { edge = e; break; }
+    lastFailEdge = e;
+  }
+
+  if (!edge) {
+    const dump = Object.keys(vars).map((k) => `${k}=${JSON.stringify(vars[k])}`).join(' ');
+    const allWhens = candidateEdges.map((e) => e.when || '(none)').join(' | ');
+    die(1, `[PROCESS_VIOLATION] transition ${FROM} -> ${TO} rejected by all when conditions: ${allWhens}\n  current: ${dump}`);
   }
 
   // gate 校验
@@ -392,32 +399,38 @@ function main() {
     }
   }
 
-  // 计数器机械递增（conductor 专属写权限的机械执行臂）
+  // quality 轮次机械递增（conductor 专属写权限的机械执行臂）
   if (!ctx.convergence || typeof ctx.convergence !== 'object') {
-    const conv = readConvergenceFromConfig();
-    ctx.convergence = { round: 0, max_rounds: conv.max_rounds, total_rounds: 0, max_total_rounds: conv.max_total_rounds };
+    ctx.convergence = {
+      mm_fusion_rounds: 0,
+      mm_fusion_max_rounds: 3,
+    };
   }
-  const conv = ctx.convergence;
-  if (TO === 'CHECKING' || TO === 'REVIEWING') conv.total_rounds += 1;
-  if (TO === 'REVIEWING' || TO === 'DELIVERING') conv.round = 0;
-  if (TO === 'FIXING') conv.round += 1;
+  if (!ctx.quality || typeof ctx.quality !== 'object') {
+    const conv = readHooksFromConfig();
+    ctx.quality = {
+      round: 0,
+      max_rounds: conv.max_total_cycles,
+      status: 'running',
+      verdict: 'PENDING',
+    };
+  }
+  const quality = ctx.quality;
+  if (TO === 'QUALITY') quality.round += 1;
 
   // 熔断判定（先持久化再退出）
-  const maxR = typeof conv.max_rounds === 'number' ? conv.max_rounds : 5;
-  const maxT = typeof conv.max_total_rounds === 'number' ? conv.max_total_rounds : 7;
-  if (conv.total_rounds >= maxT) {
+  const maxR = typeof quality.max_rounds === 'number' ? quality.max_rounds : 7;
+  if (quality.round >= maxR) {
+    quality.status = 'tripped';
+    quality.verdict = 'CIRCUIT_BREAKER';
     writeContext(taskId, ctx);
-    die(3, `[CIRCUIT_BREAKER] global total_rounds=${conv.total_rounds} >= max_total_rounds=${maxT}（停止修复，task_context.status=PAUSED 等用户决策）`);
-  }
-  if (conv.round >= maxR) {
-    writeContext(taskId, ctx);
-    die(3, `[CIRCUIT_BREAKER] single-point round=${conv.round} >= max_rounds=${maxR}（同一失败点修复轮次耗尽，task_context.status=PAUSED 等用户决策）`);
+    die(3, `[CIRCUIT_BREAKER] global quality_round=${quality.round} >= max_total_cycles=${maxR}（停止修复，task_context.status=PAUSED 等用户决策）`);
   }
 
-  // 写回 task_context：同步 current_stage + 计数器
+  // 写回 task_context：同步 current_stage + quality round
   ctx.current_stage = TO;
   writeContext(taskId, ctx);
-  process.stdout.write(`PASS transition ${FROM} -> ${TO} (when=${edge.when || 'none'}${edge.gate ? ` gate=${edge.gate}` : ''} | total_rounds=${conv.total_rounds} round=${conv.round})\n`);
+  process.stdout.write(`PASS transition ${FROM} -> ${TO} (when=${edge.when || 'none'}${edge.gate ? ` gate=${edge.gate}` : ''} | quality_round=${quality.round}/${maxR})\n`);
   process.exit(0);
 }
 
