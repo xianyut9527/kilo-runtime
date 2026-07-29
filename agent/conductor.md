@@ -69,7 +69,7 @@ forbid_write: [execution.verification] # 反自验硬门
    每个委派包含 goal/context_anchor/acceptance_criteria/known_failures/forbidden_files。调用后等待返回，禁止在 task 工具未返回前自行用 edit/write/bash 修改代码。
 7. **自验无效**：conductor 不得写 `execution.verification` 字段（硬门，仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
 8. **装配自检**：会话首个任务前执行 `node "${KILO_CONFIG_DIR}/scripts/lifecycle-doctor.mjs"`，FAIL 则不进入运行。若脚本不存在（本项目未部署 lifecycle 基础设施），**不降级放弃编排**，而是标记 `[DEGRADED]` 并继续按铁律手工编排流程，仍必须委派 subagent。
-9. **task 工具失败处理**：若 task 工具返回 error/aborted/timeout：首次失败重试 1 次（prompt 注入前次失败信号）；重试仍失败标记 `[AGENT_UNAVAILABLE]`，按节点 on_fail 派发（必配角色 escalate，可选视角 degrade）。注：task 工具失败信号识别为 LLM 语义匹配（非正则），含空格的信号文本（如 "Tool execution aborted"）用引号字面量显式枚举以降低漏判，与单 token 信号（error/aborted/timeout）并列。
+9. **task 工具失败处理**：若 task 工具返回 error/aborted/timeout 或 `task` 工具抛异常/启动失败/并发调度被中断（`Tool execution aborted` / `Tool execution cancelled`）：首次失败重试 1 次（prompt 注入前次失败信号）；并发中断信号出现时，优先检查是否可通过 `after` 机制避免；无法避免时降级为串行调度重试 1 次；重试仍失败标记 `[AGENT_UNAVAILABLE]`，按节点 on_fail 派发（必配角色 escalate，可选视角 degrade）。注：task 工具失败信号识别为 LLM 语义匹配（非正则），含空格的信号文本（如 "Tool execution aborted"）用引号字面量显式枚举以降低漏判，与单 token 信号（error/aborted/timeout）并列。
 10. **记忆写入**：DELIVERING 阶段必须执行 M4-M8 记忆写入（`python "${KILO_CONFIG_DIR}/scripts/memory.py"`），完成写入 `memory_write_status=OK`，否则 DELIVERING→DONE gate 拒绝。
 11. **即停违规**：发现跳步/越界/信任传递立即标 `[PROCESS_VIOLATION]` 并暂停，不强行推进。
 
@@ -244,6 +244,8 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 - **进入节点 N**：
   1. 执行 `pre:N` 挂载点（同挂载点默认并行；有 `after` 的按拓扑排序执行；`on_fail: abort` → `[SLOT_ABORT]` 中止进入主槽）
   2. 执行 `N` 主挂载点：`executor: conductor/multiModel` 内建节点直接内建；否则同 hook 类型默认并行组执行（无 `after` = 并行组、有 `after` 的按拓扑排序执行），并校验 `required_roles` 激活覆盖（契约源：stages/<id>.md frontmatter；`when` 求值后缺一 → `[SLOT_UNFULFILLED]`）
+
+> **并发受限兜底**：对于无法通过 `after` 机制串行的并行组（如 `on:bootstrap`、`pre:`/`post:` 挂载点、T3 子图 `MM_EXECUTING` 的 3 coder 等），若底层执行器返回 `Tool execution aborted` / `Tool execution cancelled`，conductor 应切换为**串行逐个启动**，标记 `[DEGRADED_PARALLEL]`。QUALITY 阶段的 verify/review 组已通过 `after` 机制机械串行，不再依赖此兜底。串行重试全部成功后继续正常流程；串行仍失败再按节点 `on_fail` 派发。该兜底不改变 agent .md 的并行语义声明，仅为运行稳定性兜底。
   3. 执行 `post:N` 挂载点（同 pre 语义）
   4. **机械流转裁判**：流转前必须执行 `node scripts/transition-check.mjs <task_id> --from <当前节点> --to <目标节点>`；
      - exit 0 → 允许流转（`quality.round` 已由框架自动递增，conductor 禁止手工 set convergence/quality 计数字段）；
@@ -360,7 +362,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 | 触发源                                 | 信号                                                         | 说明                                                                                                 |
 | -------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | 智能体 wall-clock 超时                 | `[AGENT_TIMEOUT]`                                            | 见 §智能体加载流程 §超时守卫；分启动卡死（agent_startup_s）与执行超时（per_agent_s/stage_default_s） |
-| `task` 工具抛异常/启动失败             | `[AGENT_UNAVAILABLE]`                                        | 启动失败区别于超时                                                                                   |
+| `task` 工具抛异常/启动失败/并发调度被中断（`Tool execution aborted` / `Tool execution cancelled`） | `[AGENT_UNAVAILABLE]`                                        | 启动失败或并发限制信号：优先检查是否可通过 `after` 机制避免；无法避免则降级串行重试 1 次；仍失败再按节点 on_fail 派发；区别于超时 |
 | 智能体返回 `BLOCKED` / `NEEDS_CONTEXT` | 状态信号                                                     | 需补上下文或升级                                                                                     |
 | 硬门 gate FAIL                         | `[MISSING_MEMORY_WRITE]` 等                                  | gate 边定义的硬门                                                                                    |
 | 跳步/越界/自验污染                     | `[PROCESS_VIOLATION]` / `[SCOPE_CREEP]` / `[TRUST_TRANSFER]` | 即停，不走 on_fail（见 §流程级即停规则）                                                             |

@@ -17,12 +17,14 @@ subagent_type: reverse-auditor
 # 边界敏感、逻辑审查、反向推理能力倾向（从产物反推是否满足原始需求）
 
 # mount：挂载点声明
-#   at    挂载点（QUALITY 阶段 verify hook，与 verifier 并行）
+#   at    挂载点（QUALITY 阶段 verify hook，在 verifier 完成后串行启动）
 #   when  条件挂载（对照 config.agents.reverse_auditor 求值）；T2+ 默认 true，T0/T1 false
 mount:
-  # v2 响应式 Hooks：QUALITY 阶段 verify hook，与 verifier 并行（无 after = 并行组成员）
+  # v2 响应式 Hooks：QUALITY 阶段 verify hook，增加 after: [verifier] 使 reverse-auditor 在 verifier 完成后串行启动，
+  # 避免 verify 组内 2 并发 task 触发底层执行器 Tool execution aborted。
   - at: QUALITY
     hook: verify
+    after: [verifier]
     deps: ["execution.code", "intent"]
     when: "config.agents.reverse_auditor"
     on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED
@@ -46,7 +48,7 @@ isolation:
 
 ## 智能体定位
 
-**生命周期阶段**：`QUALITY`（verify hook，反向审计，与 verifier 并行；条件加载 `?config.agents.reverse_auditor`）
+**生命周期阶段**：`QUALITY`（verify hook，反向审计，在 verifier 完成后串行启动；条件加载 `?config.agents.reverse_auditor`）
 **加载条件**：T2+（T0/T1 不加载）
 **模型**：见 `kilo.json` `agent.reverse-auditor.model`（严谨逻辑、反向推理能力需求）
 
@@ -138,6 +140,6 @@ issues:
 ## 硬规则
 
 - 必须从**原始意图**反推，不依赖正向验证结论
-- 与 verifier 并行执行，各自独立 context，不互相参考
+- 在 verifier 完成后串行执行，各自独立 context，不互相参考
 - 假设审计必须给出验证方法，不可只标注"需验证"
 - `failure_db` 命中同类失败模式时，必须检查产物是否复现该失败

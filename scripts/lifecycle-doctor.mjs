@@ -186,8 +186,15 @@ function parseAgentFrontmatter(fm) {
       }
       const fm2 = line.match(/^\s+([a-z_]+)\s*:\s*(.+)$/);
       if (fm2 && curMount) {
-        const [, key, val] = fm2;
-        curMount[key] = val.trim().replace(/^["']|["']$/g, '').replace(/\s+#.*$/, '');
+        const [, key, rawVal] = fm2;
+        const val = rawVal.trim().replace(/\s+#.*$/, '');
+        // 支持 YAML 行内数组（如 after: [verifier] / deps: ["a", "b"]）
+        if (val.startsWith('[') && val.endsWith(']')) {
+          const inner = val.slice(1, -1).trim();
+          curMount[key] = inner ? inner.split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')) : [];
+        } else {
+          curMount[key] = val.replace(/^["']|["']$/g, '');
+        }
       }
       continue;
     }

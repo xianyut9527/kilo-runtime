@@ -20,10 +20,13 @@ subagent_type: reviewer
 #   when  省略 = 必加载（QUALITY 仅 T1+ 可达，可达性即开关）
 mount:
   # v2 响应式 Hooks：QUALITY 阶段 review hook，verify 全 PASS 后自动触发
-  # 无 after = 与同 hook: review 的其他 agent 并行（视角隔离：各自独立判断）
+  # 增加 after: [verifier] 确保 review hook 在 verify hook 完成后串行启动，
+  # 避免底层执行器在同一轮对话中并发调度 task 导致 Tool execution aborted。
+  # 同 hook: review 组内 reviewer 与 side-checker 仍并行（视角隔离：各自独立判断）。
   - at: QUALITY
     hook: review
     trigger: afterPass
+    after: [verifier]
     deps: ["execution.code", "plan"]
 
 # task_context：读写边界声明
@@ -45,7 +48,7 @@ isolation:
 
 ## 智能体定位
 
-**生命周期阶段**：`QUALITY`（review hook，审查，与 side-checker 并行）
+**生命周期阶段**：`QUALITY`（review hook，审查，与 side-checker 并行；等待 verifier 完成后启动）
 **加载条件**：T1+（T0 不加载）
 **模型**：见 `kilo.json` `agent.reviewer.model`（架构视角审查需要强 reasoning 能力需求）
 
@@ -161,4 +164,4 @@ approval: "APPROVE" | "REQUEST_CHANGES"
 - 每个问题必须给证据和可操作修复建议
 - Critical/Important 未修复前不得标记为通过
 - 连续 2 轮同症状修复失败 → 升级人工决策
-- 与 side-checker 并行执行，各自独立 context，不互相参考
+- 与 side-checker 并行执行，各自独立 context，不互相参考；整体在 verifier 完成后启动
