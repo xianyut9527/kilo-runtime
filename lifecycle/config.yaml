@@ -42,8 +42,8 @@ tier_defaults:
   # 可选视角默认全关（适合中等复杂度任务）
   T1:
     agents:
-      reverse_auditor: false      # T2+ 才开（需求追溯审计）
-      side_checker: false         # T2+ 才开（运行时行为实测）
+      reverse_auditor: true        # T1 起开（隐性需求遗漏是"一次性完成"失败最高频原因）
+      side_checker: false         # T2+ 才开（运行时实测成本高，T1 不需要）
       synthesizer_fusion: false   # 仅 T3 multiModel 用
     review_mode: full
 
@@ -80,7 +80,7 @@ overrides:
 
   # model_overrides：覆盖 kilo.json 的模型绑定
   # 键 = agent 名，值 = 模型 ID（能力倾向参考 docs/model-registry.md 人工维护，无机械校验）
-  # 例: { verifier: "hx/kimi-k3" } → 本次任务 verifier 用 kimi-k3 而非 kilo.json 默认绑定
+  # 例: { verifier: "hx/kimi-k2.7-code" } → 本次任务 verifier 用 kimi-k2.7-code 而非 kilo.json 默认绑定
   model_overrides: {}
 
   # condition_overrides：强制覆盖 config.agents 开关
@@ -105,7 +105,7 @@ hooks:
   quality:
     max_verify_retries: 5      # verify hooks 失败重试上限（替代原 max_rounds）
     max_review_retries: 3      # review hooks 失败重试上限
-    max_total_cycles: 7          # QUALITY 总轮次上限（替代原 max_total_rounds）
+    max_total_cycles: 4          # QUALITY 总轮次上限（4轮修不好=方案/需求有问题，escalate到人）
     auto_fix: true              # 自动触发 fix hooks（false = 人工确认后修复）
 
 # ============================================================

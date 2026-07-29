@@ -21,7 +21,7 @@
     },
     "multiModel": {
       "mode": "primary",
-      "model": "hx/kimi-k2.6"
+      "model": "hx/kimi-k2.7-code"
     },
     "synthesizer-fusion": {
       "mode": "subagent",
@@ -29,7 +29,7 @@
     },
     "planner": {
       "mode": "subagent",
-      "model": "hx/glm-5.2"
+      "model": "hx/kimi-k2.6"
     },
     "plan-reviewer": {
       "mode": "subagent",
@@ -53,11 +53,11 @@
     },
     "verifier": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6"
+      "model": "hx/glm-5.2"
     },
     "reverse-auditor": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3"
+      "model": "hx/glm-5.2"
     },
     "side-checker": {
       "mode": "subagent",
@@ -73,10 +73,7 @@
     }
   },
   "skills": {
-    "paths": [
-      "${KILO_CONFIG_DIR}/.kilo/skills",
-      "${HOME}/.agents/skills"
-    ]
+    "paths": ["${KILO_CONFIG_DIR}/.kilo/skills", "${HOME}/.agents/skills"]
   },
   "permission": {
     "bash": "allow"
@@ -90,20 +87,13 @@
     },
     "gitnexus": {
       "type": "local",
-      "command": [
-        "npx",
-        "gitnexus",
-        "mcp"
-      ],
+      "command": ["npx", "gitnexus", "mcp"],
       "enabled": false,
       "timeout": 30000
     },
     "playwright": {
       "type": "local",
-      "command": [
-        "npx",
-        "@playwright/mcp"
-      ],
+      "command": ["npx", "@playwright/mcp"],
       "enabled": false,
       "timeout": 120000
     }
@@ -138,13 +128,8 @@
           "name": "kimi-k2.6",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -155,13 +140,8 @@
           "name": "kimi-k2.7-code",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -172,13 +152,8 @@
           "name": "MiniMax-M3",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -189,13 +164,8 @@
           "name": "MiniMax-M2.7-highspeed",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -206,13 +176,8 @@
           "name": "kimi-k3",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,

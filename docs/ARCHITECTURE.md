@@ -90,22 +90,25 @@ QUALITY hooks（标准 verify→fix→review→fix 循环）
 
 ## 2. 智能体清单（14 个职能智能体 + 2 个编排者）
 
-| 智能体 | 挂载点 / hook | after | trigger | when | 模型 | 职责 |
-|--------|--------------|-------|---------|------|------|------|
-| **conductor** | —（内建） | — | — | — | kimi-k2.7-code | 编排者：意图判定→定级→挂载调度→流转裁判 |
-| **multiModel** | —（lifecycle_provider） | — | — | — | kimi-k2.6 | T3 子图编排者 |
-| **planner** | `PLANNING` | — | — | — | glm-5.2 | 设计门、DAG、验收点 |
-| **coder** | `EXECUTING` | — | — | — | kimi-k2.7-code | 编码实现、三件套 |
-| **verifier** | `QUALITY hook:verify`, `MM_CHECKING`, `MM_FCHECK` | — | — | — | kimi-k2.6 | 正向验证（L1/L2/L3） |
-| **reverse-auditor** | `QUALITY hook:verify` | — | — | `config.agents.reverse_auditor` | MiniMax-M3 | 反向审计（T2+） |
-| **reviewer** | `QUALITY hook:review` | — | — | — | glm-5.2 | 代码审查（四视角） |
-| **side-checker** | `QUALITY hook:review` | — | — | `config.agents.side_checker` | glm-5.2 | 侧向验证（T2+） |
-| **fixer** | `QUALITY hook:fix` | — | `onFail` | — | MiniMax-M3 | 定向修复（auto-trigger） |
-| **plan-reviewer** | `post:PLANNING` | — | — | — | MiniMax-M3 | 方案硬门审查 |
-| **coder-a** | `MM_EXECUTING` | — | — | — | kimi-k2.6 | 逻辑推理派 |
-| **coder-b** | `MM_EXECUTING` | — | — | — | glm-5.2 | 安全边界派 |
-| **coder-c** | `MM_EXECUTING` | — | — | — | kimi-k2.7-code | 代码生成派 |
-| **synthesizer-fusion** | `MM_FUSING` | — | — | `config.agents.synthesizer_fusion` | MiniMax-M3 | 融合编辑（T3） |
+> 模型统一在 `kilo.json` `agent.<name>.model` 配置（单源真相），能力倾向参考 `docs/model-registry.md`。
+> 下表不硬编码模型，避免配置漂移。
+
+| 智能体 | 挂载点 / hook | after | trigger | when | 职责 |
+|--------|--------------|-------|---------|------|------|
+| **conductor** | —（内建） | — | — | — | 编排者：意图判定→定级→挂载调度→流转裁判 |
+| **multiModel** | —（lifecycle_provider） | — | — | — | T3 子图编排者 |
+| **planner** | `PLANNING` | — | — | — | 设计门、DAG、验收点 |
+| **coder** | `EXECUTING` | — | — | — | 编码实现、三件套 |
+| **verifier** | `QUALITY hook:verify`, `MM_CHECKING`, `MM_FCHECK` | — | — | — | 正向验证（L1/L2/L3） |
+| **reverse-auditor** | `QUALITY hook:verify` | — | — | `config.agents.reverse_auditor` | 反向审计（T2+） |
+| **reviewer** | `QUALITY hook:review` | — | — | — | 代码审查（四视角） |
+| **side-checker** | `QUALITY hook:review` | — | — | `config.agents.side_checker` | 侧向验证（T2+） |
+| **fixer** | `QUALITY hook:fix` | — | `onFail` | — | 定向修复（auto-trigger） |
+| **plan-reviewer** | `post:PLANNING` | — | — | — | 方案硬门审查 |
+| **coder-a** | `MM_EXECUTING` | — | — | — | 逻辑推理派 |
+| **coder-b** | `MM_EXECUTING` | — | — | — | 安全边界派 |
+| **coder-c** | `MM_EXECUTING` | — | — | — | 代码生成派 |
+| **synthesizer-fusion** | `MM_FUSING` | — | — | `config.agents.synthesizer_fusion` | 融合编辑（T3） |
 
 ---
 
@@ -258,7 +261,7 @@ hooks:
 ```json
 // kilo.json（唯一模型绑定来源）
 "verifier": {
-  "model": "hx/kimi-k3"    // ← 改这里
+  "model": "hx/kimi-k2.7-code"    // ← 改这里
 }
 ```
 

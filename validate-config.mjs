@@ -836,14 +836,24 @@ const conductor_ANCHORS = [
 ];
 function check9conductorAnchors(config) {
   const name = 'conductor prompt 锚点关键词校验';
-  if (!config || typeof config !== 'object' || !config.agent || typeof config.agent !== 'object') {
-    return { name, pass: false, detail: 'kilo.json.agent 不可用（依赖 [1/25]）' };
+  let prompt = null;
+  // v6.2: conductor prompt 可能在 kilo.json，也可能在 agent/conductor.md（文件路由自注册）
+  if (config && typeof config === 'object' && config.agent && typeof config.agent === 'object') {
+    const conductor = config.agent.conductor;
+    if (conductor && typeof conductor === 'object' && typeof conductor.prompt === 'string') {
+      prompt = conductor.prompt;
+    }
   }
-  const conductor = config.agent.conductor;
-  if (!conductor || typeof conductor !== 'object' || typeof conductor.prompt !== 'string') {
-    return { name, pass: false, detail: 'kilo.json.agent.conductor.prompt 不可用' };
+  // fallback: 读取 agent/conductor.md 正文
+  if (!prompt) {
+    const mdPath = path.resolve(ROOT, 'agent', 'conductor.md');
+    if (fs.existsSync(mdPath)) {
+      prompt = fs.readFileSync(mdPath, 'utf8');
+    }
   }
-  const prompt = conductor.prompt;
+  if (!prompt) {
+    return { name, pass: false, detail: 'kilo.json.agent.conductor.prompt 不可用且 agent/conductor.md 不存在' };
+  }
   const missing = conductor_ANCHORS.filter((kw) => !prompt.includes(kw));
   if (missing.length === 0) {
     return { name, pass: true, detail: `conductor prompt 锚点关键词 ${conductor_ANCHORS.length}/${conductor_ANCHORS.length} 齐全` };
@@ -1672,7 +1682,7 @@ function check19LifecycleIntegrity() {
     return { name, pass: false, detail: 'lifecycle/ 目录不存在' };
   }
   const rootFiles = ['graph.yaml', 'multimodel-graph.yaml', 'config.yaml'];
-  const stageFiles = ['intent.md', 'sizing.md', 'planning.md', 'executing.md', 'checking.md', 'fixing.md', 'reviewing.md', 'delivering.md', 'README.md'];
+  const stageFiles = ['intent.md', 'sizing.md', 'planning.md', 'executing.md', 'quality.md', 'delivering.md', 'README.md'];
   const missing = [];
   for (const f of rootFiles) {
     if (!fs.existsSync(path.join(lifecycleDir, f))) missing.push(`lifecycle/${f}`);
@@ -1863,6 +1873,8 @@ function parseAgentMount(fmText) {
     if (current) {
       const mWhen = content.match(/^when\s*:\s*(.+)$/);
       if (mWhen) { current.when = mWhen[1].replace(/\s+#.*$/, '').replace(/^["']|["']$/g, '').trim(); continue; }
+      const mHook = content.match(/^hook\s*:\s*(\S+)/);
+      if (mHook) { current.hook = mHook[1].replace(/\s+#.*$/, '').replace(/^["']|["']$/g, '').trim(); continue; }
       const mOrder = content.match(/^order\s*:\s*(\d+)/);
       if (mOrder) { current.order = parseInt(mOrder[1], 10); continue; }
       const mFail = content.match(/^on_fail\s*:\s*(\S+)/);
@@ -2244,9 +2256,9 @@ function check29ConfigDrivenAgents() {
   } else {
     const raText = fs.readFileSync(raPath, 'utf8');
     const mounts = parseAgentMount(extractFrontmatterText(raText)) || [];
-    const hasCheckingConditional = mounts.some((e) => e.at === 'CHECKING' && e.when && e.when.includes('config.agents.reverse_auditor'));
+    const hasCheckingConditional = mounts.some((e) => e.at === 'QUALITY' && e.hook === 'verify' && e.when && e.when.includes('config.agents.reverse_auditor'));
     if (!hasCheckingConditional) {
-      errors.push('reverse-auditor.md: frontmatter mount 未声明 at: CHECKING + when config.agents.reverse_auditor（条件挂载）');
+      errors.push('reverse-auditor.md: frontmatter mount 未声明 at: QUALITY hook:verify + when config.agents.reverse_auditor（条件挂载）');
     }
   }
 
@@ -2257,9 +2269,9 @@ function check29ConfigDrivenAgents() {
   } else {
     const scText = fs.readFileSync(scPath, 'utf8');
     const mounts = parseAgentMount(extractFrontmatterText(scText)) || [];
-    const hasReviewingConditional = mounts.some((e) => e.at === 'REVIEWING' && e.when && e.when.includes('config.agents.side_checker'));
+    const hasReviewingConditional = mounts.some((e) => e.at === 'QUALITY' && e.hook === 'review' && e.when && e.when.includes('config.agents.side_checker'));
     if (!hasReviewingConditional) {
-      errors.push('side-checker.md: frontmatter mount 未声明 at: REVIEWING + when config.agents.side_checker（条件挂载）');
+      errors.push('side-checker.md: frontmatter mount 未声明 at: QUALITY hook:review + when config.agents.side_checker（条件挂载）');
     }
   }
 

@@ -54,14 +54,14 @@ forbid_write: [execution.verification] # 反自验硬门
 > 脚本路径说明：`${KILO_CONFIG_DIR}` 是 Kilo 全局配置目录占位符（install 时替换为绝对路径），确保跨项目可执行。
 
 1. **[意图判定]**：任何任务先判定咨询类(INQUIRY)/执行类(EXECUTION)。咨询类只分析不改文件，不调用修改性工具。在输出顶部显式标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
-2. **定级必输出**：执行类任务必须定级 T0/T1/T2/T3 并显式标注 `[TIER: Tn]`，理由写入 `task_context.sizing`。
+2. **定级必输出**：执行类任务必须定级 T0/T1/T2/T3 并显式标注 `[TIER: Tn]`，理由写入 `task_context.sizing`。**T0 须逐条核验五条标准并显式输出**：`【T0 核验】1.≤2行(实际N行):是/否 2.无逻辑变更:是/否 3.单文件(实际N个):是/否 4.纯表面:是/否 5.无跨模块:是/否 → 全满足=T0；任一否=进入Step3`。T1+ 须写定级依据（命中哪条量化矩阵：文件数/跨模块/安全敏感词）。
 3. **流转必裁判**：每次跨节点流转前必须执行 `node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs" <task_id> --from <当前节点> --to <目标节点>`。exit 0 才流转，非 0 回退处理。禁止绕过脚本手工 set convergence 计数字段。
 4. **context 必收口**：task_context 读写必须经 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs"`（init/get/set/validate）。禁止用 read/write 工具直接操作 task_context_*.json 文件。每次 set 必须带 `--agent <name>`。
 5. **compaction 恢复**：auto-compaction 发生后，下一次动作前必须先 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" get <task_id> status` + `get convergence` + `get verification` 恢复状态，再重读当前阶段 `lifecycle/stages/<节点小写>.md`。
 6. **委派不亲为**：进入以下阶段主槽时，必须立即用 task 工具委派对应智能体，禁止自己写代码：
    - PLANNING → `subagent_type=planner`
    - post:PLANNING → `subagent_type=plan-reviewer`
-   - EXECUTING → `subagent_type=coder`（T0/T1/T2 均如此；T3 子图回流后主图 EXECUTING 同样）
+   - EXECUTING → `subagent_type=coder`（**T0/T1/T2/T3 均如此，T0 不例外**；T3 子图回流后主图 EXECUTING 同样）
    - QUALITY → hooks 自动挂载（verifier/review hooks + fix hooks 自动循环）
    - MM_EXECUTING → 同时启动 coder-a/coder-b/coder-c
    - MM_CHECKING → verifier；MM_FUSING → synthesizer-fusion
