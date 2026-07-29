@@ -101,9 +101,9 @@ forbid_write: [execution.verification] # 反自验硬门
    - `config.yaml overrides.disabled_agents` 不得使某 `required_roles` 角色无履行者 → 报错（禁用了必配角色）
    - multiModel 子图：coder-a/b/c 绑定模型的 `(vendor, architecture)` 两两不同（`multimodel-graph.yaml` `diversity_rule` 声明，人工校验，违反 → `[DIVERSITY_VIOLATION]`）
    - > **能力匹配**：无机械校验；模型绑定在 `kilo.json` `agent.<name>.model`，能力倾向参考 `docs/model-registry.md` 人工维护。
-6. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, hook, after, when, on_fail } ]（同 hook 类型默认并行组；有 after 的按拓扑排序执行，检测环依赖报错）}` + `{ nodeId → on_fail_resolved }` + edges 表 + `{ agent → timeout_s }` 预算表（per_agent_s × tier_multiplier，缺 per_agent_s 回退 stage_default_s）。运行时查表，零重复解析。
+6. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, hook, after, when, on_fail } ]（同 hook 类型默认串行组；有 after 的按拓扑排序执行，检测环依赖报错）}` + `{ nodeId → on_fail_resolved }` + edges 表 + `{ agent → timeout_s }` 预算表（per_agent_s × tier_multiplier，缺 per_agent_s 回退 stage_default_s）。运行时查表，零重复解析。
 
-> **运行时零解析**：装配完成后，conductor 每进入一阶段只查 resolved 视图：挂载点 → 有序/并行智能体列表 → `when` 条件对照 `task_context.config.agents` 求值过滤 → `task` 工具启动。
+> **运行时零解析**：装配完成后，conductor 每进入一阶段只查 resolved 视图：挂载点 → 有序/串行智能体列表 → `when` 条件对照 `task_context.config.agents` 求值过滤 → `task` 工具启动。
 
 ## 多智能体协作工作流
 
@@ -240,12 +240,19 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 
 挂载点是唯一挂载机制。conductor 运行时的执行模型：
 
-- **装配完成后**立即执行 `on:bootstrap` 挂载点（同挂载点默认并行；有 `after` 的按拓扑排序执行）
+- **装配完成后**立即执行 `on:bootstrap` 挂载点（有 `after` 的按拓扑排序执行；无 `after` 的激活智能体按全局默认串行策略逐个启动）
 - **进入节点 N**：
-  1. 执行 `pre:N` 挂载点（同挂载点默认并行；有 `after` 的按拓扑排序执行；`on_fail: abort` → `[SLOT_ABORT]` 中止进入主槽）
-  2. 执行 `N` 主挂载点：`executor: conductor/multiModel` 内建节点直接内建；否则同 hook 类型默认并行组执行（无 `after` = 并行组、有 `after` 的按拓扑排序执行），并校验 `required_roles` 激活覆盖（契约源：stages/<id>.md frontmatter；`when` 求值后缺一 → `[SLOT_UNFULFILLED]`）
+  1. 执行 `pre:N` 挂载点（有 `after` 的按拓扑排序执行；无 `after` 的激活智能体按全局默认串行策略逐个启动；`on_fail: abort` → `[SLOT_ABORT]` 中止进入主槽）
+  2. 执行 `N` 主挂载点：`executor: conductor/multiModel` 内建节点直接内建；否则按全局默认串行策略或 `after` 拓扑排序执行同 hook 类型组，并校验 `required_roles` 激活覆盖（契约源：stages/<id>.md frontmatter；`when` 求值后缺一 → `[SLOT_UNFULFILLED]`）
 
-> **并发受限兜底**：对于无法通过 `after` 机制串行的并行组（如 `on:bootstrap`、`pre:`/`post:` 挂载点、T3 子图 `MM_EXECUTING` 的 3 coder 等），若底层执行器返回 `Tool execution aborted` / `Tool execution cancelled`，conductor 应切换为**串行逐个启动**，标记 `[DEGRADED_PARALLEL]`。QUALITY 阶段的 verify/review 组已通过 `after` 机制机械串行，不再依赖此兜底。串行重试全部成功后继续正常流程；串行仍失败再按节点 `on_fail` 派发。该兜底不改变 agent .md 的并行语义声明，仅为运行稳定性兜底。
+> **全局默认串行策略**：任一挂载点（`on:bootstrap`、`pre:N`、`N`、`post:N`、子图节点等）若激活的智能体数量 ≥2，且这些智能体在该挂载点均未声明 `after`（或 `after` 为空），conductor 默认按 **resolved 视图顺序逐个串行启动**（等待上一个返回后再启动下一个），而不是并行调度。resolved 视图顺序的确定规则：
+>   1. 先对声明了 `after` 的智能体做拓扑排序（按依赖链先后执行）；
+>   2. 未声明 `after` 的智能体按 **agent 文件名字典序** 排列，逐个串行启动；
+>   3. 两种顺序在 resolved 视图中合并为该挂载点的最终启动序列。
+> 
+> 该策略用于避免底层执行器因同一轮对话中并发调度多个 `task` 工具而触发 `Tool execution aborted` / `Tool execution cancelled`。仅当某挂载点已在 `graph.yaml` 显式声明 `parallel: true`（如 T3 子图 `MM_EXECUTING` 的 3 coder）时，可保留并行语义；此时由 multiModel 按 `agent/multiModel.md` §异常处理 中的 `MM_EXECUTING 并发降级` 兜底。
+
+> **并发受限兜底（补充）**：对于已在 `graph.yaml` 声明 `parallel: true` 的节点（当前仅 T3 子图 `MM_EXECUTING`），若底层执行器仍返回 `Tool execution aborted` / `Tool execution cancelled`，multiModel 按 `agent/multiModel.md` §异常处理 中的 `MM_EXECUTING 并发降级` 将剩余未启动 coder 切换为串行逐个启动，并标记 `[MM_DEGRADED_PARALLEL]`。
   3. 执行 `post:N` 挂载点（同 pre 语义）
   4. **机械流转裁判**：流转前必须执行 `node scripts/transition-check.mjs <task_id> --from <当前节点> --to <目标节点>`；
      - exit 0 → 允许流转（`quality.round` 已由框架自动递增，conductor 禁止手工 set convergence/quality 计数字段）；
