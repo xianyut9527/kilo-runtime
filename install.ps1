@@ -200,6 +200,40 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     }
 
     # ============================================================
+    # .md file path placeholder substitution
+    # agent/*.md and .kilo/instructions/*.md contain ${KILO_CONFIG_DIR} placeholders
+    # in command examples (e.g. node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs").
+    # These must be replaced with the actual global config directory path so that
+    # conductor and other agents can execute lifecycle scripts from any project.
+    # ${HOME} in .md files is left as-is because bash/PowerShell resolve it at runtime.
+    # ============================================================
+    Write-Host ""
+    Write-Host "Substituting .md file path placeholders..." -ForegroundColor Cyan
+    $TargetEscaped = $Target -replace '\\', '\\'
+    $MdFilePatterns = @(
+        (Join-Path $Target "agent\*.md"),
+        (Join-Path $Target ".kilo\instructions\*.md")
+    )
+    $MdReplaced = 0
+    foreach ($pattern in $MdFilePatterns) {
+        $mdFiles = Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue
+        foreach ($mdFile in $mdFiles) {
+            $mdContent = Get-Content -Path $mdFile.FullName -Raw -Encoding UTF8
+            if ($mdContent -and $mdContent.Contains('${KILO_CONFIG_DIR}')) {
+                $mdContent = $mdContent -replace '\$\{KILO_CONFIG_DIR\}', $TargetEscaped
+                [System.IO.File]::WriteAllText($mdFile.FullName, $mdContent, (New-Object System.Text.UTF8Encoding($false)))
+                $MdReplaced++
+                Write-Host "[WRITE]  $($mdFile.Name): KILO_CONFIG_DIR placeholders substituted" -ForegroundColor Green
+            }
+        }
+    }
+    if ($MdReplaced -eq 0) {
+        Write-Host "[OK]     no .md files needed placeholder substitution" -ForegroundColor Gray
+    } else {
+        Write-Host "[WRITE]  $MdReplaced .md file(s) had KILO_CONFIG_DIR placeholders substituted" -ForegroundColor Green
+    }
+
+    # ============================================================
     # Agent prompt auto-sync (single source: agent/*.md description -> kilo.json prompt)
     # Eliminates manual prompt maintenance: description is the single source of truth,
     # install auto-generates prompt to ensure stable agent triggering.

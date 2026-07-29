@@ -213,6 +213,38 @@ else
 fi
 
 # ============================================================
+# .md 文件路径占位符替换
+# agent/*.md 和 .kilo/instructions/*.md 中包含 ${KILO_CONFIG_DIR} 占位符
+# 在命令示例中（如 node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs"）。
+# 必须替换为实际全局配置目录路径，确保 conductor 和其他智能体
+# 在任何项目中都能执行 lifecycle 脚本。
+# ${HOME} 在 .md 文件中保留不替换——bash/PowerShell 运行时自动解析。
+# ============================================================
+echo ""
+echo "Substituting .md file path placeholders..."
+MD_REPLACED=0
+for md_dir in "${TARGET_DIR}/agent" "${TARGET_DIR}/.kilo/instructions"; do
+    if [ -d "${md_dir}" ]; then
+        for md_file in "${md_dir}"/*.md; do
+            [ -f "${md_file}" ] || continue
+            if grep -q '\${KILO_CONFIG_DIR}' "${md_file}" 2>/dev/null; then
+                sed -i.bak \
+                    -e "s|\${KILO_CONFIG_DIR}|${TARGET_DIR}|g" \
+                    "${md_file}" \
+                    && rm -f "${md_file}.bak"
+                MD_REPLACED=$((MD_REPLACED + 1))
+                echo "[WRITE] $(basename "${md_file}"): KILO_CONFIG_DIR placeholders substituted"
+            fi
+        done
+    fi
+done
+if [ "${MD_REPLACED}" -eq 0 ]; then
+    echo "[OK]     no .md files needed placeholder substitution"
+else
+    echo "[WRITE] ${MD_REPLACED} .md file(s) had KILO_CONFIG_DIR placeholders substituted"
+fi
+
+# ============================================================
 # Agent prompt auto-sync (single source: agent/*.md description -> kilo.json prompt)
 # Eliminates manual prompt maintenance: description is the single source of truth,
 # install auto-generates prompt to ensure stable agent triggering.

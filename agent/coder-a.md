@@ -67,7 +67,7 @@ task_context:
 
 ### 工具调用规约（task 工具无 workdir 参数，coder 在当前 workspace 运行）
 
-- `read`/`edit`/`write` 工具用**绝对路径**指向 worktree 内文件（如 `E:\AI\agent\kilo_config\.worktrees\mm-<tid>-coder-<x>\src\foo.ts`）
+- `read`/`edit`/`write` 工具用**绝对路径**指向 worktree 内文件（如 `<repo_root>\.worktrees\mm-<tid>-coder-<x>\src\foo.ts`）
 - `bash` 工具用 `workdir` 参数指向 worktree 路径执行 git/build/test 命令
 - **禁止操作主工作区及 worktree 外文件**（forbidden_files 兜底 + verifier SCOPE_CREEP 检查 `git diff <base>..<worktree_branch> --name-only`）
 - GitNexus 索引只覆盖主仓库，worktree 内文件无法用 gitnexus 工具——改用 grep/glob

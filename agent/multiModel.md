@@ -162,7 +162,7 @@ multiModel（产物级聚合模式，v2）
 - 通过 `task` 工具同时启动 3 个独立 coder 智能体：`coder-a`（逻辑推理派）、`coder-b`（安全边界派）、`coder-c`（代码生成派）。**互不知晓彼此存在**。
 - 每个 coder 在**各自专属 worktree** 中独立实现代码。
   - **工具调用规约**（task 工具无 workdir 参数，coder 在当前 workspace 运行）：
-    - `read`/`edit`/`write` 工具用**绝对路径**指向 worktree 内文件（如 `E:\AI\agent\kilo_config\.worktrees\mm-<tid>-coder-a\src\foo.ts`）。
+    - `read`/`edit`/`write` 工具用**绝对路径**指向 worktree 内文件（如 `<repo_root>\.worktrees\mm-<tid>-coder-a\src\foo.ts`）。
     - `bash` 工具用 `workdir` 参数指向 worktree 路径执行 git/build/test 命令。
     - 禁止操作主工作区及 worktree 外文件（`forbidden_files` 兜底 + verifier SCOPE_CREEP 检查）。
     - GitNexus 索引覆盖主仓库，worktree 内新增/修改文件不在索引范围内——改用 `grep`/`glob`。
