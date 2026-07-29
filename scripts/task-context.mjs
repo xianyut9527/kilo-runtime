@@ -168,6 +168,16 @@ const QUALITY_ROUND_FIELD = 'quality.round';
 // 向后兼容别名：旧 assert convergence 仍接受，但内部检查已迁移到 quality/mm_fusion
 const TOTAL_ROUNDS_FIELD = 'convergence.total_rounds';
 
+// task_context.status 合法取值（保留小写初始值 initialized，流转后由 conductor 写入大写）
+const VALID_STATUSES = Object.freeze([
+  'initialized',
+  'RUNNING',
+  'PAUSED',
+  'DEGRADED',
+  'DONE',
+  'FAILED',
+]);
+
 // 文件位置：$env:TEMP/kilo/task_context_<task_id>.json（Windows）
 //          /tmp/kilo/task_context_<task_id>.json（Unix）
 function contextPath(taskId) {
@@ -248,6 +258,7 @@ function buildInitialContext(taskId) {
     fixing_history: [],
     memory_injection: {},
     status: 'initialized',
+    transition_log: [],
     convergence: {
       mm_fusion_rounds: 0,
       mm_fusion_max_rounds: conv.mm_fusion_max_rounds,
@@ -361,8 +372,31 @@ function writeContext(taskId, ctx) {
   } catch (e) {
     die(1, `Error: cannot create task_context directory for task_id=${taskId}: ${e.message}`);
   }
-  // UTF-8 无 BOM。Node 默认 writeFile 不加 BOM。
-  fs.writeFileSync(p, JSON.stringify(ctx, null, 2) + '\n', 'utf8');
+  // 原子写：同目录 tmp 文件 + rename，确保同卷且不掉电丢失
+  // Windows 兼容：fs.renameSync 在目标文件存在时 EPERM，先尝试 unlink 目标
+  const tmpPath = p + '.tmp';
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(ctx, null, 2) + '\n', 'utf8');
+    // Windows: 先删除目标（若存在），再 rename
+    try { fs.unlinkSync(p); } catch { /* 目标不存在则忽略 */ }
+    fs.renameSync(tmpPath, p);
+  } catch (e) {
+    // 兜底：rename 失败时直接复制 tmp 到目标再删 tmp
+    try {
+      fs.copyFileSync(tmpPath, p);
+      fs.unlinkSync(tmpPath);
+    } catch (e2) {
+      die(1, `Error: cannot write task_context for task_id=${taskId}: ${e.message}`);
+    }
+  }
+}
+
+// 追加一条流转记录（供 transition-check.mjs 等调用）
+function appendTransitionLog(ctx, from, to) {
+  if (!Array.isArray(ctx.transition_log)) {
+    ctx.transition_log = [];
+  }
+  ctx.transition_log.push({ from, to, timestamp: Date.now() });
 }
 
 // 按 dot path 取值（支持 a.b.c 与 a.b[0] 形式）
@@ -474,6 +508,37 @@ function setByPath(obj, dotPath, value) {
 function cmdInit(taskId) {
   assertValidTaskId(taskId);
   const p = contextPath(taskId);
+  const tmpdir = path.resolve(os.tmpdir(), 'kilo');
+  let files = [];
+  try {
+    files = fs.readdirSync(tmpdir);
+  } catch {
+    files = [];
+  }
+
+  // GC：清理 initialized 状态超过 24h 的旧 task_context 残留
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  for (const file of files) {
+    if (!file.startsWith('task_context_') || !file.endsWith('.json')) continue;
+    const filePath = path.join(tmpdir, file);
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const otherCtx = JSON.parse(raw);
+      if (otherCtx.status === 'initialized') {
+        const stat = fs.statSync(filePath);
+        if (Date.now() - stat.mtimeMs > ONE_DAY_MS) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch {
+            // 删除失败不阻塞
+          }
+        }
+      }
+    } catch {
+      // 解析失败或异常：跳过，不阻塞
+    }
+  }
+
   if (fs.existsSync(p)) {
     process.stdout.write(`already exists: task_id=${taskId}\n`);
     process.exit(0);
@@ -556,6 +621,17 @@ function cmdSet(taskId, dotPath, rawValue, agent) {
   } catch (e) {
     // 裸字符串降级：将 rawValue 原样作为字符串值
     value = rawValue;
+  }
+
+  // status schema 校验：仅 conductor 可写，且值必须在合法集合中
+  if (dotPath === 'status') {
+    if (!VALID_STATUSES.includes(value)) {
+      die(
+        1,
+        `[PROCESS_VIOLATION] invalid status "${value}". ` +
+          `status must be one of: ${VALID_STATUSES.join(', ')}`
+      );
+    }
   }
 
   const { ctx } = readContext(taskId);
@@ -778,10 +854,12 @@ export {
   VERIFICATION_FIELDS,
   TOTAL_ROUNDS_FIELD,
   QUALITY_ROUND_FIELD,
+  VALID_STATUSES,
   contextPath,
   buildInitialContext,
   readContext,
   writeContext,
+  appendTransitionLog,
   getByPath,
   setByPath,
   pathAllowedBy,

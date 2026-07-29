@@ -31,15 +31,15 @@ QUALITY 不是"一个阶段做三件事"，而是**一个响应式容器，内�
 | `useEffect` 按声明顺序执行，无编号 | `order: 10` 绝对坐标 | `hook` 类型定义阶段顺序 |
 | `useEffect(fn, [deps])` deps 变化才执行 | 无 deps 机制 | `deps: [field]` 响应式触发 |
 | 插入新 hook 只写一行，不碰其他代码 | `order: 15` 要知道前后编号 | `after: [agent]` 只引用前驱 |
-| 同类 hook 隐含串行/顺序语义 | 靠数字碰巧相同实现并行 | `hook: verify` 默认串行组 |
+| 同类 hook 隐含串行/顺序语义 | 靠数字碰巧相同实现并行 | `hook: verify` 默认并行组 |
 
-**核心原则**：hook 类型（`verify` / `fix` / `review`）**本身就定义了执行顺序**——`verify → fix → review → fix` 循环是框架内置的，不需要数字重复表达。同 hook 类型默认串行（全局默认串行策略，避免并发 task 调度 abort；`after` 声明显式依赖顺序）。仅 `graph.yaml` 声明 `parallel: true` 的节点（如 T3 子图 `MM_EXECUTING`）保留并行语义。
+**核心原则**：hook 类型（`verify` / `fix` / `review`）**本身就定义了执行顺序**——`verify → fix → review → fix` 循环是框架内置的，不需要数字重复表达。同 hook 类型默认并行（视角隔离场景保持并行；`after` 声明显式依赖顺序）。仅 `graph.yaml` 声明 `parallel: true` 的节点（如 T3 子图 `MM_EXECUTING`）保留并行语义。
 
 ```
 QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
-  code 就绪 → verify hooks 串行（hook: verify，无 after = 全局默认串行，按 agent 文件名字典序）
+  code 就绪 → verify hooks 并行（hook: verify，无 after = 全局默认并行，按 agent 文件名字典序同时启动）
     → 任一 FAIL → fix hooks（hook: fix, trigger: onFail）→ code 变化 → 重新 verify
-    → 全 PASS → review hooks 串行（hook: review, trigger: afterPass，无 after = 全局默认串行，按 agent 文件名字典序）
+    → 全 PASS → review hooks 并行（hook: review, trigger: afterPass，无 after = 全局默认并行，按 agent 文件名字典序同时启动）
       → 任一 FAIL → fix hooks（同一 fixer，trigger: onFail）→ code 变化 → 重新 verify
       → 全 PASS → quality_verdict=PASS → 离开 QUALITY → DELIVERING
 ```
@@ -56,9 +56,9 @@ QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
 
 ## Hooks 挂载（内部自动编排）
 
-> **编排规则**：hook 类型（`verify` / `fix` / `review`）定义执行顺序，不需要绝对编号。同 hook 类型默认串行（全局默认串行策略，避免并发 task 调度 abort）。需要顺序时声明 `after: [agent-name]`（相对依赖，类似 React hooks 的声明顺序）。框架对 `after` 做拓扑排序，检测环依赖报错。
+> **编排规则**：hook 类型（`verify` / `fix` / `review`）定义执行顺序，不需要绝对编号。同 hook 类型默认并行（视角隔离场景保持并行）。需要顺序时声明 `after: [agent-name]`（相对依赖，类似 React hooks 的声明顺序）。框架对 `after` 做拓扑排序，检测环依赖报错。
 
-### hook: verify — 验证 hooks（串行组）
+### hook: verify — 验证 hooks（并行组）
 
 ```yaml
 # agent/verifier.md
@@ -66,7 +66,7 @@ mount:
   - at: QUALITY
     hook: verify
     deps: ["execution.code", "plan"]
-    # 无 after = 串行组成员（按 agent 文件名字典序逐个启动）
+    # 无 after = 并行组成员（按 agent 文件名字典序同时启动）
 ```
 
 **触发时机**：当 `execution.code` 或 `plan` 变化时自动执行。
@@ -84,10 +84,10 @@ mount:
     hook: verify
     deps: ["execution.code", "intent"]
     when: "config.agents.reverse_auditor"
-    # after: [verifier] 使 reverse-auditor 在 verifier 完成后串行启动
+    # after: [verifier] 已废弃。当前配置：reverse-auditor 与 verifier 并行启动（无 after），见 agent/reverse-auditor.md
 ```
 
-**触发时机**：在 verifier 完成后串行启动（after: [verifier]）。
+**触发时机**：与 verifier 并行启动（无 after，默认并行策略）。
 
 **职责**：
 - 从产物反推需求满足度
@@ -96,7 +96,7 @@ mount:
 - 过度实现检测
 - 输出 `reverse_result: PASS | FAIL | N/A`
 
-> **新增 verify hook 智能体**：声明 `hook: verify` 即自动加入串行组。如需在某个 agent 之后执行，加 `after: [agent-name]`——只引用前驱，无需知道编号。
+> **新增 verify hook 智能体**：声明 `hook: verify` 即自动加入并行组。如需在某个 agent 之后执行，加 `after: [agent-name]`——只引用前驱，无需知道编号。
 
 ### hook: fix — 修复 hooks（条件触发）
 
@@ -122,11 +122,11 @@ mount:
 ```js
 // 伪代码：框架内部循环逻辑（hook 类型定义顺序，无绝对编号）
 while (round < config.hooks.quality.max_total_cycles) {
-  // Step 1: verify hooks 串行（hook: verify 串行组，全局默认串行策略）
-  const verifyResults = await runSerially(
+  // Step 1: verify hooks 并行（hook: verify 并行组，全局默认并行策略）
+  const verifyResults = await runParallel(
     agentsWithHook('verify').map(a => () => a.run(code, plan))
   );
-  // verifier → reverseAuditor?（条件加载，after: [verifier] 串行）
+  // verifier → reverseAuditor?（条件加载，无 after = 并行）
 
   if (verifyResults.some(r => r.verdict === 'FAIL')) {
     // Step 2: fix hooks（hook: fix, trigger: onFail）
@@ -136,11 +136,11 @@ while (round < config.hooks.quality.max_total_cycles) {
     continue;
   }
 
-  // Step 3: review hooks 串行（hook: review 串行组，trigger: afterPass）
-  const reviewResults = await runSerially(
+  // Step 3: review hooks 并行（hook: review 并行组，trigger: afterPass）
+  const reviewResults = await runParallel(
     agentsWithHook('review').map(a => () => a.run(code, plan))
   );
-  // reviewer → sideChecker?（条件加载，after: [reviewer] 串行）
+  // reviewer → sideChecker?（条件加载，无 after = 并行）
 
   if (reviewResults.some(r => r.verdict === 'FAIL')) {
     // Step 4: fix hooks（同一 fixer，trigger: onFail 响应所有 FAIL）
@@ -160,7 +160,7 @@ if (round >= config.hooks.quality.max_total_cycles) {
 }
 ```
 
-### hook: review — 审查 hooks（条件触发，verify 全 PASS 后，串行组）
+### hook: review — 审查 hooks（条件触发，verify 全 PASS 后，并行组）
 
 ```yaml
 # agent/reviewer.md
@@ -169,7 +169,7 @@ mount:
     hook: review
     trigger: afterPass       # 当 verify hooks 全 PASS 后触发
     deps: ["execution.code", "plan"]
-    # 无 after = 串行组成员（按 agent 文件名字典序逐个启动）
+    # 无 after = 并行组成员（按 agent 文件名字典序同时启动）
 ```
 
 **触发时机**：`forward_result == 'PASS' && (reverse_result in ['PASS','N/A'])` 后自动执行。
@@ -189,10 +189,10 @@ mount:
     trigger: afterPass
     deps: ["execution.code", "project_context"]
     when: "config.agents.side_checker"
-    # after: [reviewer] 使 side-checker 在 reviewer 完成后串行启动
+    # after: [reviewer] 已废弃。当前配置：side-checker 与 reviewer 并行启动（无 after），见 agent/side-checker.md
 ```
 
-**触发时机**：在 reviewer 完成后串行启动（after: [reviewer]）。
+**触发时机**：与 reviewer 并行启动（无 after，默认并行策略）。
 
 **职责**：
 - 边界条件实测
@@ -201,7 +201,7 @@ mount:
 - 兼容性验证
 - 输出 `side_result: PASS | FAIL | N/A`
 
-> **新增 review hook 智能体**：声明 `hook: review` 即自动加入串行组。如需在某个 agent 之后执行，加 `after: [agent-name]`。
+> **新增 review hook 智能体**：声明 `hook: review` 即自动加入并行组。如需在某个 agent 之后执行，加 `after: [agent-name]`。
 
 ## 响应式数据流
 

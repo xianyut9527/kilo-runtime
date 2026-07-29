@@ -26,6 +26,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { VALID_STATUSES } from './task-context.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -323,12 +324,11 @@ function parseConfig(text) {
 
 // R1: status 字段合法
 function rtCheckStatus(ctx, env, rtCheck) {
-  const valid = new Set(['initialized', 'RUNNING', 'PAUSED', 'DEGRADED', 'DONE', 'FAILED']);
   const s = ctx.status;
-  if (valid.has(s)) {
+  if (VALID_STATUSES.includes(s)) {
     rtCheck('PASS', 'runtime.status', `status=${s}`);
   } else {
-    rtCheck('FAIL', 'runtime.status', `status="${s}" ∉ {${[...valid].join(',')}}`);
+    rtCheck('FAIL', 'runtime.status', `status="${s}" ∉ {${VALID_STATUSES.join(',')}}`);
   }
 }
 
@@ -386,7 +386,7 @@ function rtCheckTransitionLog(ctx, env, rtCheck) {
   const stage = ctx.current_stage;
   if (!Array.isArray(log) || log.length === 0) {
     if (stage) {
-      rtCheck('WARN', 'runtime.transition_log', `current_stage=${stage} 但 transition_log 空（可能漏调 transition-check 或手工 set current_stage）`);
+      rtCheck('FAIL', 'runtime.transition_log', `current_stage=${stage} 但 transition_log 空（可能漏调 transition-check 或手工 set current_stage）`);
     } else {
       rtCheck('PASS', 'runtime.transition_log', '无流转记录（初始状态）');
     }
@@ -455,6 +455,25 @@ function rtCheckGate(ctx, env, rtCheck) {
   }
 }
 
+// R9: GC 残留检测（initialized 且 mtime>24h → FAIL，与 task-context.mjs GC 规则对齐）
+function rtCheckGcResidue(ctx, env, rtCheck) {
+  if (ctx.status !== 'initialized') {
+    rtCheck('PASS', 'runtime.gc_residue', `status=${ctx.status} 非 initialized，不受 GC 管辖`);
+    return;
+  }
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  try {
+    const stat = fs.statSync(env.filePath);
+    if (Date.now() - stat.mtimeMs > ONE_DAY_MS) {
+      rtCheck('FAIL', 'runtime.gc_residue', `status=initialized 且 mtime>24h（应被 GC 清理，下次 init 将删除）`);
+    } else {
+      rtCheck('PASS', 'runtime.gc_residue', `status=initialized, age=${Math.round((Date.now() - stat.mtimeMs) / 3600000)}h (<24h, 未超期)`);
+    }
+  } catch (e) {
+    rtCheck('WARN', 'runtime.gc_residue', `无法读取文件状态: ${e.message}`);
+  }
+}
+
 // 注册表：新增检测项只在此 push 一个函数（扩展点单一）
 const runtimeChecks = [
   rtCheckStatus,
@@ -465,6 +484,7 @@ const runtimeChecks = [
   rtCheckTier,
   rtCheckVerification,
   rtCheckGate,
+  rtCheckGcResidue,
 ];
 
 function runRuntimeChecksForTask(filePath, taskId, graph) {

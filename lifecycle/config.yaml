@@ -103,8 +103,8 @@ convergence:
 # ============================================================
 hooks:
   quality:
-    max_verify_retries: 5      # verify hooks 失败重试上限（替代原 max_rounds）
-    max_review_retries: 3      # review hooks 失败重试上限
+    max_verify_retries: 5      # 每轮 verify hooks 失败重试上限（替代原 max_rounds）
+    max_review_retries: 3      # 每轮 review hooks 失败重试上限
     max_total_cycles: 4          # QUALITY 总轮次上限（4轮修不好=方案/需求有问题，escalate到人）
     auto_fix: true              # 自动触发 fix hooks（false = 人工确认后修复）
 
@@ -133,7 +133,7 @@ hooks:
 #     在 agent/multiModel.md §异常处理，不适用主图 on_fail 派发）
 # ============================================================
 timeouts:
-  agent_startup_s: 60      # task 工具启动智能体，60s 未响应 → [AGENT_TIMEOUT]（启动卡死）
+  agent_startup_s: 90      # task 工具启动智能体，90s 未响应 → [AGENT_TIMEOUT]（启动卡死；原 60s 对重模型/网络抖动过严）
   stage_default_s: 600     # 单阶段默认预算（主槽执行时间上限；内建阶段守卫值）
   per_agent_s:
     coder: 1800            # coder 写代码可能较长，给 30min

@@ -7,9 +7,9 @@
   "compaction": {
     "auto": true,
     "prune": true,
-    "tail_turns": 15,
-    "preserve_recent_tokens": 80000,
-    "reserved": 12288
+    "tail_turns": 25,
+    "preserve_recent_tokens": 160000,
+    "reserved": 16384
   },
   "commit_message": {
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
@@ -73,7 +73,10 @@
     }
   },
   "skills": {
-    "paths": ["${KILO_CONFIG_DIR}/.kilo/skills", "${HOME}/.agents/skills"]
+    "paths": [
+      "${KILO_CONFIG_DIR}/.kilo/skills",
+      "${HOME}/.agents/skills"
+    ]
   },
   "permission": {
     "bash": "allow"
@@ -87,13 +90,20 @@
     },
     "gitnexus": {
       "type": "local",
-      "command": ["npx", "gitnexus", "mcp"],
+      "command": [
+        "npx",
+        "gitnexus",
+        "mcp"
+      ],
       "enabled": false,
       "timeout": 30000
     },
     "playwright": {
       "type": "local",
-      "command": ["npx", "@playwright/mcp"],
+      "command": [
+        "npx",
+        "@playwright/mcp"
+      ],
       "enabled": false,
       "timeout": 120000
     }
@@ -105,7 +115,8 @@
       "options": {
         "baseURL": "https://huixin.nat100.top/v1",
         "timeout": 600000,
-        "chunkTimeout": 300000
+        "chunkTimeout": 180000,
+        "maxRetries": 2
       },
       "models": {
         "deepseek-v4-flash": {
@@ -128,8 +139,13 @@
           "name": "kimi-k2.6",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -140,8 +156,13 @@
           "name": "kimi-k2.7-code",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -152,8 +173,13 @@
           "name": "MiniMax-M3",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -164,8 +190,13 @@
           "name": "MiniMax-M2.7-highspeed",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -176,8 +207,13 @@
           "name": "kimi-k3",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,

@@ -1,5 +1,5 @@
 ---
-description: 反向审计智能体（reverse-auditor）。从产物反推是否满足用户原始意图，审计隐含假设，发现隐性遗漏和过度实现。触发条件：T2+ 经 QUALITY verify hook 在 verifier 完成后串行触发（条件加载 config.agents.reverse_auditor，T0/T1 不加载）。核心流程：M1 自召回历史隐性遗漏模式+anti-pattern → 读取 intent+execution.diffs/changes/acceptance_map（禁止读 plan——反向审计本意是从产物反推是否满足原始需求，读了 plan 就会被规划框定发现不了 plan 自身的遗漏） → 反向审计四步：1) 需求追溯从产物反推列出原始需求每一点确认覆盖标注 [REQUIREMENT_GAP]；2) 假设审计列出实现中隐含假设验证是否成立标注 [ASSUMPTION_UNVERIFIED]；3) 隐性遗漏检测检查"用户没说但应该做"的部分对照 failure_db 同类失败模式标注 [IMPLICIT_OMISSION]；4) 过度实现检测标注 [OVER_ENGINEERING] → 输出 verdict。关键约束：1) 只审计不修复不写代码不做正向验证（verifier 负责）不做侧向验证（side-checker 负责）；2) 禁止读 plan/verification.forward/side/review——视角物理隔离；3) 只读 intent+execution 产物，反向审计唯一基准是原始意图。
+description: 反向审计智能体（reverse-auditor）。从产物反推是否满足用户原始意图，审计隐含假设，发现隐性遗漏和过度实现。触发条件：T2+ 经 QUALITY verify hook 并行触发（条件加载 config.agents.reverse_auditor，T0/T1 不加载）。核心流程：M1 自召回历史隐性遗漏模式+anti-pattern → 读取 intent+execution.diffs/changes/acceptance_map（禁止读 plan——反向审计本意是从产物反推是否满足原始需求，读了 plan 就会被规划框定发现不了 plan 自身的遗漏） → 反向审计四步：1) 需求追溯从产物反推列出原始需求每一点确认覆盖标注 [REQUIREMENT_GAP]；2) 假设审计列出实现中隐含假设验证是否成立标注 [ASSUMPTION_UNVERIFIED]；3) 隐性遗漏检测检查"用户没说但应该做"的部分对照 failure_db 同类失败模式标注 [IMPLICIT_OMISSION]；4) 过度实现检测标注 [OVER_ENGINEERING] → 输出 verdict。关键约束：1) 只审计不修复不写代码不做正向验证（verifier 负责）不做侧向验证（side-checker 负责）；2) 禁止读 plan/verification.forward/side/review——视角物理隔离；3) 只读 intent+execution 产物，反向审计唯一基准是原始意图。
 mode: subagent
 hidden: true
 color: "#F59E0B"
@@ -17,14 +17,12 @@ subagent_type: reverse-auditor
 # 边界敏感、逻辑审查、反向推理能力倾向（从产物反推是否满足原始需求）
 
 # mount：挂载点声明
-#   at    挂载点（QUALITY 阶段 verify hook，在 verifier 完成后串行启动）
+#   at    挂载点（QUALITY 阶段 verify hook，与 verifier 并行启动）
 #   when  条件挂载（对照 config.agents.reverse_auditor 求值）；T2+ 默认 true，T0/T1 false
 mount:
-  # v2 响应式 Hooks：QUALITY 阶段 verify hook，增加 after: [verifier] 使 reverse-auditor 在 verifier 完成后串行启动，
-  # 避免 verify 组内 2 并发 task 触发底层执行器 Tool execution aborted。
+  # v2 响应式 Hooks：QUALITY 阶段 verify hook，与 verifier 并行启动。
   - at: QUALITY
     hook: verify
-    after: [verifier]
     deps: ["execution.code", "intent"]
     when: "config.agents.reverse_auditor"
     on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED
@@ -140,6 +138,6 @@ issues:
 ## 硬规则
 
 - 必须从**原始意图**反推，不依赖正向验证结论
-- 在 verifier 完成后串行执行，各自独立 context，不互相参考
+- 必须与 verifier 并行执行，各自独立 context，不互相参考
 - 假设审计必须给出验证方法，不可只标注"需验证"
 - `failure_db` 命中同类失败模式时，必须检查产物是否复现该失败

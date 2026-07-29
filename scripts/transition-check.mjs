@@ -45,7 +45,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { readContext, writeContext, readHooksFromConfig as tcReadHooks } from './task-context.mjs';
+import { readContext, writeContext, appendTransitionLog, readHooksFromConfig as tcReadHooks } from './task-context.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
@@ -158,21 +158,6 @@ function parseGraphFile(text) {
     }
   }
   return { nodes, edges, top };
-}
-
-// 从 lifecycle/config.yaml 读取 hooks.quality.max_total_cycles（本脚本本地副本；失败降级 7）
-// task-context.mjs 也导出同名函数，作为被 import 方提供标准实现；
-// 本脚本独立运行时为自包含，保留本地副本。
-function readHooksFromConfig() {
-  try {
-    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
-    const mtc = text.match(/max_total_cycles:\s*(\d+)/);
-    return {
-      max_total_cycles: mtc ? parseInt(mtc[1], 10) : 7,
-    };
-  } catch {
-    return { max_total_cycles: 7 };
-  }
 }
 
 // ============================================================
@@ -407,7 +392,7 @@ function main() {
     };
   }
   if (!ctx.quality || typeof ctx.quality !== 'object') {
-    const conv = readHooksFromConfig();
+    const conv = tcReadHooks();
     ctx.quality = {
       round: 0,
       max_rounds: conv.max_total_cycles,
@@ -423,11 +408,14 @@ function main() {
   if (quality.round >= maxR) {
     quality.status = 'tripped';
     quality.verdict = 'CIRCUIT_BREAKER';
+    appendTransitionLog(ctx, FROM, TO);
+    ctx.current_stage = TO;
     writeContext(taskId, ctx);
     die(3, `[CIRCUIT_BREAKER] global quality_round=${quality.round} >= max_total_cycles=${maxR}（停止修复，task_context.status=PAUSED 等用户决策）`);
   }
 
-  // 写回 task_context：同步 current_stage + quality round
+  // 写回 task_context：追加 transition_log + current_stage + quality round 原子写入
+  appendTransitionLog(ctx, FROM, TO);
   ctx.current_stage = TO;
   writeContext(taskId, ctx);
   process.stdout.write(`PASS transition ${FROM} -> ${TO} (when=${edge.when || 'none'}${edge.gate ? ` gate=${edge.gate}` : ''} | quality_round=${quality.round}/${maxR})\n`);

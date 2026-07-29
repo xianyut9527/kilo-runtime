@@ -1,5 +1,5 @@
 ---
-description: 运行时行为视角验证智能体（side-checker）。通过实际运行/构造输入/实测对比从边界条件、安全漏洞可利用性、性能实测、兼容性实测四维度验证产物（动态视角，与 reviewer 静态代码视角互补）。触发条件：T2+ 经 QUALITY review hook 在 reviewer 完成后串行触发（条件加载 config.agents.side_checker，T0/T1 不加载）。核心流程：M1 自召回历史边界/安全/性能失效模式+anti-pattern → 读取 plan+execution.diffs/changes/acceptance_map+project_context（禁止读 verification.forward/reverse——非主路径视角一旦看到正向结论 PASS 会锚定倾向不再质疑产生从众偏误） → 侧向验证四维度：1) 边界条件实际传入空输入/null/极大输入/极端值/并发场景/错误路径验证产物行为；2) 安全漏洞可利用性实际构造注入 payload 验证拦截、发起越权请求验证拒绝、触发敏感信息外泄验证、依赖漏洞可利用性；3) 性能实测实际运行基准对比内存/CPU/延迟；4) 兼容性实测跨版本/跨平台/跨浏览器验证 → 输出 verdict。关键约束：1) 只验证不修复不写代码不做正向验证（verifier 负责）不做架构审查（reviewer 负责）不做静态代码模式审查（reviewer 负责）；2) 禁止读 verification.forward/reverse/review/fixing_history——视角物理隔离避免从众偏误；3) 通过实际执行验证而非仅阅读代码。
+description: 运行时行为视角验证智能体（side-checker）。通过实际运行/构造输入/实测对比从边界条件、安全漏洞可利用性、性能实测、兼容性实测四维度验证产物（动态视角，与 reviewer 静态代码视角互补）。触发条件：T2+ 经 QUALITY review hook 与 reviewer 并行触发（条件加载 config.agents.side_checker，T0/T1 不加载）。核心流程：M1 自召回历史边界/安全/性能失效模式+anti-pattern → 读取 plan+execution.diffs/changes/acceptance_map+project_context（禁止读 verification.forward/reverse——非主路径视角一旦看到正向结论 PASS 会锚定倾向不再质疑产生从众偏误） → 侧向验证四维度：1) 边界条件实际传入空输入/null/极大输入/极端值/并发场景/错误路径验证产物行为；2) 安全漏洞可利用性实际构造注入 payload 验证拦截、发起越权请求验证拒绝、触发敏感信息外泄验证、依赖漏洞可利用性；3) 性能实测实际运行基准对比内存/CPU/延迟；4) 兼容性实测跨版本/跨平台/跨浏览器验证 → 输出 verdict。关键约束：1) 只验证不修复不写代码不做正向验证（verifier 负责）不做架构审查（reviewer 负责）不做静态代码模式审查（reviewer 负责）；2) 禁止读 verification.forward/reverse/review/fixing_history——视角物理隔离避免从众偏误；3) 通过实际执行验证而非仅阅读代码。
 mode: subagent
 hidden: true
 color: "#F59E0B"
@@ -16,17 +16,14 @@ subagent_type: side-checker
 # 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
 
 # mount：挂载点声明
-#   at    挂载点（QUALITY 阶段 review hook，在 reviewer 完成后串行启动；review 组整体在 verify 组完成后才启动）
+#   at    挂载点（QUALITY 阶段 review hook，与 reviewer 并行启动）
 #   when  条件挂载（对照 config.agents.side_checker 求值）；T2+ 默认 true，T0/T1 false
 mount:
-  # v2 响应式 Hooks：QUALITY 阶段 review hook，verify 全 PASS 后启动
-  # 改为 after: [reviewer] 使 side-checker 在 reviewer 完成后串行启动，
-  # 避免 review 组内 2 并发 task 触发底层执行器 Tool execution aborted。
-  # reviewer 本身已 after: [verifier]，因此 review 组整体在 verify 组完成后才启动。
+  # v2 响应式 Hooks：QUALITY 阶段 review hook，verify 全 PASS 后启动。
+  # 与 reviewer 并行启动，作为 review hook 另一成员。
   - at: QUALITY
     hook: review
     trigger: afterPass
-    after: [reviewer]
     deps: ["execution.code", "project_context"]
     when: "config.agents.side_checker"
     on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED
@@ -51,7 +48,7 @@ isolation:
 
 ## 智能体定位
 
-**生命周期阶段**：`QUALITY`（review hook，侧向验证；条件加载 `?config.agents.side_checker`，review 组整体在 verify 组完成后才启动）
+**生命周期阶段**：`QUALITY`（review hook，侧向验证；条件加载 `?config.agents.side_checker`，与 reviewer 并行启动）
 **加载条件**：T2+（T0/T1 不加载）
 **模型**：见 `kilo.json` `agent.side-checker.model`（边界/安全/性能多角度需要强推理能力需求）
 
@@ -150,5 +147,5 @@ issues:
 - 必须覆盖四个维度，即使某些维度"未涉及"也要显式标注
 - 安全问题一律为 blocker（不打折）
 - 性能退化 > 20% 标记为 blocker
-- 在 reviewer 完成后串行执行，各自独立 context，不互相参考
+- 必须与 reviewer 并行执行，各自独立 context，不互相参考
 - 不依赖正向验证结论，独立从侧向角度发现问题
