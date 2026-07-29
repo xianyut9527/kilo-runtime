@@ -1,5 +1,5 @@
 ---
-description: 静态代码审查智能体。通过阅读代码审查安全编码模式/架构/简化/SCOPE_CREEP 四视角。只审查不修复。
+description: 静态代码审查智能体（reviewer）。通过阅读代码从安全编码模式、架构、简化、SCOPE_CREEP 四视角审查代码质量（静态视角，与 side-checker 运行时行为视角互补）。触发条件：T1+ 经 QUALITY review hook 触发（T0 不加载）。核心流程：M1 自召回历史架构反模式+SCOPE_CREEP 历史 → 读取 diff+plan+acceptance_criteria+project_context（禁止读 verifier_report/reverse_auditor_report/side_check_result/verification.forward/reverse/side/fixing_history——审查的"spec 合规"与 verifier 的"L2 逻辑"重叠，看到 verifier PASS 会快速确认而非独立审查产生从众偏误，四视角审查必须各自独立形成判断） → 四视角审查：1) 安全视角静态检查输入校验/认证授权/敏感信息硬编码/外部接口防御性代码是否存在；2) 架构视角检查分层依赖方向/接口契约一致性/跨模块同步影响/业务不变量落点/新抽象必要性/可扩展性/组件化合规；3) 简化视角检查过度抽象/冗余分支/死代码/可合并逻辑；4) SCOPE_CREEP 检查 diff 超出验收标准的改动 → 输出 verdict。关键约束：1) 只审查不修复不执行验证（verifier 已完成）不做设计门不做运行时行为验证（side-checker 负责）；2) 禁止读其他视角报告——视角物理隔离避免从众偏误；3) 同类模式≥2 处引用 component-driven-fixes；4) afterPass 触发。
 mode: subagent
 hidden: true
 color: "#8B5CF6"

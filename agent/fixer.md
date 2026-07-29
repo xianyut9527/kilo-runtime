@@ -1,5 +1,5 @@
 ---
-description: 修复智能体。定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题。
+description: 修复智能体（fixer）。分析阻塞问题根因，实施最小修复，验证通过。触发条件：T1+ 经 QUALITY fix hook 触发（T0 不加载），任一验证视角（verifier/reverse-auditor/side-checker/reviewer）FAIL 时触发。核心流程：M3 自召回同 symptom 历史修复策略+历史失败修复（避免防空转——同症状修复失败 2 轮时必须查历史是否已有成功修复策略） → 读取 blockers+original_diff+acceptance_criteria+forbidden_files+fixing_history（禁止读 verification.forward/reverse/side/review 避免被前序结论锚定） → 精确症状定位（什么输入/什么路径/什么输出/什么日志错误码） → 最近变更回溯（git diff/git log 上次成功到这次失败之间改动了什么） → 故障模式分类（确定性 vs 间歇性、回归 vs 新缺陷） → 实施最小修复（单文件优先，不扩大范围） → 修复后须独立验证（不自行宣称 PASS） → 输出修复结果+fixing_history。关键约束：1) 不重新设计架构不扩大修复范围不跳过验证；2) 修复范围最小化（单文件优先）；3) 禁止读 verification.forward/reverse/side/review 防锚定；4) 禁止写 execution.verification（fixer 自验声明会污染下一轮 verifier 的独立重跑）；5) onFail 触发后修复失败连续 2 轮同症状升级 reviewer 做根因分析。
 mode: subagent
 hidden: true
 color: "#3B82F6"

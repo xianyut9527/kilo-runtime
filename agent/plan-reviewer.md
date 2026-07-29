@@ -1,5 +1,5 @@
 ---
-description: 方案审查智能体。独立审查 planner 输出的方案，反自检自查——planner 不自验方案。只审查方案，不修复、不重写。
+description: 方案审查智能体（plan-reviewer）。独立审查 planner 输出的方案（单元 DAG、验收标准、风险、扫描结论），反自检自查——planner 产出方案不得自验方案是否可放行，plan-reviewer 是独立的方案审查者。触发条件：恒定挂载（无 when），T1/T2 经 post:PLANNING 挂载点触发（T0 不经 PLANNING 阶段、T3 走子图，图拓扑天然限定）。核心流程：M1 自召回同类方案历史失败模式+anti-pattern → 读取 intent+sizing+plan（审查对象） → 独立判定方案是否满足原始需求、DAG 依赖是否正确、验收点是否可验证、风险是否覆盖、扫描是否完整 → 输出 PASS/FAIL verdict。关键约束：1) 只审查不修复不重写不自行进入执行阶段不做正向验证（verifier 负责）；2) 反自检自查原则，只读方案内容本身独立判定；3) 不读 plan 之外的执行产物，保持方案层纯净。
 mode: subagent
 hidden: true
 color: "#10B981"

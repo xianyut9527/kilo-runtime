@@ -200,6 +200,23 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     }
 
     # ============================================================
+    # Agent prompt auto-sync (single source: agent/*.md description -> kilo.json prompt)
+    # Eliminates manual prompt maintenance: description is the single source of truth,
+    # install auto-generates prompt to ensure stable agent triggering.
+    # ============================================================
+    Write-Host ""
+    Write-Host "Syncing agent prompts from descriptions..." -ForegroundColor Cyan
+    $SyncScript = Join-Path $Target "scripts\sync-agent-prompt.mjs"
+    if (Test-Path $SyncScript) {
+        & node $SyncScript 2>&1 | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[WARN]   agent prompt sync had issues (exit $LASTEXITCODE), continuing..." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[WARN]   sync-agent-prompt.mjs not found at $SyncScript, skip" -ForegroundColor Yellow
+    }
+
+    # ============================================================
     # Memory layer setup (sqlite3 CLI / python memory.py + memory.db)
     # When sqlite3 CLI is missing, prompt the user; on consent, auto-install sqlite3.
     # Step 2 falls back to python scripts/memory.py (v2.6 main channel) when sqlite3

@@ -213,6 +213,20 @@ else
 fi
 
 # ============================================================
+# Agent prompt auto-sync (single source: agent/*.md description -> kilo.json prompt)
+# Eliminates manual prompt maintenance: description is the single source of truth,
+# install auto-generates prompt to ensure stable agent triggering.
+# ============================================================
+echo ""
+echo "Syncing agent prompts from descriptions..."
+SYNC_SCRIPT="${TARGET_DIR}/scripts/sync-agent-prompt.mjs"
+if [ -f "${SYNC_SCRIPT}" ]; then
+    node "${SYNC_SCRIPT}" 2>&1 || echo "[WARN] agent prompt sync had issues (exit $?), continuing..."
+else
+    echo "[WARN] sync-agent-prompt.mjs not found at ${SYNC_SCRIPT}, skip"
+fi
+
+# ============================================================
 # Memory 层初始化（sqlite3 CLI / python memory.py + memory.db）
 # 检测到 sqlite3 CLI 缺失时提示用户，同意则自动安装；
 # Step 2 在 CLI 不可用时回退 python scripts/memory.py（v2.6 主通道）初始化。
