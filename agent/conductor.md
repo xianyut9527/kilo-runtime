@@ -79,6 +79,7 @@ forbid_write: [execution.verification] # 反自验硬门
      3. 两种顺序在 resolved 视图中合并为该挂载点的最终启动序列。
      
      该策略默认串行；`graph.yaml` / `multimodel-graph.yaml` 节点显式声明 `parallel: true`（当前仅 T3 子图 `MM_EXECUTING`）时，由 multiModel 按最大并行度执行；未声明 `parallel` 时默认串行，受上述零输出硬门约束。
+13. **task_context 强制初始化**：会话首个任务进入 INTENT 前，必须先执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" init <task_id>`。未初始化直接流转 → `[PROCESS_VIOLATION]`（transition-check.mjs 会明确拦截并提示 init）。
 
 ## 核心转变
 

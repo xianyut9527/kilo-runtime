@@ -128,40 +128,62 @@ edges:
     to: SIZING
     when: "intent_type == 'EXECUTION'"
 
-  # 咨询类 → 直接结束（命中价值信号时先执行轻量 M4-M8 记忆写入再入 DONE，见 stages/intent.md）
+  # 咨询类 → 同样进入定级（不再直通 DONE，走完整闭环提升质量）
+  # 闭环：SIZING → PLANNING（分析门）→ QUALITY → DELIVERING → DONE
+  # T0 咨询快答（见 sizing.md 决策树）走 SIZING → DELIVERING
   - from: INTENT
-    to: DONE
+    to: SIZING
     when: "intent_type == 'INQUIRY'"
 
-  # T0 极速通道：无设计门/验证/审查，SIZING 后直接编码
+  # T0 执行类极速通道：无设计门/验证/审查，SIZING 后直接编码
   - from: SIZING
     to: EXECUTING
-    when: "tier == 'T0'"
+    when: "intent_type == 'EXECUTION' and tier == 'T0'"
 
-  # T1/T2 → 进入设计门
+  # T1/T2 执行类 → 进入设计门
   - from: SIZING
     to: PLANNING
-    when: "tier in ['T1','T2']"
+    when: "intent_type == 'EXECUTION' and tier in ['T1','T2']"
 
-  # T3 → 进入 multiModel 子图做生成+融合
+  # T3 执行类 → 进入 multiModel 子图做生成+融合
   - from: SIZING
     to: MM_SUBGRAPH
-    when: "tier == 'T3'"
+    when: "intent_type == 'EXECUTION' and tier == 'T3'"
 
-  # 设计门完成 → 进入编码（post:PLANNING 挂载点审查失败经 mount on_fail: abort 中止流转，见头注释挂载点语义）
-  - { from: PLANNING, to: EXECUTING }
+  # T0 咨询类快答：无设计门/审查，SIZING 后直接交付（DELIVERING 执行轻量 M4-M8 记忆写入）
+  - from: SIZING
+    to: DELIVERING
+    when: "intent_type == 'INQUIRY' and tier == 'T0'"
 
-  # T0 编码完成 → 直接交付（无验证/审查）
+  # T1/T2/T3 咨询类 → 进入分析门（复用 PLANNING 阶段，模式切换为 analysis）
+  - from: SIZING
+    to: PLANNING
+    when: "intent_type == 'INQUIRY' and tier in ['T1','T2','T3']"
+
+  # 设计门完成 → 进入编码（EXECUTION 模式）
+  - from: PLANNING
+    to: EXECUTING
+    when: "intent_type == 'EXECUTION'"
+
+  # 分析门完成 → 进入质量保障（INQUIRY 模式，跳过 EXECUTING）
+  - from: PLANNING
+    to: QUALITY
+    when: "intent_type == 'INQUIRY'"
+
+  # T0 执行类编码完成 → 直接交付（无验证/审查）
   - from: EXECUTING
     to: DELIVERING
-    when: "tier == 'T0'"
+    when: "intent_type == 'EXECUTION' and tier == 'T0'"
 
-  # T1/T2/T3 编码完成 → 进入质量保障（T3 从子图回流 EXECUTING 后同样需 QUALITY）
+  # T1/T2/T3 执行类编码完成 → 进入质量保障
   - from: EXECUTING
     to: QUALITY
-    when: "tier in ['T1','T2','T3']"
+    when: "intent_type == 'EXECUTION' and tier in ['T1','T2','T3']"
 
-  # QUALITY 通过 → 进入交付
+  # INQUIRY 类分析完成 → 进入质量保障（经 QUALITY 验证分析结论）
+  # PLANNING → QUALITY 已声明（见上）
+
+  # QUALITY 通过 → 进入交付（统一处理 EXECUTION + INQUIRY）
   - from: QUALITY
     to: DELIVERING
     when: "quality_verdict == 'PASS'"

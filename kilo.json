@@ -17,23 +17,23 @@
   "agent": {
     "conductor": {
       "mode": "primary",
-      "model": "hx/glm-5.2"
+      "model": "hx/MiniMax-M3"
     },
     "multiModel": {
       "mode": "primary",
-      "model": "hx/glm-5.2"
+      "model": "hx/MiniMax-M3"
     },
     "synthesizer-fusion": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-pro"
+      "model": "hx/MiniMax-M3"
     },
     "planner": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-pro"
+      "model": "hx/kimi-k2.6"
     },
     "plan-reviewer": {
       "mode": "subagent",
-      "model": "hx/glm-5.2"
+      "model": "hx/MiniMax-M3"
     },
     "coder": {
       "mode": "subagent",

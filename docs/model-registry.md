@@ -1,5 +1,30 @@
 ---
 description: 模型能力倾向矩阵（人类可读版）+ 按智能体能力需求选择策略 + 多样性保障规则。模型 ID 绑定由 kilo.json agent.<name>.model 字段统一管理；能力匹配无机械校验，本文档供人类选模型参考。
+diversity_map:
+  "hx/glm-5.2":
+    vendor: zhipu
+    architecture: glm-5.2
+  "hx/deepseek-v4-pro":
+    vendor: deepseek
+    architecture: deepseek-v4-pro
+  "hx/deepseek-v4-flash":
+    vendor: deepseek
+    architecture: deepseek-v4-flash
+  "hx/kimi-k2.6":
+    vendor: moonshot
+    architecture: kimi-k2.6
+  "hx/kimi-k2.7-code":
+    vendor: moonshot
+    architecture: kimi-k2.7-code
+  "hx/kimi-k3":
+    vendor: moonshot
+    architecture: kimi-k3
+  "hx/MiniMax-M3":
+    vendor: minimax
+    architecture: MiniMax-M3
+  "hx/MiniMax-M2.7-highspeed":
+    vendor: minimax
+    architecture: MiniMax-M2.7-highspeed
 ---
 
 # docs/model-registry

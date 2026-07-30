@@ -346,8 +346,14 @@ function main() {
     die(1, `[PROCESS_VIOLATION] no edge ${FROM} -> ${TO} in graph.yaml. 合法出边:\n  ${outs.join('\n  ') || '(无出边——终态节点)'}`);
   }
 
-  // 读 task_context
-  const { ctx } = readContext(taskId);
+  // 读 task_context（必须在 init 之后才能流转）
+  let ctx;
+  try {
+    const result = readContext(taskId);
+    ctx = result.ctx;
+  } catch (e) {
+    die(1, `[PROCESS_VIOLATION] task_context not initialized for task_id=${taskId}. Run: node scripts/task-context.mjs init ${taskId}`);
+  }
   const vars = resolveVars(ctx);
 
   // 多边求值：找第一条 when 满足的边；无 when 的边直接匹配

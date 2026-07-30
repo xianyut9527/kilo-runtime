@@ -70,6 +70,47 @@ tier_defaults:
     review_mode: full
 
 # ============================================================
+# inquiry_tier_defaults：咨询类任务定级差异化开关（v2.1 新增）
+# 咨询类（INQUIRY）不再直通 DONE，而是走 SIZING→PLANNING→QUALITY→DELIVERING 闭环
+# 因此需要独立的 tier 开关，控制分析深度和审查视角
+# ============================================================
+inquiry_tier_defaults:
+  # T0 咨询快答：简单问答 / 已明确的知识点 / 单一事实确认
+  # SIZING 后直接 DELIVERING，无分析门，无审查
+  T0:
+    agents: {}
+    review_mode: none
+
+  # T1 项目分析：需要阅读当前项目文件 / 单一视角分析
+  # 短分析门 → 分析角色 → 验证结论准确性 → 审查角色(full)
+  T1:
+    agents:
+      reverse_auditor: true        # T1 起开（隐性遗漏是分析失败最高频原因）
+      side_checker: false         # T2+ 才开（深度调研成本高）
+      synthesizer_fusion: false   # 仅 T3 multiModel 用
+    review_mode: full
+
+  # T2 多维度调研：跨文件/跨模块调研 / 对比/评估/建议
+  # 完整分析门 → 研究 DAG → 分析角色 → 验证结论准确性 → 审查角色(full)
+  T2:
+    agents:
+      reverse_auditor: true       # 需求追溯审计（分析是否回答了原始问题）
+      side_checker: true          # 侧向验证（极端值/反事实/来源可信度实测）
+      synthesizer_fusion: false   # 仅 T3 multiModel 用
+    review_mode: full
+
+  # T3 深度多模型分析：架构级评估 / 需要多模型并行分析对比
+  # multiModel 并行分析生命周期（复用 multiModel 子图，模式=analysis）
+  T3:
+    provider: multiModel
+    agents:
+      synthesizer_fusion: true    # 融合编辑智能体（隔离硬门：不读拆分意图/模型身份）
+      reverse_auditor: true       # T3 走主图 QUALITY 后激活反向审计
+      side_checker: true          # T3 走主图 QUALITY 后激活侧向验证
+      mm_worktree: true           # worktree 隔离默认启用（分析产物级聚合）
+    review_mode: full
+
+# ============================================================
 # overrides：用户/环境覆盖（默认全空 = 全量自动发现注册）
 # ============================================================
 overrides:

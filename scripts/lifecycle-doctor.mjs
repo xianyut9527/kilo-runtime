@@ -35,6 +35,79 @@ const SUBGRAPH_PATH = path.join(ROOT, 'lifecycle', 'multimodel-graph.yaml');
 const CONFIG_PATH = path.join(ROOT, 'lifecycle', 'config.yaml');
 const STAGES_DIR = path.join(ROOT, 'lifecycle', 'stages');
 const AGENT_DIR = path.join(ROOT, 'agent');
+const KILO_JSON_PATH = path.join(ROOT, 'kilo.json');
+
+// ============================================================
+// 解析 kilo.json（标准 JSON，Node 内置）
+// ============================================================
+function parseKiloJson(text) {
+  const data = JSON.parse(text);
+  const agents = new Map(); // name -> { model, mode }
+  if (data.agent && typeof data.agent === 'object') {
+    for (const [name, cfg] of Object.entries(data.agent)) {
+      if (cfg && typeof cfg === 'object') {
+        agents.set(name, {
+          model: cfg.model || null,
+          mode: cfg.mode || null,
+        });
+      }
+    }
+  }
+  // 收集 provider 下所有模型 ID
+  const models = new Set();
+  if (data.provider && typeof data.provider === 'object') {
+    for (const [providerName, providerCfg] of Object.entries(data.provider)) {
+      if (providerCfg.models && typeof providerCfg.models === 'object') {
+        for (const modelId of Object.keys(providerCfg.models)) {
+          models.add(`${providerName}/${modelId}`);
+        }
+      }
+    }
+  }
+  return {
+    defaultAgent: data.default_agent || null,
+    agents,
+    models,
+  };
+}
+
+// 解析 model-registry.md frontmatter 中的 diversity_map（嵌套 YAML）
+function parseDiversityMap(fmText) {
+  const map = {};
+  const lines = fmText.split(/\r?\n/);
+  let currentModel = null;
+  let inMap = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    // 顶层键 diversity_map:
+    if (/^diversity_map\s*:/.test(line)) {
+      inMap = true;
+      continue;
+    }
+    if (!inMap) continue;
+
+    // 模型ID行（缩进2空格）："hx/glm-5.2":
+    const modelMatch = line.match(/^  "?([^":\s]+)"?\s*:\s*$/);
+    if (modelMatch) {
+      currentModel = modelMatch[1];
+      map[currentModel] = {};
+      continue;
+    }
+
+    // 属性行（缩进4空格）：vendor: zhipu
+    if (currentModel) {
+      const attrMatch = line.match(/^    ([a-z_]+)\s*:\s*(\S+)\s*$/);
+      if (attrMatch) {
+        const [, attrKey, attrVal] = attrMatch;
+        map[currentModel][attrKey] = attrVal;
+      }
+    }
+  }
+  return map;
+}
 
 const VERBOSE = process.argv.includes('--verbose');
 const RUNTIME = process.argv.includes('--runtime');
@@ -72,7 +145,7 @@ function stripComment(line) {
 
 // 解析 graph.yaml / multimodel-graph.yaml 的 nodes + edges + 顶层标量
 // 返回 { nodes: Map<id, {type, executor, on_fail, provider, graph, required}>,
-//        edges: [{from,to,when,gate}], top: {provider, entry, exit} }
+//        edges: [{from,to,when,gate}], top: {provider, entry, exit, diversity_rule} }
 function parseGraphFile(text) {
   const nodes = new Map();
   const edges = [];
@@ -80,10 +153,44 @@ function parseGraphFile(text) {
   let section = null;
   let curNode = null;
   let curEdge = null;
+  // diversity_rule 多行解析状态
+  let inDiversity = false;
+  let divRule = null;
 
   for (const raw of text.split(/\r?\n/)) {
     const line = stripComment(raw);
     if (!line.trim()) continue;
+
+    // diversity_rule 多行块
+    if (inDiversity) {
+      const indent = line.match(/^\s*/)[0].length;
+      if (indent === 0) {
+        // 块结束
+        top.diversity_rule = divRule;
+        inDiversity = false;
+        // 继续处理当前行作为普通顶层
+      } else {
+        const dm = line.match(/^\s+([a-z_]+)\s*:\s*(.*)$/);
+        if (dm) {
+          const [, dkey, dval] = dm;
+          if (dkey === 'applies_to') {
+            divRule.applies_to = dval.replace(/^\[|\]$/g, '').split(',').map((s) => s.trim()).filter(Boolean);
+          } else if (dkey === 'on_violation') {
+            divRule.on_violation = dval.trim();
+          } else if (dkey === 'dimensions') {
+            divRule.dimensions = {};
+          }
+        }
+        const dimM = line.match(/^\s+([a-z_]+)\s*:\s*(\w+)\s*$/);
+        if (dimM && divRule.dimensions !== undefined) {
+          const [, dimKey, dimVal] = dimM;
+          if (['vendor', 'architecture'].includes(dimKey)) {
+            divRule.dimensions[dimKey] = dimVal;
+          }
+        }
+        continue;
+      }
+    }
 
     // 顶层键
     if (/^[^\s-]/.test(line)) {
@@ -94,7 +201,11 @@ function parseGraphFile(text) {
         if (key === 'edges') { section = 'edges'; curEdge = null; continue; }
         // 其他顶层键（version/provider/entry/exit/diversity_rule）
         if (val) top[key] = val.trim();
-        if (key === 'diversity_rule') section = null;
+        if (key === 'diversity_rule') {
+          inDiversity = true;
+          divRule = {};
+          section = null;
+        }
         continue;
       }
       continue;
@@ -144,6 +255,10 @@ function parseGraphFile(text) {
       }
       continue;
     }
+  }
+  // 文件结束时，若仍在 diversity_rule 块内，落盘
+  if (inDiversity && divRule) {
+    top.diversity_rule = divRule;
   }
   return { nodes, edges, top };
 }
@@ -991,6 +1106,155 @@ const FRAMEWORK_NAMES = new Set(['conductor', 'multiModel']);
     }
   }
   if (driftFound === 0) pass('doc.drift', `${stageFiles.length} 个 stage 文件正文无硬编码可选智能体名`);
+}
+
+// ============================================================
+// G. kilo.json 智能体配置自检
+// ============================================================
+
+const kjText = readText(KILO_JSON_PATH);
+let kj = null;
+if (kjText) {
+  try {
+    kj = parseKiloJson(kjText);
+    pass('kilojson.parse', 'kilo.json 可解析');
+  } catch (e) {
+    fail('kilojson.parse', `kilo.json 解析失败: ${e.message}`);
+  }
+} else {
+  fail('kilojson.parse', `kilo.json 缺失: ${KILO_JSON_PATH}`);
+}
+
+if (kj) {
+  const KJ_MODES = new Set(['primary', 'subagent', 'standby']);
+
+  // G1. agent 条目 ↔ agent/*.md 双向一致
+  {
+    const mdNames = new Set(agents.keys());
+    const kjNames = new Set(kj.agents.keys());
+    let orphanKj = 0, orphanMd = 0;
+    for (const name of kjNames) {
+      if (!mdNames.has(name)) {
+        orphanKj++;
+        fail('kilojson.agent.md', `kilo.json agent.${name} 无对应 agent/${name}.md 文件`);
+      }
+    }
+    for (const name of mdNames) {
+      if (!kjNames.has(name)) {
+        orphanMd++;
+        fail('kilojson.agent.md', `agent/${name}.md 存在但 kilo.json agent.${name} 未声明`);
+      }
+    }
+    if (orphanKj === 0 && orphanMd === 0) pass('kilojson.agent.md', `${kjNames.size} 个 agent 双向一致`);
+  }
+
+  // G2. model 合法性（provider.models 中存在）
+  {
+    let bad = 0;
+    for (const [name, cfg] of kj.agents) {
+      if (cfg.model && !kj.models.has(cfg.model)) {
+        bad++;
+        fail('kilojson.agent.model', `agent.${name}.model="${cfg.model}" 不在 provider.models 中`);
+      }
+    }
+    if (bad === 0) pass('kilojson.agent.model', `全部 agent model 合法（${kj.agents.size} 个）`);
+  }
+
+  // G3. mode 取值集
+  {
+    let bad = 0;
+    for (const [name, cfg] of kj.agents) {
+      if (cfg.mode && !KJ_MODES.has(cfg.mode)) {
+        bad++;
+        fail('kilojson.agent.mode', `agent.${name}.mode="${cfg.mode}" ∉ {${[...KJ_MODES].join(',')}}`);
+      }
+    }
+    if (bad === 0) pass('kilojson.agent.mode', '全部 agent mode 合法');
+  }
+
+  // G4. default_agent 指向存在性
+  if (kj.defaultAgent) {
+    if (kj.agents.has(kj.defaultAgent)) {
+      pass('kilojson.default_agent', `default_agent="${kj.defaultAgent}" 存在`);
+    } else {
+      fail('kilojson.default_agent', `default_agent="${kj.defaultAgent}" 未在 agent 中声明`);
+    }
+  } else {
+    warn('kilojson.default_agent', 'default_agent 未设置');
+  }
+
+  // G5. multiModel diversity_rule 机械校验（conductor.md §启动期装配 第 5 条）
+  // 读取 model-registry.md diversity_map
+  {
+    const REGISTRY_PATH = path.join(ROOT, 'docs', 'model-registry.md');
+    const regText = readText(REGISTRY_PATH);
+    let divMap = null;
+    if (regText) {
+      const regFm = extractFrontmatter(regText);
+      if (regFm) divMap = parseDiversityMap(regFm);
+    }
+
+    if (divMap && Object.keys(divMap).length > 0) {
+      pass('kilojson.diversity.map', `model-registry diversity_map 已加载（${Object.keys(divMap).length} 个模型）`);
+    } else {
+      warn('kilojson.diversity.map', 'model-registry.md diversity_map 缺失，diversity 校验降级为人工');
+    }
+
+    // 收集 diversity_rule 目标 agent
+    const diversityTargets = new Set();
+    if (sub) {
+      const dr = sub.top?.diversity_rule;
+      if (dr && dr.applies_to) {
+        for (const name of (Array.isArray(dr.applies_to) ? dr.applies_to : [dr.applies_to])) {
+          diversityTargets.add(name);
+        }
+      }
+    }
+    if (diversityTargets.size === 0) {
+      pass('kilojson.diversity.applies', 'multimodel-graph.yaml 无 diversity_rule（无需校验）');
+    } else {
+      let divFail = 0;
+      const collected = []; // { name, vendor, architecture }
+      for (const name of diversityTargets) {
+        const cfg = kj.agents.get(name);
+        if (!cfg || !cfg.model) {
+          fail('kilojson.diversity.model', `diversity 目标 agent ${name} 未声明 model`);
+          divFail++;
+          continue;
+        }
+        if (!divMap || !divMap[cfg.model]) {
+          if (divMap) {
+            fail('kilojson.diversity.model', `diversity 目标 agent ${name} model="${cfg.model}" 不在 diversity_map 中`);
+            divFail++;
+          }
+          continue;
+        }
+        const d = divMap[cfg.model];
+        collected.push({ name, vendor: d.vendor, architecture: d.architecture });
+      }
+
+      if (collected.length >= 2) {
+        // 两两比较
+        let violationFound = false;
+        for (let i = 0; i < collected.length; i++) {
+          for (let j = i + 1; j < collected.length; j++) {
+            const a = collected[i], b = collected[j];
+            if (a.vendor === b.vendor || a.architecture === b.architecture) {
+              violationFound = true;
+              fail('kilojson.diversity', `[DIVERSITY_VIOLATION] ${a.name}(${a.model || kj.agents.get(a.name)?.model}) vs ${b.name}(${b.model || kj.agents.get(b.name)?.model}): vendor=${a.vendor} arch=${a.architecture}`);
+              divFail++;
+            }
+          }
+        }
+        if (!violationFound) pass('kilojson.diversity', `diversity_rule 通过（${collected.length} 个目标全部不同 vendor/architecture）`);
+      }
+
+      if (divFail === 0 && collected.length === 0 && diversityTargets.size > 0 && !divMap) {
+        // diversity_map 缺失但有目标，仅 warn
+        warn('kilojson.diversity', `有 ${diversityTargets.size} 个 diversity 目标但 diversity_map 缺失，无法机械校验`);
+      }
+    }
+  }
 }
 
 // ============================================================

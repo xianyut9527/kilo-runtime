@@ -258,6 +258,7 @@ function buildInitialContext(taskId) {
     fixing_history: [],
     memory_injection: {},
     status: 'initialized',
+    current_stage: 'START',      // v2.1 新增：初始阶段为 START，流转由 transition-check.mjs 机械递增
     transition_log: [],
     convergence: {
       mm_fusion_rounds: 0,

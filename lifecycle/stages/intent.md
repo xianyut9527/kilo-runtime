@@ -39,12 +39,20 @@ quality_gate:
 
 ## 路由规则（边定义见 graph.yaml）
 
-- `INQUIRY` → 直接回答；若命中"价值信号"（见 `agent/conductor.md` §记忆编排），回答完成后执行轻量 M4-M8 记忆写入，再进入 `DONE`；未命中 → 直接 `DONE`。
-  - **默认路径**：INQUIRY 默认由 conductor **内建直接回答**，无需 `task` 启动外部智能体。
-  - **可插拔入口**：用户可在 prompt 显式声明外挂咨询智能体，或经 `task_context.config.custom_overrides` 声明（如领域顾问型 agent），conductor 判定 INQUIRY 后经 `task` 工具加载该智能体作答。
-  - **约束**：无论内建还是外挂，INQUIRY 路径**全程禁止修改性工具**（见 `core.md` §意图分类）；外挂智能体必须有 `agent/<name>.md` 且 frontmatter `mode: subagent` + `mount` 声明（v6 单源注册）。
-- `EXECUTION` → 进入 `SIZING`（任务定级）。
-- `NEEDS_CONTEXT` → 回传用户请求补充信息，不推进。
+- **v2.1 变更**：INQUIRY 不再直通 DONE，而是与 EXECUTION 同样进入 `SIZING` 定级，走完整闭环提升质量：
+  - `INQUIRY` → `SIZING` → `PLANNING`（分析门）→ `QUALITY`（分析结论验证）→ `DELIVERING`（记忆沉淀）→ `DONE`
+  - T0 咨询快答：`SIZING` → `DELIVERING`（跳过 PLANNING/QUALITY）
+  - T1+ 咨询分析：`SIZING` → `PLANNING` → `QUALITY` → `DELIVERING`
+  - T3 深度调研：`SIZING` → `MM_SUBGRAPH`（多模型并行分析）→ `QUALITY` → `DELIVERING`
+- `EXECUTION` → `SIZING`（任务定级）
+- `NEEDS_CONTEXT` → 回传用户请求补充信息，不推进
+- 旧路由 `INQUIRY → DONE`（直接结束）已移除，全部咨询走闭环
+
+## 硬规则
+
+1. **task_context 强制初始化**：进入 INTENT 前必须先执行 `node scripts/task-context.mjs init <task_id>`。未初始化直接流转 → `[PROCESS_VIOLATION]`（transition-check.mjs 会明确拦截并提示 init）。
+2. **流转必裁判**：INTENT → SIZING 前必须执行 `node scripts/transition-check.mjs <task_id> --from INTENT --to SIZING`，exit 0 才允许流转。
+3. **显式输出判定结论**：输出顶部必须标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
 
 ## 降级处理
 
