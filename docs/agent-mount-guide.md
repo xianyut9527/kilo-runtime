@@ -119,7 +119,7 @@ mount:
   - at: QUALITY                  # 挂载点名称（必填）
     hook: verify                 # v2 响应式 hook：verify | fix | review
     deps: [execution.code, plan] # hook 依赖（deps 变化时自动触发）
-    after: [other-agent]          # 可选相对依赖（省略 = 与同 hook 类型其他 agent 并行）
+    after: [other-agent]          # 可选相对依赖（省略 = 与同 hook 类型其他 agent 串行，按 agent 文件名字典序逐个启动）
     trigger: onChange             # 触发时机：onChange（默认）| afterPass | onFail
     when: "config.agents.xxx"    # 条件挂载（可选）
     on_fail: degrade              # 失败策略（可选）
@@ -158,7 +158,7 @@ mount:
 mount:
   - at: QUALITY       # reviewer
     hook: review
-  - at: QUALITY       # side-checker（与 reviewer 并行）
+  - at: QUALITY       # side-checker（与 reviewer 串行，after: [reviewer]）
     hook: review
 ```
 

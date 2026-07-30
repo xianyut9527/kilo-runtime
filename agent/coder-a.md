@@ -19,9 +19,9 @@ subagent_type: coder-a
 # mount：挂载点声明
 #   at    挂载点（MM_EXECUTING，multiModel 子图执行阶段；3 coder 同挂此点）
 #   when  省略 = 必加载（multiModel 模式由 multiModel 主控经 task 工具启动）
-#   after 省略 = 与同挂载点其他 agent 并行（3 coder 视角隔离，必须并行，不得声明 after）
+#   after 省略 = 与同挂载点其他 agent 并行（T3 子图 parallel: true 节点保留并行语义（multiModel 内建调度））
 mount:
-  - at: MM_EXECUTING           # 3 coder 并行（视角隔离，不声明 after）
+  - at: MM_EXECUTING           # T3 子图 parallel: true 节点，3 coder 并行（不声明 after）
 
 # diversity_role：multiModel 多样化角色标识（3 coder 的 (vendor, architecture) 应两两不同，防止输出趋同）
 # 此为 conductor bootstrap 启动期人工校验项（非机械校验）；模型绑定在 kilo.json

@@ -1843,7 +1843,7 @@ function check24LifecycleAgentsFrontmatter() {
 // (a) agent frontmatter 完整性：subagent 必须声明 mount
 // (b) mount 合法性：at ∈ 派生挂载点全集；on_fail ∈ {abort,warn,skip}；order 为非负整数或省略
 // (c) required 覆盖：graph.yaml/multimodel-graph.yaml 节点 required:[role...] 的角色，≥1 frontmatter 在该主挂载点注册
-// (d) 视角并行：CHECKING/REVIEWING/MM_EXECUTING 主挂载点的条件挂载智能体不得声明 order（视角隔离必须并行）
+// (d) T3 子图并行：MM_EXECUTING 主挂载点的条件挂载智能体不得声明 order（graph.yaml parallel: true 节点保留并行语义，但主图同 hook 类型默认串行）
 // v6: manifest 合入 agent/*.md frontmatter，解析源从 lifecycle/agents/*.yaml 改为 agent/*.md
 // v6.1: capabilities_required 字段已删除（capabilities.yaml 已删除，能力匹配靠人类维护 docs/model-registry.md）
 
@@ -1974,18 +1974,18 @@ function check25MountRouteCoverage() {
         errors.push(`${m.file}: mount[${e.at}] on_fail '${e.on_fail}' 非法（abort|warn|skip|degrade）`);
       }
       if (e.order !== undefined && (!Number.isInteger(e.order) || e.order < 0)) {
-        errors.push(`${m.file}: mount[${e.at}] order 非法（必须非负整数或省略=并行）`);
+          errors.push(`${m.file}: mount[${e.at}] order 非法（必须非负整数或省略，v2 已废弃 order 改用 hook 类型定义顺序 + after 相对依赖）`);
       }
       if (!mountRegistrants.has(e.at)) mountRegistrants.set(e.at, []);
       mountRegistrants.get(e.at).push({ agent: m.name, roles, entry: e, file: m.file });
     }
   }
-  // 视角并行校验：条件挂载的视角智能体不得声明 order（视角隔离必须并行）
+  // 串行校验：条件挂载的智能体可以声明 after 控制相对顺序（主图同 hook 类型默认串行）
   const perspectivePoints = ['CHECKING', 'REVIEWING', 'MM_EXECUTING'];
   for (const pt of perspectivePoints) {
     for (const r of mountRegistrants.get(pt) || []) {
       if (r.entry.when && r.entry.order !== undefined) {
-        errors.push(`${r.file}: mount[${pt}] 声明 order=${r.entry.order} 但带 when 条件（视角隔离场景必须并行，不得声明 order）`);
+        errors.push(`${r.file}: mount[${pt}] 声明 order=${r.entry.order} 但带 when 条件（主图同 hook 类型默认串行，需要顺序时用 after 声明前驱）`);
       }
     }
   }
@@ -2029,7 +2029,7 @@ function check25MountRouteCoverage() {
   return {
     name,
     pass: true,
-    detail: `${manifests.length} agent frontmatter / ${mountRegistrants.size} 挂载点 / ${mounted} 条挂载全部合法；stages required_roles 契约覆盖完整 + graph 纯拓扑守护通过 + 子图 required 覆盖完整；视角并行无违规`,
+    detail: `${manifests.length} agent frontmatter / ${mountRegistrants.size} 挂载点 / ${mounted} 条挂载全部合法；stages required_roles 契约覆盖完整 + graph 纯拓扑守护通过 + 子图 required 覆盖完整；串行策略无违规`,
   };
 }
 

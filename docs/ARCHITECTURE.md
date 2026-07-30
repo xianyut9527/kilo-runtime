@@ -188,7 +188,7 @@ subagent_type: my-agent
 mount:
   - at: QUALITY
     hook: verify               # 或 review / fix
-    # 无 after = 与同 hook 类型其他 agent 并行
+    # 无 after = 与同 hook 类型其他 agent 串行（按 agent 文件名字典序逐个启动，避免并发 task 调度 abort）
     # after: [verifier]        # 如需串行，声明前驱
     # when: "config.agents.my_agent"  # 如需按 tier 开关
     on_fail: degrade           # 可选视角用 degrade，必配用默认
@@ -222,7 +222,7 @@ isolation:
 mount:
   - at: QUALITY
     hook: verify
-    # 无 after → 与 verifier / reverse-auditor 并行
+    # 无 after → 与 verifier / reverse-auditor 串行（按 agent 文件名字典序逐个启动，避免并发 task 调度 abort）
 
 # 需要相对顺序时声明 after（只引用前驱，零改其他文件）
 mount:

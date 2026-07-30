@@ -762,7 +762,7 @@ for (const [name, a] of agents) {
     }
     if (!hasCycle) pass(`agent.${key}.after.topo`, `after 依赖无环（${depMap.size} 个有 after 声明的 agent）`);
   }
-  if (groups.size === 0) pass('agent.after.topo', '无 after 声明（全部并行组，无需拓扑排序）');
+  if (groups.size === 0) pass('agent.after.topo', '无 after 声明（全部串行组，按 agent 文件名字典序逐个启动，遵守零输出硬门）');
 }
 
 // B4. when 引用的 config.agents.<key> 至少在任一 tier_defaults 声明（防孤儿开关）
