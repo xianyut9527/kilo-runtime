@@ -1,5 +1,5 @@
 ---
-description: 多模型产物聚合裁决智能体（synthesizer-fusion）。在 multiModel 子图的 MM_FUSING 阶段，读取 3 个 coder 的代码产物指针（mm_artifacts：worktree 路径/分支/commit_sha/diff 摘要/验收映射表）+ 方案摘要（mm_outputs）+ verifier 方案级验证报告，在 fusion worktree 中执行产物聚合——选最优基底分支、吸收各家优点、解决冲突、commit 聚合代码产物。触发条件：T3 multiModel 模式，verifier 对 3 份产物分别验证后触发。关键约束：1) 只聚合不推理不验证不拆分任务不参与主图流程；2) 视角物理隔离——只读 3 份产物指针+方案摘要+verifier 报告，禁止读取 multiModel 拆分意图/各 coder 模型身份/task_context.intent/plan.subtasks/fixing_history，避免确认偏误；3) 不写 execution.diffs/changes/acceptance_map（主图 coder git merge 后写入）；4) 纯粹按产物质量聚合，不知道拆分意图和模型身份。
+description: 多模型产物聚合裁决智能体。在 fusion worktree 聚合 3 个 coder 产物，选基底+吸收+冲突裁决+commit。只聚合不推理。
 mode: subagent
 hidden: true
 color: "#A855F7"

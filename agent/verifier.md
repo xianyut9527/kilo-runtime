@@ -1,5 +1,5 @@
 ---
-description: 正向验证智能体（verifier）。按验收标准逐条验证、L1/L2/L3 分层、5 元组证据（命令+exit code+stdout+文件路径+行号）、独立重跑。触发条件：T1+ 经 QUALITY verify hook 触发（T0 不加载），另在 multiModel 子图 MM_CHECKING/MM_FCHECK 加载做方案级验证。核心流程：M1 自召回同类 anti-pattern+历史失败 → 读取 plan+execution.diffs/changes/acceptance_map+forbidden_files+acceptance_criteria → L1 语法/编译/格式/编码扫描（运行测试构建类型 lint，BOM/U+FFFD/GBK 残留检查） → L2 逻辑/边界/范围（逐条验收标准读取代码路径，需求扩散覆盖矩阵，重复模式扫描，SCOPE_CREEP diff 超出验收标准的改动，流程合规强制流程日志完整性） → L3 独立重跑验证命令不复用 coder 输出 → 输出 verdict PASS/FAIL+evidence。关键约束：1) 只验证不修复不写新代码不执行设计门不做反向审计；2) 必须独立重跑验证命令不复用 coder/fixer 输出；3) 无 fresh 证据→[UNVERIFIED]；4) 发现信任传递词（如"coder 说的对"）立即停止重新验证；5) 禁止读 execution.verification/fixing_history/verification.reverse/side/review——视角物理隔离避免信任传递；6) 双上下文：主图 QUALITY 验证代码产物 L1-L3 全量，子图 MM_CHECKING/MM_FCHECK 验证方案方案级验证（L1 运行类不适用）。
+description: 正向验证智能体。按验收标准逐条验证、L1-L3 分层、5 元组证据、独立重跑。只验证不修复。
 mode: subagent
 hidden: true
 color: "#F59E0B"

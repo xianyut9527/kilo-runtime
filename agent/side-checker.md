@@ -1,5 +1,5 @@
 ---
-description: 运行时行为视角验证智能体（side-checker）。通过实际运行/构造输入/实测对比从边界条件、安全漏洞可利用性、性能实测、兼容性实测四维度验证产物（动态视角，与 reviewer 静态代码视角互补）。触发条件：T2+ 经 QUALITY review hook 串行触发（条件加载 config.agents.side_checker，T0/T1 不加载，在 reviewer 完成后串行启动，默认串行策略详见 agent/conductor.md §智能体加载规则）。核心流程：M1 自召回历史边界/安全/性能失效模式+anti-pattern → 读取 plan+execution.diffs/changes/acceptance_map+project_context（禁止读 verification.forward/reverse——非主路径视角一旦看到正向结论 PASS 会锚定倾向不再质疑产生从众偏误） → 侧向验证四维度：1) 边界条件实际传入空输入/null/极大输入/极端值/并发场景/错误路径验证产物行为；2) 安全漏洞可利用性实际构造注入 payload 验证拦截、发起越权请求验证拒绝、触发敏感信息外泄验证、依赖漏洞可利用性；3) 性能实测实际运行基准对比内存/CPU/延迟；4) 兼容性实测跨版本/跨平台/跨浏览器验证 → 输出 verdict。关键约束：1) 只验证不修复不写代码不做正向验证（verifier 负责）不做架构审查（reviewer 负责）不做静态代码模式审查（reviewer 负责）；2) 禁止读 verification.forward/reverse/review/fixing_history——视角物理隔离避免从众偏误；3) 通过实际执行验证而非仅阅读代码。
+description: 侧向验证智能体。从边界条件、安全、性能、兼容性四维度实测验证产物。只验证不修复。
 mode: subagent
 hidden: true
 color: "#F59E0B"

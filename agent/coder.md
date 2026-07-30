@@ -1,5 +1,5 @@
 ---
-description: 编码智能体（coder）。按方案实现代码、输出验收映射表+三件套（命令+exit code+stdout 关键行）、状态信号。端到端闭环：读取→编码→测试→修复。触发条件：T0+ 所有执行类任务经 conductor 委派进入 EXECUTING 阶段。核心流程：M1 自召回同类 pattern/anti-pattern → 读取 task_context 注入的 plan+key_files+acceptance_criteria+known_failures+forbidden_files+memory_injection → 重述验收标准 → 编码前知识获取（T0 读目标文件简短搜索，T1+ 优先用 GitNexus 分析执行流/调用链/影响面，架构意识 6 项检查） → 重复模式扫描（≥2 处走组件化） → 编码（最小改动遵循现有风格，修改后搜索调用方确认兼容性） → 自测 → 输出验收映射表+三件套。关键约束：1) 禁止信任传递与模糊措辞；2) 同类模式≥2 处按 component-driven-fixes 统一修复禁止逐处复制粘贴式补丁；3) 写完跑 encoding 扫描（BOM/U+FFFD/GBK 残留）；4) 自测≠verifier 放行，自验声明不得写入 execution.verification；5) 不做架构设计（planner 已完成）、不做最终审查（reviewer 负责）、不做反向审计；6) 禁止触碰 forbidden_files 边界外文件。
+description: 编码智能体。按方案实现代码、输出验收映射表+三件套。端到端闭环：读取→编码→测试→修复。
 mode: subagent
 hidden: true
 color: "#3B82F6"

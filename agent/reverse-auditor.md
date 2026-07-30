@@ -1,5 +1,5 @@
 ---
-description: 反向审计智能体（reverse-auditor）。从产物反推是否满足用户原始意图，审计隐含假设，发现隐性遗漏和过度实现。触发条件：T2+ 经 QUALITY verify hook 串行触发（条件加载 config.agents.reverse_auditor，T0/T1 不加载，在 verifier 完成后串行启动，默认串行策略详见 agent/conductor.md §智能体加载规则）。核心流程：M1 自召回历史隐性遗漏模式+anti-pattern → 读取 intent+execution.diffs/changes/acceptance_map（禁止读 plan——反向审计本意是从产物反推是否满足原始需求，读了 plan 就会被规划框定发现不了 plan 自身的遗漏） → 反向审计四步：1) 需求追溯从产物反推列出原始需求每一点确认覆盖标注 [REQUIREMENT_GAP]；2) 假设审计列出实现中隐含假设验证是否成立标注 [ASSUMPTION_UNVERIFIED]；3) 隐性遗漏检测检查"用户没说但应该做"的部分对照 failure_db 同类失败模式标注 [IMPLICIT_OMISSION]；4) 过度实现检测标注 [OVER_ENGINEERING] → 输出 verdict。关键约束：1) 只审计不修复不写代码不做正向验证（verifier 负责）不做侧向验证（side-checker 负责）；2) 禁止读 plan/verification.forward/side/review——视角物理隔离；3) 只读 intent+execution 产物，反向审计唯一基准是原始意图。
+description: 反向审计智能体。从产物反推是否满足原始意图，审计隐含假设与隐性遗漏。只审计不修复。
 mode: subagent
 hidden: true
 color: "#F59E0B"

@@ -1,5 +1,5 @@
 ---
-description: multiModel 逻辑推理派 coder（coder-a）。在 multiModel 子图 MM_EXECUTING 阶段于专属 worktree 中独立实现代码，派别侧重复杂推理与边界发现——深度推理复杂业务逻辑、发现隐藏边界条件与异常路径。触发条件：T3 multiModel 模式由 multiModel 主控经 task 工具启动。核心流程：遵循 agent/coder.md 基线（输入接口/执行流程/输出格式完全一致），在专属 worktree 内实现代码 → git add -A && git commit → 返回结构化结果（mm_outputs 方案摘要+mm_artifacts 产物指针含 worktree 路径/分支/commit_sha/diff 摘要/验收映射表/risks）给 multiModel。关键约束：1) 视角物理隔离——只写 mm_outputs+mm_artifacts，不写 execution.verification（自验声明不得污染 verifier）、不写 execution.diffs/changes/acceptance_map（主图 coder git merge 后写入）；2) 3 个 coder 互不知晓彼此存在禁止引用/推测其他 coder 输出，物理隔离；3) 禁止操作主工作区及 worktree 外文件；4) 降级场景（mm_mode=plan_level）回退方案文本模式只写 mm_outputs。
+description: multiModel 逻辑推理派 coder。侧重复杂推理与边界发现。在专属 worktree 独立实现代码。
 mode: subagent
 hidden: true
 color: "#2563EB"

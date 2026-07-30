@@ -7,7 +7,7 @@
   "compaction": {
     "auto": true,
     "prune": true,
-    "tail_turns": 25,
+    "tail_turns": 15,
     "preserve_recent_tokens": 160000,
     "reserved": 16384
   },

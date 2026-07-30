@@ -68,20 +68,17 @@
   "agent": {
     "conductor": {
       "mode": "primary",
-      "model": "<见 kilo.json 实际绑定>",
-      "prompt": "工作流编排者：意图判定→定级→按 lifecycle/ 加载智能体→管理上下文传递→门禁管理→记忆写入。详见 agent/conductor.md。"
+      "model": "<见 kilo.json 实际绑定>"
     },
     "multiModel": {
       "mode": "primary",
-      "model": "<见 kilo.json 实际绑定>",
-      "prompt": "多模型并行编排（T3）。3 coder + verifier + synthesizer-fusion。详见 agent/multiModel.md。"
+      "model": "<见 kilo.json 实际绑定>"
     },
     "synthesizer-fusion": {
       "mode": "subagent",
-      "model": "<见 kilo.json 实际绑定>",
-      "prompt": "多模型融合编辑智能体。详见 agent/synthesizer-fusion.md。"
+      "model": "<见 kilo.json 实际绑定>"
     },
-    "planner":     { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
+    "planner":     { "mode": "subagent", "model": "<见 kilo.json>" },
     "coder":       { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
     "verifier":    { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
     "reverse-auditor": { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
