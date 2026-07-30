@@ -49,14 +49,14 @@ EXECUTING（coder 产出 execution.code）
   ▼
 QUALITY 容器内自动循环：
   │
-  ├─ hook: verify（并行组：verifier + reverse-auditor? + 自定义智能体）
+  ├─ hook: verify（串行组：verifier + reverse-auditor? + 自定义智能体）
   │   │   deps: [execution.code, plan]
-  │   │   无 after → 并行组（视角隔离）
+  │   │   无 after → 串行组（按 agent 文件名字典序逐个启动，避免并发 task 调度 abort）
   │   ▼
   │   任一 FAIL → hook: fix（fixer + 自定义 fixer，trigger: onFail）
-  │   全 PASS   → hook: review（并行组：reviewer + side-checker? + 自定义智能体，trigger: afterPass）
+  │   全 PASS   → hook: review（串行组：reviewer + side-checker? + 自定义智能体，trigger: afterPass）
   │
-  ├─ hook: review（并行组）
+  ├─ hook: review（串行组）
   │   │   deps: [execution.code]
   │   ▼
   │   任一 FAIL → hook: fix（同一 fixer，trigger: onFail）
@@ -218,7 +218,7 @@ isolation:
 ### 4.2 调整执行顺序（相对依赖）
 
 ```yaml
-# 同 hook 类型默认并行（省略 after）
+# 同 hook 类型默认串行（省略 after，按 agent 文件名字典序逐个启动）
 mount:
   - at: QUALITY
     hook: verify

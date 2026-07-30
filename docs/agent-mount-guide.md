@@ -145,7 +145,7 @@ at: MM_CHECKING
 
 ### `after`（可选）
 
-同 hook 类型 / 同挂载点多个智能体时的**相对依赖声明**。声明 `after: [agent-name]` 表示在本智能体之前必须执行指定 agent；省略 = **并行组成员**。
+同 hook 类型 / 同挂载点多个智能体时的**相对依赖声明**。声明 `after: [agent-name]` 表示在本智能体之前必须执行指定 agent；省略 = **串行组成员**（按 agent 文件名字典序逐个启动，避免并发 task 调度 abort）。
 
 ```yaml
 # 相对依赖执行（after 引用前驱 agent 名）
@@ -154,7 +154,7 @@ mount:
     hook: verify
     after: [verifier]            # 在 verifier 之后执行（reverse-auditor 场景）
 
-# 并行执行（都省略 after）
+# 串行执行（都省略 after，按 agent 文件名字典序逐个启动）
 mount:
   - at: QUALITY       # reviewer
     hook: review
@@ -162,9 +162,9 @@ mount:
     hook: review
 ```
 
-> **视角隔离场景**（如 3 coder 并行）**必须省略 `after`**，声明 `after` 会导致串行，破坏并行假设。
+> **T3 子图并行场景**（如 3 coder 在 `MM_EXECUTING` 节点，`graph.yaml` 声明 `parallel: true`）省略 `after`，由 multiModel 按最大并行度执行。主图同 hook 类型默认串行，声明 `after` 控制相对顺序。
 
-> v2 废弃 `order: <数字>` 绝对编号系统。QUALITY 内部顺序由 `hook` 类型内置定义（`verify → fix → review → fix`），同 hook 类型内默认并行，需要相对顺序时用 `after` 声明前驱。
+> v2 废弃 `order: <数字>` 绝对编号系统。QUALITY 内部顺序由 `hook` 类型内置定义（`verify → fix → review → fix`），同 hook 类型内默认串行（避免并发 task 调度 abort），需要相对顺序时用 `after` 声明前驱。仅 `graph.yaml` 声明 `parallel: true` 的节点保留并行语义。
 
 ### `when`（可选）
 
@@ -334,25 +334,25 @@ mount:
 
 仅当 `config.agents.side_checker = true` 时挂载（T2+ 默认 true）。失败时跳过该视角，标记 `DEGRADED`，不阻塞 QUALITY hooks 主流程。
 
-### 示例 E：并行组（视角隔离）
+### 示例 E：并行组（T3 子图 `parallel: true` 节点）
 
 `agent/coder-a.md`、`coder-b.md`、`coder-c.md`：
 
 ```yaml
 # coder-a.md
 mount:
-  - at: MM_EXECUTING           # 与 coder-b、c 同号并行
+  - at: MM_EXECUTING           # 与 coder-b、c 同号并行（graph.yaml 声明 parallel: true）
 
 # coder-b.md
 mount:
-  - at: MM_EXECUTING           # 同槽，无 after = 并行组成员
+  - at: MM_EXECUTING           # 同槽，无 after = 并行组成员（仅 parallel: true 节点保留并行）
 
 # coder-c.md
 mount:
-  - at: MM_EXECUTING           # 3 个视角隔离，必须并行
+  - at: MM_EXECUTING           # 3 个视角隔离，parallel: true 节点并行启动
 ```
 
-三者都挂 `MM_EXECUTING`，都省略 `after`，bootstrap 将其归入同一并行组，运行时 conductor 同时启动 3 个 task。
+三者都挂 `MM_EXECUTING`（`graph.yaml` 显式声明 `parallel: true`），都省略 `after`，bootstrap 将其归入同一并行组，运行时 multiModel 同时启动 3 个 task。**主图非 `parallel: true` 节点的同 hook 类型默认串行**，避免并发 task 调度触发 `Tool execution aborted`。
 
 ---
 

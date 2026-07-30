@@ -113,7 +113,7 @@ mount:
     hook: verify
   - at: MM_CHECKING              # 一智能体可挂载多点
   - at: MM_FCHECK
-# mount 可选字段：order（同挂载点执行顺序，升序数字；省略=并行组）
+# mount 可选字段：order（同挂载点执行顺序，升序数字；省略=串行组）
 #                 when（条件挂载）/ on_fail（abort|warn|skip|degrade）
 ```
 
@@ -147,9 +147,9 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 
 #### 装配与运行时
 1. conductor 启动期读 `lifecycle/graph.yaml`（纯拓扑）+ `multimodel-graph.yaml`（派生挂载点全集：`on:bootstrap`/`on:done` + 每节点 `pre:`/主/`post:`）+ 全部 `agent/*.md` frontmatter（按 `mount[].at` 自注册，v6 单源）+ `lifecycle/stages/*.md` frontmatter（`required_roles` 契约）+ `lifecycle/config.yaml`（tier_defaults/overrides/convergence）
-2. 同挂载点按 `hook` 类型分组 + `after` 相对依赖拓扑排序（同 hook 类型默认并行；视角隔离场景必须并行，不得声明 `after`）；校验各阶段 `required_roles` 被主挂载点注册覆盖
+2. 同挂载点按 `hook` 类型分组 + `after` 相对依赖拓扑排序（同 hook 类型默认串行，避免并发 task 调度 abort；需要顺序时声明 after）；校验各阶段 `required_roles` 被主挂载点注册覆盖
 3. 装配 resolved 视图：`{ mountPoint → [{ agent, model, hook, after, trigger, deps, when, on_fail }]（已排序/分组）}` + edges 表；运行时查表，零重复解析
-4. 进入节点 N：`pre:N` → 主挂载点（并行组 + after 拓扑序，或 executor 内建）→ `post:N` → 按 edges + when/gate 流转；装配后立即执行 `on:bootstrap`，入 DONE 前执行 `on:done`
+4. 进入节点 N：`pre:N` → 主挂载点（串行组 + after 拓扑序，或 executor 内建）→ `post:N` → 按 edges + when/gate 流转；装配后立即执行 `on:bootstrap`，入 DONE 前执行 `on:done`
 5. 每个智能体启动时按 frontmatter `task_context.read` 注入上下文切片（见第 3 章）；完成后按 `task_context.write` 收回结果
 
 #### 可扩展规则（文件制自动注册）
@@ -365,16 +365,16 @@ EXECUTING（coder）
   ▼
 QUALITY（响应式 Hooks 容器）
   │
-  ├─ verify hooks（默认并行）
+  ├─ verify hooks（默认串行）
   │   ├─ verifier（正向）──┐
-  │   └─ reverse-auditor（反向，T2+）──┤
+  │   └─ reverse-auditor（反向，T2+，after: [verifier]）──┤
   │   └─ （各自独立 context）──┘
   │   │
   │   ▼ 全 PASS？
   │   ├─ 是 → review hooks
   │   └─ 否 → fix hooks → code 变化 → 自动 re-verify（循环）
   │
-  ├─ review hooks（默认并行）
+  ├─ review hooks（默认串行）
   │   ├─ reviewer（审查）──┐
   │   ├─ side-checker（侧向，T2+）──┤
   │   └─ （各自独立 context）──┘
@@ -510,7 +510,7 @@ QUALITY（响应式 Hooks 容器）
 | 开销类型 | 评估 | 缓解 |
 |----------|------|------|
 | Token 成本 | 每个智能体独立 context window，总 token 是单 agent 的 3-5 倍 | T0/T1 不启动全部智能体；task_context 只注入相关章节 |
-| 延迟 | 并行启动多个智能体理论上不增加 wall-clock 延迟，但增加并发调度压力 | T0/T1 按需加载，减少不必要并行 |
+| 延迟 | 串行启动多个智能体增加 wall-clock 延迟，但避免并发调度 abort | T0/T1 按需加载，减少不必要串行；T3 子图 parallel: true 保留并行 |
 | 上下文传递损耗 | task_context 摘要可能丢失细节 | task_context 结构化字段 + 关键原文保留 |
 
 ### 共享上下文的同步风险

@@ -49,7 +49,7 @@
 #   <NODE>         节点主槽（阶段本体；executor 内建阶段由 conductor/multiModel 占据）
 #   post:<NODE>    节点主槽执行后、edges 流转前
 # 子图节点（MM_*）同样派生三挂载点。智能体在自身 agent/*.md frontmatter `mount` 声明挂载点 +
-# hook/after/when/on_fail；同 hook 类型默认并行（视角隔离场景必须保持并行，不得声明 after）。
+#   hook/after/when/on_fail；同 hook 类型默认串行（需要顺序时声明 after: [agent-name]）。
 # 需要顺序时声明 after: [agent-name]（相对依赖，只引用前驱），框架自动 topo-sort。
 # 阶段必配角色契约在 stages/<id-lower>.md frontmatter `required_roles`（阶段语义内聚）；
 # 本文件不声明任何角色——增删智能体、调整挂载、改顺序都不碰本文件。
@@ -94,9 +94,9 @@ nodes:
 
   # 质量保障：响应式 Hooks 阶段（合并原 CHECKING + REVIEWING + FIXING）
   # 内部 hooks（hook 类型定义顺序，不需要绝对编号）：
-  #   hook: verify → verify hooks（verifier + reverse_auditor? 并行组，无 after = 并行）
+  #   hook: verify → verify hooks（verifier + reverse_auditor? 串行组，reverse_auditor after: [verifier]）
   #   hook: fix → fix hooks（fixer, trigger: onFail，任一 verify/review FAIL 时自动触发）
-  #   hook: review → review hooks（reviewer + side_checker? 并行组, trigger: afterPass）
+  #   hook: review → review hooks（reviewer + side_checker? 串行组, trigger: afterPass，side_checker after: [reviewer]）
   # 循环逻辑：代码变化 → 自动触发 verify hooks → 结果变化 → 自动触发 review/fix hooks
   # 必配角色契约：stages/quality.md frontmatter required_roles
   - id: QUALITY

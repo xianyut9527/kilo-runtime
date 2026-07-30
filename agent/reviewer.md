@@ -20,7 +20,7 @@ subagent_type: reviewer
 #   when  省略 = 必加载（QUALITY 仅 T1+ 可达，可达性即开关）
 mount:
   # v2 响应式 Hooks：QUALITY 阶段 review hook，trigger: afterPass 确保 review hooks
-  # 在 verify hooks 全 PASS 后自动触发；side-checker 作为 review hook 另一成员并行启动。
+  # 在 verify hooks 全 PASS 后自动触发；side-checker 作为 review hook 另一成员在 reviewer 完成后串行启动（遵守零输出硬门；详见 agent/conductor.md §智能体加载规则）。
   - at: QUALITY
     hook: review
     trigger: afterPass
@@ -45,7 +45,7 @@ isolation:
 
 ## 智能体定位
 
-**生命周期阶段**：`QUALITY`（review hook，审查；side-checker 作为 review hook 另一成员并行启动）
+**生命周期阶段**：`QUALITY`（review hook，审查；side-checker 作为 review hook 另一成员在 reviewer 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §智能体加载规则）
 **加载条件**：T1+（T0 不加载）
 **模型**：见 `kilo.json` `agent.reviewer.model`（架构视角审查需要强 reasoning 能力需求）
 

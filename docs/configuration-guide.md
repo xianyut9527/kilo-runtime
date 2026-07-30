@@ -122,7 +122,7 @@ subagent_type: verifier     # task 工具的 subagent_type 参数值
 #              v2 废弃 order 数字编号，改用 hook 类型内置顺序 + after 相对依赖
 mount:
   - at: QUALITY                # v2 响应式 Hooks 阶段（合并原 CHECKING+REVIEWING+FIXING）
-    hook: verify               # verify hook：与 reverse-auditor 默认并行
+    hook: verify               # verify hook：reverse-auditor after: [verifier] 在本 agent 之后串行
     deps: [execution.code, plan]
   - at: MM_CHECKING            # 一智能体可挂载多槽（同时在 multiModel 子图挂载）
   - at: MM_FCHECK
@@ -162,10 +162,10 @@ isolation:
 
 ### 顺序与并行
 
-- 同挂载点 / 同 hook 类型多个智能体 **默认并行**（省略 `after`）
+- 同挂载点 / 同 hook 类型多个智能体 **默认串行**（省略 `after`，按 agent 文件名字典序逐个启动）
 - v2 不再使用 `order: <数字>` 绝对编号；QUALITY 内部顺序由 `hook` 类型内置定义：`verify → fix → review → fix`
 - 需要控制同 hook 内相对顺序时，声明 `after: [agent-name]`（只引用前驱，零改其他文件）
-- **视角隔离场景必须并行**（如 3 个 coder、verifier + reverse-auditor），不得声明 `after`
+- **避免并发 task 调度 abort**：同 hook 类型默认串行启动，避免同一轮对话并发调度多个 task 触发底层执行器 `Tool execution aborted`；仅 `graph.yaml` 显式声明 `parallel: true` 的节点（如 T3 子图 `MM_EXECUTING` 的 3 coder）保留并行语义
 
 ---
 
@@ -202,7 +202,7 @@ mount:
   - at: QUALITY
     hook: review                    # v2 响应式 Hooks：review hook
     when: "config.agents.security_auditor"     # 条件挂载
-    # 与 reviewer / side-checker 同 hook 类型默认并行；如需 reviewer 之后执行可写 after: [reviewer]
+    # 与 reviewer / side-checker 同 hook 类型默认串行；如需 reviewer 之后执行可写 after: [reviewer]
 
 task_context:
   read: [execution.diffs, plan, project_context]

@@ -6,7 +6,7 @@
 
 **核心变化**（v1 → v2）：
 - **QUALITY 阶段**（v2 新增）替代原 `CHECKING + REVIEWING + FIXING` 三个独立阶段
-- **内部 hooks 自动循环**：verify hooks（hook: verify，并行组）→ fix hooks（hook: fix, trigger: onFail）→ review hooks（hook: review, trigger: afterPass，并行组）→ fix hooks（同一 fixer）
+- **内部 hooks 自动循环**：verify hooks（hook: verify，串行启动组）→ fix hooks（hook: fix, trigger: onFail）→ review hooks（hook: review, trigger: afterPass，串行启动组）→ fix hooks（同一 fixer）
 - **数据驱动**：`execution.code` 变化 → 自动触发 verify hooks → 结果变化 → 自动触发 review/fix hooks
 - **conductor 角色退化**：从"工厂领班"变为"Reconciler"，只处理异常，不手动回流
 - **扩展性提升**：新增 agent = 注册 hook，零改 graph/stages
@@ -24,7 +24,7 @@ lifecycle/
     ├── planning.md         # PLANNING      — frontmatter required_roles: [planner]
     ├── executing.md        # EXECUTING     — frontmatter required_roles: [coder]
     ├── quality.md          # QUALITY       — v2 响应式 Hooks 阶段（合并原 CHECKING + REVIEWING + FIXING）
-    │                         #   hooks: verify (并行组) → fix (trigger:onFail) → review (并行组, trigger:afterPass) → fix (同一 fixer)
+    │                         #   hooks: verify (串行启动组) → fix (trigger:onFail) → review (串行启动组, trigger:afterPass) → fix (同一 fixer)
     ├── delivering.md       # DELIVERING    — conductor 内建
     └── archive/            # v1 归档阶段（已废弃，保留参考）
         ├── checking.md.v1  # 原 CHECKING   — 正向验证（已合并到 QUALITY verify hooks）
@@ -44,11 +44,11 @@ lifecycle/
 | DELIVERING | `delivering.md` | conductor 内建 | `pause` | `[MISSING_MEMORY_WRITE]` 检查 |
 
 > **QUALITY 阶段内部 hooks**：
-> - `hook: verify` verify hooks：verifier + reverse_auditor?（并行组，无 after = 并行）
+> - `hook: verify` verify hooks：verifier + reverse_auditor?（默认串行启动组，无 after = 默认串行，reverse_auditor after: [verifier]；详见 `agent/conductor.md` §智能体加载规则）
 > - `hook: fix` fix hooks：fixer（trigger: onFail，任一 verify/review FAIL 时自动触发）
-> - `hook: review` review hooks：reviewer + side_checker?（并行组，trigger: afterPass，verify 全 PASS 后触发）
+> - `hook: review` review hooks：reviewer + side_checker?（默认串行启动组，trigger: afterPass，verify 全 PASS 后触发；无 after = 默认串行，side_checker after: [reviewer]；详见 `agent/conductor.md` §智能体加载规则）
 > - **顺序由 hook 类型定义**：verify → fix → review → fix 循环是框架内置的，不需要绝对编号
-> - **同 hook 类型默认并行**：无 after 时默认并行（视角隔离场景保持并行）；需要顺序时声明 `after: [agent-name]`
+> - **同 hook 类型默认串行启动**：无 `after` 时默认串行启动（按 agent 文件名字典序逐个启动；遵守零输出硬门；详见 `agent/conductor.md` §智能体加载规则）；需要顺序时声明 `after: [agent-name]`
 > - **循环逻辑**：code 变化 → 自动触发 verify → verify PASS → 自动触发 review → review PASS → quality_verdict=PASS → 离开 QUALITY
 > - **熔断**：`config.yaml hooks.quality.max_verify_retries` / `max_review_retries` / `max_total_cycles`
 
@@ -78,7 +78,7 @@ mount:
   - at: QUALITY                   # 挂载点（命名空间派生）
     hook: verify                   # hook 类型：verify | review | fix（定义执行顺序，不需要编号）
     deps: ["execution.code", "plan"]  # 数据依赖：这些字段变化时自动触发
-    after: [other-agent]           # 可选：在指定 agent 之后执行（相对依赖，类似 React hooks 声明顺序）；省略 = 并行组成员（按 agent 文件名字典序同时启动）
+    after: [other-agent]           # 可选：在指定 agent 之后执行（相对依赖，类似 React hooks 声明顺序）；省略 = 串行启动组成员（按 agent 文件名字典序逐个启动；遵守零输出硬门）
     trigger: onChange              # 触发时机：onChange（默认）| afterPass | onFail
     when: "config.agents.reverse_auditor"  # 可选：条件挂载
     on_fail: degrade               # 可选：abort|warn|skip|degrade
@@ -88,10 +88,10 @@ mount:
 #   - at: CHECKING                    # 兼容：自动映射为 QUALITY hook: verify
 ```
 
-- **同挂载点多个智能体**：多个 agent .md frontmatter 声明同一 `at` + `hook` 即可；都省略 `after` = 并行组（全局默认并行策略，按 agent 文件名字典序同时启动；需串行时声明 `after: [agent-name]` 形成显式依赖链）。
+- **同挂载点多个智能体**：多个 agent .md frontmatter 声明同一 `at` + `hook` 即可；都省略 `after` 时默认串行启动（按 agent 文件名字典序逐个启动；遵守零输出硬门；详见 `agent/conductor.md` §智能体加载规则）。需显式依赖链时声明 `after: [agent-name]`。
 - **顺序调整**：声明 `after: [agent-name]`——只引用前驱 agent 名（相对依赖），**零改其他文件**。框架自动拓扑排序，检测环依赖报错。
 - **`hook` 类型**：`verify`（验证，检查代码质量）、`review`（审查，检查代码风格/架构）、`fix`（修复，自动修复问题）；hook 类型定义执行顺序，不需要绝对编号
-- **`after` 语义**：声明在哪些 agent 之后执行（类似 React hooks 声明顺序）；省略 = 并行组成员（按 agent 文件名字典序同时启动）
+- **`after` 语义**：声明在哪些 agent 之后执行（类似 React hooks 声明顺序）；省略 = 串行组成员（按 agent 文件名字典序逐个启动；遵守零输出硬门，详见 `agent/conductor.md` §智能体加载规则）
 - **`trigger` 语义**：`onChange`（deps 变化时触发，默认）、`afterPass`（前置 hooks 全 PASS 后触发）、`onFail`（前置 hooks 任一 FAIL 时触发）
 - **`when` 条件语法**：`config.agents.<key>` 由 conductor 在 SIZING 按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户显式覆盖写入；无 `when` = 恒定挂载（图拓扑可达即加载——推荐默认，新增智能体零配置）。
 - **必配角色校验**：阶段必配角色契约在本阶段 `stages/<id>.md` frontmatter `required_roles`（阶段语义内聚，单一真相）；角色名 = 智能体文件名（去 .md）或其 frontmatter 显式 `role` 字段。bootstrap/doctor 静态预演——无智能体在该主槽履行该角色 → `[ASSEMBLY_FAIL]`。**graph.yaml 永不出现角色名/智能体名**。
@@ -105,7 +105,7 @@ mount:
 | 引入新角色并设为某阶段必配 | 丢 agent 文件 + 该阶段 `stages/<id>.md` frontmatter `required_roles` 加一行（阶段语义变化，内聚；**graph.yaml 仍不动**） |
 | 多智能体履行同一角色 | 新 agent frontmatter 显式 `role: <角色名>`（缺省 role = 文件名）；required_roles 校验按 role 匹配 |
 | 挂载到任意阶段 | frontmatter `mount` 加一条 `{at: <STAGE>}`（主槽）或 `pre:<STAGE>` / `post:<STAGE>`；启动/收尾：`on:bootstrap` / `on:done`；可选视角加 `on_fail: degrade` |
-| 一槽挂载多个 | 多个 agent .md frontmatter 声明同一 `at` + `hook`；都省略 `after` 默认并行（全局默认并行策略） |
+| 一槽挂载多个 | 多个 agent .md frontmatter 声明同一 `at` + `hook`；都省略 `after` 默认串行启动（遵守零输出硬门；详见 `agent/conductor.md` §智能体加载规则） |
 | 调整执行顺序 | frontmatter mount 条目声明 `after: [agent-name]`（相对依赖，只引用前驱；框架自动 topo-sort） |
 | 新增阶段 | ① 丢 `lifecycle/stages/<name>.md`（frontmatter：description/model_capability/token_budget + 非内建阶段需 `required_roles`；文件名派生节点 ID）② `graph.yaml` 加 node（type/executor/on_fail）+ edges（语义 ID，无占号问题）——三挂载点自动派生 |
 | 改阶段失败策略 | `graph.yaml` 节点 `on_fail` 字段改值（abort/retry_once/degrade/escalate/pause）；派发动作见 `agent/conductor.md` §异常处理派发表 |
