@@ -134,8 +134,13 @@ for (const [name, desc] of descriptions) {
   // description 已包含角色定位+触发条件+核心流程+关键约束，足够稳定触发
   const newPrompt = desc;
 
-  if (currentPrompt === newPrompt) {
-    if (verbose) console.log(`[OK]   ${name}: 已同步 (len=${newPrompt.length})`);
+  // prompt 字段为空表示使用 description 作为唯一真相，不算 drift
+  if (currentPrompt === newPrompt || currentPrompt === '') {
+    if (verbose && currentPrompt === '') {
+      console.log(`[OK]   ${name}: prompt 为空，使用 description 作为唯一真相`);
+    } else if (verbose) {
+      console.log(`[OK]   ${name}: 已同步 (len=${newPrompt.length})`);
+    }
   } else {
     driftCount++;
     drifts.push(name);

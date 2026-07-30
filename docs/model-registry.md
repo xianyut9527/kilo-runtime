@@ -19,17 +19,24 @@ description: 模型能力倾向矩阵（人类可读版）+ 按智能体能力�
 
 > 本表仅描述各模型的能力倾向，**不是绑定关系**。实际绑定以 `kilo.json` `agent.<name>.model` 为准。
 
-| 模型 ID（kilo.json provider.hx.models） | 厂商 | 架构 | 推理 | 编码 | 长上下文 | 安全边界 |
-|------|------|------|------|------|----------|----------|
-| `hx/kimi-k2.6` | moonshot | kimi-k2.6 | ★★★★★ | ★★★★☆ | 200K | ★★★★☆ |
-| `hx/kimi-k2.7-code` | moonshot | kimi-k2.7-code | ★★★★☆ | ★★★★★ | 200K | ★★★★☆ |
-| `hx/kimi-k3` | moonshot | kimi-k3 | ★★★★★ | ★★★★★ | 200K | ★★★★★ |
-| `hx/MiniMax-M3` | minimax | MiniMax-M3 | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ |
-| `hx/MiniMax-M2.7-highspeed` | minimax | MiniMax-M2.7-highspeed | ★★★☆☆ | ★★★☆☆ | 200K | ★★★☆☆ |
-| `hx/glm-5.2` | zhipu | glm-5.2 | ★★★★★ | ★★★★☆ | 200K | ★★★★★ |
-| `hx/deepseek-v4-flash` | deepseek | deepseek-v4-flash | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ |
+| 模型 ID（kilo.json provider.hx.models） | 厂商 | 架构 | 推理 | 编码 | 长上下文 | 安全边界 | 稳定性排序 |
+|------|------|------|------|------|----------|----------|----------|
+| `hx/glm-5.2` | zhipu | glm-5.2 | ★★★★★ | ★★★★☆ | 200K | ★★★★★ | 1（最稳定） |
+| `hx/deepseek-v4-pro` | deepseek | deepseek-v4-pro | ★★★★★ | ★★★★★ | 200K | ★★★★★ | 2 |
+| `hx/kimi-k2.6` | moonshot | kimi-k2.6 | ★★★★★ | ★★★★☆ | 200K | ★★★★☆ | 3 |
+| `hx/kimi-k2.7-code` | moonshot | kimi-k2.7-code | ★★★★☆ | ★★★★★ | 200K | ★★★★☆ | 4 |
+| `hx/kimi-k3` | moonshot | kimi-k3 | ★★★★★ | ★★★★★ | 200K | ★★★★★ | 待观察 |
+| `hx/MiniMax-M3` | minimax | MiniMax-M3 | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 5 |
+| `hx/MiniMax-M2.7-highspeed` | minimax | MiniMax-M2.7-highspeed | ★★★☆☆ | ★★★☆☆ | 200K | ★★★☆☆ | 6 |
+| `hx/deepseek-v4-flash` | deepseek | deepseek-v4-flash | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 7 |
 
 > **厂商/架构列用途**：`multimodel-graph.yaml` `diversity_rule` 要求 coder-a/b/c 的 `(vendor, architecture)` 两两不同。人工选模型时对照此列确认。
+> **稳定性排序用途**：`kilo.json` 中关键路径模型优先选用稳定性排序靠前的模型，当前默认 `glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6`。
+
+## 稳定性优先选模型指南
+
+当前稳定性排序（由稳定到不稳定）：`glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6` > `kimi-k2.7-code` > `MiniMax-M3` > `MiniMax-M2.7-highspeed` > `deepseek-v4-flash`。
+`kimi-k2.7-code` 已降级使用，不再担任 conductor / multiModel / coder 等关键路径模型；`deepseek-v4-pro` 作为主力高性能模型补充到关键路径。
 
 ## 按智能体能力倾向矩阵
 
