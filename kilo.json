@@ -17,11 +17,11 @@
   "agent": {
     "conductor": {
       "mode": "primary",
-      "model": "hx/MiniMax-M3"
+      "model": "hx/kimi-k2.7-code"
     },
     "multiModel": {
       "mode": "primary",
-      "model": "hx/MiniMax-M3"
+      "model": "hx/kimi-k2.7-code"
     },
     "synthesizer-fusion": {
       "mode": "subagent",
