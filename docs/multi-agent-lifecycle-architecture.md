@@ -397,7 +397,7 @@ QUALITY（响应式 Hooks 容器）
 
 ### 循环计数
 - `task_context.quality.round` 每次进入 QUALITY 时 +1
-- `task_context.quality.max_rounds` 默认 7（来源：`lifecycle/config.yaml` `hooks.quality.max_total_cycles`）
+- `task_context.quality.max_rounds` 默认 4（来源：`lifecycle/config.yaml` `hooks.quality.max_total_cycles`）
 
 ---
 

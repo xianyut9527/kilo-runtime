@@ -100,14 +100,13 @@ inquiry_tier_defaults:
     review_mode: full
 
   # T3 深度多模型分析：架构级评估 / 需要多模型并行分析对比
-  # multiModel 并行分析生命周期（复用 multiModel 子图，模式=analysis）
+  # 注：INQUIRY T3 当前由主图 PLANNING（完整分析门）→ QUALITY 处理，
+  #     多模型并行分析（复用 multiModel 子图）是预留扩展，暂未接线。
+  #     以下 agents 在主图 QUALITY hooks 中加载（reverse_auditor/side_checker）。
   T3:
-    provider: multiModel
     agents:
-      synthesizer_fusion: true    # 融合编辑智能体（隔离硬门：不读拆分意图/模型身份）
       reverse_auditor: true       # T3 走主图 QUALITY 后激活反向审计
       side_checker: true          # T3 走主图 QUALITY 后激活侧向验证
-      mm_worktree: true           # worktree 隔离默认启用（分析产物级聚合）
     review_mode: full
 
 # ============================================================

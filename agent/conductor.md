@@ -208,7 +208,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
   },
   "quality": {
     "round": 0,
-    "max_rounds": 7,
+    "max_rounds": 4,    # 示例值；实际由 config.yaml hooks.quality.max_total_cycles 动态注入
     "status": "running",
     "verify": { "forward": {}, "reverse": {} },
     "review": { "result": {}, "side": {} },
@@ -236,7 +236,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 > - `status`：任务全局状态（RUNNING / PAUSED / DEGRADED / DONE / FAILED），由 conductor 内建阶段写入；multiModel 子图运行期间保持 RUNNING，MM_ARCHIVED 交还 conductor 后由 conductor 接管
 > - `subgraph_status`：子图出口信号（如 `ready_for_delivery`），由 multiModel 在 MM_ARCHIVED 写入，供 graph.yaml `MM_SUBGRAPH→EXECUTING` 边条件求值；与 `status` 分离避免枚举污染
 > - `quality.round`：当前 QUALITY hooks 循环轮次（verify→fix→review→fix 自动循环计数），每次 verify/review hooks 触发 fix hooks 后 +1
-> - `quality.max_rounds`：QUALITY 总轮次上限（默认 7，见 `lifecycle/config.yaml` `hooks.quality.max_total_cycles`），达到即 `[CIRCUIT_BREAKER]`
+> - `quality.max_rounds`：QUALITY 总轮次上限（见 `lifecycle/config.yaml` `hooks.quality.max_total_cycles`，当前值为 4），达到即 `[CIRCUIT_BREAKER]`
 > - `convergence.mm_fusion_rounds`：T3 子图内部 MM_FCHECK 打回 synthesizer-fusion 重新聚合轮次（仅 multiModel 写入，独立计数）
 > - `convergence.mm_fusion_max_rounds`：子图内部熔断阈值（默认 3，见 `lifecycle/config.yaml` convergence）
 >

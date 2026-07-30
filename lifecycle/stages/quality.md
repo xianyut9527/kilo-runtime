@@ -257,7 +257,7 @@ mount:
 # task_context.quality（新增字段，框架自动管理）
 quality:
   round: 0                    # 当前 QUALITY 轮次
-  max_rounds: 7               # 来源：config.yaml hooks.quality.max_total_cycles
+  max_rounds: 4               # 来源：config.yaml hooks.quality.max_total_cycles（当前值 4；脚本不可读时回退 7）
   status: "running"           # running | passed | failed | circuit_breaker
   mode: "execution" | "inquiry"  # v2.1 新增：当前 QUALITY 所处模式
   
@@ -309,7 +309,7 @@ hooks:
   quality:
     max_verify_retries: 5      # verify 失败重试上限（替代原 max_rounds）
     max_review_retries: 3    # review 失败重试上限
-    max_total_cycles: 7        # QUALITY 总轮次上限（替代原 max_total_rounds）
+    max_total_cycles: 4        # QUALITY 总轮次上限（当前值 4；4 轮修不好=方案/需求有问题，escalate 到人）
     auto_fix: true             # 自动触发 fix hooks（false = 人工确认后修复）
 ```
 

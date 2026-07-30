@@ -87,7 +87,7 @@ forbidden_files: ["string"]
 fixing_history: [...]              # 前几轮修复历史（避免重复）
 quality:
   round: int
-  max_rounds: 7  # 阈值来源：lifecycle/config.yaml hooks.quality.max_total_cycles
+  max_rounds: 4  # 示例值；实际由 config.yaml hooks.quality.max_total_cycles 动态注入
 # 禁止读取：verification.forward / verification.reverse / verification.side / verification.review（避免被前序结论锚定）
 # 禁止写入：task_context.execution.verification（避免污染下一轮 verifier）
 ```

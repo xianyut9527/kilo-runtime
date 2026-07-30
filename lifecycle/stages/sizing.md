@@ -83,7 +83,7 @@ quality_gate:
 | INQUIRY | T0 | `DELIVERING` | 否 | N/A |
 | INQUIRY | T1 | `PLANNING`（短）→ `QUALITY` | 短分析门 | full |
 | INQUIRY | T2 | `PLANNING`（完整）→ `QUALITY` | 完整分析门 | full |
-| INQUIRY | T3 | `MM_SUBGRAPH`（多模型子图）→ `QUALITY` | 完整分析门 | full |
+| INQUIRY | T3 | `PLANNING`（完整）→ `QUALITY` | 完整分析门 | full |
 
 ## 阶段 B·校准（后置）
 

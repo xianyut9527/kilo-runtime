@@ -158,8 +158,8 @@ QUALITY hooks（标准 verify→fix→review→fix 循环）
 
 **熔断**：
 - `quality.round`（每次进入 QUALITY 时 +1）
-- `quality.max_rounds = hooks.quality.max_total_cycles = 7`
-- `quality.round ≥ 7` → `[CIRCUIT_BREAKER]` → PAUSED 等用户决策
+- `quality.max_rounds = hooks.quality.max_total_cycles`（当前值 4）
+- `quality.round ≥ 4` → `[CIRCUIT_BREAKER]` → PAUSED 等用户决策
 
 ---
 
@@ -252,7 +252,7 @@ hooks:
   quality:
     max_verify_retries: 5     # verify 失败重试上限
     max_review_retries: 3     # review 失败重试上限
-    max_total_cycles: 7       # QUALITY 总轮次上限
+    max_total_cycles: 4       # QUALITY 总轮次上限（4 轮修不好=方案/需求有问题）
     auto_fix: true
 ```
 

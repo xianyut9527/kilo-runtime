@@ -139,7 +139,7 @@ function main() {
     check('s11.delivering-done', r11.code === 0, r11.out);
   }
 
-  // ---------- 场景 12：QUALITY 熔断（quality.round >= max_total_cycles=7） ----------
+  // ---------- 场景 12：QUALITY 熔断（quality.round >= max_total_cycles=4） ----------
   {
     tc(['init', ID2]);
     patchContext(ID2, (ctx) => {
@@ -158,7 +158,7 @@ function main() {
     // 实际熔断：直接 patch quality.round 接近阈值后触发
     patchContext(ID2, (ctx) => {
       if (!ctx.quality) ctx.quality = {};
-      ctx.quality.round = 6; // 下次进入 QUALITY 时 +1 = 7 → 熔断
+      ctx.quality.round = 3; // 下次进入 QUALITY 时 +1 = 4 → 达到阈值熔断（config.yaml max_total_cycles=4）
     });
     // 需要一条边进入 QUALITY——但当前在 DELIVERING（上次 EXECUTING→QUALITY 已走）
     // 重置 current_stage 到 EXECUTING 来模拟重新进入
@@ -167,8 +167,8 @@ function main() {
     });
     const r12 = tr(ID2, 'EXECUTING', 'QUALITY');
     check('s12b.circuit-breaker', r12.code === 3 && /CIRCUIT_BREAKER/.test(r12.out), `exit=${r12.code} ${r12.out}`);
-    // 熔断后计数已持久化：quality.round=7
-    check('s12c.counter-persisted', qualityOf(ID2).round === 7, JSON.stringify(qualityOf(ID2)));
+    // 熔断后计数已持久化：quality.round=4
+    check('s12c.counter-persisted', qualityOf(ID2).round === 4, JSON.stringify(qualityOf(ID2)));
   }
 
   // ---------- 场景 13：T0 极速通道（无 PLANNING/QUALITY） ----------

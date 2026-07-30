@@ -368,7 +368,7 @@ overrides:
 hooks:
   quality:
     max_verify_retries: 3        # ← 从 5 改为 3
-    max_total_cycles: 7
+    max_total_cycles: 4          # ← 从 7 改为 4
 ```
 
 `graph.yaml` 不再重复声明 convergence（v6.1 删除展示副本）。
@@ -456,7 +456,7 @@ hooks:
   quality:
     max_verify_retries: 5      # verify 失败重试上限
     max_review_retries: 3      # review 失败重试上限
-    max_total_cycles: 7        # QUALITY 总轮次上限
+    max_total_cycles: 4        # QUALITY 总轮次上限（4 轮修不好=方案/需求有问题）
 ```
 
 ### tier_defaults.agents 的 key 命名规则（自动派生）
