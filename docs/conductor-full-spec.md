@@ -186,7 +186,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 > 
 > 该策略默认串行；`graph.yaml` / `multimodel-graph.yaml` 节点显式声明 `parallel: true`（当前仅 T3 子图 `MM_EXECUTING`）时，由 multiModel 按最大并行度执行；未声明 `parallel` 时默认串行，受上述零输出硬门约束。
 
-> **并发受限兜底**：对于默认串行序列，若底层执行器仍返回 `Tool execution aborted` / `Tool execution cancelled`，conductor 优先检查是否可通过 `after` 机制进一步拆分依赖链；无法避免时标记 `[AGENT_UNAVAILABLE]`，按节点 `on_fail` 派发。对于 `graph.yaml` 显式声明 `parallel: true` 的节点（当前仅 T3 子图 `MM_EXECUTING`），multiModel 按 `agent/multiModel.md` §异常处理 中的 `MM_EXECUTING 并发降级` 将剩余未启动 coder 切换为串行逐个启动，并标记 `[MM_DEGRADED_PARALLEL]`。
+> **并发受限兜底**：对于默认串行序列，若底层执行器仍返回 `Tool execution aborted` / `Tool execution cancelled`，conductor 优先检查是否可通过 `after` 机制进一步拆分依赖链；（abort 不可恢复，见铁律 #9；前置杜绝优先：prompt ≤1500 字符 + 串行策略）无法避免时标记 `[AGENT_UNAVAILABLE]`，按节点 `on_fail` 派发。对于 `graph.yaml` 显式声明 `parallel: true` 的节点（当前仅 T3 子图 `MM_EXECUTING`），multiModel 按 `agent/multiModel.md` §异常处理 中的 `MM_EXECUTING 并发降级` 将剩余未启动 coder 切换为串行逐个启动，并标记 `[MM_DEGRADED_PARALLEL]`。
    3. 执行 `post:N` 挂载点（同 pre 语义）
    4. **机械流转裁判**：流转前必须执行 `node scripts/transition-check.mjs <task_id> --from <当前节点> --to <目标节点>`；
       - exit 0 → 允许流转（`quality.round` 已由框架自动递增，conductor 禁止手工 set convergence/quality 计数字段）；
@@ -244,7 +244,7 @@ warning（非 blocker）→ 标记但放行
 
 ## 委派方法学（不变）
 
-T1+ 任务加载 coder 智能体时，委派包仍必须包含：
+T1+ 任务加载 coder 智能体时，委派包仍必须包含（**≤1500 字符**，见铁律 #9 prompt 长度硬门；超出必须精简——subagent 有独立 context window 自己读文件）：
 
 - **goal 单一**：一个委派包只解决一个可验证单元
 - **context_anchor 精确**：具体文件:行号或符号 UID
@@ -303,7 +303,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 | 触发源                                 | 信号                                                         | 说明                                                                                                 |
 | -------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | 智能体 wall-clock 超时                 | `[AGENT_TIMEOUT]`                                            | 见 §智能体加载流程 §超时守卫；分启动卡死（agent_startup_s）与执行超时（per_agent_s/stage_default_s） |
-| `task` 工具抛异常/启动失败/并发调度被中断（`Tool execution aborted` / `Tool execution cancelled`） | `[AGENT_UNAVAILABLE]`                                        | 启动失败或并发限制信号：优先检查是否可通过 `after` 机制避免；无法避免则降级串行重试 1 次；仍失败再按节点 on_fail 派发；区别于超时 |
+| `task` 工具抛异常/启动失败/并发调度被中断（`Tool execution aborted` / `Tool execution cancelled`） | `[AGENT_UNAVAILABLE]`                                        | abort 后会话断开几乎无法重试：**前置杜绝**（见铁律 #9 prompt ≤1500 字符硬门 + 铁律 #12 串行策略），不尝试重试，直接按节点 on_fail 派发或降级 conductor 内建；区别于超时 |
 | 智能体返回 `BLOCKED` / `NEEDS_CONTEXT` | 状态信号                                                     | 需补上下文或升级                                                                                     |
 | 硬门 gate FAIL                         | `[MISSING_MEMORY_WRITE]` 等                                  | gate 边定义的硬门                                                                                    |
 | 跳步/越界/自验污染                     | `[PROCESS_VIOLATION]` / `[SCOPE_CREEP]` / `[TRUST_TRANSFER]` | 即停，不走 on_fail（见 §流程级即停规则）                                                             |

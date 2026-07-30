@@ -134,11 +134,11 @@ for (const [name, desc] of descriptions) {
   // description 已包含角色定位+触发条件+核心流程+关键约束，足够稳定触发
   const newPrompt = desc;
 
-  // prompt 字段为空表示使用 description 作为唯一真相，不算 drift
-  if (currentPrompt === newPrompt || currentPrompt === '') {
-    if (verbose && currentPrompt === '') {
-      console.log(`[OK]   ${name}: prompt 为空，使用 description 作为唯一真相`);
-    } else if (verbose) {
+  // prompt 必须始终与 description 同步，不允许留空让扩展从 .md 派生。
+  // 扩展在创建 subagent 时从 .md 派生 prompt 可能对复杂 description 生成非法
+  // ModelMessage[] schema，导致 Tool execution aborted。因此强制写入 prompt。
+  if (currentPrompt === newPrompt) {
+    if (verbose) {
       console.log(`[OK]   ${name}: 已同步 (len=${newPrompt.length})`);
     }
   } else {

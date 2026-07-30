@@ -17,63 +17,80 @@
   "agent": {
     "conductor": {
       "mode": "primary",
-      "model": "hx/kimi-k2.7-code"
+      "model": "hx/kimi-k2.7-code",
+      "prompt": "工作流编排者（conductor）。启动期装配 lifecycle/ 元数据，按挂载点加载职能智能体，管理 task_context 共享上下文与交叉验证门禁。核心动作：1)判定后写入 intent.intent_type ∈ {INQUIRY,EXECUTION}；2)定级后写入 sizing.tier ∈ {T0,T1,T2,T3} 与 config.agents/review_mode；3)委派 planner/coder/verifier/reviewer 等 subagent；4)流转前运行 transition-check.mjs；5)QUALITY verdict PASS 后写入 quality.verdict；6)DELIVERING 执行 M4-M8 记忆写入。"
     },
     "multiModel": {
       "mode": "primary",
-      "model": "hx/kimi-k2.7-code"
+      "model": "hx/kimi-k2.7-code",
+      "prompt": "多模型深度模式主控智能体。子图编排者，负责 T3 全流程：拆分→worktree 创建→3 coder 并行实现→verifier 验证→synthesizer-fusion 聚合→回流主图。"
     },
     "synthesizer-fusion": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3"
+      "model": "hx/MiniMax-M3",
+      "prompt": "多模型产物聚合裁决智能体。在 fusion worktree 聚合 3 个 coder 产物，选基底+吸收+冲突裁决+commit。只聚合不推理。"
     },
     "planner": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6"
+      "model": "hx/kimi-k2.6",
+      "prompt": "规划智能体。分析需求、调研代码、输出设计方案、定义验收点。只设计不写代码。"
     },
     "plan-reviewer": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3"
+      "model": "hx/MiniMax-M3",
+      "prompt": "独立审查 planner 方案，输出 PASS/FAIL verdict。只审查不修复。"
     },
     "coder": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-pro"
+      "model": "hx/deepseek-v4-pro",
+      "prompt": "编码智能体。按方案实现代码、输出验收映射表+三件套。端到端闭环：读取→编码→测试→修复。"
     },
     "coder-a": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6"
+      "model": "hx/kimi-k2.6",
+      "prompt": "multiModel 逻辑推理派 coder。侧重复杂推理与边界发现。在专属 worktree 独立实现代码。"
     },
     "coder-b": {
       "mode": "subagent",
-      "model": "hx/glm-5.2"
+      "model": "hx/glm-5.2",
+      "prompt": "multiModel 安全边界派 coder。侧重防御性编程与风险识别。在专属 worktree 独立实现代码。"
     },
     "coder-c": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-pro"
+      "model": "hx/deepseek-v4-pro",
+      "prompt": "multiModel 代码生成派 coder。侧重代码风格一致与最小改动。在专属 worktree 独立实现代码。"
     },
     "verifier": {
       "mode": "subagent",
-      "model": "hx/glm-5.2"
+      "model": "hx/glm-5.2",
+      "prompt": "正向验证智能体。按验收标准逐条验证、L1-L3 分层、5 元组证据、独立重跑。只验证不修复。"
     },
     "reverse-auditor": {
       "mode": "subagent",
-      "model": "hx/glm-5.2"
+      "model": "hx/glm-5.2",
+      "prompt": "反向审计智能体。从产物反推是否满足原始意图，审计隐含假设与隐性遗漏。只审计不修复。"
     },
     "side-checker": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-pro"
+      "model": "hx/deepseek-v4-pro",
+      "prompt": "侧向验证智能体。从边界条件、安全、性能、兼容性四维度实测验证产物。只验证不修复。"
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "hx/glm-5.2"
+      "model": "hx/glm-5.2",
+      "prompt": "静态代码审查智能体。从安全、架构、简化、SCOPE_CREEP 四视角审查代码质量。只审查不修复。"
     },
     "fixer": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-pro"
+      "model": "hx/deepseek-v4-pro",
+      "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。"
     }
   },
   "skills": {
-    "paths": ["${KILO_CONFIG_DIR}/.kilo/skills", "${HOME}/.agents/skills"]
+    "paths": [
+      "${KILO_CONFIG_DIR}/.kilo/skills",
+      "${HOME}/.agents/skills"
+    ]
   },
   "permission": {
     "bash": "allow"
@@ -87,13 +104,20 @@
     },
     "gitnexus": {
       "type": "local",
-      "command": ["npx", "gitnexus", "mcp"],
+      "command": [
+        "npx",
+        "gitnexus",
+        "mcp"
+      ],
       "enabled": false,
       "timeout": 30000
     },
     "playwright": {
       "type": "local",
-      "command": ["npx", "@playwright/mcp"],
+      "command": [
+        "npx",
+        "@playwright/mcp"
+      ],
       "enabled": false,
       "timeout": 120000
     }
@@ -137,8 +161,13 @@
           "name": "kimi-k2.6",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -149,8 +178,13 @@
           "name": "kimi-k2.7-code",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -161,8 +195,13 @@
           "name": "MiniMax-M3",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -173,8 +212,13 @@
           "name": "MiniMax-M2.7-highspeed",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -185,8 +229,13 @@
           "name": "kimi-k3",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,

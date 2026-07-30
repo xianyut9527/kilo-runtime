@@ -17,10 +17,10 @@ subagent_type: reverse-auditor
 # 边界敏感、逻辑审查、反向推理能力倾向（从产物反推是否满足原始需求）
 
 # mount：挂载点声明
-#   at    挂载点（QUALITY 阶段 verify hook，在 verifier 完成后串行启动，避免 verify 组内 2 并发 task 触发底层执行器 Tool execution aborted；遵守零输出硬门；详见 agent/conductor.md §智能体加载规则）
+#   at    挂载点（QUALITY 阶段 verify hook，在 verifier 完成后串行启动，避免 verify 组内 2 并发 task 触发底层执行器 Tool execution aborted；遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）
 #   when  条件挂载（对照 config.agents.reverse_auditor 求值）；T2+ 默认 true，T0/T1 false
 mount:
-  # v2 响应式 Hooks：QUALITY 阶段 verify hook，在 verifier 完成后串行启动，避免 verify 组内 2 并发 task 触发底层执行器 Tool execution aborted（遵守零输出硬门；详见 agent/conductor.md §智能体加载规则）。
+  # v2 响应式 Hooks：QUALITY 阶段 verify hook，在 verifier 完成后串行启动，避免 verify 组内 2 并发 task 触发底层执行器 Tool execution aborted（遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）。
   - at: QUALITY
     hook: verify
     after: [verifier]
@@ -47,7 +47,7 @@ isolation:
 
 ## 智能体定位
 
-  **生命周期阶段**：`QUALITY`（verify hook，反向审计；条件加载 `?config.agents.reverse_auditor`，在 verifier 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §智能体加载规则）
+  **生命周期阶段**：`QUALITY`（verify hook，反向审计；条件加载 `?config.agents.reverse_auditor`，在 verifier 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §全局默认串行策略）
   **加载条件**：T2+（T0/T1 不加载）
 **模型**：见 `kilo.json` `agent.reverse-auditor.model`（严谨逻辑、反向推理能力需求）
 
@@ -139,6 +139,6 @@ issues:
 ## 硬规则
 
 - 必须从**原始意图**反推，不依赖正向验证结论
-- 必须与 verifier 串行执行，各自独立 context，不互相参考（在 verifier 完成后串行执行，默认串行策略详见 agent/conductor.md §智能体加载规则，遵守零输出硬门）
+- 必须与 verifier 串行执行，各自独立 context，不互相参考（在 verifier 完成后串行执行，默认串行策略详见 agent/conductor.md §全局默认串行策略，遵守零输出硬门）
 - 假设审计必须给出验证方法，不可只标注"需验证"
 - `failure_db` 命中同类失败模式时，必须检查产物是否复现该失败

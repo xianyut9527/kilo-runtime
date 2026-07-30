@@ -25,11 +25,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { VALID_STATUSES } from './task-context.mjs';
+import { createHash } from 'node:crypto';
+import { VALID_STATUSES } from './task-context-runtime.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
+const SCRIPTS_DIR = path.join(ROOT, 'scripts');
 const GRAPH_PATH = path.join(ROOT, 'lifecycle', 'graph.yaml');
 const SUBGRAPH_PATH = path.join(ROOT, 'lifecycle', 'multimodel-graph.yaml');
 const CONFIG_PATH = path.join(ROOT, 'lifecycle', 'config.yaml');
@@ -111,6 +114,15 @@ function parseDiversityMap(fmText) {
 
 const VERBOSE = process.argv.includes('--verbose');
 const RUNTIME = process.argv.includes('--runtime');
+const SYNC_PROMPT = process.argv.includes('--sync');
+const FAST_MODE = process.argv.includes('--fast');
+const FULL_MODE = process.argv.includes('--full');
+
+// 运行时模式与缓存模式正交：
+//   --runtime 仅做运行时 task_context 探针，不走静态检查。
+//   默认 / --full：完整静态检查（并更新 fingerprint 缓存）。
+//   --fast：指纹匹配则跳过静态检查；指纹不匹配或缓存 I/O 失败则降级为完整检查。
+//   --sync：在完整检查成功后额外运行 prompt 同步（install.ps1 已做，运行时按需触发）。
 
 
 const NODE_ON_FAIL = new Set(['abort', 'retry_once', 'degrade', 'escalate', 'pause']);
@@ -670,16 +682,151 @@ function runRuntimeMode() {
   }
 }
 
+// ============================================================
+// 报告
+// ============================================================
 
-if (RUNTIME) {
-  runRuntimeMode();
+function report() {
+  finalizeStaticRun();
+  let nPass = 0, nFail = 0, nWarn = 0;
+  for (const r of results) {
+    if (r.level === 'PASS') { nPass++; if (!VERBOSE && r.detail === '') continue; }
+    if (r.level === 'FAIL') nFail++;
+    if (r.level === 'WARN') nWarn++;
+    if (r.level === 'PASS' && !VERBOSE) continue;
+    process.stdout.write(`${r.level} ${r.name}${r.detail ? ' — ' + r.detail : ''}\n`);
+  }
+  process.stdout.write(`\nSUMMARY: ${nPass} PASS / ${nFail} FAIL / ${nWarn} WARN\n`);
+  if (nFail > 0) {
+    process.stderr.write('[ASSEMBLY_FAIL] 装配校验未通过，修复上述 FAIL 后重跑\n');
+    process.exit(1);
+  }
   process.exit(0);
 }
 
 // ============================================================
-// 加载输入
+// 指纹缓存（静态装配缓存）
 // ============================================================
 
+const CACHE_DIR = path.join(os.tmpdir(), 'kilo');
+const FINGERPRINT_PATH = path.join(CACHE_DIR, 'lifecycle-doctor.fingerprint.json');
+
+const FINGERPRINT_SCOPES = [
+  { type: 'dir', path: path.join(ROOT, 'lifecycle') },
+  { type: 'dir', path: path.join(ROOT, 'agent') },
+  { type: 'dir', path: path.join(ROOT, '.kilo', 'instructions') },
+  { type: 'dir', path: path.join(ROOT, 'scripts') },
+  { type: 'file', path: path.join(ROOT, 'kilo.json') },
+];
+
+function ensureCacheDir() {
+  try { fs.mkdirSync(CACHE_DIR, { recursive: true }); return true; } catch { return false; }
+}
+
+function listFiles(dir, base = dir, out = []) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    const rel = path.relative(base, full).replace(/\\/g, '/');
+    if (entry.isDirectory()) listFiles(full, base, out);
+    else if (entry.isFile()) out.push(rel);
+  }
+  return out.sort();
+}
+
+function hashFile(filePath) {
+  try { const data = fs.readFileSync(filePath); return createHash('sha256').update(data).digest('hex'); } catch { return null; }
+}
+
+function computeFingerprint() {
+  const parts = [];
+  for (const scope of FINGERPRINT_SCOPES) {
+    if (scope.type === 'file') {
+      const hash = hashFile(scope.path);
+      if (hash === null) return null;
+      parts.push(`${path.relative(ROOT, scope.path).replace(/\\/g, '/')}:${hash}`);
+    } else {
+      for (const rel of listFiles(scope.path)) {
+        const hash = hashFile(path.join(scope.path, rel));
+        if (hash === null) return null;
+        parts.push(`${rel}:${hash}`);
+      }
+    }
+  }
+  return createHash('sha256').update(parts.join('\n')).digest('hex');
+}
+
+function readFingerprintCache() {
+  try {
+    const data = JSON.parse(fs.readFileSync(FINGERPRINT_PATH, 'utf8'));
+    return data && typeof data.fingerprint === 'string' ? data.fingerprint : null;
+  } catch { return null; }
+}
+
+function writeFingerprintCache(fingerprint) {
+  if (!ensureCacheDir()) return false;
+  try {
+    const tmp = FINGERPRINT_PATH + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ fingerprint, createdAt: Date.now(), version: 1 }, null, 2) + '\n', 'utf8');
+    try { fs.unlinkSync(FINGERPRINT_PATH); } catch {}
+    fs.renameSync(tmp, FINGERPRINT_PATH);
+    return true;
+  } catch { return false; }
+}
+
+function checkFingerprint() {
+  const current = computeFingerprint();
+  if (current === null) return { match: false, reason: 'fingerprint computation failed' };
+  const cached = readFingerprintCache();
+  if (cached === null) return { match: false, reason: 'no cached fingerprint' };
+  if (current === cached) return { match: true, fingerprint: current };
+  return { match: false, reason: 'fingerprint mismatch' };
+}
+
+function syncAgentPrompts() {
+  const syncScript = path.join(SCRIPTS_DIR, 'sync-agent-prompt.mjs');
+  const result = spawnSync(process.execPath, [syncScript], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 });
+  if (result.error) { fail('sync.prompt', `sync-agent-prompt.mjs 调用失败: ${result.error.message}`); return; }
+  if (result.status !== 0) { fail('sync.prompt', `sync-agent-prompt.mjs 退出码 ${result.status}: ${(result.stderr || '').trim().slice(0, 200)}`); return; }
+  const summaryLine = (result.stdout || '').trim().split(/\r?\n/).find(l => l.startsWith('[SUMMARY]'));
+  pass('sync.prompt', summaryLine ? summaryLine.replace('[SUMMARY] ', 'prompt 同步 — ') : 'agent.prompt 已同步');
+}
+
+function finalizeStaticRun() {
+  if (FULL_MODE || FAST_MODE) {
+    const fingerprint = computeFingerprint();
+    if (fingerprint !== null) {
+      if (writeFingerprintCache(fingerprint)) pass('cache.fingerprint', `fingerprint updated: ${fingerprint.slice(0, 16)}...`);
+      else warn('cache.fingerprint', 'failed to write fingerprint cache (proceeding)');
+    }
+  }
+  if (SYNC_PROMPT) syncAgentPrompts();
+}
+
+// ============================================================
+// 启动调度（在静态检查之前执行）
+// ============================================================
+
+if (RUNTIME) { runRuntimeMode(); process.exit(0); }
+
+if (FAST_MODE) {
+  const fp = checkFingerprint();
+  if (fp.match) {
+    process.stdout.write(`CACHE_HIT ${fp.fingerprint}\n`);
+    process.stdout.write('SUMMARY: 0 PASS / 0 FAIL / 0 WARN (fingerprint cache)\n');
+    process.exit(0);
+  }
+  if (VERBOSE) process.stdout.write(`CACHE_MISS ${fp.reason}\n`);
+}
+
+if (SYNC_PROMPT && FAST_MODE && checkFingerprint().match) {
+  process.stdout.write('CACHE_HIT but --sync requested; running full checks + prompt sync\n');
+}
+
+
+// 完整静态检查成功后，按模式更新缓存 / 同步 prompt，然后报告
+// 注意：执行流会顺序运行下面的静态检查，最终到达本段。
 const graphText = readText(GRAPH_PATH);
 if (!graphText) {
   fail('input.graph', `无法读取 ${GRAPH_PATH}`);
@@ -1257,25 +1404,5 @@ if (kj) {
   }
 }
 
-// ============================================================
-// 报告
-// ============================================================
-
-function report() {
-  let nPass = 0, nFail = 0, nWarn = 0;
-  for (const r of results) {
-    if (r.level === 'PASS') { nPass++; if (!VERBOSE && r.detail === '') continue; }
-    if (r.level === 'FAIL') nFail++;
-    if (r.level === 'WARN') nWarn++;
-    if (r.level === 'PASS' && !VERBOSE) continue;
-    process.stdout.write(`${r.level} ${r.name}${r.detail ? ' — ' + r.detail : ''}\n`);
-  }
-  process.stdout.write(`\nSUMMARY: ${nPass} PASS / ${nFail} FAIL / ${nWarn} WARN\n`);
-  if (nFail > 0) {
-    process.stderr.write('[ASSEMBLY_FAIL] 装配校验未通过，修复上述 FAIL 后重跑\n');
-    process.exit(1);
-  }
-  process.exit(0);
-}
-
+// 静态检查代码块结束后调用 report()
 report();

@@ -32,7 +32,7 @@ QUALITY 不是"一个阶段做三件事"，而是**一个响应式容器，内�
 | `useEffect` 按声明顺序执行，无编号 | `order: 10` 绝对坐标 | `hook` 类型定义阶段顺序 |
 | `useEffect(fn, [deps])` deps 变化才执行 | 无 deps 机制 | `deps: [field]` 响应式触发 |
 | 插入新 hook 只写一行，不碰其他代码 | `order: 15` 要知道前后编号 | `after: [agent]` 只引用前驱 |
-| 同类 hook 隐含串行/顺序语义 | 靠数字碰巧相同实现并行 | `hook: verify` 默认串行启动组（详见 agent/conductor.md §智能体加载规则） |
+| 同类 hook 隐含串行/顺序语义 | 靠数字碰巧相同实现并行 | `hook: verify` 默认串行启动组（详见 agent/conductor.md §全局默认串行策略） |
 
 **核心原则**：hook 类型（`verify` / `fix` / `review`）**本身就定义了执行顺序**——`verify → fix → review → fix` 循环是框架内置的，不需要数字重复表达。同 hook 类型默认按 `agent/conductor.md` §智能体加载规则串行启动（无 `after` 时默认串行，按 agent 文件名字典序逐个启动，遵守零输出硬门）；需要顺序时声明 `after: [agent-name]`。仅 `graph.yaml` 声明 `parallel: true` 的节点（如 T3 子图 `MM_EXECUTING`）保留最大并行语义。详见 `agent/conductor.md` §智能体加载规则。
 
@@ -153,7 +153,7 @@ mount:
 ```js
 // 伪代码：框架内部循环逻辑（hook 类型定义顺序，无绝对编号）
 while (round < config.hooks.quality.max_total_cycles) {
-  // Step 1: verify hooks 串行启动（hook: verify 组，默认串行策略，详见 agent/conductor.md §智能体加载规则）
+  // Step 1: verify hooks 串行启动（hook: verify 组，默认串行策略，详见 agent/conductor.md §全局默认串行策略）
   const verifyResults = await runSerially(
     agentsWithHook('verify').map(a => () => a.run(executionCodeOrAnalysis, plan))
   );
@@ -369,3 +369,4 @@ quality_gate:
 5. **不跳过 review**：即使 verify 连续 FAIL 后最终 PASS，也必须经过 review hooks 才能离开 QUALITY
 6. **CIRCUIT_BREAKER 不阻塞交付**：熔断后流转到 DELIVERING，但标记 `[QUALITY_CB]`，由用户决策是否继续
 7. **INQUIRY 模式编码禁令**：INQUIRY 模式下 QUALITY 全生命周期中，修复角色 **禁止调用修改性工具**。修复角色只输出修正后的分析文本，不输出代码。
+8. **离开 QUALITY 硬门**：进入下阶段前必须写入 `quality.verdict` ∈ {PASS, CIRCUIT_BREAKER}。缺 verdict 时 transition-check.mjs 报 `[MISSING_QUALITY_VERDICT]` 拒绝流转，确保 T1/T2/T3 不能绕过 QUALITY。

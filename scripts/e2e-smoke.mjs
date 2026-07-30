@@ -23,7 +23,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { contextPath, readContext, writeContext } from './task-context.mjs';
+import { contextPath, readContext, writeContext } from './task-context-runtime.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TC = path.join(__dirname, 'task-context.mjs');

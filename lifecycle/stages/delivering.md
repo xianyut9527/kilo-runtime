@@ -72,6 +72,11 @@ token_budget: 6000
 
 > 未执行 → `[MISSING_MEMORY_WRITE]` 阻塞交付。
 
+### 交付门禁不可跳过
+
+- `DELIVERING → DONE` 由 `transition-check.mjs` 的 `MEMORY_WRITE_COMPLETE` gate 守卫。`memory_write_status` 必须为 `OK` 或 `DEGRADED`，或 `memory_write_complete === true`。`MISSING` 或其他任意值均会被拒绝，报 `[MISSING_MEMORY_WRITE]`。
+- 任何从 DELIVERING 出发的 transition 必须满足 `task_context.current_stage === 'DELIVERING'` 的阶段顺序硬门，防止未进入 DELIVERING 直接跳到 DONE。
+
 #### 4. 分支收尾协议（仅 EXECUTION）
 1. git status 清理（无未 staged 调试代码）
 2. 单提交对应单定级单元

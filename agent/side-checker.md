@@ -16,11 +16,11 @@ subagent_type: side-checker
 # 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
 
 # mount：挂载点声明
-#   at    挂载点（QUALITY 阶段 review hook，在 reviewer 完成后串行启动，避免 review 组内 2 并发 task 触发底层执行器 Tool execution aborted。reviewer 本身已 after: [verifier]，因此 review 组整体在 verify 组完成后才启动；遵守零输出硬门；详见 agent/conductor.md §智能体加载规则）
+#   at    挂载点（QUALITY 阶段 review hook，在 reviewer 完成后串行启动，避免 review 组内 2 并发 task 触发底层执行器 Tool execution aborted。reviewer 本身已 after: [verifier]，因此 review 组整体在 verify 组完成后才启动；遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）
 #   when  条件挂载（对照 config.agents.side_checker 求值）；T2+ 默认 true，T0/T1 false
 mount:
   # v2 响应式 Hooks：QUALITY 阶段 review hook，verify 全 PASS 后启动。
-  # 在 reviewer 完成后串行启动，作为 review hook 另一成员（避免 review 组内 2 并发 task 触发底层执行器 Tool execution aborted；遵守零输出硬门；详见 agent/conductor.md §智能体加载规则）。
+  # 在 reviewer 完成后串行启动，作为 review hook 另一成员（避免 review 组内 2 并发 task 触发底层执行器 Tool execution aborted；遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）。
   - at: QUALITY
     hook: review
     trigger: afterPass
@@ -49,7 +49,7 @@ isolation:
 
 ## 智能体定位
 
-  **生命周期阶段**：`QUALITY`（review hook，侧向验证；条件加载 `?config.agents.side_checker`，在 reviewer 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §智能体加载规则）
+  **生命周期阶段**：`QUALITY`（review hook，侧向验证；条件加载 `?config.agents.side_checker`，在 reviewer 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §全局默认串行策略）
 **加载条件**：T2+（T0/T1 不加载）
 **模型**：见 `kilo.json` `agent.side-checker.model`（边界/安全/性能多角度需要强推理能力需求）
 
@@ -148,5 +148,5 @@ issues:
 - 必须覆盖四个维度，即使某些维度"未涉及"也要显式标注
 - 安全问题一律为 blocker（不打折）
 - 性能退化 > 20% 标记为 blocker
-- 必须与 reviewer 串行执行，各自独立 context，不互相参考（在 reviewer 完成后串行执行，默认串行策略详见 agent/conductor.md §智能体加载规则，遵守零输出硬门）
+- 必须与 reviewer 串行执行，各自独立 context，不互相参考（在 reviewer 完成后串行执行，默认串行策略详见 agent/conductor.md §全局默认串行策略，遵守零输出硬门）
 - 不依赖正向验证结论，独立从侧向角度发现问题

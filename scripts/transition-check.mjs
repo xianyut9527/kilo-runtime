@@ -45,7 +45,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { readContext, writeContext, appendTransitionLog, readHooksFromConfig as tcReadHooks } from './task-context.mjs';
+import { readContext, writeContext, appendTransitionLog, readHooksFromConfig as tcReadHooks } from './task-context-runtime.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
@@ -355,6 +355,29 @@ function main() {
     die(1, `[PROCESS_VIOLATION] task_context not initialized for task_id=${taskId}. Run: node scripts/task-context.mjs init ${taskId}`);
   }
   const vars = resolveVars(ctx);
+
+  // 阶段顺序硬门：FROM 必须等于 task_context.current_stage（已设置时），防止跨阶段跳跃
+  const actualCurrentStage = ctx.current_stage;
+  if (actualCurrentStage && actualCurrentStage !== 'START' && actualCurrentStage !== FROM) {
+    die(1, `[PROCESS_VIOLATION] stage mismatch: transition claims ${FROM} -> ${TO}, but task_context.current_stage="${actualCurrentStage}"。必须先经 transition-check 逐步流转，不得跳跃。`);
+  }
+
+  // 关键字段缺失硬门（在求值 when 之前拒绝，给出明确错误）
+  if (FROM === 'INTENT') {
+    if (vars.intent_type !== 'INQUIRY' && vars.intent_type !== 'EXECUTION') {
+      die(1, `[PROCESS_VIOLATION] INTENT 阶段未写入合法 intent_type（当前=${JSON.stringify(vars.intent_type)}）。必须执行 task-context.mjs set <task_id> intent.intent_type '<INQUIRY|EXECUTION>' --agent conductor`);
+    }
+  }
+  if (FROM === 'SIZING') {
+    if (!['T0', 'T1', 'T2', 'T3'].includes(vars.tier)) {
+      die(1, `[PROCESS_VIOLATION] SIZING 阶段未写入合法 tier（当前=${JSON.stringify(vars.tier)}）。必须执行 task-context.mjs set <task_id> sizing.tier '<T0|T1|T2|T3>' --agent conductor`);
+    }
+  }
+  if (FROM === 'QUALITY') {
+    if (vars.quality_verdict !== 'PASS' && vars.quality_verdict !== 'CIRCUIT_BREAKER') {
+      die(1, `[MISSING_QUALITY_VERDICT] QUALITY 阶段未写入合法 verdict（当前=${JSON.stringify(vars.quality_verdict)}）。T1/T2/T3 必须经过 QUALITY hooks（verify/review/fix 循环），写入 quality.verdict ∈ {PASS, CIRCUIT_BREAKER} 后才能离开。`);
+    }
+  }
 
   // 多边求值：找第一条 when 满足的边；无 when 的边直接匹配
   let edge = null;

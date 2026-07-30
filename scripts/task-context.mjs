@@ -46,10 +46,14 @@ import os from 'node:os';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { readContext, writeContext, appendTransitionLog, contextPath, buildInitialContext,
+         VALID_STATUSES, VERIFICATION_FIELDS, QUALITY_ROUND_FIELD, CURRENT_STAGE_FIELD,
+         TOTAL_ROUNDS_FIELD, readHooksFromConfig, readConvergenceFromConfig,
+         assertValidTaskId, getByPath, setByPath, pathAllowedBy, pathPrefix, parseValue,
+         extractFrontmatter, die } from './task-context-runtime.mjs';
+
 // 脚本所在目录（ESM 无 __dirname）
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// 阈值权威来源：lifecycle/config.yaml（v2 quality.max_total_cycles 来自 hooks.quality）
-const CONVERGENCE_SOURCE = path.resolve(__dirname, '..', 'lifecycle', 'config.yaml');
 
 // ============================================================
 // 写权限矩阵（v6.2 派生化：启动时扫描 agent/*.md frontmatter
@@ -62,12 +66,6 @@ const CONVERGENCE_SOURCE = path.resolve(__dirname, '..', 'lifecycle', 'config.ya
 // ============================================================
 
 const AGENT_DIR = path.resolve(__dirname, '..', 'agent');
-
-// 从 agent .md 全文提取 frontmatter 块（首个 --- ... --- 之间）
-function extractFrontmatter(text) {
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  return m ? m[1] : null;
-}
 
 // 在 frontmatter 块内提取 task_context.write 列表。
 // 支持行内数组（write: [a, b]）与多行列表（write:\n  - a\n  - b）两种 YAML 子集。
@@ -140,141 +138,26 @@ function deriveWriteMatrix() {
 
 const WRITE_MATRIX = deriveWriteMatrix();
 
-// F2 invariant：WRITE_MATRIX.conductor 必须包含 memory_injection（单数）
-// 派生失败（agent/conductor.md frontmatter 被破坏/缺失）→ 启动即报错，fail-closed
-if (!Array.isArray(WRITE_MATRIX.conductor) || !WRITE_MATRIX.conductor.includes('memory_injection')) {
-  throw new Error('invariant: WRITE_MATRIX.conductor must include "memory_injection" (derived from agent/conductor.md frontmatter task_context.write)');
+// 编译期校验：派生矩阵中 conductor 必须包含关键字段；如 frontmatter 被破坏则启动即报错，fail-closed
+const REQUIRED_CONDUCTOR_FIELDS = [
+  'memory_injection',
+  'current_stage',
+  'intent',
+  'sizing',
+  'status',
+];
+if (!Array.isArray(WRITE_MATRIX.conductor)) {
+  throw new Error('invariant: WRITE_MATRIX.conductor must be an array (derived from agent/conductor.md frontmatter task_context.write)');
 }
-
-// 硬门 1：execution.verification 与 verification.forward 仅 verifier 可写
-// 其他 agent 写入 → [TRUST_TRANSFER] + exit 1
-// verification.reverse/side/review 由 WRITE_MATRIX 按 agent 单独放行，
-// 不在此处硬门触发。
-// execution.verification 与 verification.forward 是 verifier 独占产出，
-// 合并为 "verification 硬门"。
-const VERIFICATION_FIELDS = Object.freeze([
-  // 硬门 1：仅 verifier 可写。execution.verification 与 verification.forward
-  // 属于 verifier 独占产物，其他 agent 写入触发 [TRUST_TRANSFER]。
-  // verification.reverse/side/review 由 WRITE_MATRIX 按 agent 放行，
-  // 不再纳入此处硬门。
-  'execution.verification',
-  'verification.forward',
-]);
-
-// 硬门 2：quality.round 仅 conductor 可写
-// 其他 agent 写入 → [PROCESS_VIOLATION] + exit 1
-const QUALITY_ROUND_FIELD = 'quality.round';
-
-// 向后兼容别名：旧 assert convergence 仍接受，但内部检查已迁移到 quality/mm_fusion
-const TOTAL_ROUNDS_FIELD = 'convergence.total_rounds';
-
-// task_context.status 合法取值（保留小写初始值 initialized，流转后由 conductor 写入大写）
-const VALID_STATUSES = Object.freeze([
-  'initialized',
-  'RUNNING',
-  'PAUSED',
-  'DEGRADED',
-  'DONE',
-  'FAILED',
-]);
-
-// 文件位置：$env:TEMP/kilo/task_context_<task_id>.json（Windows）
-//          /tmp/kilo/task_context_<task_id>.json（Unix）
-function contextPath(taskId) {
-  return path.join(os.tmpdir(), 'kilo', `task_context_${taskId}.json`);
-}
-
-// 白名单校验 taskId：仅允许字母数字下划线连字符，长度 1-64
-function assertValidTaskId(taskId) {
-  if (typeof taskId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(taskId)) {
-    die(1, `Error: invalid task_id "${taskId}". Allowed characters: A-Z, a-z, 0-9, underscore (_), hyphen (-). Max length 64.`);
+for (const f of REQUIRED_CONDUCTOR_FIELDS) {
+  if (!WRITE_MATRIX.conductor.includes(f)) {
+    throw new Error(`invariant: WRITE_MATRIX.conductor must include "${f}" (derived from agent/conductor.md frontmatter task_context.write)`);
   }
-}
-
-// 从 lifecycle/config.yaml 读取响应式 Hooks 阈值（v2：hooks.quality.max_total_cycles）
-// 失败降级到 7
-function readHooksFromConfig() {
-  try {
-    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
-    const mtc = text.match(/max_total_cycles:\s*(\d+)/);
-    return {
-      max_total_cycles: mtc ? parseInt(mtc[1], 10) : 7,
-    };
-  } catch {
-    return { max_total_cycles: 7 };
-  }
-}
-
-// 从 lifecycle/config.yaml 读取子图融合阈值（保留 convergence.mm_fusion_max_rounds）
-function readConvergenceFromConfig() {
-  try {
-    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
-    const mm = text.match(/mm_fusion_max_rounds:\s*(\d+)/);
-    return {
-      mm_fusion_max_rounds: mm ? parseInt(mm[1], 10) : 3,
-    };
-  } catch {
-    return { mm_fusion_max_rounds: 3 };
-  }
-}
-
-// 初始 task_context 结构（按 conductor.md §task_context 结构摘要）
-function buildInitialContext(taskId) {
-  const conv = readConvergenceFromConfig();
-  const hooks = readHooksFromConfig();
-  return {
-    task_id: taskId,
-    intent: {},
-    sizing: {},
-    config: {
-      // 仅差异化开关（恒定挂载智能体无 when，不依赖 config.agents，由图拓扑限定）
-      // SIZING 按 lifecycle/config.yaml tier_defaults 覆盖写入
-      agents: {
-        reverse_auditor: false,
-        side_checker: false,
-        synthesizer_fusion: false,
-      },
-      review_mode: 'none',
-      custom_overrides: {},
-    },
-    plan: {},
-    plan_review: {},
-    execution: {},
-    verification: {
-      forward: null,
-      reverse: null,
-      side: null,
-      review: null,
-    },
-    quality: {
-      round: 0,
-      max_rounds: hooks.max_total_cycles,
-      status: 'running',
-      verify: { forward: {}, reverse: {} },
-      review: { result: {}, side: {} },
-      fix: { round: 0, issues_fixed: [], issues_remaining: [] },
-      verdict: 'PENDING',
-    },
-    fixing_history: [],
-    memory_injection: {},
-    status: 'initialized',
-    current_stage: 'START',      // v2.1 新增：初始阶段为 START，流转由 transition-check.mjs 机械递增
-    transition_log: [],
-    convergence: {
-      mm_fusion_rounds: 0,
-      mm_fusion_max_rounds: conv.mm_fusion_max_rounds,
-    },
-  };
 }
 
 // ============================================================
 // 工具
 // ============================================================
-
-function die(code, msg) {
-  process.stderr.write(msg + '\n');
-  process.exit(code);
-}
 
 function usage() {
   const txt = [
@@ -282,6 +165,7 @@ function usage() {
     '  node scripts/task-context.mjs init <task_id>',
     '  node scripts/task-context.mjs get <task_id> <dot.path>',
     "  node scripts/task-context.mjs set <task_id> <dot.path> <json-value> --agent <name>",
+    "  node scripts/task-context.mjs set <task_id> --batch '<json-object>' --agent <name>",
     '  node scripts/task-context.mjs validate <task_id>',
     '  node scripts/task-context.mjs assert <task_id> <type> [args...]',
     '',
@@ -308,198 +192,11 @@ function usage() {
   process.exit(0);
 }
 
-// 解析 dot path 段。支持 execution.diffs[current_unit] → ["execution","diffs[current_unit]"]
-// 简化：拆 dot；首段为顶层 key，后续作为该 key 下的子路径。
-function pathPrefix(dotPath) {
-  // 取第一段作为顶层前缀
-  const idx = dotPath.indexOf('.');
-  if (idx === -1) return dotPath;
-  return dotPath.slice(0, idx);
-}
-
-// 判断 dotPath 是否在 matrix 字段的允许范围内。
-// 规则：dotPath === pattern，或 dotPath 以 pattern + "." 开头，
-// 或 dotPath 以 pattern + "[" 开头（处理 execution.diffs[current_unit]）。
-function pathAllowedBy(dotPath, pattern) {
-  if (dotPath === pattern) return true;
-  if (dotPath.startsWith(pattern + '.')) return true;
-  if (dotPath.startsWith(pattern + '[')) return true;
-  return false;
-}
-
 // 解析 --agent 参数（可能在任意位置）
 function parseAgent(args) {
   const idx = args.indexOf('--agent');
   if (idx === -1 || idx + 1 >= args.length) return null;
   return args[idx + 1];
-}
-
-// ============================================================
-// 读 / 写 task_context.json
-// ============================================================
-
-function readContext(taskId) {
-  const p = contextPath(taskId);
-  if (!fs.existsSync(p)) {
-    die(1, `Error: task_context not found for task_id=${taskId}`);
-  }
-  let raw;
-  try {
-    raw = fs.readFileSync(p, 'utf8');
-  } catch (e) {
-    die(1, `Error: cannot read task_context for task_id=${taskId}: ${e.message}`);
-  }
-  // 剥离 UTF-8 BOM（外部工具可能以 UTF-8 with BOM 写入）
-  if (raw.charCodeAt(0) === 0xFEFF) {
-    raw = raw.slice(1);
-  }
-  try {
-    return { ctx: JSON.parse(raw), path: p };
-  } catch (e) {
-    die(1, `Error: invalid JSON in task_context for task_id=${taskId}: ${e.message}`);
-  }
-}
-
-function writeContext(taskId, ctx) {
-  const p = contextPath(taskId);
-  // F1 二次校验：确保解析后的路径仍在安全前缀内
-  const resolved = path.resolve(p);
-  const tmpdir = path.resolve(os.tmpdir(), 'kilo');
-  if (!resolved.startsWith(tmpdir + path.sep)) {
-    die(1, `Error: path traversal detected for task_id=${taskId}`);
-  }
-  try {
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-  } catch (e) {
-    die(1, `Error: cannot create task_context directory for task_id=${taskId}: ${e.message}`);
-  }
-  // 原子写：同目录 tmp 文件 + rename，确保同卷且不掉电丢失
-  // Windows 兼容：fs.renameSync 在目标文件存在时 EPERM，先尝试 unlink 目标
-  const tmpPath = p + '.tmp';
-  try {
-    fs.writeFileSync(tmpPath, JSON.stringify(ctx, null, 2) + '\n', 'utf8');
-    // Windows: 先删除目标（若存在），再 rename
-    try { fs.unlinkSync(p); } catch { /* 目标不存在则忽略 */ }
-    fs.renameSync(tmpPath, p);
-  } catch (e) {
-    // 兜底：rename 失败时直接复制 tmp 到目标再删 tmp
-    try {
-      fs.copyFileSync(tmpPath, p);
-      fs.unlinkSync(tmpPath);
-    } catch (e2) {
-      die(1, `Error: cannot write task_context for task_id=${taskId}: ${e.message}`);
-    }
-  }
-}
-
-// 追加一条流转记录（供 transition-check.mjs 等调用）
-function appendTransitionLog(ctx, from, to) {
-  if (!Array.isArray(ctx.transition_log)) {
-    ctx.transition_log = [];
-  }
-  ctx.transition_log.push({ from, to, timestamp: Date.now() });
-}
-
-// 按 dot path 取值（支持 a.b.c 与 a.b[0] 形式）
-function getByPath(obj, dotPath) {
-  // 拆 a.b[0].c 为段：a, b[0], c
-  const segments = [];
-  let buf = '';
-  for (let i = 0; i < dotPath.length; i++) {
-    const ch = dotPath[i];
-    if (ch === '.') {
-      if (buf.length > 0) {
-        segments.push(buf);
-        buf = '';
-      }
-    } else {
-      buf += ch;
-    }
-  }
-  if (buf.length > 0) segments.push(buf);
-
-  let cur = obj;
-  for (const seg of segments) {
-    if (cur === null || cur === undefined) return undefined;
-    // 段中可能含 [N]（仅一个），如 execution.diffs[current_unit]
-    const m = seg.match(/^([^\[]+)(?:\[(\d+)\])?$/);
-    if (!m) return undefined;
-    const key = m[1];
-    const idx = m[2];
-    if (typeof cur !== 'object' || cur === null) return undefined;
-    if (!(key in cur)) return undefined;
-    cur = cur[key];
-    if (idx !== undefined) {
-      if (!Array.isArray(cur)) return undefined;
-      cur = cur[Number(idx)];
-    }
-  }
-  return cur;
-}
-
-// 按 dot path 写入（支持 a.b.c 形式创建中间对象）
-function setByPath(obj, dotPath, value) {
-  // 拆段（同 getByPath）
-  const segments = [];
-  let buf = '';
-  for (let i = 0; i < dotPath.length; i++) {
-    const ch = dotPath[i];
-    if (ch === '.') {
-      if (buf.length > 0) {
-        segments.push(buf);
-        buf = '';
-      }
-    } else {
-      buf += ch;
-    }
-  }
-  if (buf.length > 0) segments.push(buf);
-
-  let cur = obj;
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    const m = seg.match(/^([^\[]+)(?:\[(\d+)\])?$/);
-    if (!m) {
-      die(1, `Error: invalid path segment "${seg}"`);
-    }
-    const key = m[1];
-    const idx = m[2];
-    const isLast = i === segments.length - 1;
-    if (isLast) {
-      if (idx === undefined) {
-        cur[key] = value;
-      } else {
-        if (!Array.isArray(cur[key])) {
-          die(
-            1,
-            `Error: path segment "${seg}" expects an array, got ${typeof cur[key]}`
-          );
-        }
-        cur[key][Number(idx)] = value;
-      }
-      return;
-    }
-    // 中间段：若不存在则创建对象
-    if (idx === undefined) {
-      if (
-        !(key in cur) ||
-        cur[key] === null ||
-        typeof cur[key] !== 'object' ||
-        Array.isArray(cur[key])
-      ) {
-        cur[key] = {};
-      }
-      cur = cur[key];
-    } else {
-      if (!Array.isArray(cur[key])) {
-        die(
-          1,
-          `Error: path segment "${seg}" expects an array, got ${typeof cur[key]}`
-        );
-      }
-      cur = cur[key];
-    }
-  }
 }
 
 // ============================================================
@@ -517,22 +214,31 @@ function cmdInit(taskId) {
     files = [];
   }
 
-  // GC：清理 initialized 状态超过 24h 的旧 task_context 残留
+  // GC 策略：
+  //   initialized 状态超过 24h → 清理（遗留的空壳）
+  //   DONE / FAILED 状态超过 7 天 → 清理（已完成的历史任务）
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  const GC_EXPIRY = {
+    initialized: ONE_DAY_MS,
+    DONE: SEVEN_DAYS_MS,
+    FAILED: SEVEN_DAYS_MS,
+  };
   for (const file of files) {
     if (!file.startsWith('task_context_') || !file.endsWith('.json')) continue;
     const filePath = path.join(tmpdir, file);
     try {
       const raw = fs.readFileSync(filePath, 'utf8');
       const otherCtx = JSON.parse(raw);
-      if (otherCtx.status === 'initialized') {
-        const stat = fs.statSync(filePath);
-        if (Date.now() - stat.mtimeMs > ONE_DAY_MS) {
-          try {
-            fs.unlinkSync(filePath);
-          } catch {
-            // 删除失败不阻塞
-          }
+      const status = otherCtx.status;
+      const expiry = GC_EXPIRY[status];
+      if (expiry === undefined) continue; // RUNNING / PAUSED / DEGRADED 不清理
+      const stat = fs.statSync(filePath);
+      if (Date.now() - stat.mtimeMs > expiry) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch {
+          // 删除失败不阻塞
         }
       }
     } catch {
@@ -562,43 +268,110 @@ function cmdGet(taskId, dotPath) {
   process.exit(0);
 }
 
-function cmdSet(taskId, dotPath, rawValue, agent) {
-  assertValidTaskId(taskId);
+function validateSingleWrite(agent, dotPath, value) {
   // 硬门 3：--agent 必须存在且在矩阵名单
   if (!agent) {
-    die(2, 'Error: --agent <name> is required for set');
+    return { allowed: false, code: 2, message: 'Error: --agent <name> is required for set' };
   }
   if (!Object.prototype.hasOwnProperty.call(WRITE_MATRIX, agent)) {
-    die(
-      1,
-      `Error: agent "${agent}" is not in the write matrix. Allowed: ${Object.keys(
-        WRITE_MATRIX
-      ).join(', ')}`
-    );
+    return {
+      allowed: false,
+      code: 1,
+      message: `Error: agent "${agent}" is not in the write matrix. Allowed: ${Object.keys(WRITE_MATRIX).join(', ')}`,
+    };
   }
 
   // 硬门 1：verification 硬门 — 非 verifier 一律拒绝
-  // matrix 中 verifier 独占 verification.forward 与 execution.verification；
-  // verification.reverse/side/review 由 WRITE_MATRIX 按 agent 单独放行，
-  // 不进入本硬门。
   if (VERIFICATION_FIELDS.some((f) => pathAllowedBy(dotPath, f))) {
     if (agent !== 'verifier') {
-      die(
-        1,
-        `[TRUST_TRANSFER] agent "${agent}" is not allowed to write "${dotPath}". ` +
-          'verification.forward and execution.verification are reserved for verifier only.'
-      );
+      return {
+        allowed: false,
+        code: 1,
+        message: `[TRUST_TRANSFER] agent "${agent}" is not allowed to write "${dotPath}". verification.forward and execution.verification are reserved for verifier only.`,
+      };
     }
   }
 
-  // 硬门 2：quality.round 仅 conductor 可写
-  if (pathAllowedBy(dotPath, QUALITY_ROUND_FIELD)) {
+  // 硬门 2：quality.round / current_stage 仅 conductor 可写
+  if (pathAllowedBy(dotPath, QUALITY_ROUND_FIELD) || pathAllowedBy(dotPath, CURRENT_STAGE_FIELD)) {
     if (agent !== 'conductor') {
-      die(
-        1,
-        `[PROCESS_VIOLATION] agent "${agent}" is not allowed to write "${dotPath}". ` +
-          'quality.round is reserved for conductor only.'
-      );
+      return {
+        allowed: false,
+        code: 1,
+        message: `[PROCESS_VIOLATION] agent "${agent}" is not allowed to write "${dotPath}". quality.round and current_stage are reserved for conductor only.`,
+      };
+    }
+  }
+
+  // 枚举硬门：sizing.tier 必须合法，intent.intent_type 必须合法，current_stage 必须非空字符串
+  if (dotPath === 'sizing.tier') {
+    const validTiers = ['T0', 'T1', 'T2', 'T3'];
+    if (!validTiers.includes(value)) {
+      return {
+        allowed: false,
+        code: 1,
+        message: `[PROCESS_VIOLATION] invalid tier "${value}". tier must be one of: ${validTiers.join(', ')}`,
+      };
+    }
+  }
+  if (dotPath === 'intent.intent_type') {
+    const validIntents = ['INQUIRY', 'EXECUTION'];
+    if (!validIntents.includes(value)) {
+      return {
+        allowed: false,
+        code: 1,
+        message: `[PROCESS_VIOLATION] invalid intent_type "${value}". intent_type must be one of: ${validIntents.join(', ')}`,
+      };
+    }
+  }
+  if (dotPath === 'current_stage') {
+    if (typeof value !== 'string' || value.length === 0) {
+      return {
+        allowed: false,
+        code: 1,
+        message: `[PROCESS_VIOLATION] invalid current_stage "${value}". current_stage must be a non-empty string`,
+      };
+    }
+  }
+
+  // status schema 校验：仅 conductor 可写，且值必须在合法集合中
+  if (dotPath === 'status') {
+    if (!VALID_STATUSES.includes(value)) {
+      return {
+        allowed: false,
+        code: 1,
+        message: `[PROCESS_VIOLATION] invalid status "${value}". status must be one of: ${VALID_STATUSES.join(', ')}`,
+      };
+    }
+  }
+
+  // config.agents 值类型校验：整体写入时所有值必须为布尔；单键写入时值必须为布尔
+  if (dotPath === 'config.agents') {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return {
+        allowed: false,
+        code: 1,
+        message: `[PROCESS_VIOLATION] config.agents must be an object of boolean switches, got ${Array.isArray(value) ? 'array' : typeof value}`,
+      };
+    }
+    for (const [k, v] of Object.entries(value)) {
+      if (typeof v !== 'boolean') {
+        return {
+          allowed: false,
+          code: 1,
+          message: `[PROCESS_VIOLATION] config.agents.${k} must be boolean, got ${typeof v} ("${v}")`,
+        };
+      }
+    }
+  }
+  if (dotPath.startsWith('config.agents.') && !dotPath.includes('[', 14)) {
+    // 单键写入 config.agents.<key>：值必须为布尔
+    if (typeof value !== 'boolean') {
+      return {
+        allowed: false,
+        code: 1,
+        message: `[PROCESS_VIOLATION] ${dotPath} must be boolean, got ${typeof value} ("${value}")`,
+      };
     }
   }
 
@@ -606,39 +379,77 @@ function cmdSet(taskId, dotPath, rawValue, agent) {
   const allowedPatterns = WRITE_MATRIX[agent];
   const allowed = allowedPatterns.some((p) => pathAllowedBy(dotPath, p));
   if (!allowed) {
-    die(
-      1,
-      `Error: agent "${agent}" cannot write "${dotPath}". ` +
-        `Allowed paths: ${allowedPatterns.join(', ')}`
-    );
+    return {
+      allowed: false,
+      code: 1,
+      message: `Error: agent "${agent}" cannot write "${dotPath}". Allowed paths: ${allowedPatterns.join(', ')}`,
+    };
   }
 
-  // 解析 JSON 值
-  // 优先 JSON.parse；失败时将裸字符串视为 JSON 字符串（友好降级）
-  // （PowerShell 传递 "PASS" 时外层引号被剥离 → node 收到 PASS → JSON.parse 失败）
-  let value;
-  try {
-    value = JSON.parse(rawValue);
-  } catch (e) {
-    // 裸字符串降级：将 rawValue 原样作为字符串值
-    value = rawValue;
-  }
+  return { allowed: true, code: 0, message: '' };
+}
 
-  // status schema 校验：仅 conductor 可写，且值必须在合法集合中
-  if (dotPath === 'status') {
-    if (!VALID_STATUSES.includes(value)) {
-      die(
-        1,
-        `[PROCESS_VIOLATION] invalid status "${value}". ` +
-          `status must be one of: ${VALID_STATUSES.join(', ')}`
-      );
-    }
+function cmdSet(taskId, dotPath, rawValue, agent) {
+  assertValidTaskId(taskId);
+  const value = parseValue(rawValue);
+  const result = validateSingleWrite(agent, dotPath, value);
+  if (!result.allowed) {
+    die(result.code, result.message);
   }
-
   const { ctx } = readContext(taskId);
   setByPath(ctx, dotPath, value);
   writeContext(taskId, ctx);
   process.stdout.write(`ok: set ${dotPath}\n`);
+  process.exit(0);
+}
+
+function readStdin() {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => { data += chunk; });
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.on('error', (e) => reject(e));
+  });
+}
+
+function cmdSetBatch(taskId, batchInput, agent) {
+  assertValidTaskId(taskId);
+
+  let rawBatch;
+  if (batchInput === '-') {
+    rawBatch = fs.readFileSync(0, 'utf8');
+  } else {
+    rawBatch = batchInput;
+  }
+
+  let batch;
+  try {
+    batch = JSON.parse(rawBatch);
+  } catch (e) {
+    die(2, `Error: --batch value is not valid JSON: ${e.message}`);
+  }
+  if (!batch || typeof batch !== 'object' || Array.isArray(batch)) {
+    die(2, 'Error: --batch JSON must be an object mapping dot paths to values');
+  }
+
+  const entries = Object.entries(batch);
+
+  // 第一阶段：预校验所有路径，任一失败则整体拒绝（fail-closed，无部分写入）
+  for (const [dotPath, value] of entries) {
+    const result = validateSingleWrite(agent, dotPath, value);
+    if (!result.allowed) {
+      die(result.code, `Batch rejected at "${dotPath}": ${result.message}`);
+    }
+  }
+
+  // 第二阶段：单次读取，全部写入内存，原子写回
+  const { ctx } = readContext(taskId);
+  for (const [dotPath, value] of entries) {
+    setByPath(ctx, dotPath, value);
+  }
+  writeContext(taskId, ctx);
+  process.stdout.write(`ok: batch set ${entries.length} path(s)\n`);
   process.exit(0);
 }
 
@@ -681,6 +492,25 @@ function cmdValidate(taskId) {
       detail: ok ? '' : `expected non-negative integer, got ${JSON.stringify(v)}`,
     });
   }
+  // critical 字段：intent_type / tier / current_stage 必须已写入且合法
+  const intentType = ctx.intent && ctx.intent.intent_type;
+  const tier = ctx.sizing && ctx.sizing.tier;
+  const currentStage = ctx.current_stage;
+  checks.push({
+    name: 'critical.intent_type',
+    pass: intentType === 'INQUIRY' || intentType === 'EXECUTION',
+    detail: `intent.intent_type=${JSON.stringify(intentType)}`,
+  });
+  checks.push({
+    name: 'critical.tier',
+    pass: ['T0', 'T1', 'T2', 'T3'].includes(tier),
+    detail: `sizing.tier=${JSON.stringify(tier)}`,
+  });
+  checks.push({
+    name: 'critical.current_stage',
+    pass: typeof currentStage === 'string' && currentStage.length > 0,
+    detail: `current_stage=${JSON.stringify(currentStage)}`,
+  });
   // convergence 数值字段非负整数（v2 仅 mm_fusion 计数）
   const conv = ctx.convergence || {};
   for (const f of ['mm_fusion_rounds', 'mm_fusion_max_rounds']) {
@@ -823,14 +653,29 @@ function main() {
   }
   if (sub === 'set') {
     // set <task_id> <dot.path> <json-value> --agent <name>
-    if (args.length < 6) {
-      die(
-        2,
-        'Error: set requires <task_id> <dot.path> <json-value> --agent <name>'
-      );
+    // set <task_id> --batch '<json-object>' --agent <name>
+    // --agent 可出现在任意位置，此处鲁棒解析
+    const agentIdx = args.indexOf('--agent');
+    if (agentIdx === -1 || agentIdx + 1 >= args.length) {
+      die(2, 'Error: set requires --agent <name>');
     }
-    const agent = parseAgent(args);
-    cmdSet(args[1], args[2], args[3], agent);
+    const agent = args[agentIdx + 1];
+    const positional = args.slice(1, agentIdx).concat(args.slice(agentIdx + 2));
+    const batchIdx = positional.indexOf('--batch');
+    if (batchIdx !== -1) {
+      if (positional.length !== 3) {
+        die(2, 'Error: batch set requires <task_id> --batch <json-object-or-minus>');
+      }
+      cmdSetBatch(positional[0], positional[batchIdx + 1], agent);
+    } else {
+      if (positional.length !== 3) {
+        die(
+          2,
+          'Error: set requires <task_id> <dot.path> <json-value> --agent <name>'
+        );
+      }
+      cmdSet(positional[0], positional[1], positional[2], agent);
+    }
   }
   if (sub === 'validate') {
     if (args.length !== 2) die(2, 'Error: validate requires <task_id>');

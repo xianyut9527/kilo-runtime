@@ -18,15 +18,15 @@ subagent_type: verifier
 
 # mount：挂载点声明（可挂一个或多个点；每个条目是一个挂载点）
 #   at       挂载点（派生自 graph.yaml 节点：on:bootstrap/on:done/pre:N/N/post:N）
-#   hook     hook 类型（verify/fix/review）；同 hook 类型默认串行组（全局默认串行策略，避免并发 task 调度 abort；按 agent 文件名字典序逐个启动，等待上一个返回后再启动下一个；视角隔离仍物理独立启动，遵守零输出硬门；详见 agent/conductor.md §智能体加载规则）
+#   hook     hook 类型（verify/fix/review）；同 hook 类型默认串行组（全局默认串行策略，避免并发 task 调度 abort；按 agent 文件名字典序逐个启动，等待上一个返回后再启动下一个；视角隔离仍物理独立启动，遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）
 #   when     可选条件挂载（对照 task_context.config.agents.<key> 求值）；省略 = 必加载
-#   after    可选顺序依赖（声明在哪些 agent 之后执行）；省略 = 串行组成员（按 agent 文件名字典序逐个启动，等待上一个返回后再启动下一个；详见 agent/conductor.md §智能体加载规则）
+#   after    可选顺序依赖（声明在哪些 agent 之后执行）；省略 = 串行组成员（按 agent 文件名字典序逐个启动，等待上一个返回后再启动下一个；详见 agent/conductor.md §全局默认串行策略）
 #   deps     可选响应式依赖（task_context 字段路径；deps 变化才触发，避免重复执行）
 #   trigger  可选触发条件（onFail = 任一 hook FAIL 时触发；afterPass = 上游 hook 全 PASS 后触发）
 #   on_fail  可选失败策略（abort|warn|skip|degrade）；pre:/post:/on: 默认 warn
 mount:
   # v2 响应式 Hooks：QUALITY 阶段 verify hook，deps 驱动自动触发
-  # 无 after = 默认串行组成员（按 agent 文件名字典序逐个启动，等待上一个返回后再启动下一个；reverse-auditor 在 verifier 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §智能体加载规则）
+  # 无 after = 默认串行组成员（按 agent 文件名字典序逐个启动，等待上一个返回后再启动下一个；reverse-auditor 在 verifier 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §全局默认串行策略）
   - at: QUALITY
     hook: verify
     deps: ["execution.code", "plan"]
@@ -154,4 +154,4 @@ issues:
 - 必须独立重跑验证命令（不复用 coder 输出）
 - 任何声明无本轮 fresh 证据 → `[UNVERIFIED]`
 - 发现"同意""认可""coder 说的对"等信任传递词 → 立即停止，重新验证
-- reverse-auditor 在 verifier 完成后串行启动，各自独立 context，不互相参考（默认串行策略详见 agent/conductor.md §智能体加载规则，遵守零输出硬门）
+- reverse-auditor 在 verifier 完成后串行启动，各自独立 context，不互相参考（默认串行策略详见 agent/conductor.md §全局默认串行策略，遵守零输出硬门）

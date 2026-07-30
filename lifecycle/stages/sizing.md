@@ -98,4 +98,5 @@ quality_gate:
 - **多模型配额降级硬门**：触发多模型子图前必扫 `dispatch_log` 查过去 24h T3 失败率（≥30% → 跳过多模型子图降级为单路编码/单路分析）。
 - **INQUIRY 禁止编码**：INQUIRY 全生命周期中，智能体**禁止调用修改性工具**（edit/write/create/delete）。若分析过程中发现需要修改代码才能回答 → 转为 EXECUTION 重新定级。
 - **流转必裁判**：SIZING → 下一节点前必须执行 `node scripts/transition-check.mjs <task_id> --from SIZING --to <NEXT>`。未执行 transition-check 直接推进 → `[PROCESS_VIOLATION]`。
-- **task_context 写回**：定级完成后必须 `task-context.mjs set <task_id> sizing.tier <TIER> --agent conductor`。
+- **强制写入 tier 与合法性校验**：定级完成后必须 `task-context.mjs set <task_id> sizing.tier <T0|T1|T2|T3> --agent conductor`。非法 tier 或非空 current_stage 由 task-context.mjs 拒绝。
+- **阶段顺序硬门**：transition-check.mjs 要求 `task_context.current_stage` 必须等于 `--from` 节点，未逐步流转而跳跃 → `[PROCESS_VIOLATION]`。

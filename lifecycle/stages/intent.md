@@ -53,6 +53,7 @@ quality_gate:
 1. **task_context 强制初始化**：进入 INTENT 前必须先执行 `node scripts/task-context.mjs init <task_id>`。未初始化直接流转 → `[PROCESS_VIOLATION]`（transition-check.mjs 会明确拦截并提示 init）。
 2. **流转必裁判**：INTENT → SIZING 前必须执行 `node scripts/transition-check.mjs <task_id> --from INTENT --to SIZING`，exit 0 才允许流转。
 3. **显式输出判定结论**：输出顶部必须标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
+4. **强制写入 intent_type**：判定完成后必须执行 `node scripts/task-context.mjs set <task_id> intent.intent_type '<INQUIRY|EXECUTION>' --agent conductor`。未写入合法 intent_type 时，transition-check.mjs 将拒绝任何从 INTENT 出发的流转，报 `[PROCESS_VIOLATION]`。
 
 ## 降级处理
 
