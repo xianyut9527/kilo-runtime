@@ -546,9 +546,31 @@ function rtCheckTier(ctx, env, rtCheck) {
   const bad = Object.entries(agents).filter(([, v]) => typeof v !== 'boolean');
   if (bad.length > 0) {
     rtCheck('FAIL', 'runtime.tier', `config.agents 非布尔键: ${bad.map(([k]) => k).join(', ')}`);
-  } else {
-    rtCheck('PASS', 'runtime.tier', `tier=${tier} agents={${Object.entries(agents).map(([k,v]) => `${k}:${v}`).join(',')}}`);
+    return;
   }
+  // tier→必填开关一致性校验（防 apply-tier 漏写 / 手工写错）
+  // 规则来源：lifecycle/config.yaml tier_defaults；此处硬编码期望（与 config.yaml 单一真相保持一致）
+  const TIER_EXPECTED = {
+    T0: {},
+    T1: { reverse_auditor: true, side_checker: false, synthesizer_fusion: false },
+    T2: { reverse_auditor: true, side_checker: true, synthesizer_fusion: false },
+    T3: { synthesizer_fusion: true, reverse_auditor: true, side_checker: true, mm_worktree: true },
+  };
+  const expected = TIER_EXPECTED[tier];
+  if (expected) {
+    const mismatches = [];
+    for (const [k, v] of Object.entries(expected)) {
+      const actual = agents[k];
+      if (actual !== v) {
+        mismatches.push(`${k}: expected=${v}, got=${actual === undefined ? '(missing)' : actual}`);
+      }
+    }
+    if (mismatches.length > 0) {
+      rtCheck('FAIL', 'runtime.tier', `tier=${tier} config.agents 与 tier_defaults 不一致: ${mismatches.join('; ')}。应执行: task-context.mjs apply-tier <task_id> ${tier} --agent conductor`);
+      return;
+    }
+  }
+  rtCheck('PASS', 'runtime.tier', `tier=${tier} agents={${Object.entries(agents).map(([k,v]) => `${k}:${v}`).join(',')}}`);
 }
 
 // R7: 阶段产物完整性（QUALITY 后要求 quality.verify.forward 已填充；同时保留 verification.forward 向后兼容）

@@ -48,7 +48,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readContext, writeContext, appendTransitionLog, contextPath, buildInitialContext,
          VALID_STATUSES, VERIFICATION_FIELDS, QUALITY_ROUND_FIELD, CURRENT_STAGE_FIELD,
-         TOTAL_ROUNDS_FIELD, readHooksFromConfig, readConvergenceFromConfig,
+         TOTAL_ROUNDS_FIELD, readHooksFromConfig, readConvergenceFromConfig, readTierDefaults,
          assertValidTaskId, getByPath, setByPath, pathAllowedBy, pathPrefix, parseValue,
          extractFrontmatter, die } from './task-context-runtime.mjs';
 
@@ -166,6 +166,7 @@ function usage() {
     '  node scripts/task-context.mjs get <task_id> <dot.path>',
     "  node scripts/task-context.mjs set <task_id> <dot.path> <json-value> --agent <name>",
     "  node scripts/task-context.mjs set <task_id> --batch '<json-object>' --agent <name>",
+    '  node scripts/task-context.mjs apply-tier <task_id> <T0|T1|T2|T3> [--intent INQUIRY] --agent conductor',
     '  node scripts/task-context.mjs validate <task_id>',
     '  node scripts/task-context.mjs assert <task_id> <type> [args...]',
     '',
@@ -179,10 +180,11 @@ function usage() {
     '  node scripts/task-context.mjs --help',
     '',
     'Subcommands:',
-    '  init     Create task_context_<task_id>.json under os.tmpdir()/kilo/.',
-    '  get      Print value at dot.path (JSON).',
-    '  set      Write JSON value to dot.path. Enforces write matrix.',
-    '  validate Check required top-level fields, quality integers, and convergence mm_fusion integers.',
+    '  init        Create task_context_<task_id>.json under os.tmpdir()/kilo/.',
+    '  get         Print value at dot.path (JSON).',
+    '  set         Write JSON value to dot.path. Enforces write matrix.',
+    '  apply-tier  Apply config.yaml tier_defaults to config.agents + review_mode (SIZING helper).',
+    '  validate    Check required top-level fields, quality integers, and convergence mm_fusion integers.',
     '',
     'Agents in write matrix: ' + Object.keys(WRITE_MATRIX).join(', '),
     '',
@@ -453,6 +455,57 @@ function cmdSetBatch(taskId, batchInput, agent) {
   process.exit(0);
 }
 
+// ============================================================
+// apply-tier: SIZING 阶段机械应用 config.yaml tier_defaults
+// 消除"conductor 手工 set config.agents 容易漏写/写错"的根因。
+// 读 config.yaml tier_defaults[tier]（或 inquiry_tier_defaults[tier]），
+// 原子写入 config.agents + config.review_mode。
+// 覆盖 config.agents 整体（非增量），保证与 config.yaml 单一真相一致。
+// ============================================================
+function cmdApplyTier(taskId, tier, agent, opts) {
+  assertValidTaskId(taskId);
+  if (!['T0', 'T1', 'T2', 'T3'].includes(tier)) {
+    die(2, `Error: apply-tier requires <T0|T1|T2|T3>, got "${tier}"`);
+  }
+  if (agent !== 'conductor') {
+    die(1, `[PROCESS_VIOLATION] apply-tier is conductor-only (got --agent "${agent}")`);
+  }
+
+  const intentKind = opts.inquiry ? 'inquiry' : 'execution';
+  const allTiers = readTierDefaults();
+  const tierMap = allTiers[intentKind];
+  if (!tierMap || !tierMap[tier]) {
+    die(1, `Error: config.yaml ${intentKind}_tier_defaults missing tier "${tier}"`);
+  }
+
+  const entry = tierMap[tier];
+  const agentsValue = entry.agents || {};
+  const reviewMode = entry.review_mode || 'none';
+
+  // 复用 validateSingleWrite 做硬门校验（config.agents 布尔 + conductor 有权写 config）
+  const agentsCheck = validateSingleWrite(agent, 'config.agents', agentsValue);
+  if (!agentsCheck.allowed) {
+    die(agentsCheck.code, `apply-tier: ${agentsCheck.message}`);
+  }
+  const rmCheck = validateSingleWrite(agent, 'config.review_mode', reviewMode);
+  if (!rmCheck.allowed) {
+    die(rmCheck.code, `apply-tier: ${rmCheck.message}`);
+  }
+
+  // 原子写入：读 → 改 → 写
+  const { ctx } = readContext(taskId);
+  // config.agents 整体覆盖（保证与 config.yaml 一致，清除残留的脏开关）
+  ctx.config = ctx.config || {};
+  ctx.config.agents = agentsValue;
+  ctx.config.review_mode = reviewMode;
+  writeContext(taskId, ctx);
+
+  process.stdout.write(
+    `ok: apply-tier ${tier} (${intentKind}) → config.agents=${JSON.stringify(agentsValue)} review_mode=${reviewMode}\n`
+  );
+  process.exit(0);
+}
+
 function cmdValidate(taskId) {
   assertValidTaskId(taskId);
   const { ctx, path: p } = readContext(taskId);
@@ -678,8 +731,29 @@ function main() {
     }
   }
   if (sub === 'validate') {
-    if (args.length !== 2) die(2, 'Error: validate requires <task_id>');
+    if (args.length !== 2) die(2, 'Error: validate requires exactly <task_id>');
     cmdValidate(args[1]);
+  }
+  if (sub === 'apply-tier') {
+    // apply-tier <task_id> <TIER> [--intent INQUIRY] --agent conductor
+    const agentIdx = args.indexOf('--agent');
+    if (agentIdx === -1 || agentIdx + 1 >= args.length) {
+      die(2, 'Error: apply-tier requires --agent <name>');
+    }
+    const agent = args[agentIdx + 1];
+    const intentIdx = args.indexOf('--intent');
+    const inquiry = intentIdx !== -1 && args[intentIdx + 1] === 'INQUIRY';
+    const positional = args.slice(1, agentIdx).concat(args.slice(agentIdx + 2));
+    // remove --intent INQUIRY from positional if present
+    const filtered = [];
+    for (let i = 0; i < positional.length; i++) {
+      if (positional[i] === '--intent') { i++; continue; }
+      filtered.push(positional[i]);
+    }
+    if (filtered.length !== 2) {
+      die(2, 'Error: apply-tier requires <task_id> <T0|T1|T2|T3> [--intent INQUIRY] --agent conductor');
+    }
+    cmdApplyTier(filtered[0], filtered[1], agent, { inquiry });
   }
   if (sub === 'assert') {
     // assert <task_id> <assertion-type> [args...]

@@ -288,7 +288,7 @@ multiModel（产物级聚合模式，v2）
 | git merge fusion 分支到主工作区冲突   | 主图 EXECUTING coder 解决；持续冲突 → escalate → 人工          |
 | synthesizer-fusion 自检清单任一项为"否" | 打回重试，或标注原因后由用户确认                              |
 | 任一组件触发 RATE_LIMIT 3 次            | 降级 single-coder 直办（multiModel 退出，conductor 把 tier 降 T2 重走 PLANNING）+ 清理所有 worktree，标记 `[MULTIMODEL_DEGRADED]` |
-| **MM_EXECUTING 并发降级** | multiModel 启动 3 个 coder（coder-a/b/c）时，若底层执行器返回 `Tool execution aborted` / `Tool execution cancelled`，应立即将剩余未启动 coder 切换为**串行逐个启动**（等待上一个 coder 返回后再启动下一个），并标记 `[MM_DEGRADED_PARALLEL]`。串行执行仍能保证各 coder 的 worktree 隔离和互不可见，仅牺牲时间效率换取调度稳定性。若串行后仍失败，按上表“coder 返回 `BLOCKED` / `NEEDS_CONTEXT`”或“3 份产物全 FAIL”处理。 |
+| **MM_EXECUTING 并发降级** | multiModel 启动 3 个 coder（coder-a/b/c）时，**必须用 `agent_manager` 工具 `mode: worktree` 启动独立会话**（每 coder 独立 context + 独立 worktree），禁止在 conductor 主会话用 `task` 工具串行 dispatch（前一个 coder 返回 transcript 会撑爆主会话 context → 后续 coder `Tool execution aborted`，根因见 conductor.md §T3 编排稳定性）。若 Agent Manager 不可用，降级为 plan_level 方案级融合（单 coder `task` dispatch + 文本聚合），标记 `[MM_AM_DEGRADED]`，不强行串行 dispatch。若 Agent Manager 会话返回 `Tool execution aborted`，按本表"coder 返回 `BLOCKED` / `NEEDS_CONTEXT`"或"3 份产物全 FAIL"处理。 |
 | 累计 3 次 multiModel 失败               | 停止 multiModel，single-coder 交付 + `[MULTIMODEL_ABANDONED]` + 清理所有 worktree |
 
 ## 与 conductor 的区别

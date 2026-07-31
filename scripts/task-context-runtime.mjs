@@ -110,6 +110,115 @@ function readConvergenceFromConfig() {
   }
 }
 
+// ============================================================
+// 从 lifecycle/config.yaml 解析 tier_defaults / inquiry_tier_defaults
+// 返回 { execution: { T0: {agents, review_mode, provider?}, ... }, inquiry: {...} }
+// conductor 在 SIZING 阶段调用 readTierDefaults()[intentKind][tier] 取默认组合，
+// 消除"手工 set config.agents 容易漏写/写错"的根因（mm-eval-20260731 全 false bug）。
+// 复用 lifecycle-doctor.mjs 的 yaml 子集解析器（脚本自包含）。
+// ============================================================
+function parseTierDefaults(text) {
+  const result = { execution: {}, inquiry: {} };
+  const lines = text.split(/\r?\n/);
+  let section = null;      // 'execution' | 'inquiry' | null
+  let curTier = null;
+  let inAgents = false;
+  let curAgents = null;
+  let curReviewMode = null;
+  let curProvider = null;
+
+  function flush() {
+    if (curTier && section) {
+      const entry = { agents: curAgents || {}, review_mode: curReviewMode || 'none' };
+      if (curProvider) entry.provider = curProvider;
+      result[section][curTier] = entry;
+    }
+    curAgents = null;
+    curReviewMode = null;
+    curProvider = null;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    // strip inline comment (preserve # inside quotes — none expected here)
+    const hashIdx = raw.search(/\s#/);
+    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
+    if (!line.trim()) continue;
+
+    // top-level keys we care about
+    if (/^tier_defaults\s*:/.test(line)) { flush(); section = 'execution'; curTier = null; inAgents = false; continue; }
+    if (/^inquiry_tier_defaults\s*:/.test(line)) { flush(); section = 'inquiry'; curTier = null; inAgents = false; continue; }
+    if (/^(overrides|convergence|hooks|timeouts)\s*:/.test(line)) { flush(); section = null; curTier = null; inAgents = false; continue; }
+
+    if (!section) continue;
+
+    // tier key: "  T0:" / "  T1:" (2-space indent under tier_defaults)
+    const tierM = line.match(/^  (T[0-3])\s*:\s*$/);
+    if (tierM) {
+      flush();
+      curTier = tierM[1];
+      inAgents = false;
+      continue;
+    }
+
+    if (!curTier) continue;
+
+    // agents: (key under tier, 4-space indent)
+    const agentsStart = line.match(/^    agents\s*:\s*$/);
+    if (agentsStart) {
+      inAgents = true;
+      curAgents = {};
+      continue;
+    }
+    const agentsInline = line.match(/^    agents\s*:\s*\{(.*)\}\s*$/);
+    if (agentsInline) {
+      inAgents = false;
+      curAgents = {};
+      // inline empty {} → keep empty; inline {} with content not expected in this file
+      continue;
+    }
+
+    if (inAgents) {
+      // agent entry: "      key: true" (6-space indent)
+      const agentM = line.match(/^      ([a-z_]+)\s*:\s*(true|false)\s*$/);
+      if (agentM) {
+        curAgents[agentM[1]] = agentM[2] === 'true';
+        continue;
+      }
+      // leaving agents block (indent < 6)
+      if (!/^ {6,}/.test(line) && line.trim()) {
+        inAgents = false;
+      }
+    }
+
+    // review_mode (4-space indent, sibling of agents)
+    const rmM = line.match(/^    review_mode\s*:\s*(\w+)\s*$/);
+    if (rmM) {
+      inAgents = false;
+      curReviewMode = rmM[1];
+      continue;
+    }
+
+    // provider (T3 only, 4-space indent)
+    const provM = line.match(/^    provider\s*:\s*(\w+)\s*$/);
+    if (provM) {
+      curProvider = provM[1];
+      continue;
+    }
+  }
+  flush();
+  return result;
+}
+
+function readTierDefaults() {
+  try {
+    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
+    return parseTierDefaults(text);
+  } catch {
+    return { execution: {}, inquiry: {} };
+  }
+}
+
 // 初始 task_context 结构（按 conductor.md §task_context 结构摘要）
 function buildInitialContext(taskId) {
   const conv = readConvergenceFromConfig();
@@ -373,6 +482,7 @@ export {
   assertValidTaskId,
   readHooksFromConfig,
   readConvergenceFromConfig,
+  readTierDefaults,
   buildInitialContext,
   die,
   readContext,

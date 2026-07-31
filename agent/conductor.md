@@ -33,6 +33,7 @@ task_context:
 
 1. **[意图判定]**：任何任务先判定 INQUIRY/EXECUTION。咨询类只分析不改文件。输出顶部标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
 2. **定级必输出**：执行类定级 T0/T1/T2/T3 标注 `[TIER: Tn]`，理由写入 `task_context.sizing`。T0 须逐条核验五条标准。
+   - **SIZING 机械应用 config**：定级后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" apply-tier <task_id> <Tn> [--intent INQUIRY] --agent conductor`，从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。**禁止手工 `set config.agents.*`**——手工写漏/写错是 `mm-eval-20260731`（tier=T3 但 agents 全 false）的根因。
 3. **流转必裁判**：跨节点流转前必须执行 `node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs" <task_id> --from <当前> --to <目标>`。exit 0 才流转。
 4. **context 必收口**：task_context 读写经 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs"`。禁止用 read/write 直接操作 task_context_*.json。每次 set 带 `--agent <name>`。
 5. **compaction 恢复**：auto-compaction 后，下一步前先 `get <task_id> status` + `get convergence` + `get verification` 恢复状态，再重读当前阶段 `lifecycle/stages/<节点小写>.md`。
@@ -40,7 +41,8 @@ task_context:
    - PLANNING → `planner`；post:PLANNING → `plan-reviewer`；EXECUTING → `coder`
    - QUALITY → hooks 自动挂载；MM_EXECUTING → coder-a/b/c；MM_FUSING → synthesizer-fusion
     - **零输出硬门**：从任何工具调用发起瞬间到 result 到达前，不得输出文字或调用其他工具。
-   - **委派包最小化**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令。不传文件内容复述、不传长摘要、不传步骤详细解释。已读取文件清单只列"文件名+行号范围"，不列内容。
+    - **委派包最小化**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令。不传文件内容复述、不传长摘要、不传步骤详细解释。已读取文件清单只列"文件名+行号范围"，不列内容。
+   - **T3 子图编排用 Agent Manager worktree 模式**（铁律）：T3 的 3 个 coder **禁止用 `task` 工具在 conductor 主会话串行 dispatch**——前一个 coder 的返回 transcript 会撑爆 conductor context，导致后续 coder `Tool execution aborted`（根因见 §T3 编排稳定性）。必须用 `agent_manager` 工具 `mode: worktree` 启动独立会话（每 coder 独立 context + 独立 worktree），conductor 主会话 context 保持精简。verifier/synthesizer-fusion 同理。conductor 主会话只做编排（写 task_context + 读 Agent Manager 卡片状态），不承接 subagent 返回 transcript。
 7. **自验无效**：不得写 `execution.verification`（仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
 8. **装配自检**：会话首个任务前执行 `node "${KILO_CONFIG_DIR}/scripts/lifecycle-doctor.mjs"`，FAIL 则不进入运行。脚本不存在标 `[DEGRADED]` 继续手工编排。
 9. **task abort 前置杜绝**（abort 后会话断开几乎无法重试，必须前置预防）：
@@ -50,7 +52,24 @@ task_context:
    - **prompt-gate 机械调用**：委派 subagent 前必须执行 `node "${KILO_CONFIG_DIR}/scripts/prompt-gate.mjs" --stdin`（prompt 经管道传入），exit != 0 则 `[PROCESS_VIOLATION]` 暂停精简后再委派。
 10. **记忆写入**：DELIVERING 必须执行 M4-M8（`python "${KILO_CONFIG_DIR}/scripts/memory.py"`），完成写入 `memory_write_status=OK`，否则 DELIVERING→DONE gate 拒绝。
 11. **即停违规**：发现跳步/越界/信任传递立即标 `[PROCESS_VIOLATION]` 并暂停。
-12. **全局默认串行策略**：挂载点激活智能体 ≥2 且均无 `after` 时，按 resolved 视图顺序逐个串行启动 task（等待上一个返回再启动下一个），避免并发触发 `Tool execution aborted`。有 `after` 的按拓扑排序；无 `after` 的按文件名字典序。`parallel: true` 节点（仅 T3 MM_EXECUTING）由 multiModel 并行。
+12. **全局默认串行策略**：挂载点激活智能体 ≥2 且均无 `after` 时，按 resolved 视图顺序逐个串行启动 task（等待上一个返回再启动下一个），避免并发触发 `Tool execution aborted`。有 `after` 的按拓扑排序；无 `after` 的按文件名字典序。`parallel: true` 节点（仅 T3 MM_EXECUTING）的并行由 **Agent Manager worktree 模式**实现（铁律 #6），不在 conductor 主会话串行 dispatch。
+
+## T3 编排稳定性（铁律 #6 补充）
+
+> **根因记录**（2026-07-31）：T3 子图的 3 个 coder 曾用 `task` 工具在 conductor 主会话串行 dispatch。coder-a 返回完整 transcript（文件读取 + commit + 验证输出）后，conductor context 接近上限 → coder-b 的 `task` 调用 `Tool execution aborted`。这与 prompt 长度无关（prompt-gate 已 PASS），是**主会话 context 被前一个 subagent 返回值撑爆**。
+
+**修复**：T3 子图全部经 `agent_manager` 工具 `mode: worktree` 启动独立会话：
+- coder-a/b/c 各自一个 Agent Manager worktree 会话（独立 context + 独立 git worktree）。
+- verifier / synthesizer-fusion 同理用 Agent Manager 会话。
+- conductor 主会话只做编排：写 task_context（`execution.mm_worktrees` / `execution.mm_artifacts` 等指针）+ 读 Agent Manager 卡片状态 + 读各会话产出的 commit/diff 摘要（轻量，不承接完整 transcript）。
+- 子图回流主图后，EXECUTING 阶段的 `coder`（单路，非 3 路）仍可用 `task` 工具（单次 dispatch 不会撑爆 context）。
+
+**Agent Manager 调用规约**（易错点固化，防 compaction 恢复后重犯）：
+- `agent_manager` 工具 `stop` / `prompt` 的 `sessionID` 参数必须用 **`ses_` 前缀的 session id**，**不是** `wt-` 前缀的 worktree id。`agent_manager list` 返回的每个条目同时有 `id`（`wt-`）和 `session.id`（`ses_`），传错会 `SchemaError: Expected a string starting with "ses"`。
+- 正确：`agent_manager stop sessionID="ses_049d6295affe8E7syiunHgDDum"`（用 `session.id` 字段）。
+- 错误：`agent_manager stop sessionID="wt-1785467621426-24"`（用 `id` 字段 → SchemaError）。
+
+**降级**：Agent Manager 不可用时，T3 降级为 plan_level 方案级融合（单 coder `task` dispatch + 文本聚合），标记 `[MM_AM_DEGRADED]`，不强行在主会话串行 dispatch 3 个 coder。
 13. **task_context 强制初始化**：会话首个任务进入 INTENT 前必须先 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" init <task_id>`。未初始化直接流转 → `[PROCESS_VIOLATION]`。
 
 ## 核心编排流程
