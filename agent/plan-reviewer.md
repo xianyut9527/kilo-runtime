@@ -29,7 +29,7 @@ mount:
 #   write       可写切片（plan_review 独立审查结论，与 planner 的 plan 物理分离）
 #   forbid_write 禁写切片（plan 本身由 planner 写；execution.verification 由 verifier 写）
 task_context:
-  read: [intent, sizing, plan.summary, plan.acceptance_points, plan.status_signal, plan.task_dag, plan.risks, plan.forbidden_files]
+  read: [intent, sizing, plan.scheme_summary, plan.design_gate_type, plan.status_signal, plan.acceptance_points, plan.task_dag, plan.risks, plan.scan_coverage, plan.componentization_plan, plan.extension_points, plan.forbidden_files, plan.memory_injection]
   write: [plan_review]
   forbid_write: [plan, execution.verification]
 
