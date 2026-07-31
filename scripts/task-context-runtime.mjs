@@ -316,6 +316,8 @@ function buildInitialContext(taskId) {
     status: 'initialized',
     current_stage: 'START',      // v2.1 新增：初始阶段为 START，流转由 transition-check.mjs 机械递增
     transition_log: [],
+    dispatch_log: [],
+    overload_count: 0,
     convergence: {
       mm_fusion_rounds: 0,
       mm_fusion_max_rounds: conv.mm_fusion_max_rounds,

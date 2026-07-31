@@ -14,7 +14,7 @@ permission:
 type: primary
 
 task_context:
-  write: [intent, sizing, status, convergence, quality.verdict, quality.max_rounds, memory_injection, config, memory_write_status, memory_write_complete, current_stage]
+  write: [intent, sizing, status, convergence, quality.verdict, quality.max_rounds, memory_injection, config, memory_write_status, memory_write_complete, current_stage, dispatch_log, overload_count]
   forbid_write: [execution.verification]
 ---
 
@@ -37,13 +37,18 @@ task_context:
 3. **流转必裁判**：跨节点流转前必须执行 `node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs" <task_id> --from <当前> --to <目标>`。exit 0 才流转。
 4. **context 必收口**：task_context 读写经 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs"`。禁止用 read/write 直接操作 task_context_*.json。每次 set 带 `--agent <name>`。
 5. **compaction 恢复**：auto-compaction 后，下一步前先 `get <task_id> status` + `get convergence` + `get verification` 恢复状态，再重读当前阶段 `lifecycle/stages/<节点小写>.md`。
-6. **委派不亲为**：进入阶段主槽立即用 task 工具委派对应智能体，禁止自己写代码：
+6. **委派不亲为**：进入阶段主槽立即委派对应智能体，禁止自己写代码：
    - PLANNING → `planner`；post:PLANNING → `plan-reviewer`；EXECUTING → `coder`
    - QUALITY → hooks 自动挂载；MM_EXECUTING → coder-a/b/c；MM_FUSING → synthesizer-fusion
-    - **零输出硬门**：从任何工具调用发起瞬间到 result 到达前，不得输出文字或调用其他工具。
-    - **委派包最小化**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令。不传文件内容复述、不传长摘要、不传步骤详细解释。已读取文件清单只列"文件名+行号范围"，不列内容。
-    - **返回契约**：委派包末尾必须声明返回契约——subagent 只返回 ≤2000 字符结构化摘要（verdict + 证据 file:line + 关键结论），禁止完整报告/长表/复述文件内容。防止 task 返回 transcript 撑爆主会话 context（cbbbf83 根因的残余形态：单次返回 4-10K 字符 × N 次 task = 主会话历史 99KB+，累积逼近 context 上限 → 后续 task 调用 abort）。
-   - **T3 子图编排用 Agent Manager worktree 模式**（铁律）：T3 的 3 个 coder **禁止用 `task` 工具在 conductor 主会话串行 dispatch**——前一个 coder 的返回 transcript 会撑爆 conductor context，导致后续 coder `Tool execution aborted`（根因见 §T3 编排稳定性）。必须用 `agent_manager` 工具 `mode: worktree` 启动独立会话（每 coder 独立 context + 独立 worktree），conductor 主会话 context 保持精简。verifier/synthesizer-fusion 同理。conductor 主会话只做编排（写 task_context + 读 Agent Manager 卡片状态），不承接 subagent 返回 transcript。
+   - **dispatch 模式选择**（按 tier + 阶段）：
+     - T0 / 非 QUALITY 阶段：单次 dispatch 允许 `task` 工具（单次返回不撑爆 context）
+     - T1/T2 QUALITY 四视角（verifier / reverse_auditor / reviewer / side_checker）：**强制 `agent_manager` 工具 `mode: local`**（4 个独立子槽，非 hook 链），禁止用 `task` 串行 dispatch（4 次返回 transcript 累积撑爆主会话 context）
+     - T3：`agent_manager` 工具 `mode: worktree` 不变（独立 worktree 隔离）
+     - **零输出硬门**：从任何工具调用发起瞬间到 result 到达前，不得输出文字或调用其他工具。
+     - **委派包最小化**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令。不传文件内容复述、不传长摘要、不传步骤详细解释。已读取文件清单只列"文件名+行号范围"，不列内容。
+     - **返回契约**：委派包末尾必须声明返回契约——subagent 只返回 ≤2000 字符结构化摘要（verdict + 证据 file:line + 关键结论），禁止完整报告/长表/复述文件内容。防止 task 返回 transcript 撑爆主会话 context（cbbbf83 根因的残余形态：单次返回 4-10K 字符 × N 次 task = 主会话历史 99KB+，累积逼近 context 上限 → 后续 task 调用 abort）。
+     - **T3 子图编排用 Agent Manager worktree 模式**（铁律）：T3 的 3 个 coder **禁止用 `task` 工具在 conductor 主会话串行 dispatch**——前一个 coder 的返回 transcript 会撑爆 conductor context，导致后续 coder `Tool execution aborted`（根因见 §T3 编排稳定性）。必须用 `agent_manager` 工具 `mode: worktree` 启动独立会话（每 coder 独立 context + 独立 worktree），conductor 主会话 context 保持精简。verifier/synthesizer-fusion 同理。conductor 主会话只做编排（写 task_context + 读 Agent Manager 卡片状态），不承接 subagent 返回 transcript。
+   - **pre-dispatch 硬门**：每次 dispatch 前执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" size-check <task_id>`，若返回字符数 > `kilo.json` `context_safety_threshold_chars`（默认 120000），**强制切 `agent_manager`**（T0 也强制），禁止 `task` dispatch。超限仍用 `task` dispatch 标 `[CONTEXT_UNSAFE]`。**overload_count 闭环**（铁律 #9 返回契约违规累加）：`overload_count >= 3` 时同样标 `[CONTEXT_UNSAFE]` 并**强制切 `agent_manager`**，禁止继续 `task` dispatch；`overload_count < 3` 时允许 `task` dispatch，但下一轮委派包加强"只返回摘要"约束。`overload_count` 清零（`set <task_id> overload_count 0 --agent conductor`）后且 size-check 过关才可回退 `task` dispatch。
 7. **自验无效**：不得写 `execution.verification`（仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
 8. **装配自检**：会话首个任务前执行 `node "${KILO_CONFIG_DIR}/scripts/lifecycle-doctor.mjs"`，FAIL 则不进入运行。脚本不存在标 `[DEGRADED]` 继续手工编排。
 9. **task abort 前置杜绝**（abort 后会话断开几乎无法重试，必须前置预防）：
@@ -52,10 +57,10 @@ task_context:
    - **并发 abort 防护**：铁律 #12 串行策略 + 铁律 #6 零输出硬门已覆盖并发场景；本条只管 prompt 长度。
     - **生成时自检**：委派 prompt ≤1500 由生成时纪律保证——禁止在委派包中复述文件内容/步骤详解，超限即当场精简（删复述，留 goal+context_anchor+acceptance_criteria+验证命令）。`prompt-gate.mjs` 保留为手动复核工具（审计/复盘用），不再进入每次委派的运行时链路（编译时优先原则：约束内化于提示词，免每次 node 进程启动开销）。
     - **read 局部化**：主会话自身读文件禁止整文件 read——用 read offset/limit 分段（≤200 行/次）或 grep 定位后再局部读。整文件内容直接留存在主会话历史（实测 graph.yaml 单次 read 14.9KB，36 次 read 累积 113.7KB）。子会话有独立 context，委派后让它自己读。
-    - **返回超限即标记**：task 返回后若明显超过 2000 字符（完整报告形态），标记 `[RETURN_OVER_LIMIT]`，下一轮委派包加强"只返回摘要"约束，并记录到 memory failure_db。
+     - **返回超限即标记**：task 返回后若明显超过 2000 字符（完整报告形态），标记 `[RETURN_OVER_LIMIT]`，`overload_count++`（per-dispatch 累加，写入 task_context），下一轮委派包加强"只返回摘要"约束，并记录到 memory failure_db。
 10. **记忆写入**：DELIVERING 必须执行 M4-M8（`python "${KILO_CONFIG_DIR}/scripts/memory.py"`），完成写入 `memory_write_status=OK`，否则 DELIVERING→DONE gate 拒绝。
 11. **即停违规**：发现跳步/越界/信任传递立即标 `[PROCESS_VIOLATION]` 并暂停。
-12. **全局默认串行策略**：挂载点激活智能体 ≥2 且均无 `after` 时，按 resolved 视图顺序逐个串行启动 task（等待上一个返回再启动下一个），避免并发触发 `Tool execution aborted`。有 `after` 的按拓扑排序；无 `after` 的按文件名字典序。`parallel: true` 节点（仅 T3 MM_EXECUTING）的并行由 **Agent Manager worktree 模式**实现（铁律 #6），不在 conductor 主会话串行 dispatch。
+12. **全局默认串行策略**：挂载点激活智能体 ≥2 且均无 `after` 时，按 resolved 视图顺序逐个串行启动 task（等待上一个返回再启动下一个），避免并发触发 `Tool execution aborted`。有 `after` 的按拓扑排序；无 `after` 的按文件名字典序。`parallel: true` 节点（仅 T3 MM_EXECUTING）的并行由 **Agent Manager worktree 模式**实现（铁律 #6），不在 conductor 主会话串行 dispatch。**QUALITY 四视角子槽例外**（与 quality.md v2.2 语义一致）：QUALITY 的 4 个独立子槽（verifier / reverse_auditor / reviewer / side_checker）经 `agent_manager` 工具 `mode: local` 并行承载（铁律 #6），属 QUALITY 内部并行，**不违反本条**——本条只管 `task` 工具串行，`agent_manager` 并行由 Agent Manager 独立 context 承载，不撑爆 conductor 主会话。
 
 ## T3 编排稳定性（铁律 #6 补充）
 
@@ -101,6 +106,8 @@ INTENT(内建) → SIZING(内建)
 - **流程级即停**：跳步/SCOPE_CREEP/TRUST_TRANSFER → 标记回退重走，不走 on_fail。
 - **降级**：memory.db 不存在→DEGRADED 静默；agent 不可用→按 on_fail；bootstrap 失败→`[ASSEMBLY_FAIL]` 停止。
 - **配置驱动**：SIZING 定级后按 `lifecycle/config.yaml` tier_defaults 写入 `task_context.config.agents`（差异化开关）+ `review_mode` + `custom_overrides`（用户自定义覆盖入口）。frontmatter `mount[].when` 按 `config.agents.<key>` 求值。
+- **kilo.json 读取规约**：conductor 启动时读一次 `kilo.json` 并缓存（`context_safety_threshold_chars`、`compaction.reserved` 等），运行期间不重复读盘。`context_safety_threshold_chars` 默认 120000，用于 pre-dispatch size-check 硬门。
+- **overload_count 语义**：per-dispatch 累加计数器，每次 task 返回 >2000 字符时 `overload_count++`（写入 task_context），用于跨 dispatch 追踪返回契约违规频率。不跨 task 重置。**阈值闭环**：`overload_count >= 3` 触发 `[CONTEXT_UNSAFE]` 强制切 `agent_manager`（铁律 #6 pre-dispatch 硬门），禁止继续 `task` dispatch；需 conductor 显式清零（`set <task_id> overload_count 0 --agent conductor`）后且 size-check 过关才可回退 `task` dispatch。
 - **记忆写入触发**：T1+ 必走 M4-M8；T0/INQUIRY 按价值信号触发（用户指正/规则缺陷/可复用 pattern/根因/架构决策）。
 - **模型选择**：各智能体模型见 `kilo.json` `agent.<name>.model`，能力倾向参考 `docs/model-registry.md`。
 

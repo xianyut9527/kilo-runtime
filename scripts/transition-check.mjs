@@ -413,6 +413,62 @@ function main() {
     }
   }
 
+  // ============================================================
+  // provenance gate（edge-conditioned，仅 T1/T2 EXECUTION 边）
+  // 检查 dispatch_log 中是否包含对应阶段的 agent 记录
+  // 豁免：T0 边（SIZING→DELIVERING / SIZING→EXECUTING）、T3（子图 flow 不产生
+  // 主图同名 agent 记录）、INQUIRY 全部边（含 PLANNING→QUALITY / QUALITY→DELIVERING）
+  // QUALITY→DELIVERING 的 required 集合按 task_context.config.agents 中为 true 的
+  // 视角动态求值（不静态要求 4 视角）；CIRCUIT_BREAKER 出口豁免本门（熔断逃逸
+  // 不受缺日志阻塞，CB 路径 hooks 可能未全跑）。
+  // ============================================================
+  const tier = vars.tier;
+  const intentType = vars.intent_type;
+  const dispatchLog = Array.isArray(ctx.dispatch_log) ? ctx.dispatch_log : [];
+
+  // 门仅对 EXECUTION 意图的 T1/T2 生效；T0/T3/INQUIRY 一律豁免
+  const isT1orT2 = tier === 'T1' || tier === 'T2';
+  const isExempt = intentType !== 'EXECUTION' || !isT1orT2;
+  // CIRCUIT_BREAKER 出口豁免：熔断逃逸不受 provenance 缺记录阻塞
+  const isCircuitBreakerExit = FROM === 'QUALITY' && TO === 'DELIVERING' && vars.quality_verdict === 'CIRCUIT_BREAKER';
+
+  if (!isExempt && !isCircuitBreakerExit) {
+    const provenanceRequired = [];
+    if (FROM === 'PLANNING' && TO === 'EXECUTING') {
+      // post:PLANNING 恒定挂载 plan-reviewer（不依赖 config.agents），与 planner 同记
+      provenanceRequired.push('planner', 'plan-reviewer');
+    }
+    if (FROM === 'EXECUTING' && TO === 'QUALITY') {
+      provenanceRequired.push('coder');
+    }
+    if (FROM === 'QUALITY' && TO === 'DELIVERING') {
+      // 动态求值（不静态要求 4 视角）：
+      //   必配视角（quality.md required_roles，恒定要求）→ verifier / reviewer
+      //   可选视角（config.agents 中为 true 才要求）→ reverse_auditor / side_checker
+      // T1 side_checker=false 时仅要求 reverse_auditor（可选视角），缺 side_checker 不阻塞。
+      const MANDATORY = ['verifier', 'reviewer'];
+      const OPTIONAL = ['reverse_auditor', 'side_checker'];
+      const agentsCfg = (ctx.config && ctx.config.agents && typeof ctx.config.agents === 'object') ? ctx.config.agents : null;
+      if (agentsCfg) {
+        provenanceRequired.push(...MANDATORY);
+        for (const p of OPTIONAL) {
+          if (agentsCfg[p] === true) provenanceRequired.push(p);
+        }
+      } else {
+        // config.agents 缺失（异常态/旧上下文）：保守回退静态 4 视角（fail-closed）
+        provenanceRequired.push(...MANDATORY, ...OPTIONAL);
+      }
+    }
+
+    if (provenanceRequired.length > 0) {
+      const dispatchedAgents = new Set(dispatchLog.map((e) => e.agent));
+      const missing = provenanceRequired.filter((a) => !dispatchedAgents.has(a));
+      if (missing.length > 0) {
+        die(1, `[PROCESS_VIOLATION] missing dispatch provenance for ${FROM} -> ${TO}: required agents ${JSON.stringify(provenanceRequired)}, missing ${JSON.stringify(missing)}. dispatch_log agents: ${JSON.stringify([...dispatchedAgents])}`);
+      }
+    }
+  }
+
   // quality 轮次机械递增（conductor 专属写权限的机械执行臂）
   if (!ctx.convergence || typeof ctx.convergence !== 'object') {
     ctx.convergence = {

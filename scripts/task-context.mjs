@@ -19,6 +19,8 @@
 //   node scripts/task-context.mjs set <task_id> <dot.path> <json-value> --agent <name>
 //   node scripts/task-context.mjs validate <task_id>
 //   node scripts/task-context.mjs assert <task_id> <assertion-type> [args...]
+//   node scripts/task-context.mjs size-check <task_id>
+//   node scripts/task-context.mjs log-dispatch <task_id> --agent <name> --mode <mode> --stage <stage>
 //   node scripts/task-context.mjs --help
 //
 // assert 子命令（运行时状态断言，供 conductor compaction 恢复后自检）：
@@ -54,6 +56,7 @@ import { readContext, writeContext, appendTransitionLog, contextPath, buildIniti
 
 // 脚本所在目录（ESM 无 __dirname）
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
 
 // ============================================================
 // 写权限矩阵（v6.2 派生化：启动时扫描 agent/*.md frontmatter
@@ -185,6 +188,8 @@ function usage() {
     '  set         Write JSON value to dot.path. Enforces write matrix.',
     '  apply-tier  Apply config.yaml tier_defaults to config.agents + review_mode (SIZING helper).',
     '  validate    Check required top-level fields, quality integers, and convergence mm_fusion integers.',
+    '  size-check  Print task_context file character count (pre-dispatch safety gate vs context_safety_threshold_chars).',
+    '  log-dispatch  Append {agent, mode, stage, timestamp} to dispatch_log[] (dispatch provenance). --agent must be in write-matrix agent set; --stage must be a graph.yaml node. Whitelist-enforced, rejects forged records.',
     '',
     'Agents in write matrix: ' + Object.keys(WRITE_MATRIX).join(', '),
     '',
@@ -703,6 +708,117 @@ function cmdAssert(taskId, assertionType, args) {
 }
 
 // ============================================================
+// size-check 子命令：返回 task_context 文件字符数
+// conductor pre-dispatch 硬门：超 kilo.json context_safety_threshold_chars
+// 强制切 agent_manager，禁止 task dispatch
+// ============================================================
+
+function cmdSizeCheck(taskId) {
+  assertValidTaskId(taskId);
+  const p = contextPath(taskId);
+  if (!fs.existsSync(p)) {
+    process.stdout.write('0\n');
+    process.exit(0);
+  }
+  try {
+    // 字符数（非字节）：UTF-8 解码后按 JS 字符串 length 计，与
+    // kilo.json context_safety_threshold_chars 阈值口径一致
+    const text = fs.readFileSync(p, 'utf8');
+    process.stdout.write(String(text.length) + '\n');
+    process.exit(0);
+  } catch (e) {
+    die(1, `Error: cannot read task_context for task_id=${taskId}: ${e.message}`);
+  }
+}
+
+// ============================================================
+// log-dispatch 子命令：追加 dispatch_log[] 条目
+// conductor 每次 dispatch 前调用，记录 agent/mode/stage
+// 白名单（防任意伪造，如 test2 类记录）：
+//   --agent ∈ 注册智能体名（WRITE_MATRIX 键，含 conductor）∪ tier_defaults
+//             agents 键（下划线视角名：reverse_auditor / side_checker /
+//             synthesizer_fusion——dispatch_log 惯例与 config.agents 键一致，
+//             transition-check provenance 亦按此名校验，缺则死锁）
+//   --stage ∈ graph.yaml 节点集合（主图节点）
+// CLI 无调用方身份可校验，"白名单放行"即权限边界；保留 mode 枚举校验。
+// ============================================================
+
+function deriveDispatchAgentWhitelist() {
+  const names = new Set(Object.keys(WRITE_MATRIX));
+  try {
+    const tierDefaults = readTierDefaults();
+    for (const kind of ['execution', 'inquiry']) {
+      const map = (tierDefaults && tierDefaults[kind]) || {};
+      for (const t of Object.keys(map)) {
+        const agents = (map[t] && map[t].agents) || {};
+        for (const k of Object.keys(agents)) names.add(k);
+      }
+    }
+  } catch {
+    // 配置读取失败：仅矩阵键（fail-closed 偏严，不静默放行）
+  }
+  return names;
+}
+
+const DISPATCH_AGENT_WHITELIST = deriveDispatchAgentWhitelist();
+
+function readGraphNodeIds() {
+  const ids = [];
+  let text;
+  try {
+    text = fs.readFileSync(GRAPH_PATH, 'utf8');
+  } catch {
+    return ids; // graph.yaml 缺失 → 空集合（fail-closed：所有 --stage 被拒）
+  }
+  let inNodes = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/\s#.*$/, '').trim();
+    if (!line) continue;
+    if (line === 'nodes:') { inNodes = true; continue; }
+    if (line === 'edges:') { inNodes = false; continue; }
+    if (inNodes) {
+      const m = line.match(/^-\s*id\s*:\s*(\S+)\s*$/);
+      if (m) ids.push(m[1]);
+    }
+  }
+  return ids;
+}
+
+const GRAPH_NODE_IDS = readGraphNodeIds();
+
+function cmdLogDispatch(taskId, agent, mode, stage) {
+  assertValidTaskId(taskId);
+  if (!agent) die(2, 'Error: log-dispatch requires --agent <name>');
+  if (!mode) die(2, 'Error: log-dispatch requires --mode <task|agent_manager>');
+  if (!stage) die(2, 'Error: log-dispatch requires --stage <STAGE>');
+  const validModes = ['task', 'agent_manager'];
+  if (!validModes.includes(mode)) {
+    die(2, `Error: --mode must be one of: ${validModes.join(', ')}`);
+  }
+  // --agent 白名单：注册智能体名 ∪ tier_defaults 视角键（含 conductor）
+  if (!DISPATCH_AGENT_WHITELIST.has(agent)) {
+    die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 dispatch 白名单（${[...DISPATCH_AGENT_WHITELIST].sort().join(', ')}）。防任意伪造 dispatch 记录。`);
+  }
+  // --stage 白名单：graph.yaml 节点集合
+  if (!GRAPH_NODE_IDS.includes(stage)) {
+    die(2, `[PROCESS_VIOLATION] --stage "${stage}" 不在 graph.yaml 节点集合（${GRAPH_NODE_IDS.join(', ')}）。`);
+  }
+  const { ctx } = readContext(taskId);
+  if (!Array.isArray(ctx.dispatch_log)) {
+    ctx.dispatch_log = [];
+  }
+  ctx.dispatch_log.push({
+    agent,
+    mode,
+    stage,
+    timestamp: Date.now(),
+  });
+  writeContext(taskId, ctx);
+  process.stdout.write(`ok: dispatch_log appended (agent=${agent} mode=${mode} stage=${stage})\n`);
+  process.exit(0);
+}
+
+// ============================================================
 // 入口
 // ============================================================
 
@@ -777,6 +893,20 @@ function main() {
       die(2, `Error: assert requires <task_id> <assertion-type> [args...]. Available: ${Object.keys(ASSERTIONS).join(', ')}`);
     }
     cmdAssert(args[1], args[2], args.slice(3));
+  }
+  if (sub === 'size-check') {
+    if (args.length !== 2) die(2, 'Error: size-check requires exactly <task_id>');
+    cmdSizeCheck(args[1]);
+  }
+  if (sub === 'log-dispatch') {
+    // log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>
+    const agentIdx = args.indexOf('--agent');
+    const modeIdx = args.indexOf('--mode');
+    const stageIdx = args.indexOf('--stage');
+    if (agentIdx === -1 || agentIdx + 1 >= args.length) die(2, 'Error: log-dispatch requires --agent <name>');
+    if (modeIdx === -1 || modeIdx + 1 >= args.length) die(2, 'Error: log-dispatch requires --mode <task|agent_manager>');
+    if (stageIdx === -1 || stageIdx + 1 >= args.length) die(2, 'Error: log-dispatch requires --stage <STAGE>');
+    cmdLogDispatch(args[1], args[agentIdx + 1], args[modeIdx + 1], args[stageIdx + 1]);
   }
   die(2, `Error: unknown subcommand "${sub}". Use --help.`);
 }

@@ -12,6 +12,7 @@ required_roles: [verifier, reviewer]
 
 > v2 响应式 Hooks 架构核心阶段。合并原 `CHECKING` + `REVIEWING` + `FIXING`，数据驱动自动循环。
 > **v2.1 模式切换**：QUALITY 阶段根据 `task_context.intent_type` 在「代码验证（execution）」与「分析结论验证（analysis）」之间自动切换。hook 类型和循环结构不变，但验证/审查标准按模式适配。
+> **v2.2 四视角独立子槽**：QUALITY 四视角（正向验证 / 反向审计 / 静态审查 / 侧向验证）是 **4 个独立子槽**，非 hook 链。每个子槽由 conductor 通过 `agent_manager` 工具 `mode: local` 独立 dispatch（T1/T2），或 `mode: worktree`（T3）。子槽之间无共享状态、无顺序依赖，各自独立产出 verdict。conductor 收齐 4 个 verdict 后做机械 AND 汇总。这与 hook 链（verify→fix→review→fix 循环）是正交的两个维度：hook 链定义 QUALITY 容器内的自动循环逻辑，子槽定义每个 hook 阶段内并发/串行的 agent 实例化方式。
 > 流转关系见 `lifecycle/graph.yaml`（纯拓扑，QUALITY → DELIVERING）；必配角色契约见本文件 frontmatter `required_roles`；智能体经 frontmatter `mount` 自注册挂载。
 
 ## 设计理念
@@ -114,7 +115,7 @@ mount:
     hook: verify
     deps: ["execution.code", "execution.analysis", "intent"]
     when: "config.agents.reverse_auditor"
-    # after: [verifier] 使 reverse-auditor 在 verifier 完成后串行启动，避免 verify 组内并发 task 触发底层执行器 Tool execution aborted（遵守零输出硬门），见 agent/reverse-auditor.md
+    # after: [verifier] 使反向审计角色在 verifier 完成后串行启动，避免 verify 组内并发 task 触发底层执行器 Tool execution aborted（遵守零输出硬门），见 agent/reverse-auditor.md
 ```
 
 **触发时机**：在 verifier 完成后串行启动（after: [verifier]）。
@@ -240,7 +241,7 @@ mount:
     trigger: afterPass
     deps: ["execution.code", "execution.analysis", "project_context"]
     when: "config.agents.side_checker"
-    # after: [reviewer] 使 side-checker 在 reviewer 完成后串行启动，避免 review 组内并发 task 触发底层执行器 Tool execution aborted（遵守零输出硬门），见 agent/side-checker.md
+    # after: [reviewer] 使侧向验证角色在 reviewer 完成后串行启动，避免 review 组内并发 task 触发底层执行器 Tool execution aborted（遵守零输出硬门），见 agent/side-checker.md
 ```
 
 **触发时机**：在 reviewer 完成后串行启动（after: [reviewer]）。
