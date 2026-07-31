@@ -350,7 +350,7 @@ quality_gate:
 - `quality_verdict == 'PASS'` → DELIVERING（EXECUTION + INQUIRY 统一出口）
 - `quality_verdict == 'CIRCUIT_BREAKER'` → DELIVERING（带降级标记 `[QUALITY_CB]`）
 - T1 路径（两种模式）：反向审计角色加载（`config.agents.reverse_auditor` 默认 true）；侧向验证角色默认 false，但 `config.yaml overrides.condition_overrides` 强制 true（防非法跳过硬门，2026-08-01 起生效）
-- T2/T3 路径（两种模式）：全 hooks 加载（reverse_auditor + side_checker + synthesizer_fusion）
+- T2/T3 路径（两种模式）：全 hooks 加载（反向审计 + 侧向验证 + 合成融合）
 
 ## 与传统阶段的兼容性
 
