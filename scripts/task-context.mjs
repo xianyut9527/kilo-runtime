@@ -48,7 +48,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readContext, writeContext, appendTransitionLog, contextPath, buildInitialContext,
          VALID_STATUSES, VERIFICATION_FIELDS, QUALITY_ROUND_FIELD, CURRENT_STAGE_FIELD,
-         TOTAL_ROUNDS_FIELD, readHooksFromConfig, readConvergenceFromConfig, readTierDefaults,
+         TOTAL_ROUNDS_FIELD, readHooksFromConfig, readConvergenceFromConfig, readTierDefaults, readConditionOverrides,
          assertValidTaskId, getByPath, setByPath, pathAllowedBy, pathPrefix, parseValue,
          extractFrontmatter, die } from './task-context-runtime.mjs';
 
@@ -482,6 +482,19 @@ function cmdApplyTier(taskId, tier, agent, opts) {
   const agentsValue = entry.agents || {};
   const reviewMode = entry.review_mode || 'none';
 
+  // 合并 overrides.condition_overrides（优先级最高，覆盖 tier_defaults）
+  // 防非法跳过：condition_overrides 强制 true 的键不会被 tier_defaults false 关闭。
+  // 仅合并 config.agents.* 键；其他键忽略。
+  const condOverrides = readConditionOverrides();
+  const overriddenKeys = [];
+  for (const [dotPath, val] of Object.entries(condOverrides)) {
+    const m = dotPath.match(/^config\.agents\.([a-z_]+)$/);
+    if (m) {
+      if (agentsValue[m[1]] !== val) overriddenKeys.push(`${m[1]}: ${agentsValue[m[1]]}→${val}`);
+      agentsValue[m[1]] = val;
+    }
+  }
+
   // 复用 validateSingleWrite 做硬门校验（config.agents 布尔 + conductor 有权写 config）
   const agentsCheck = validateSingleWrite(agent, 'config.agents', agentsValue);
   if (!agentsCheck.allowed) {
@@ -500,8 +513,11 @@ function cmdApplyTier(taskId, tier, agent, opts) {
   ctx.config.review_mode = reviewMode;
   writeContext(taskId, ctx);
 
+  const overrideNote = overriddenKeys.length > 0
+    ? ` overrides=${overriddenKeys.join(',')}`
+    : '';
   process.stdout.write(
-    `ok: apply-tier ${tier} (${intentKind}) → config.agents=${JSON.stringify(agentsValue)} review_mode=${reviewMode}\n`
+    `ok: apply-tier ${tier} (${intentKind}) → config.agents=${JSON.stringify(agentsValue)} review_mode=${reviewMode}${overrideNote}\n`
   );
   process.exit(0);
 }

@@ -24,7 +24,7 @@ mount:
   - at: QUALITY
     hook: verify
     after: [verifier]
-    deps: ["execution.code", "intent"]
+    deps: ["execution.code", "execution.analysis", "intent"]
     when: "config.agents.reverse_auditor"
     on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED
 
@@ -32,7 +32,7 @@ mount:
 #   read   可读切片（intent 原始需求；execution.diffs 实际产物；changes 变更清单；acceptance_map 验收映射）
 #   write  可写切片（verification.reverse 反向审计结论）
 task_context:
-  read: [intent, execution.diffs, execution.changes, execution.acceptance_map]
+  read: [intent, execution.diffs, execution.changes, execution.acceptance_map, execution.analysis]
   write: [verification.reverse]
 
 # isolation：视角物理隔离声明（反向审计不见设计意图 plan，从产物反推是否满足原始需求）

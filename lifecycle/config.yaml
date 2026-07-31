@@ -126,7 +126,18 @@ overrides:
   # condition_overrides：强制覆盖 config.agents 开关
   # 键 = "config.agents.<key>"，值 = true/false
   # 例: { "config.agents.reverse_auditor": true } → 强制加载 reverse-auditor（即使 tier_defaults 关闭）
-  condition_overrides: {}
+  #
+  # 防非法跳过硬门（2026-08-01）：强制全开可选验证视角，覆盖 tier_defaults 中所有 false 值。
+  # 语义：无论定级 T0-T3，reverse_auditor / side_checker / synthesizer_fusion 均强制加载，
+  #       杜绝任何 tier 静默跳过验证能力。
+  # 注意：T0 执行类走 INTENT→SIZING→EXECUTING→DELIVERING 极速通道，本不经过 QUALITY，
+  #       故此覆盖对 T0 EXECUTION 实际无加载点（拓扑不可达）；对 T0 INQUIRY 同理不经过 QUALITY。
+  #       本覆盖生效范围：T1/T2/T3（均经 QUALITY 阶段，挂载点拓扑可达 → 强制加载）。
+  #       synthesizer_fusion 仅 T3 子图有挂载点，T1/T2 拓扑不可达 → 强制 true 无副作用。
+  condition_overrides:
+    "config.agents.reverse_auditor": true      # 强制开：需求追溯审计，杜绝 T1 close=false 静默跳过
+    "config.agents.side_checker": true         # 强制开：运行时侧向实测，杜绝 T1 close=false 静默跳过
+    "config.agents.synthesizer_fusion": true   # 强制开：T3 融合智能体（T1/T2 拓扑不可达，无副作用）
 
 # ============================================================
 # convergence：收敛熔断阈值（唯一真相来源）

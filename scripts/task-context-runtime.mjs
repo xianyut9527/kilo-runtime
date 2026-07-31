@@ -219,6 +219,61 @@ function readTierDefaults() {
   }
 }
 
+// ============================================================
+// 从 lifecycle/config.yaml 解析 overrides.condition_overrides
+// 返回 { "config.agents.<key>": boolean, ... }
+// condition_overrides 优先级最高，覆盖 tier_defaults 中的同键值。
+// 防非法跳过：condition_overrides 强制 true 的键不会被 tier_defaults false 关闭。
+// 解析格式：
+//   condition_overrides:
+//     "config.agents.reverse_auditor": true
+//     "config.agents.side_checker": true
+// 键带引号（含点号），值 true/false。
+// ============================================================
+function parseConditionOverrides(text) {
+  const result = {};
+  const lines = text.split(/\r?\n/);
+  let inOverrides = false;
+  let inCondOverrides = false;
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const hashIdx = raw.search(/\s#/);
+    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
+    if (!line.trim()) continue;
+    const indent = line.match(/^\s*/)[0].length;
+
+    // 进入 overrides 段
+    if (/^overrides\s*:/.test(line)) { inOverrides = true; inCondOverrides = false; continue; }
+    // 离开 overrides 段（遇到下一个顶层 key，indent=0）
+    if (inOverrides && indent === 0 && /^[a-z_]+\s*:/.test(line)) { inOverrides = false; inCondOverrides = false; continue; }
+    if (!inOverrides) continue;
+
+    // condition_overrides 子段（2-space indent under overrides）
+    if (/^  condition_overrides\s*:/.test(line)) { inCondOverrides = true; continue; }
+    // condition_overrides 内的键值对（4-space indent，键带引号）
+    if (inCondOverrides) {
+      // 键带引号: "config.agents.xxx": true
+      const qM = line.match(/^    "config\.agents\.([a-z_]+)"\s*:\s*(true|false)\s*$/);
+      if (qM) { result[`config.agents.${qM[1]}`] = qM[2] === 'true'; continue; }
+      // 无引号变体: config.agents.xxx: true
+      const nqM = line.match(/^    config\.agents\.([a-z_]+)\s*:\s*(true|false)\s*$/);
+      if (nqM) { result[`config.agents.${nqM[1]}`] = nqM[2] === 'true'; continue; }
+      // 离开 condition_overrides 段（indent < 4 且非空）
+      if (!/^ {4,}/.test(line) && line.trim()) { inCondOverrides = false; }
+    }
+  }
+  return result;
+}
+
+function readConditionOverrides() {
+  try {
+    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
+    return parseConditionOverrides(text);
+  } catch {
+    return {};
+  }
+}
+
 // 初始 task_context 结构（按 conductor.md §task_context 结构摘要）
 function buildInitialContext(taskId) {
   const conv = readConvergenceFromConfig();
@@ -483,6 +538,7 @@ export {
   readHooksFromConfig,
   readConvergenceFromConfig,
   readTierDefaults,
+  readConditionOverrides,
   buildInitialContext,
   die,
   readContext,

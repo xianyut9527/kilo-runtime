@@ -25,7 +25,7 @@ mount:
     hook: review
     trigger: afterPass
     after: [reviewer]
-    deps: ["execution.code", "project_context"]
+    deps: ["execution.code", "execution.analysis", "project_context"]
     when: "config.agents.side_checker"
     on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED
 
@@ -34,7 +34,7 @@ mount:
 #                    execution.acceptance_map 验收映射；project_context 项目级约束）
 #   write  可写切片（verification.side 侧向验证结论）
 task_context:
-  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, project_context]
+  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, project_context, execution.analysis]
   write: [verification.side]
 
 # isolation：视角物理隔离声明（侧向验证不见正向/反向结论，独立实测）

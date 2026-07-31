@@ -26,8 +26,8 @@ mount:
 #          plan_review 由 post:PLANNING 的审查者写入，planner 回流时读审查反馈）
 #   write  可写的 task_context 切片（plan 由 planner 设计方案后写入）
 task_context:
-  read: [intent, sizing, plan_review]
-  write: [plan]
+  read: [intent, sizing, plan_review, project_context]
+  write: [plan, execution.analysis]
 
 # gate：planner 不设门禁字段——方案放行由 post:PLANNING 恒定挂载的独立审查者判定，
 # 其 verdict=FAIL/超时/异常 → 挂载点 on_fail: abort 中止流转（通用挂载机制，见 graph.yaml 头注释），planner 不自验方案
@@ -46,6 +46,15 @@ task_context:
 **做什么**：分析需求、调研代码、输出设计方案（短方案或完整 DAG）、定义验收点、全量扫描清单。
 
 **不做什么**：不执行代码、不修改文件、不自行进入执行阶段、不做验证。
+
+### INQUIRY 模式职责（A1）
+
+INQUIRY 模式下 planner 承担研究执行角色（因 INQUIRY 无 EXECUTING 阶段，见 `planning.md` 模式 B）：
+- 执行 `research_units` 中每个研究单元（读文件/查证/记录证据）
+- 产出 `execution.analysis`（完整结构：conclusion_summary + evidence + dimensions_covered/missing + bias_flags + confidence）
+- **约束**：INQUIRY 模式禁止修改性工具（edit/write/create/delete），只产出分析文本。post:PLANNING 审查者的核对清单必须包含：planner 未调用任何修改性工具（edit/write/create/delete）
+
+这是设计特例，非 planner 默认职责。EXECUTION 模式下 planner 仅设计方案，不执行研究。
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 

@@ -29,7 +29,7 @@ mount:
   # 无 after = 默认串行组成员（按 agent 文件名字典序逐个启动，等待上一个返回后再启动下一个；reverse-auditor 在 verifier 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §全局默认串行策略）
   - at: QUALITY
     hook: verify
-    deps: ["execution.code", "plan"]
+    deps: ["execution.code", "execution.analysis", "plan"]
   # multiModel 子图保留传统挂载（子图内部暂不改造 hooks）
   - at: MM_CHECKING
   - at: MM_FCHECK
@@ -42,7 +42,7 @@ mount:
 #   write     可写的 task_context 切片（verification.forward + execution.verification 双独占——写入边界硬门，
 #             task-context.mjs 的 WRITE_MATRIX 从本字段自动派生，缺一项运行时即拒写）
 task_context:
-  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, execution.mm_outputs, execution.fused_output, forbidden_files]
+  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, execution.mm_outputs, execution.fused_output, execution.analysis, forbidden_files]
   write: [verification.forward, execution.verification]      # verifier 双独占写入（写入边界硬门）
 
 # isolation：视角物理隔离声明（防止确认偏误）

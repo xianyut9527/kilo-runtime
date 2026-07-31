@@ -35,6 +35,8 @@ required_roles: [planner]
 
 ### 模式 B：分析门（`intent_type == 'INQUIRY'`）
 
+> INQUIRY 模式特例——PLANNING 阶段主槽（planner）承担研究执行（因 INQUIRY 无 EXECUTING 阶段）；这是设计特例，非默认职责（I1）
+
 1. **问题结构化**：将用户原始问题拆解为子问题/维度/角度。例："评估这个架构"→拆解为「可扩展性」「可维护性」「安全」「性能」四个维度。
 2. **信息来源确认**：列出回答该问题需要阅读的文件、文档、历史记录、外部资料。标注哪些是当前项目内可获取的，哪些需要推理/常识补充。
 3. **澄清与界定**（T2+ 必做）：
@@ -44,7 +46,10 @@ required_roles: [planner]
 4. **研究 DAG**：按信息依赖排序，每单元含研究目标+关键文件+信息来源+预期结论。
 5. **偏见预检**：列出可能的确认偏误（如过度依赖最近修改、忽略历史失败模式），给出规避策略。
 6. **结论框架**：预设输出结构——按什么维度组织结论、每个维度需要哪些证据支撑。
-7. **风险与局限**：列出分析局限（如"未读取运行时日志""基于静态代码推断"）。
+7. **逐单元研究**：执行 research_units 中每个研究单元（读文件/查证/记录证据）
+8. **汇总证据**：按结论框架组织证据清单（file:line + snippet + relevance）
+9. **产出 execution.analysis**：写入完整分析结论（对照 quality.md 结构定义：conclusion_summary + evidence + dimensions_covered/missing + bias_flags + confidence）
+10. **风险与局限**：列出分析局限（如"未读取运行时日志""基于静态代码推断"）。
 
 ## 输出信号
 
@@ -80,7 +85,17 @@ conclusion_framework:
   dimensions: [{ name, evidence_required, priority }]
   bias_mitigation: ["string"]
 analysis_limitations: ["string"]
+execution:
+  analysis:
+    conclusion_summary: "string"
+    evidence: [{ file, line, snippet, relevance }]
+    dimensions_covered: ["string"]
+    dimensions_missing: ["string"]
+    bias_flags: ["string"]
+    confidence: "high" | "medium" | "low"
 ```
+> research_units 是研究计划（transition_context，保留作指针）；execution.analysis 是执行后的完整结论产物（M2）。
+> Token 经验法则（I2）：research_units ≤5 个；单 unit 研究 ≤2000 token 预算。
 
 ## 路由规则（边定义见 graph.yaml）
 

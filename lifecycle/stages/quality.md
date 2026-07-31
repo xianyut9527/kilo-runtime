@@ -47,7 +47,7 @@ QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
 
 ## 输入
 
-> **视角物理隔离**：verify hooks 只读 `plan + execution.code + forbidden_files + acceptance_criteria`（EXECUTION 模式）或 `plan + execution.analysis + forbidden_files + conclusion_criteria`（INQUIRY 模式），**禁止读 `execution.quality / fixing_history`**。review hooks 只读 `execution.code/analysis + plan + acceptance_criteria/conclusion_criteria + project_context`，**禁止读 `execution.quality` 的报告结论**。fix hooks 读取 `execution.quality.issues + fixing_history`。
+> **视角物理隔离**：verify hooks 只读 `plan + execution.code + forbidden_files + acceptance_criteria`（EXECUTION 模式）或 `plan + execution.analysis + forbidden_files + conclusion_framework`（INQUIRY 模式），**禁止读 `execution.quality / fixing_history`**。review hooks 只读 `execution.code/analysis + plan + acceptance_criteria/conclusion_framework + project_context`，**禁止读 `execution.quality` 的报告结论**。fix hooks 读取 `execution.quality.issues + fixing_history`。
 
 ### EXECUTION 模式输入
 - 编码角色输出的完整代码产物（`execution.code`：diff + changes + acceptance_map）
@@ -62,6 +62,20 @@ QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
 - 原始问题与边界定义（反向审计 hook 用，**不传 plan**）
 - project_context（审查 hook 用）
 
+### execution.analysis 结构定义
+
+```yaml
+execution:
+  analysis:
+    conclusion_summary: "string"       # 分析结论摘要
+    evidence:                          # 证据清单
+      - { file: "string", line: int, snippet: "string", relevance: "string", source: "string" }
+    dimensions_covered: ["string"]     # 已覆盖的分析维度
+    dimensions_missing: ["string"]     # 未覆盖的分析维度
+    bias_flags: ["string"]             # 偏见标记（如 confirmatory_bias / selection_bias）
+    confidence: "HIGH" | "MEDIUM" | "LOW"  # 置信度
+```
+
 ## Hooks 挂载（内部自动编排）
 
 > **编排规则**：hook 类型（`verify` / `fix` / `review`）定义执行顺序，不需要绝对编号。同 hook 类型默认按 `agent/conductor.md` §智能体加载规则串行启动（无 `after` 时默认串行，按 agent 文件名字典序逐个启动，遵守零输出硬门）。需要顺序时声明 `after: [agent-name]`（相对依赖，类似 React hooks 的声明顺序）。框架对 `after` 做拓扑排序，检测环依赖报错。
@@ -73,8 +87,7 @@ QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
 mount:
   - at: QUALITY
     hook: verify
-    deps: ["execution.code", "plan"]        # EXECUTION 模式
-    deps: ["execution.analysis", "plan"]    # INQUIRY 模式
+    deps: ["execution.code", "execution.analysis", "plan"]
     # 无 after = 默认串行（按 agent 文件名字典序逐个启动；遵守零输出硬门）
 ```
 
@@ -99,8 +112,7 @@ mount:
 mount:
   - at: QUALITY
     hook: verify
-    deps: ["execution.code", "intent"]          # EXECUTION 模式
-    deps: ["execution.analysis", "intent"]      # INQUIRY 模式
+    deps: ["execution.code", "execution.analysis", "intent"]
     when: "config.agents.reverse_auditor"
     # after: [verifier] 使 reverse-auditor 在 verifier 完成后串行启动，避免 verify 组内并发 task 触发底层执行器 Tool execution aborted（遵守零输出硬门），见 agent/reverse-auditor.md
 ```
@@ -199,8 +211,7 @@ mount:
   - at: QUALITY
     hook: review
     trigger: afterPass       # 当 verify hooks 全 PASS 后触发
-    deps: ["execution.code", "plan"]        # EXECUTION 模式
-    deps: ["execution.analysis", "plan"]    # INQUIRY 模式
+    deps: ["execution.code", "execution.analysis", "plan"]
     # 无 after = 默认串行（按 agent 文件名字典序逐个启动；遵守零输出硬门）
 ```
 
@@ -227,8 +238,7 @@ mount:
   - at: QUALITY
     hook: review
     trigger: afterPass
-    deps: ["execution.code", "project_context"]        # EXECUTION 模式
-    deps: ["execution.analysis", "project_context"]    # INQUIRY 模式
+    deps: ["execution.code", "execution.analysis", "project_context"]
     when: "config.agents.side_checker"
     # after: [reviewer] 使 side-checker 在 reviewer 完成后串行启动，避免 review 组内并发 task 触发底层执行器 Tool execution aborted（遵守零输出硬门），见 agent/side-checker.md
 ```
@@ -259,7 +269,6 @@ quality:
   round: 0                    # 当前 QUALITY 轮次
   max_rounds: 4               # 来源：config.yaml hooks.quality.max_total_cycles（当前值 4；脚本不可读时回退 7）
   status: "running"           # running | passed | failed | circuit_breaker
-  mode: "execution" | "inquiry"  # v2.1 新增：当前 QUALITY 所处模式
   
   # verify 结果（hook: verify 钩子产出）
   verify:
@@ -330,7 +339,6 @@ quality_gate:
   reverse_result: "PASS" | "FAIL" | "N/A"
   review_result: "PASS" | "CONDITIONAL_PASS" | "FAIL"
   side_result: "PASS" | "FAIL" | "N/A"
-  mode: "execution" | "inquiry"
   issues:
     verify: [{ source, severity, tag, message, evidence }]
     review: [{ severity, tag, message, evidence }]
@@ -341,8 +349,8 @@ quality_gate:
 
 - `quality_verdict == 'PASS'` → DELIVERING（EXECUTION + INQUIRY 统一出口）
 - `quality_verdict == 'CIRCUIT_BREAKER'` → DELIVERING（带降级标记 `[QUALITY_CB]`）
-- T1 路径（两种模式）：侧向验证角色不加载，反向审计角色不加载
-- T2/T3 路径（两种模式）：全 hooks 加载
+- T1 路径（两种模式）：反向审计角色加载（`config.agents.reverse_auditor` 默认 true）；侧向验证角色默认 false，但 `config.yaml overrides.condition_overrides` 强制 true（防非法跳过硬门，2026-08-01 起生效）
+- T2/T3 路径（两种模式）：全 hooks 加载（reverse_auditor + side_checker + synthesizer_fusion）
 
 ## 与传统阶段的兼容性
 
@@ -359,7 +367,7 @@ quality_gate:
 ## 硬规则
 
 1. **自动循环，不手动回流**：conductor **不得**手动设置 `quality.issues` 来触发 fix hooks；只有 hooks 返回 FAIL 才自动触发
-2. **deps 变化才触发**：verify hooks 只在 `execution.code` 或 `plan`（EXECUTION）/ `execution.analysis` 或 `plan`（INQUIRY）变化时重新执行；无变化时不重复浪费 token
+2. **deps 变化才触发**：verify hooks 只在 deps 中任一引用字段变化时重新执行（deps 语义为"任一字段变化即触发"，非"全部存在"；EXECUTION 模式只写 execution.code，INQUIRY 模式只写 execution.analysis，互不干扰）；无变化时不重复浪费 token
 3. **视角隔离不变**：verify hooks 不见 review hooks 结论，review hooks 不见 verify hooks 结论，fix hooks 只读 issues 不读结论
 4. **fix 后必须重 verify**：fix hooks 产出新 code/analysis 后，必须重新经过 verify hooks，不可直接跳到 review
 5. **不跳过 review**：即使 verify 连续 FAIL 后最终 PASS，也必须经过 review hooks 才能离开 QUALITY

@@ -1067,6 +1067,28 @@ for (const [name, a] of agents) {
   if (groups.size === 0) pass('agent.after.topo', '无 after 声明（全部串行组，按 agent 文件名字典序逐个启动，遵守零输出硬门）');
 }
 
+// B3e. deps 字段可写性校验：每个 deps 字段须命中某 agent write 或 conductor write 或白名单
+{
+  // 收集所有 agent write 声明（含 conductor）
+  const allWrites = new Set();
+  for (const [name, a] of agents) {
+    for (const w of a.writes) allWrites.add(w);
+  }
+  // 白名单：框架字段（conductor 写入或生命周期固有字段）
+  const WHITELIST = new Set(['intent', 'project_context', 'plan', 'execution.quality.issues', 'execution.code']);
+  for (const [name, a] of agents) {
+    for (const m of a.mount) {
+      if (!m.deps || !Array.isArray(m.deps)) continue;
+      for (const dep of m.deps) {
+        if (!allWrites.has(dep) && !WHITELIST.has(dep)) {
+          warn(`agent.${name}.mount.deps`, `"${dep}" 未命中任何 agent write 声明或白名单（可能引用框架字段，非 FAIL）`);
+        }
+      }
+    }
+  }
+  pass('agent.deps.writability', 'deps 可写性校验完成');
+}
+
 // B4. when 引用的 config.agents.<key> 至少在任一 tier_defaults / inquiry_tier_defaults 声明（防孤儿开关）
 {
   const allTierKeys = new Set();

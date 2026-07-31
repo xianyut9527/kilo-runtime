@@ -32,8 +32,8 @@ mount:
 #   read      可读的 task_context 切片（blockers + 代码产物 + 验收标准 + 修复历史）
 #   write     可写的 task_context 切片（fixing_history + execution.diffs——修复产物）
 task_context:
-  read: [execution.diffs, execution.changes, execution.acceptance_map, fixing_history, forbidden_files]
-  write: [fixing_history, execution.diffs]
+  read: [execution.diffs, execution.changes, execution.acceptance_map, fixing_history, forbidden_files, execution.analysis]
+  write: [fixing_history, execution.diffs, execution.analysis]
 
 # isolation：视角物理隔离（避免被前序验证结论锚定）
 isolation:
