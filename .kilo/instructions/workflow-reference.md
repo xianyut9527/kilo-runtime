@@ -31,7 +31,7 @@ keywords: workflow, reference, small_model, 程序化记忆, 需求扩散
 - **初始化**：memory.db 不存在时，优先重新运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）— 脚本自动检测 `sqlite3` CLI + 提示安装 + 初始化 `memory.db`（建表 + 迁移 bootstrap 经验 + 补种 project_context）；手动 fallback：`sqlite3 ~/.config/kilo-data/memory.db < .kilo/memory/schema/init.sql`
 - **查询/写入规则**：见 `docs/memory-ops-reference.md`（M1 任务开始注入 ≤2000 tokens / M3 失败回溯必查 / M4 去重写入 / M5 经验写入 / M6 反馈 / M7 失败案例 / M8 dispatch_log + model_calibration）
 - **Skill 固化**：fact_store.confidence ≥ 0.8 且 hit_count ≥ 3 → 按 `.kilo/instructions/skill-upgrade.md` 生成升级提案
-- **健康度校验**：`node validate-config.mjs` check17 读 `.kilo/memory/contracts/health_check.sql` 标准化查询
+- **健康度校验**：`node scripts/lifecycle-doctor.mjs` 记忆层健康度检查读 `.kilo/memory/contracts/health_check.sql` 标准化查询
 
 ## 需求扩散与同类点扫描
 

@@ -1,5 +1,5 @@
 ---
-description: 编码智能体。按方案实现代码、输出验收映射表+三件套。端到端闭环：读取→编码→测试→修复。
+description: 编码智能体。按方案实现代码、输出验收映射表+三件套。端到端闭环：读取→编码→测试→修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。
 mode: subagent
 hidden: true
 color: "#3B82F6"
@@ -129,6 +129,12 @@ encoding_scan: "PASS" | "FAIL" | "N/A"
 4. **复用优先**：编码前 grep/glob 扫描是否已有同类抽象（util/hook/component/service/repository/mixin），已有则消费而非新建；无则新建但写入 `risks` 标注"新抽象待 review"
 5. **扩展点评估**：若改动属于高频变更领域（表单/列表/权限/数据获取/第三方集成/错误处理/日志/配置），评估是否应留扩展点（slot/策略接口/配置驱动/插件化），写入 `acceptance_map.edge_cases`；写死分支链且领域高频 → 回 planner
 6. **组件化前摄扫描**：编码前 grep/glob 扫描本次改动模式是否在代码库已存在 ≥1 处同类实现；命中 ≥2 处 → 强制按 `component-driven-fixes` skill 执行（UI 与非 UI 同等适用，见 skill 更新后的触发域）；命中 1 处但属高频变更领域 → 评估是否 preemptively 抽象
+
+## 返回契约（防主会话 context 撑爆）
+
+- 本智能体是 task 子会话，返回给 conductor 的最终消息**只允许 ≤2000 字符结构化摘要**（verdict + 证据 file:line + 关键结论）。
+- 禁止返回完整报告/长表格/复述文件内容——详细产物写入 task_context（verdict/plan/execution 字段），返回消息只留指针与结论。
+- 返回超限 → 主会话历史膨胀 → 后续 task 调用 Tool execution aborted（cbbbf83 根因形态）。
 
 ## 硬规则
 

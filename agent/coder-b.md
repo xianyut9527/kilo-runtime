@@ -1,5 +1,5 @@
 ---
-description: multiModel 安全边界派 coder。侧重防御性编程与风险识别。在专属 worktree 独立实现代码。
+description: multiModel 安全边界派 coder。侧重防御性编程与风险识别。在专属 worktree 独立实现代码。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。
 mode: subagent
 hidden: true
 color: "#1D4ED8"

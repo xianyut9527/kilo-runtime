@@ -41,7 +41,6 @@ keywords: skills, lifecycle, sqlite, fact-store, no-md-append
 | 知识库 | `anti-patterns-coordination/` | 反模式：协同类 |
 | 知识库 | `anti-patterns-contract/` | 反模式：契约类 |
 | 知识库 | `writing-skills/` | Skill 编写规范 |
-| 知识库 | `hermes-migration/` | Hermes 迁移工具包 |
 | UI 设计 | `design-system/` | 设计系统 |
 | UI 设计 | `ui-accessibility/` | 无障碍 |
 | UI 设计 | `ui-animation/` | 动效 |
@@ -92,7 +91,7 @@ description: {≤1024 字符}
 keywords: [tag1, tag2]
 license: MIT
 compatibility:
-  - hermes-agent >= 2026
+  - kilo-agent >= 2026
 metadata:
   version: "1.0"
   category: {category}

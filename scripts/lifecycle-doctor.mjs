@@ -883,6 +883,21 @@ for (const file of fs.readdirSync(AGENT_DIR)) {
 }
 pass('input.agents', `${agents.size} 个 agent frontmatter 已解析`);
 
+// memory 模块完整性（文件存在性；原 validate-config check14 缺口补回）
+{
+  const req = [
+    ['.kilo/memory/README.md', '公共 API 文档'],
+    ['.kilo/memory/AGENTS.md', 'agent 注入入口'],
+    ['.kilo/memory/schema/init.sql', 'DDL 唯一源'],
+    ['.kilo/memory/contracts/health_check.sql', '健康度查询契约源'],
+  ];
+  let bad = 0;
+  for (const [rel, desc] of req) {
+    if (!fs.existsSync(path.join(ROOT, rel))) { fail(`memory.module.files`, `${rel} 缺失（${desc}）`); bad++; }
+  }
+  if (!bad) pass('memory.module.files', `${req.length} 个模块入口文件齐全（README/AGENTS/schema:init.sql/contracts:health_check.sql）`);
+}
+
 // ============================================================
 // A. 图结构校验
 // ============================================================

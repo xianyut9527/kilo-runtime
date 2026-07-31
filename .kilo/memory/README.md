@@ -16,7 +16,7 @@
 ├── schema/              ← 第 1 层：DDL 唯一源
 │   └── init.sql         ← 7 表 + 26 索引 + 4 视图 + 2 FTS5 虚表（trigram，v2.6）+ 8 条 project_context 自动种子（v2.5 +skill_usage_events）
 └── contracts/           ← 第 2 层：接口契约
-    └── health_check.sql ← 标准化健康度查询（v2.6.2 18 项；被 validate-config.mjs check17 调用）
+    └── health_check.sql ← 标准化健康度查询（v2.6.2 18 项；健康检查执行者 = `python scripts/memory.py check`）
 ```
 
 > **v2.6.2 精简**：原 `policy/*.md`（11 文件）和 `api/*.sql`（13 文件）和 `api/mcp/*`（4 文件）已在 commit `de3915e` 删除——业务规则与 SQL 模板统一由 `docs/memory-ops-reference.md` 定义（生命周期驱动后），迁移脚本与 v2.3→v2.6.2 升级历史归档为 CHANGELOG 记录。
@@ -28,7 +28,7 @@
 | `schema/init.sql` | install / 首次部署 | 建表（7 表 + 索引 + 视图 + 2 FTS5 虚表）+ 8 条 project_context 自动种子 |
 | `docs/memory-ops-reference.md` | lifecycle DELIVERING 阶段 | M1 注入查询模板 + M4-M8 写入模板 + 降级处理（conductor 在 DELIVERING 内建调用） |
 | `.kilo/instructions/workflow-core.md` §收尾自检 | conductor 收尾 | 10 条硬门 checklist（M4-M8 SQL 模板内联） |
-| `contracts/health_check.sql` | validate-config.mjs check17 | 18 项健康度查询（v2.6.2 含反馈执行率 soft-warn） |
+| `contracts/health_check.sql` | `python scripts/memory.py check` | 18 项健康度查询契约源（v2.6.2 含反馈执行率 soft-warn） |
 | `AGENTS.md` | 运行时自动注入 | 模块对 agent 的核心原则 + Token Budget + 必读规则 |
 
 ## 核心铁律（3 条）
@@ -44,8 +44,8 @@
 
 ### 铁律 2：**模块自洽**
 
-> 模块自身具备完整性检查能力（`contracts/health_check.sql`）。
-> check17 在每次 `node validate-config.mjs` 时执行，确保：
+> 模块自身具备完整性检查能力（`contracts/health_check.sql` 为 18 项查询契约源；`memory.py check` 为执行者，v2.6.4 起主通道内建，替代原 validate-config check17）。
+> `python scripts/memory.py check` 确保：
 > - 7 表结构齐全（v2.5 含 `skill_usage_events`）
 > - 核心索引存在（≥21，含 v2.3 新增 `idx_fact_scope` / `idx_upgrade_fact` / `idx_upgrade_status`）
 > - 视图存在且可查询（v2.6.1 #17 VIEWS_QUERYABLE_OK）
@@ -123,14 +123,14 @@
 | `.kilo/skills/` | skill 是 sqlite fact_store 的固化产物（满足 confidence/hit_count 门槛后触发草稿） |
 | `agent/*.md` | 智能体 prompt 不直接引用 SQL；通过 lifecycle 阶段文件加载智能体，conductor 在 DELIVERING 查阅 `docs/memory-ops-reference.md` |
 | `docs/memory-ops-reference.md` | 生命周期驱动后唯一业务规则与 SQL 模板入口 |
-| `validate-config.mjs` | check17 通过 contracts/health_check.sql 校验模块；check14 校验模块入口文件存在 |
+| `python scripts/memory.py` | `check` 子命令执行 7 表存在性 + 行数解析 + 告警标记（v2.6.4 起主通道内建）；模块文件完整性由 `lifecycle-doctor.mjs` 装配自检覆盖 |
 | `kilo.json` | 记忆主通道 = `python scripts/memory.py`（sqlite3 CLI 可选替代）；数据库文件 `~/.config/kilo-data/memory.db` |
 
 ## 升级路径
 
 | 阶段 | 内容 |
 |---|---|
-| v2.0 | 模块边界封装 + 4 层分离 + check17 健康度 |
+| v2.0 | 模块边界封装 + 4 层分离 + health_check 健康度 |
 | v2.1 | 14 条 AP + 2 条 PAT 从 SKILL.md 迁移到 fact_store（去 md 化） |
 | v2.2 | 4 个 archived sub-skill 文件彻底删除；fact_store 试用期机制；M6 自增数据源扩展 |
 | v2.3 | project_context 8 条种子自动 fill / trial 14 天过期归档 / skill_upgrade V2 / M6 Stage 1 前置校验 / scope 隔离 / semantic_search v4.0 接口规范 / 补偿 prompt 消费追踪 |
@@ -149,13 +149,13 @@
 | 症状 | 排查 |
 |---|---|
 | `no such table: fact_store` | 重新运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）自动初始化 memory.db |
-| check17 提示 `[MEMORY_LAYER_HOLLOW]` | memory.db 表齐全但 dispatch_log/fact_store 全空 → 任务收尾未执行 sqlite INSERT |
-| check17 FAIL 但表存在 | `contracts/health_check.sql` 索引/视图缺失 → 比对 `schema/init.sql` |
-| check17 `[PROJECT_CONTEXT_EMPTY]` | project_context 种子未应用 → 执行 `schema/init.sql` 末尾 INSERT OR IGNORE 段 |
-| check17 `[TRIAL_EXPIRED_PENDING]` | 14 天过期 trial 行未归档 → 手动执行 `UPDATE fact_store SET archived=1 WHERE created_at < date('now','-14 days') AND hit_count < 2` |
-| check17 `[FEEDBACK_LOOP_IDLE]` | dispatch ≥5 但全库 helpful/misleading 反馈 = 0 → M6 Stage 3 未激活，强制输出 `[memory:helpful=...]` 反馈标记 |
-| check17 `[CONTEXT_USE_COUNT_STALE]` | dispatch ≥5 但 project_context use_count 总和 = 0 → M1 query A' UPDATE 未执行，按 `docs/memory-ops-reference.md` M1 模板执行 `UPDATE...RETURNING` |
-| check17 `[VIEWS_QUERYABLE_OK]` | 视图体内 SQL 损坏 → 重新执行 `schema/init.sql` 末尾 CREATE VIEW 段 |
+| `memory.py check` 提示 `[MEMORY_LAYER_HOLLOW]` | memory.db 表齐全但 dispatch_log/fact_store 全空 → 任务收尾未执行 sqlite INSERT |
+| `memory.py check` FAIL 但表存在 | `contracts/health_check.sql` 索引/视图缺失 → 比对 `schema/init.sql` |
+| `memory.py check` `[PROJECT_CONTEXT_EMPTY]` | project_context 种子未应用 → 执行 `schema/init.sql` 末尾 INSERT OR IGNORE 段 |
+| `memory.py check` `[TRIAL_EXPIRED_PENDING]` | 14 天过期 trial 行未归档 → 手动执行 `UPDATE fact_store SET archived=1 WHERE created_at < date('now','-14 days') AND hit_count < 2` |
+| `memory.py check` `[FEEDBACK_LOOP_IDLE]` | dispatch ≥5 但全库 helpful/misleading 反馈 = 0 → M6 Stage 3 未激活，强制输出 `[memory:helpful=...]` 反馈标记 |
+| `memory.py check` `[CONTEXT_USE_COUNT_STALE]` | dispatch ≥5 但 project_context use_count 总和 = 0 → M1 query A' UPDATE 未执行，按 `docs/memory-ops-reference.md` M1 模板执行 `UPDATE...RETURNING` |
+| `memory.py check` `[VIEWS_QUERYABLE_OK]` | 视图体内 SQL 损坏 → 重新执行 `schema/init.sql` 末尾 CREATE VIEW 段 |
 | FTS5 中文 MATCH 恒 0 命中 | v2.6 前部署的 DB 虚表为 unicode61 分词 → 重建：`DROP TABLE fact_fts; DROP TABLE failure_fts;` 再执行 `schema/init.sql` 中的 CREATE VIRTUAL TABLE 段 |
 
 ## 扩展指南

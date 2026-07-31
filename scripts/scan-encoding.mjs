@@ -5,7 +5,7 @@
 // 用途：
 //   - verifier L1 必查项（默认对 git diff --name-only HEAD 跑）
 //   - coder 完工前自检
-//   - validate-config.mjs [15/15] 调用覆盖全 repo
+//   - lifecycle-doctor.mjs 编码健康度检查项调用覆盖全 repo
 //
 // 用法：
 //   node scripts/scan-encoding.mjs [file1] [file2] ...
@@ -308,7 +308,7 @@ function main() {
 }
 
 // ============================================================
-// 模块导出（供 validate-config.mjs 等 Node 程序 dynamic import）
+// 模块导出（供 lifecycle-doctor.mjs 等 Node 程序 dynamic import）
 // ============================================================
 
 export { checkBOM, checkReplacementChar, checkGBK, scanFile, resolveFilePaths };

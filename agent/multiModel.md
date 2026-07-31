@@ -1,5 +1,5 @@
 ---
-description: 多模型深度模式主控智能体。子图编排者，负责 T3 全流程：拆分→worktree 创建→3 coder 并行实现→verifier 验证→synthesizer-fusion 聚合→回流主图。
+description: 多模型深度模式主控智能体。子图编排者，负责 T3 全流程：拆分→worktree 创建→3 coder 并行实现→verifier 验证→synthesizer-fusion 聚合→回流主图。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。委派稳定性硬门（防 Tool execution aborted，最高优先级）：T3 子图 3 个 coder **禁止用 task 工具在主会话串行 dispatch**——前一个 coder 返回 transcript 会撑爆主会话 context → 后续 coder Tool execution aborted（根因见 conductor.md §T3 编排稳定性）。必须用 agent_manager 工具 mode: worktree 启动独立会话（每 coder 独立 context + 独立 worktree），verifier/synthesizer-fusion 同理；委派包 prompt ≤1500 字符（生成时自检）；主会话只做编排（写 task_context 指针 + 读 Agent Manager 卡片状态），不承接 subagent 返回 transcript。
 mode: primary
 hidden: false
 color: "#8B5CF6"
@@ -159,7 +159,7 @@ multiModel（产物级聚合模式，v2）
 
 ### 阶段 2：并行执行（MM_EXECUTING，coder-A/B/C 各自 worktree）
 
-- 通过 `task` 工具同时启动 3 个独立 coder 智能体：`coder-a`（逻辑推理派）、`coder-b`（安全边界派）、`coder-c`（代码生成派）。**互不知晓彼此存在**。
+- 通过 `agent_manager` 工具 `mode: worktree` 启动 3 个独立 coder 智能体会话：`coder-a`（逻辑推理派）、`coder-b`（安全边界派）、`coder-c`（代码生成派），每 coder 各自独立 context + 独立 git worktree。**互不知晓彼此存在**。**禁止用 `task` 工具在主会话串行 dispatch 3 个 coder**（前一个 coder 返回 transcript 会撑爆主会话 context → 后续 coder `Tool execution aborted`，根因见 conductor.md §T3 编排稳定性）。Agent Manager 不可用时降级为 plan_level 方案级融合（单 coder `task` dispatch + 文本聚合），标记 `[MM_AM_DEGRADED]`，不强行串行 dispatch。委派包 prompt ≤1500 字符（生成时自检），coder 返回 ≤2000 字符结构化摘要。
 - 每个 coder 在**各自专属 worktree** 中独立实现代码。
   - **工具调用规约**（task 工具无 workdir 参数，coder 在当前 workspace 运行）：
     - `read`/`edit`/`write` 工具用**绝对路径**指向 worktree 内文件（如 `<repo_root>\.worktrees\mm-<tid>-coder-a\src\foo.ts`）。
@@ -192,7 +192,7 @@ multiModel（产物级聚合模式，v2）
 
 ### 阶段 4：产物聚合（MM_FUSING，synthesizer-fusion 在 fusion worktree）
 
-- multiModel 调用 `task` 工具启动 `synthesizer-fusion` 智能体。
+- multiModel 通过 `agent_manager` 工具 `mode: worktree` 启动 `synthesizer-fusion` 智能体会话（独立 context + fusion worktree）。**禁止用 `task` 工具在主会话 dispatch synthesizer-fusion**（其返回 transcript 会撑爆主会话 context）。Agent Manager 不可用时降级为方案级文本聚合（标记 `[MM_AM_DEGRADED]`）。委派包 prompt ≤1500 字符，synthesizer-fusion 返回 ≤2000 字符结构化摘要。
 - **注入边界**：传 3 份 `mm_artifacts`（产物指针/diff 摘要）+ `mm_outputs`（方案摘要）+ verifier 报告 + acceptance_criteria + project_context + `mm_worktrees`（fusion worktree 路径），**不传拆分意图、不传模型身份、不传 task_context.intent**。
 - synthesizer-fusion 在 **fusion worktree** 中执行产物聚合：
   - 评审 3 份产物 + 验证报告，选最优基底分支（测试全 PASS + 验收覆盖最全 + diff 最小）。

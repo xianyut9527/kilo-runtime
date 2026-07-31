@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+- **2026-07-31**: 全库清理与死引用闭环 — 去除无意义描述/未落地引用，补齐 memory 模块机械校验缺口，同步全局部署。
+  - **死引用清零**：删除 memory-mcp 备用通道描述（`kilo.json` 无预埋、`test.js`/`test-stability.js` 不存在，v2.6.2 已删 api/）——`AGENTS.md` / `.kilo/instructions/core.md` / `.kilo/memory/AGENTS.md` / `README.md` 4 文件同步；validate-config check17/check14 引用改为真实执行者——`.kilo/memory/README.md`（L19/31/48/126 + 故障排查表 7 行 + 升级路径）与 `.kilo/memory/AGENTS.md`（L62）；`examples/install-check.md`（目录不存在）与 `check16` 引用从 `CONFIG_CHANGE_CHECKLIST.md` 移除。
+  - **机制落地**：`agent/conductor.md` convergence-auditor 段补实际执行命令（`node scripts/trust-transfer-check.mjs <task_id> [--round N]`，读取 `%TEMP%/kilo/task_context_*.json`，与原脚本接口核对一致）。
+  - **缺口补回**：`lifecycle-doctor.mjs` 新增 `memory.module.files` 检查（原 validate-config check14 功能）——校验 `.kilo/memory/` 4 个入口文件（README/AGENTS/schema:init.sql/contracts:health_check.sql）存在性；50 → 51 PASS。
+  - **README 修正**：skills.paths 段改为与 kilo.json 实际两路径一致（`${KILO_CONFIG_DIR}/.kilo/skills` + `${HOME}/.agents/skills`）；目录树 health_check 描述改为真实执行者（memory.py check）。
+  - **全局部署同步**：重跑 install.ps1 清除全局孤儿残留（validate-config.mjs / audit-*.mjs / dist / tests / lifecycle/stages/archive/*.v1 / 无消费者 node_modules+package.json），全局与仓库完全一致（EXCLUDE 除外）。
+  - **验证**：lifecycle-doctor 51 PASS / 0 FAIL / 0 WARN；sync-agent-prompt drift=0；e2e-smoke 38 PASS；全仓 grep 无 validate-config/memory-mcp/examples/ 死引用残留（CHANGELOG 历史条目除外）。
+
 - **2026-07-28**: v2.6.4 记忆通道兜底闭环 — check17 探测链与 install 初始化补齐 python memory.py 分支（查漏补缺失）。
   - **背景**：v2.6 已将记忆主通道切为 `python scripts/memory.py`，但两处运行时链路仍只认 sqlite3 CLI：① validate-config.mjs check17 探测链为 better-sqlite3 → sqlite3 CLI（含 winget 探测），python-only 机器会被误报 `[MEMORY_RUNTIME_UNAVAILABLE]`（主通道实际可用）；② install.ps1/install.sh 的 memory.db 初始化仅依赖 sqlite3 CLI，python-only 机器 memory.db 永不建表，主通道装好即残。
   - **validate-config.mjs**：check17 探测链末尾新增 python memory.py 分支（仅 CLI 缺失时进入，掩盖不了契约真实 FAIL）；经 `memory.py check` 一次调用完成 7 表存在性 + 行数解析，AP-/PAT- 迁移行数经 `query` 补查；dispatch_log=0 内联 `[MEMORY_LAYER_HOLLOW]` 提示；db 缺失 / 全通道不可用两处修复文案改为"memory.py exec-file（免安装）/ sqlite3 CLI"双路径。

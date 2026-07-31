@@ -11,7 +11,7 @@
 - **版本**：`2.6.2`
 - **策略**：`sqlite-first-md-fallback + bash-cli-channel + fts5-trigram + scope-isolation + helpful-rate-mandatory-feedback`
 - **数据库路径**：`${HOME}/.config/kilo-data/memory.db`
-- **访问通道**：主通道 = `python scripts/memory.py`（stdlib sqlite3 封装，跨平台免安装）；sqlite3 CLI 为可选替代；备用通道 = 自建 memory-mcp（v3.0，`kilo.json` 中 `enabled:false` 默认关闭）
+- **访问通道**：主通道 = `python scripts/memory.py`（stdlib sqlite3 封装，跨平台免安装）；sqlite3 CLI 为可选替代
 - **生命周期集成**：记忆操作统一由 `docs/memory-ops-reference.md` 定义，不再分散在各 agent 文件中
 
 ## 核心原则
@@ -59,7 +59,7 @@
 ## 模块不生效的降级行为
 
 - `memory.db` 不存在 → 跳过所有 sqlite 查询/写入，Kilo 自动优雅降级；重新运行 `install.ps1`/`install.sh` 可自动安装 `sqlite3` + 初始化 `memory.db`
-- `schema/init.sql` 缺失 → 模块不加载，但 `validate-config.mjs` check14 会 FAIL
+- `schema/init.sql` 缺失 → 模块不加载，`lifecycle-doctor.mjs` 装配自检的 `memory.module.files` 检查会 FAIL
 
 ## 相关文件
 

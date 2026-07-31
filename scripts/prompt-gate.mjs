@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // prompt-gate.mjs
-// task 调用前 prompt 字符数硬门 — conductor 铁律 9 的机械执行臂。
+// task 委派 prompt 长度复核工具（手动诊断，非运行时门）。
 //
-// 定位：conductor 每次委派 subagent 前必须调用本脚本校验 prompt 长度。
-// "模型提议委派、脚本裁判长度"——把软约束（提示词）变为硬约束（退出码）。
-// conductor 不得绕过本脚本直接发起超长 prompt 的 task 调用（[PROCESS_VIOLATION]）。
+// 定位：委派 prompt ≤1500 字符由生成时自检纪律保证（conductor 铁律 9：
+// 禁止复述文件内容、超限当场精简）。本脚本保留为人工/CI 复核工具
+// （审计、复盘、抽查历史委派包），不再要求每次委派前运行时调用——
+// 每次调用 = 一次 node 进程启动开销，约束已内化于提示词（编译时优先原则）。
 //
 // 用法：
 //   node scripts/prompt-gate.mjs --file <path>
@@ -43,7 +44,7 @@ function usage() {
     '  node scripts/prompt-gate.mjs --stdin --max <n>',
     '  node scripts/prompt-gate.mjs --help',
     '',
-    'Mechanical prompt length gate (conductor-only, iron-law 9).',
+    'Manual prompt length audit tool (conductor iron-law 9, non-runtime).',
     '',
     'Options:',
     '  --file <path>   Read prompt from file',

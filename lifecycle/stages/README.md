@@ -25,11 +25,7 @@ lifecycle/
     ├── executing.md        # EXECUTING     — frontmatter required_roles: [coder]
     ├── quality.md          # QUALITY       — v2 响应式 Hooks 阶段（合并原 CHECKING + REVIEWING + FIXING）
     │                         #   hooks: verify (串行启动组) → fix (trigger:onFail) → review (串行启动组, trigger:afterPass) → fix (同一 fixer)
-    ├── delivering.md       # DELIVERING    — conductor 内建
-    └── archive/            # v1 归档阶段（已废弃，保留参考）
-        ├── checking.md.v1  # 原 CHECKING   — 正向验证（已合并到 QUALITY verify hooks）
-        ├── reviewing.md.v1 # 原 REVIEWING   — 代码审查（已合并到 QUALITY review hooks）
-        └── fixing.md.v1    # 原 FIXING      — 修复循环（已合并到 QUALITY fix hooks）
+    └── delivering.md       # DELIVERING    — conductor 内建
 ```
 
 ## 阶段索引

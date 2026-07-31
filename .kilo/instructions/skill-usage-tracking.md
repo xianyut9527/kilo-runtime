@@ -98,7 +98,7 @@ ORDER BY uses DESC
 LIMIT 30;
 ```
 
-## 6. check17 健康度
+## 6. 记忆层健康度
 
 v2.5 起 `contracts/health_check.sql` 不直接验证 `skill_usage_events`（无硬性要求），仅通过 `ROW_COUNTS` 间接统计。理由：skill_usage_events 是 telemetry 数据，可选；agent 必须确保记录但不强制最低行数。
 

@@ -38,3 +38,6 @@ kilo.json.bak.*
 
 # 多模型 worktree 隔离产物（T3 产物级聚合，见 multimodel-graph.yaml:33 路径模板）
 .worktrees/
+
+# MCP 运行时产物（playwright 等本地 MCP 生成的临时目录）
+.playwright-mcp/

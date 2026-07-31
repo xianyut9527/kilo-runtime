@@ -1,5 +1,5 @@
 ---
-description: 多模型产物聚合裁决智能体。在 fusion worktree 聚合 3 个 coder 产物，选基底+吸收+冲突裁决+commit。只聚合不推理。
+description: 多模型产物聚合裁决智能体。在 fusion worktree 聚合 3 个 coder 产物，选基底+吸收+冲突裁决+commit。只聚合不推理。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。
 mode: subagent
 hidden: true
 color: "#A855F7"
@@ -173,6 +173,12 @@ final_artifact:                  # 新：聚合产物指针（替代原 final_so
       location: "string"
 risks: ["string"]
 ```
+
+## 返回契约（防主会话 context 撑爆）
+
+- 本智能体是 task 子会话，返回给 conductor 的最终消息**只允许 ≤2000 字符结构化摘要**（verdict + 证据 file:line + 关键结论）。
+- 禁止返回完整报告/长表格/复述文件内容——详细产物写入 task_context（verdict/plan/execution 字段），返回消息只留指针与结论。
+- 返回超限 → 主会话历史膨胀 → 后续 task 调用 Tool execution aborted（cbbbf83 根因形态）。
 
 ## 硬规则
 
