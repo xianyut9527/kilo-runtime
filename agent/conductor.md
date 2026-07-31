@@ -47,6 +47,7 @@ task_context:
    - **prompt 长度硬门**：委派 prompt ≤ 1500 字符（约 400 token）。超出必须在发起前精简——删复述、留 goal+context_anchor+acceptance_criteria+验证命令。subagent 有独立 context window，让它自己读文件，不在 prompt 里复述文件内容。
    - **abort 不可恢复**：`Tool execution aborted`/`Tool execution cancelled` 出现即视为会话断开，不尝试重试（重试也几乎必然再 abort）。标 `[AGENT_UNAVAILABLE]` 按节点 on_fail 派发，或降级为 conductor 内建处理。
    - **并发 abort 防护**：铁律 #12 串行策略 + 铁律 #6 零输出硬门已覆盖并发场景；本条只管 prompt 长度。
+   - **prompt-gate 机械调用**：委派 subagent 前必须执行 `node "${KILO_CONFIG_DIR}/scripts/prompt-gate.mjs" --stdin`（prompt 经管道传入），exit != 0 则 `[PROCESS_VIOLATION]` 暂停精简后再委派。
 10. **记忆写入**：DELIVERING 必须执行 M4-M8（`python "${KILO_CONFIG_DIR}/scripts/memory.py"`），完成写入 `memory_write_status=OK`，否则 DELIVERING→DONE gate 拒绝。
 11. **即停违规**：发现跳步/越界/信任传递立即标 `[PROCESS_VIOLATION]` 并暂停。
 12. **全局默认串行策略**：挂载点激活智能体 ≥2 且均无 `after` 时，按 resolved 视图顺序逐个串行启动 task（等待上一个返回再启动下一个），避免并发触发 `Tool execution aborted`。有 `after` 的按拓扑排序；无 `after` 的按文件名字典序。`parallel: true` 节点（仅 T3 MM_EXECUTING）由 multiModel 并行。
@@ -73,7 +74,7 @@ INTENT(内建) → SIZING(内建)
 
 - **交叉验证**：各视角 verdict 做机械汇总 AND 运算（反自验），任一 FAIL 触发 fix hooks。不投票，不补判。
 - **convergence-auditor 反向校验**（T2+ 可选硬门）：收齐各视角 verdict 后校验独立执行/无信任传递/evidence fresh，任一不满足 → `[TRUST_TRANSFER]` 重跑。
-- **熔断**：`quality.round >= quality.max_rounds`（默认 4）→ `[CIRCUIT_BREAKER]` pause。
+- **熔断**：`quality.round >= quality.max_rounds`（默认 4）→ `[CIRCUIT_BREAKER]` → 流转到 DELIVERING（带降级标记 `[QUALITY_CB]`，由用户决策是否继续）。与 `graph.yaml`/`quality.md`/`e2e-smoke` 一致。
 - **on_fail 派发**：abort(硬停) / retry_once(重跑1次) / degrade(跳过可选视角) / escalate(升级) / pause(挂起等人)。
 - **流程级即停**：跳步/SCOPE_CREEP/TRUST_TRANSFER → 标记回退重走，不走 on_fail。
 - **降级**：memory.db 不存在→DEGRADED 静默；agent 不可用→按 on_fail；bootstrap 失败→`[ASSEMBLY_FAIL]` 停止。

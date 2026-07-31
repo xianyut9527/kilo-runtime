@@ -129,7 +129,7 @@
       "options": {
         "baseURL": "https://huixin.nat100.top/v1",
         "timeout": 600000,
-        "chunkTimeout": 180000,
+        "chunkTimeout": 600000,
         "maxRetries": 2
       },
       "models": {

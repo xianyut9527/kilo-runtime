@@ -48,7 +48,7 @@ quality_gate:
 
 ## 路由规则（边定义见 graph.yaml）
 
-- `DONE` → T1+ 进入 `QUALITY`；T0 直达 `DELIVERING`
+- `DONE` → T1+ 进入 `QUALITY`；T0 直达 `DELIVERING`（**T0 交付前置硬门**：直达 DELIVERING 前必须完成轻量验证——`node scripts/scan-encoding.mjs` 通过 + `encoding_clean: true` + `no_debug_leftovers: true`，否则输出 `DONE_WITH_CONCERNS` 进 QUALITY 兜底）
 - `DONE_WITH_CONCERNS` → 附带风险说明进入 `QUALITY`
 - `NEEDS_CONTEXT` / `BLOCKED` → 停止并回传，不推进
 - **T3 回流**：`MM_SUBGRAPH → EXECUTING`（`subgraph_status == 'ready_for_delivery'`），coder 执行 `git merge mm-\u003ctid\u003e-fusion` 应用聚合代码产物到主工作区，然后走标准 `QUALITY → DELIVERING`（QUALITY hooks 自动循环验证 merge 后代码产物）

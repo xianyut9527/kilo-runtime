@@ -440,7 +440,7 @@ function main() {
     appendTransitionLog(ctx, FROM, TO);
     ctx.current_stage = TO;
     writeContext(taskId, ctx);
-    die(3, `[CIRCUIT_BREAKER] global quality_round=${quality.round} >= max_total_cycles=${maxR}（停止修复，task_context.status=PAUSED 等用户决策）`);
+    die(3, `[CIRCUIT_BREAKER] global quality_round=${quality.round} >= max_total_cycles=${maxR}（已写入 quality.verdict=CIRCUIT_BREAKER + current_stage=${TO}，流转到 DELIVERING 带降级标记 [QUALITY_CB]，由用户决策是否继续）`);
   }
 
   // 写回 task_context：追加 transition_log + current_stage + quality round 原子写入

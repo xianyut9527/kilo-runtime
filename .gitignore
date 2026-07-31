@@ -35,3 +35,6 @@ kilo.json.bak.*
 
 # 多模型审计临时产物
 .kilo_tmp/
+
+# 多模型 worktree 隔离产物（T3 产物级聚合，见 multimodel-graph.yaml:33 路径模板）
+.worktrees/

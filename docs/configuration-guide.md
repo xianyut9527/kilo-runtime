@@ -367,8 +367,7 @@ overrides:
 ```yaml
 hooks:
   quality:
-    max_verify_retries: 3        # ← 从 5 改为 3
-    max_total_cycles: 4          # ← 从 7 改为 4
+    max_total_cycles: 4          # ← 从 7 改为 4（唯一熔断阈值，替代原 max_verify_retries/max_review_retries 死配置）
 ```
 
 `graph.yaml` 不再重复声明 convergence（v6.1 删除展示副本）。
@@ -454,9 +453,7 @@ overrides:
 # hooks.quality：响应式 Hooks 熔断阈值（v2 唯一真相）
 hooks:
   quality:
-    max_verify_retries: 5      # verify 失败重试上限
-    max_review_retries: 3      # review 失败重试上限
-    max_total_cycles: 4        # QUALITY 总轮次上限（4 轮修不好=方案/需求有问题）
+    max_total_cycles: 4        # QUALITY 总轮次上限（唯一熔断阈值，4 轮修不好=方案/需求有问题）
 ```
 
 ### tier_defaults.agents 的 key 命名规则（自动派生）

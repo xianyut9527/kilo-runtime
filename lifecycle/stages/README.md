@@ -50,7 +50,7 @@ lifecycle/
 > - **顺序由 hook 类型定义**：verify → fix → review → fix 循环是框架内置的，不需要绝对编号
 > - **同 hook 类型默认串行启动**：无 `after` 时默认串行启动（按 agent 文件名字典序逐个启动；遵守零输出硬门；详见 `agent/conductor.md` §智能体加载规则）；需要顺序时声明 `after: [agent-name]`
 > - **循环逻辑**：code 变化 → 自动触发 verify → verify PASS → 自动触发 review → review PASS → quality_verdict=PASS → 离开 QUALITY
-> - **熔断**：`config.yaml hooks.quality.max_verify_retries` / `max_review_retries` / `max_total_cycles`
+> - **熔断**：`config.yaml hooks.quality.max_total_cycles`（唯一机械熔断阈值，按 `quality.round` 判定）
 
 > 注：角色名（如 `verifier`）是契约标识，实际挂载由 `agent/*.md` frontmatter `mount` 自注册决定。`config.agents` 开关见 `lifecycle/config.yaml` `tier_defaults`。
 

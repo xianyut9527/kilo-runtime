@@ -51,6 +51,7 @@ T2: 多维度分析 / 需要跨文件/跨模块调研 / 需要对比/评估/建�
 T3: 深度调研 / 架构级评估 / 需要多模型并行分析对比
      → multiModel 并行分析生命周期（复用 multiModel 子图，模式=analysis）
      → 3 个不同模型并行分析同一问题，synthesizer-fusion 独立融合最优结论
+     → ⚠️ INQUIRY T3 多模型并行分析为预留扩展，暂未接线（见 config.yaml `inquiry_tier_defaults` 注释），实际 INQUIRY T3 降级走 T2 单路分析门 + 全视角审查；仅 EXECUTION T3 接入 multiModel 子图
 ```
 
 ### 定级输出

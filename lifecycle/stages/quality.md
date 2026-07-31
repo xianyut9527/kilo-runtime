@@ -307,17 +307,13 @@ quality:
 # lifecycle/config.yaml hooks 段
 hooks:
   quality:
-    max_verify_retries: 5      # verify 失败重试上限（替代原 max_rounds）
-    max_review_retries: 3    # review 失败重试上限
-    max_total_cycles: 4        # QUALITY 总轮次上限（当前值 4；4 轮修不好=方案/需求有问题，escalate 到人）
+    max_total_cycles: 4        # QUALITY 总轮次上限（唯一熔断阈值；4 轮修不好=方案/需求有问题，escalate 到人）
     auto_fix: true             # 自动触发 fix hooks（false = 人工确认后修复）
 ```
 
 **熔断规则**：
-- verify FAIL 连续 `max_verify_retries` 次 → CIRCUIT_BREAKER
-- review FAIL 连续 `max_review_retries` 次 → CIRCUIT_BREAKER
-- QUALITY 总轮次 ≥ `max_total_cycles` → CIRCUIT_BREAKER
-- CIRCUIT_BREAKER 时 `quality_verdict = 'CIRCUIT_BREAKER'` → 流转到 DELIVERING（带降级标记）
+- QUALITY 总轮次 ≥ `max_total_cycles` → CIRCUIT_BREAKER（唯一机械熔断阈值，由 `transition-check.mjs` 按 `quality.round` 判定）
+- CIRCUIT_BREAKER 时 `quality_verdict = 'CIRCUIT_BREAKER'` → 流转到 DELIVERING（带降级标记 `[QUALITY_CB]`，由用户决策是否继续）
 
 ## 输出信号
 

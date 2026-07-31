@@ -143,9 +143,7 @@ convergence:
 # ============================================================
 hooks:
   quality:
-    max_verify_retries: 5      # 每轮 verify hooks 失败重试上限（替代原 max_rounds）
-    max_review_retries: 3      # 每轮 review hooks 失败重试上限
-    max_total_cycles: 4          # QUALITY 总轮次上限（4轮修不好=方案/需求有问题，escalate到人）
+    max_total_cycles: 4          # QUALITY 总轮次上限（唯一熔断阈值，4轮修不好=方案/需求有问题，escalate到人）
     auto_fix: true              # 自动触发 fix hooks（false = 人工确认后修复）
 
 # ============================================================

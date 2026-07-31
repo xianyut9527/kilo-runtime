@@ -355,10 +355,11 @@ function parseStageFrontmatter(fm) {
   return m[1].split(',').map((s) => s.trim()).filter(Boolean);
 }
 
-// 解析 config.yaml 关注段：tier_defaults / overrides.disabled_agents / timeouts
+// 解析 config.yaml 关注段：tier_defaults / inquiry_tier_defaults / overrides.disabled_agents / timeouts
 function parseConfig(text) {
   const cfg = {
-    tierAgents: new Map(),   // tier -> Set(agentKey)
+    tierAgents: new Map(),          // tier -> Set(agentKey)  来自 tier_defaults
+    inquiryTierAgents: new Map(),   // tier -> Set(agentKey)  来自 inquiry_tier_defaults
     disabledAgents: [],
     perAgentKeys: [],
     multiplierEntries: [],   // {key, value}
@@ -376,11 +377,13 @@ function parseConfig(text) {
       l1 = m ? m[1] : null; l2 = null; l3 = null;
       continue;
     }
-    if (l1 === 'tier_defaults') {
+    // tier_defaults 与 inquiry_tier_defaults 结构完全相同，复用同解析逻辑，结果写入不同 Map
+    if (l1 === 'tier_defaults' || l1 === 'inquiry_tier_defaults') {
+      const targetMap = l1 === 'tier_defaults' ? cfg.tierAgents : cfg.inquiryTierAgents;
       if (indent === 2) {
         const m = line.match(/^\s+(\w+)\s*:/);
         l2 = m ? m[1] : null; l3 = null;
-        if (l2 && !cfg.tierAgents.has(l2)) cfg.tierAgents.set(l2, new Set());
+        if (l2 && !targetMap.has(l2)) targetMap.set(l2, new Set());
         continue;
       }
       if (indent === 4) {
@@ -390,7 +393,7 @@ function parseConfig(text) {
       }
       if (indent >= 6 && l3 === 'agents' && l2) {
         const m = line.match(/^\s+(\w+)\s*:/);
-        if (m) cfg.tierAgents.get(l2).add(m[1]);
+        if (m) targetMap.get(l2).add(m[1]);
         continue;
       }
       continue;
@@ -1027,10 +1030,13 @@ for (const [name, a] of agents) {
   if (groups.size === 0) pass('agent.after.topo', '无 after 声明（全部串行组，按 agent 文件名字典序逐个启动，遵守零输出硬门）');
 }
 
-// B4. when 引用的 config.agents.<key> 至少在任一 tier_defaults 声明（防孤儿开关）
+// B4. when 引用的 config.agents.<key> 至少在任一 tier_defaults / inquiry_tier_defaults 声明（防孤儿开关）
 {
   const allTierKeys = new Set();
-  if (cfg) for (const keys of cfg.tierAgents.values()) for (const k of keys) allTierKeys.add(k);
+  if (cfg) {
+    for (const keys of cfg.tierAgents.values()) for (const k of keys) allTierKeys.add(k);
+    for (const keys of cfg.inquiryTierAgents.values()) for (const k of keys) allTierKeys.add(k);
+  }
   for (const [name, a] of agents) {
     for (const m of a.mount) {
       if (!m.when) continue;
@@ -1140,11 +1146,13 @@ if (cfg) {
     }
     if (!bad) pass('config.timeouts.multiplier', `${cfg.multiplierEntries.length} 个条目合法`);
   }
-  // D3. tier_defaults 键 ⊆ {T0..T3}
+  // D3. tier_defaults 与 inquiry_tier_defaults 键 ⊆ {T0..T3}
   {
-    const bad = [...cfg.tierAgents.keys()].filter((t) => !TIERS.has(t));
-    if (bad.length === 0) pass('config.tier.keys', 'tier 键全部合法');
-    for (const t of bad) fail('config.tier.keys', `"${t}" ⊄ {T0,T1,T2,T3}`);
+    const bad1 = [...cfg.tierAgents.keys()].filter((t) => !TIERS.has(t));
+    const bad2 = [...cfg.inquiryTierAgents.keys()].filter((t) => !TIERS.has(t));
+    if (bad1.length === 0 && bad2.length === 0) pass('config.tier.keys', 'tier 键全部合法（tier_defaults + inquiry_tier_defaults）');
+    for (const t of bad1) fail('config.tier.keys', `tier_defaults "${t}" ⊄ {T0,T1,T2,T3}`);
+    for (const t of bad2) fail('config.tier.keys', `inquiry_tier_defaults "${t}" ⊄ {T0,T1,T2,T3}`);
   }
     // D4. tier 开关键应对应"带 when 的智能体"（防僵尸开关）
     // 例外白名单：multiModel 主控行为开关（非智能体挂载开关，无对应 agent when 引用）
@@ -1163,6 +1171,14 @@ if (cfg) {
         if (TIER_BEHAVIOR_KEYS.has(k)) continue;  // 行为开关豁免
         if (!whenKeys.has(k)) {
           warn(`config.tier.${tier}.${k}`, `无任何智能体 when 引用 config.agents.${k}（僵尸开关）`);
+        }
+      }
+    }
+    for (const [tier, keys] of cfg.inquiryTierAgents) {
+      for (const k of keys) {
+        if (TIER_BEHAVIOR_KEYS.has(k)) continue;  // 行为开关豁免
+        if (!whenKeys.has(k)) {
+          warn(`config.inquiry_tier.${tier}.${k}`, `无任何智能体 when 引用 config.agents.${k}（僵尸开关）`);
         }
       }
     }

@@ -32,6 +32,7 @@ nodes:
           若 worktree 创建失败则降级方案级融合（plan_level），不阻塞主流程；
           跨平台路径模板——Windows: <repo_root>\.worktrees\mm-<tid>-{coder-a,coder-b,coder-c,fusion}\，
           Unix: <repo_root>/.worktrees/mm-<tid>-{coder-a,coder-b,coder-c,fusion}/；
+          ⚠️ Windows MAX_PATH 风险：默认 260 字符限制，深仓库根路径 + mm-<tid>-coder-a 嵌套易触上限，导致 worktree 创建失败（on_fail:abort → [MM_WT_DEGRADED]）；缓解：启用 Windows 长路径（LongPathsEnabled=1）或浅仓库根；本仓库已在 .gitignore 忽略 .worktrees/；
           fusion worktree base = 主工作区当前分支 HEAD（与 3 coder worktree 同一时间窗口创建）；
           失败 → 标 [MM_WT_DEGRADED]，清理已创建 worktree，降级方案级融合（mm_mode="plan_level"，跳过本节点，MM_EXECUTING 回退方案文本模式）
 
@@ -58,7 +59,8 @@ nodes:
 
   - id: MM_ARCHIVED
     type: terminal
-    note: 写 subgraph_status=ready_for_delivery（fusion 分支已就绪）+ status=RUNNING（交还 conductor 后接管）；task_context 交还 conductor 回流主图 EXECUTING（coder 执行 `git merge mm-<tid>-fusion` 将聚合代码产物应用到主工作区，写入 execution.diffs/changes/acceptance_map），然后走标准 QUALITY→DELIVERING（主图 hooks 自动循环验证 merge 后代码产物）
+    note: 写 subgraph_status=ready_for_delivery（fusion 分支已就绪）+ status=RUNNING（交还 conductor 后接管）；task_context 交还 conductor 回流主图 EXECUTING（coder 执行 `git merge mm-<tid>-fusion` 将聚合代码产物应用到主工作区，写入 execution.diffs/changes/acceptance_map），然后走标准 QUALITY→DELIVERING（主图 hooks 自动循环验证 merge 后代码产物）；
+          ⚠️ fusion worktree 清理责任：主图 DELIVERING 阶段完成 merge 产物交付后，必须清理 fusion worktree（`git worktree remove .worktrees/mm-<tid>-fusion --force`）+ 删除 fusion 分支（`git branch -D mm-<tid>-fusion`）；清理责任归属主图 conductor（非 multiModel，因子图已 terminal）；未清理 → .worktrees/ 残留累积（虽已 gitignore 但占磁盘）
 
 edges:
   - { from: MM_INIT, to: MM_INJECT }

@@ -83,6 +83,8 @@ token_budget: 6000
 3. 告知用户分支去向，不擅自 push 合并
 4. worktree 隔离清理（如适用）
 
+> **T0 直达前置**：T0 任务绕过 QUALITY 直达 DELIVERING，须在 EXECUTING 阶段完成轻量验证（`scan-encoding.mjs` 通过 + `encoding_clean: true` + `no_debug_leftovers: true`，见 `executing.md` 路由规则）。DELIVERING 接收 T0 产物时默认信任前置已通过；若 EXECUTING 输出 `DONE_WITH_CONCERNS` 则已回流 QUALITY 兜底，不会直达。
+
 ## 输出信号
 
 ```yaml
