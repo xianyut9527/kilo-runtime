@@ -29,21 +29,19 @@ kilo_config/
 ├── kilo.json                              # 模型绑定（agent.<name>.model）+ provider 模型清单
 ├── agent/                                 # 智能体行为文件（一智能体一文件，frontmatter 自注册）
 │   ├── conductor.md                       #   编排者（type: primary，内建执行，无 mount）
-│   ├── multiModel.md                      #   T3 子图编排者（type: lifecycle_provider，无 mount）
+│   ├── multiModel.md                      #   T3 阶段级并行调度者（type: primary，mount: PLANNING when: multiModel）
 │   ├── planner.md                         #   规划（mount: PLANNING）
 │   ├── coder.md                           #   编码（mount: EXECUTING）
-│   ├── verifier.md                        #   正向验证（mount: QUALITY hook:verify + MM_CHECKING + MM_FCHECK）
+│   ├── verifier.md                        #   正向验证（mount: QUALITY hook:verify）
 │   ├── reverse-auditor.md                 #   反向审计（mount: QUALITY hook:verify, when: T2+）
 │   ├── side-checker.md                    #   侧向验证（mount: QUALITY hook:review, when: T2+）
 │   ├── reviewer.md                        #   静态审查（mount: QUALITY hook:review）
 │   ├── fixer.md                           #   修复（mount: QUALITY hook:fix, auto-trigger）
-│   ├── coder-a.md                         #   multiModel 逻辑推理派（mount: MM_EXECUTING）
-│   ├── coder-b.md                         #   multiModel 安全边界派（mount: MM_EXECUTING）
-│   ├── coder-c.md                         #   multiModel 代码生成派（mount: MM_EXECUTING）
-│   └── synthesizer-fusion.md              #   融合编辑（mount: MM_FUSING, when: ...）
+│   ├── planner-a.md                       #   multiModel 调度变体（kimi-k2.6）
+│   ├── planner-b.md                       #   multiModel 调度变体（deepseek-v4-pro）
+│   ├── planner-c.md                       #   multiModel 调度变体（glm-5.2）
 ├── lifecycle/
 │   ├── graph.yaml                         # 主生命周期 DAG（节点 + 边 + 流转条件）
-│   ├── multimodel-graph.yaml              # T3 子图 DAG（含 diversity_rule 多样化硬规则）
 │   ├── config.yaml                        # 定级默认组合 + 用户覆盖 + 熔断阈值（唯一真相）
 │   └── stages/                            # 阶段执行逻辑（一阶段一文件，文件名派生节点 ID）
 │       ├── intent.md                      #   意图判定 → INTENT
@@ -70,7 +68,6 @@ kilo_config/
 | 图结构（节点/边/流转） | `lifecycle/graph.yaml` | `stages/*.md` 只写执行逻辑，不重复图结构 |
 | 定级→智能体组合 | `lifecycle/config.yaml` `tier_defaults` | `conductor.md` 不硬编码组合 |
 | 熔断阈值 | `lifecycle/config.yaml` `convergence`（唯一真相） | `graph.yaml` 不再重复声明 |
-| 多样化硬规则 | `lifecycle/multimodel-graph.yaml` `diversity_rule` | `docs/model-registry.md` 是人类可读说明 |
 
 ---
 
@@ -102,8 +99,7 @@ subagent_type: verifier     # task 工具的 subagent_type 参数值
 # ===== 生命周期字段（bootstrap 扫此部分自动注册）=====
 
 # type：智能体类型（决定是否经 mount 挂载）
-#   primary            - 编排者，内建执行，不经 mount（conductor）
-#   lifecycle_provider - 特殊 primary，自带子图（multiModel）
+#   primary            - 编排者/调度者，内建执行或经 mount 挂载（conductor 无 mount；multiModel mount: PLANNING）
 #   (省略)             - subagent，由编排者经 task 工具按 mount 挂载启动
 # verifier 是 subagent，省略 type
 
@@ -124,8 +120,6 @@ mount:
   - at: QUALITY                # v2 响应式 Hooks 阶段（合并原 CHECKING+REVIEWING+FIXING）
     hook: verify               # verify hook：reverse-auditor after: [verifier] 在本 agent 之后串行
     deps: [execution.code, plan]
-  - at: MM_CHECKING            # 一智能体可挂载多槽（同时在 multiModel 子图挂载）
-  - at: MM_FCHECK
 
 # task_context：读写边界声明（bootstrap 注入上下文切片 + 运行时强制隔离）
 #   read        可读的 task_context 切片
@@ -141,8 +135,8 @@ isolation:
   forbid_read: [execution.verification, fixing_history]   # 视角物理隔离
 
 # gate：本智能体输出须通过的质量门禁（对应 graph.yaml edge 的 gate 字段）
-# 仅 synthesizer-fusion（FUSION_SELF_CHECK_10）使用
-# gate: FUSION_SELF_CHECK_10
+# 仅 DELIVERING→DONE 的 MEMORY_WRITE_COMPLETE 使用
+# gate: MEMORY_WRITE_COMPLETE
 ---
 ```
 
@@ -165,7 +159,7 @@ isolation:
 - 同挂载点 / 同 hook 类型多个智能体 **默认串行**（省略 `after`，按 agent 文件名字典序逐个启动）
 - v2 不再使用 `order: <数字>` 绝对编号；QUALITY 内部顺序由 `hook` 类型内置定义：`verify → fix → review → fix`
 - 需要控制同 hook 内相对顺序时，声明 `after: [agent-name]`（只引用前驱，零改其他文件）
-- **避免并发 task 调度 abort**：同 hook 类型默认串行启动，避免同一轮对话并发调度多个 task 触发底层执行器 `Tool execution aborted`；仅 `graph.yaml` 显式声明 `parallel: true` 的节点（如 T3 子图 `MM_EXECUTING` 的 3 coder）保留并行语义
+- **避免并发 task 调度 abort**：同 hook 类型默认串行启动，避免同一轮对话并发调度多个 task 触发底层执行器 `Tool execution aborted`
 
 ---
 
@@ -383,11 +377,10 @@ nodes:
                                 #   type: stage 的节点，执行逻辑文件路径自动派生：stages/<id 小写>.md
                                 #   （PLANNING → stages/planning.md），无需 stage 字段
   - id: PLANNING
-    type: stage                # virtual | stage | subgraph | terminal
+    type: stage                # virtual | stage | terminal（subgraph 类型已废弃，T3 走阶段级并行）
     executor: conductor        # 内建执行者（conductor/multiModel）；声明后主槽不经 task 启动外部智能体
     required: [planner]        # 主槽必配角色列表（结构层不变量）；无 agent 挂载该角色 → [ASSEMBLY_FAIL]
-    provider: multiModel       # subgraph 节点的子图提供者（对应 agent type: lifecycle_provider）
-    graph: multimodel-graph.yaml  # subgraph 节点的子图 DAG 文件
+                                #   T3 时由 multiModel 挂载 PLANNING 主槽，内部串行调度 planner-a/b/c 三变体
     note: 人类可读说明         # 可选
 
 # 边字段
@@ -405,7 +398,6 @@ edges:
 |------|------|------------|-----------|
 | `virtual` | 占位（START） | 无 | 无 |
 | `stage` | 阶段节点 | 有（`stages/<id 小写>.md`，文件名派生） | 有（主槽 + pre/post） |
-| `subgraph` | 子图入口 | 无（子图有自己的 DAG） | 经 provider 路由 |
 | `terminal` | 终态（DONE） | 无 | 无 |
 
 ### executor vs mount
@@ -436,12 +428,12 @@ tier_defaults:
       fixer: true
       reverse_auditor: false   # T2+ 才开
       side_checker: false      # T2+ 才开
-      synthesizer_fusion: false  # 仅 T3
     review_mode: full
   T3:
-    provider: multiModel       # T3 交给子图
+    provider: multiModel       # T3 阶段级并行
     agents:
-      synthesizer_fusion: true
+      reverse_auditor: true
+      side_checker: true
     review_mode: full
 
 # overrides：用户/环境覆盖（默认全空 = 全量自动发现注册）
@@ -464,38 +456,20 @@ key 是智能体文件名的 **下划线形式**（`reverse-auditor.md` → `rev
 |-------------|-------------------|
 | reverse-auditor.md | reverse_auditor |
 | side-checker.md | side_checker |
-| synthesizer-fusion.md | synthesizer_fusion |
-| coder-a / coder-b / coder-c | （不单独开关，由 T3 provider 隐含） |
+| planner-a / planner-b / planner-c | （不单独开关，由 T3 provider 隐含） |
 | coder / planner / verifier / reviewer / fixer | 同名（单词名直接用） |
 
 ---
 
-## 6. multimodel-graph.yaml 字段详解（T3 子图）
+## 6. T3 阶段级多模型并行
 
-```yaml
-provider: multiModel          # 子图提供者
-entry: MM_INIT                # 子图入口节点
-exit: MM_ARCHIVED             # 子图出口节点
-
-nodes:
-  - id: MM_EXECUTING
-    required: [coder-a, coder-b, coder-c]   # 3 coder 必配
-    parallel: true                           # 并行执行（视角隔离）
-
-# 多样化硬规则（v6.1 从原 capabilities.yaml 迁移至此——仅本子图使用）
-diversity_rule:
-  applies_to: [coder-a, coder-b, coder-c]
-  dimensions:
-    vendor: required         # 模型提供者两两不同
-    architecture: required   # 模型架构两两不同
-  on_violation: DIVERSITY_VIOLATION
-```
+T3 走主图 `PLANNING→EXECUTING→QUALITY→DELIVERING` 全链路（与 T1/T2 一致），无独立 DAG。PLANNING 阶段由 `multiModel` 调度 3 个 planner 变体（planner-a / planner-b / planner-c，分别绑定 kimi-k2.6 / deepseek-v4-pro / glm-5.2）出方案并融合选优，写入 `plan`；EXECUTING 单路 coder 按融合方案实现；QUALITY 四视角交叉验证不变。
 
 ### diversity_rule 校验逻辑
 
-bootstrap 校验 coder-a/b/c 在 kilo.json 绑定模型的 `(vendor, architecture)` 两两不同。vendor/architecture 来源：`docs/model-registry.md` 人工维护（无机器可读副本）。违反 → `[DIVERSITY_VIOLATION]`。
+bootstrap 校验 planner-a/b/c 在 kilo.json 绑定模型的 `(vendor, architecture)` 两两不同。vendor/architecture 来源：`docs/model-registry.md` 人工维护（无机器可读副本）。违反 → `[DIVERSITY_VIOLATION]`。
 
-> 人工对照流程：打开 `docs/model-registry.md` §模型清单，确认 coder-a/b/c 绑定的模型在"厂商"和"架构"两列两两不同。
+> 人工对照流程：打开 `docs/model-registry.md` §模型清单，确认 planner-a/b/c 绑定的模型在"厂商"和"架构"两列两两不同。
 
 ---
 
@@ -515,8 +489,8 @@ bootstrap 校验 coder-a/b/c 在 kilo.json 绑定模型的 `(vendor, architectur
 | `execution.diffs` | coder/fixer | 变更 diff |
 | `execution.changes` | coder | 变更清单 |
 | `execution.acceptance_map` | coder | 验收映射表 |
-| `execution.mm_outputs` | coder-a/b/c | multiModel 3 份方案输出（详细方案，非代码产物） |
-| `execution.fused_output` | synthesizer-fusion | 融合后方案（设计方案，非代码；供主图 EXECUTING 阶段 coder 按方案实现） |
+| `execution.mm_outputs` | planner-a/b/c | multiModel 3 份方案输出（详细方案，非代码产物） |
+| `execution.fused_output` | multiModel | 融合后方案（设计方案，非代码；供主图 EXECUTING 阶段 coder 按方案实现） |
 | `execution.verification` | verifier | 验证结论（写入边界硬门：唯一写入者） |
 | `verification.forward` | verifier | 正向验证结论 |
 | `verification.reverse` | reverse-auditor | 反向审计结论 |
@@ -562,7 +536,7 @@ node scripts/lifecycle-doctor.mjs
 | 错误码 | 含义 | 排查 |
 |--------|------|------|
 | `[ASSEMBLY_FAIL]` | 启动期装配失败 | 跑 `node scripts/lifecycle-doctor.mjs --verbose` 定位：agent frontmatter mount / stages required_roles 覆盖 / kilo.json 模型绑定 |
-| `[DIVERSITY_VIOLATION]` | 3 coder 模型不满足多样化 | 检查 kilo.json coder-a/b/c 模型的 (vendor, architecture) 是否两两不同（对照 docs/model-registry.md） |
+| `[DIVERSITY_VIOLATION]` | 3 个 planner 变体模型不满足多样化 | 检查 kilo.json planner-a/b/c 模型的 (vendor, architecture) 是否两两不同（对照 docs/model-registry.md） |
 | `[PROCESS_VIOLATION]` | 流程违规（跳步/越权写） | 检查是否跳过必经阶段 / 是否越权写 execution.verification |
 | `[TRUST_TRANSFER]` | 信任传递 | 检查验证智能体是否引用了其他视角结论而非独立验证 |
 | `[SCOPE_CREEP]` | 越界修改 | 检查 coder/fixer 是否改了 forbidden_files 之外的文件 |

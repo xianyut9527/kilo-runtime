@@ -28,13 +28,12 @@ import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { VALID_STATUSES } from './task-context-runtime.mjs';
+import { VALID_STATUSES, readTierDefaults } from './task-context-runtime.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const SCRIPTS_DIR = path.join(ROOT, 'scripts');
 const GRAPH_PATH = path.join(ROOT, 'lifecycle', 'graph.yaml');
-const SUBGRAPH_PATH = path.join(ROOT, 'lifecycle', 'multimodel-graph.yaml');
 const CONFIG_PATH = path.join(ROOT, 'lifecycle', 'config.yaml');
 const STAGES_DIR = path.join(ROOT, 'lifecycle', 'stages');
 const AGENT_DIR = path.join(ROOT, 'agent');
@@ -109,7 +108,29 @@ function parseDiversityMap(fmText) {
       }
     }
   }
-  return map;
+
+  // 解析 deprecated_for_critical 行（在 diversity_map 之前，顶层键）
+  const depMatch = fmText.match(/^deprecated_for_critical\s*:\s*\[(.*)\]\s*$/m);
+  const deprecated = depMatch
+    ? depMatch[1].split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
+    : [];
+
+  // 解析 diversity_rule.applies_to（列表或字符串）
+  let appliesTo = [];
+  const ruleStartMatch = fmText.match(/^diversity_rule\s*:\s*$/m);
+  if (ruleStartMatch) {
+    const ruleBlock = fmText.slice(ruleStartMatch.index + ruleStartMatch[0].length);
+    // 匹配 applies_to: 下一行起的缩进列表
+    const listMatch = ruleBlock.match(/^  applies_to\s*:\s*\n((?:    - [^\n]+\n?)+)/m);
+    if (listMatch) {
+      appliesTo = listMatch[1].split(/\r?\n/).map(s => s.trim()).filter(s => s.startsWith('- ')).map(s => s.slice(2).trim());
+    } else {
+      const scalarMatch = ruleBlock.match(/^  applies_to\s*:\s*["']?([^\n"']+)["']?/m);
+      if (scalarMatch) appliesTo = [scalarMatch[1].trim()];
+    }
+  }
+
+  return { map, deprecated, applies_to: appliesTo };
 }
 
 const VERBOSE = process.argv.includes('--verbose');
@@ -155,7 +176,7 @@ function stripComment(line) {
   return line;
 }
 
-// 解析 graph.yaml / multimodel-graph.yaml 的 nodes + edges + 顶层标量
+// 解析 graph.yaml 的 nodes + edges + 顶层标量（旧子图文件已废弃，T3 走阶段级并行）
 // 返回 { nodes: Map<id, {type, executor, on_fail, provider, graph, required}>,
 //        edges: [{from,to,when,gate}], top: {provider, entry, exit, diversity_rule} }
 function parseGraphFile(text) {
@@ -549,14 +570,11 @@ function rtCheckTier(ctx, env, rtCheck) {
     return;
   }
   // tier→必填开关一致性校验（防 apply-tier 漏写 / 手工写错）
-  // 规则来源：lifecycle/config.yaml tier_defaults；此处硬编码期望（与 config.yaml 单一真相保持一致）
-  const TIER_EXPECTED = {
-    T0: {},
-    T1: { reverse_auditor: true, side_checker: false, synthesizer_fusion: false },
-    T2: { reverse_auditor: true, side_checker: true, synthesizer_fusion: false },
-    T3: { synthesizer_fusion: true, reverse_auditor: true, side_checker: true, mm_worktree: true },
-  };
-  const expected = TIER_EXPECTED[tier];
+  // 规则来源：lifecycle/config.yaml tier_defaults / inquiry_tier_defaults，机械读取
+  const tierDefaults = readTierDefaults();
+  const intentType = (ctx.intent && ctx.intent.intent_type) || 'EXECUTION';
+  const tierMap = intentType === 'INQUIRY' ? tierDefaults.inquiry : tierDefaults.execution;
+  const expected = (tierMap && tierMap[tier]) ? tierMap[tier].agents : null;
   if (expected) {
     const mismatches = [];
     for (const [k, v] of Object.entries(expected)) {
@@ -566,7 +584,7 @@ function rtCheckTier(ctx, env, rtCheck) {
       }
     }
     if (mismatches.length > 0) {
-      rtCheck('FAIL', 'runtime.tier', `tier=${tier} config.agents 与 tier_defaults 不一致: ${mismatches.join('; ')}。应执行: task-context.mjs apply-tier <task_id> ${tier} --agent conductor`);
+      rtCheck('FAIL', 'runtime.tier', `tier=${tier} config.agents 与 ${intentType === 'INQUIRY' ? 'inquiry_tier_defaults' : 'tier_defaults'} 不一致: ${mismatches.join('; ')}。应执行: task-context.mjs apply-tier <task_id> ${tier} --agent conductor`);
       return;
     }
   }
@@ -809,13 +827,34 @@ function checkFingerprint() {
   return { match: false, reason: 'fingerprint mismatch' };
 }
 
+function runSyncScript(scriptName, args = []) {
+  const scriptPath = path.join(SCRIPTS_DIR, scriptName);
+  return spawnSync(process.execPath, [scriptPath, ...args], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 });
+}
+
 function syncAgentPrompts() {
-  const syncScript = path.join(SCRIPTS_DIR, 'sync-agent-prompt.mjs');
-  const result = spawnSync(process.execPath, [syncScript], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 });
+  const result = runSyncScript('sync-agent-prompt.mjs');
   if (result.error) { fail('sync.prompt', `sync-agent-prompt.mjs 调用失败: ${result.error.message}`); return; }
   if (result.status !== 0) { fail('sync.prompt', `sync-agent-prompt.mjs 退出码 ${result.status}: ${(result.stderr || '').trim().slice(0, 200)}`); return; }
   const summaryLine = (result.stdout || '').trim().split(/\r?\n/).find(l => l.startsWith('[SUMMARY]'));
   pass('sync.prompt', summaryLine ? summaryLine.replace('[SUMMARY] ', 'prompt 同步 — ') : 'agent.prompt 已同步');
+}
+
+function checkPromptDrift() {
+  const result = runSyncScript('sync-agent-prompt.mjs', ['--check']);
+  if (result.error) { fail('prompt.drift', `sync-agent-prompt.mjs --check 调用失败: ${result.error.message}`); return; }
+  const stdout = result.stdout || '';
+  // 解析 drift= 数值
+  const driftMatch = stdout.match(/drift=(\d+)/);
+  const driftCount = driftMatch ? parseInt(driftMatch[1], 10) : -1;
+  if (driftCount === 0) {
+    pass('prompt.drift', '0 drift（agent prompt 与 description 一致）');
+  } else if (driftCount > 0) {
+    // drift 是 install 时 sync-agent-prompt.mjs 修复对象，装配期仅提醒不阻塞（install.ps1/sh 已自动跑 sync）
+    warn('prompt.drift', `检测到 ${driftCount} 个 prompt drift，运行 \`node scripts/sync-agent-prompt.mjs\` 或重跑 install 同步`);
+  } else {
+    warn('prompt.drift', '无法解析 drift 计数，请手动运行 sync-agent-prompt.mjs --check');
+  }
 }
 
 function finalizeStaticRun() {
@@ -826,7 +865,12 @@ function finalizeStaticRun() {
       else warn('cache.fingerprint', 'failed to write fingerprint cache (proceeding)');
     }
   }
-  if (SYNC_PROMPT) syncAgentPrompts();
+  if (SYNC_PROMPT) {
+    syncAgentPrompts();
+  } else {
+    // 默认装配模式：检测 prompt drift（不写入，只报告）
+    checkPromptDrift();
+  }
 }
 
 // ============================================================
@@ -859,11 +903,6 @@ if (!graphText) {
 }
 const graph = parseGraphFile(graphText);
 pass('input.graph', `${graph.nodes.size} nodes / ${graph.edges.length} edges`);
-
-const subText = readText(SUBGRAPH_PATH);
-const sub = subText ? parseGraphFile(subText) : null;
-if (sub) pass('input.subgraph', `${sub.nodes.size} nodes / ${sub.edges.length} edges`);
-else warn('input.subgraph', 'multimodel-graph.yaml 缺失（T3 不可用）');
 
 const cfgText = readText(CONFIG_PATH);
 const cfg = cfgText ? parseConfig(cfgText) : null;
@@ -902,15 +941,14 @@ pass('input.agents', `${agents.size} 个 agent frontmatter 已解析`);
 // A. 图结构校验
 // ============================================================
 
-// A1/A2. edges 引用已声明节点（主图 + 子图）
-for (const [label, g] of [['graph', graph], ['subgraph', sub]]) {
-  if (!g) continue;
+// A1/A2. edges 引用已声明节点（仅主图；子图文件已废弃）
+{
   let bad = 0;
-  for (const e of g.edges) {
-    if (!e.from || !g.nodes.has(e.from)) { fail(`${label}.edges`, `from "${e.from}" 未声明`); bad++; }
-    if (!e.to || !g.nodes.has(e.to)) { fail(`${label}.edges`, `to "${e.to}" 未声明`); bad++; }
+  for (const e of graph.edges) {
+    if (!e.from || !graph.nodes.has(e.from)) { fail(`graph.edges`, `from "${e.from}" 未声明`); bad++; }
+    if (!e.to || !graph.nodes.has(e.to)) { fail(`graph.edges`, `to "${e.to}" 未声明`); bad++; }
   }
-  if (!bad) pass(`${label}.edges.resolve`, `${g.edges.length} 条边全部引用已声明节点`);
+  if (!bad) pass(`graph.edges.resolve`, `${graph.edges.length} 条边全部引用已声明节点`);
 }
 
 // A3. 主图节点 on_fail 取值集
@@ -942,55 +980,31 @@ for (const [label, g] of [['graph', graph], ['subgraph', sub]]) {
   if (!bad) pass('graph.stage.file', '全部 stage 节点执行逻辑文件存在');
 }
 
-// A6. subgraph 节点：graph 文件存在 + provider 对应 lifecycle_provider
+// A6. 旧 subgraph 节点已废弃：graph 中不应再出现 type:subgraph
+let subgraphNodeCount = 0;
 for (const [id, n] of graph.nodes) {
-  if (n.type !== 'subgraph') continue;
-  if (n.graph && fs.existsSync(path.join(ROOT, 'lifecycle', n.graph))) {
-    pass(`graph.subgraph.${id}.graph`, `${n.graph} 存在`);
-  } else {
-    fail(`graph.subgraph.${id}.graph`, `${n.graph ?? '(未声明)'} 不存在`);
-  }
-  if (n.provider && agents.has(n.provider) && agents.get(n.provider).type === 'lifecycle_provider') {
-    pass(`graph.subgraph.${id}.provider`, `provider ${n.provider} = lifecycle_provider`);
-  } else {
-    fail(`graph.subgraph.${id}.provider`, `provider ${n.provider ?? '(未声明)'} 无 lifecycle_provider 智能体`);
+  if (n.type === 'subgraph') {
+    subgraphNodeCount++;
+    fail(`graph.subgraph.${id}`, 'type:subgraph 已废弃（T3 改为阶段级多模型并行，主图不再有子图节点）');
   }
 }
+if (subgraphNodeCount === 0) pass('graph.subgraph', '无 type:subgraph 节点（阶段级并行模式）');
 
-// A7. T3 回流守护：MM_SUBGRAPH 出边必须指向 EXECUTING（融合方案由主图 coder 实现），然后走标准验证审查闭环，不得直达 DELIVERING
-{
-  let mmOut = 0, mmToExecuting = false, mmToDelivering = false;
-  for (const e of graph.edges) {
-    if (e.from === 'MM_SUBGRAPH') {
-      mmOut++;
-      if (e.to === 'EXECUTING') mmToExecuting = true;
-      if (e.to === 'DELIVERING') mmToDelivering = true;
-    }
-  }
-  if (mmOut === 0) {
-    fail('graph.t3回流', 'MM_SUBGRAPH 无出边');
-  } else if (mmToDelivering) {
-    fail('graph.t3回流', `MM_SUBGRAPH 出边指向 DELIVERING（应回流 EXECUTING 由主图 coder 按融合方案实现后走标准验证审查闭环）`);
-  } else if (!mmToExecuting) {
-    fail('graph.t3回流', `MM_SUBGRAPH 出边未指向 EXECUTING（当前指向未知节点）`);
-  } else {
-    pass('graph.t3回流', `MM_SUBGRAPH → EXECUTING（融合方案由主图 coder 实现后走标准 QUALITY→DELIVERING 闭环）`);
-  }
-}
+// A7/A8. T3 回流守护（已移除：MM_SUBGRAPH/INQUIRY_MM_SUBGRAPH 已废弃，T3 回归主图流程）
+// 阶段级多模型并行模式下，T3 走正常主图 PLANNING→EXECUTING→QUALITY→DELIVERING，
+// multiModel 挂载在 PLANNING 阶段主槽调度 planner-a/b/c 变体输出方案，EXECUTING 回归单路 coder，无需子图回流守护。
+
 
 // ============================================================
 // B. 挂载点校验
 // ============================================================
 
-// 派生挂载点全集：on:bootstrap / on:done ∪ (主图 ∪ 子图节点) × {pre:N, N, post:N}
+// 派生挂载点全集：on:bootstrap / on:done ∪ 主图节点 × {pre:N, N, post:N}
 const mountPoints = new Set(['on:bootstrap', 'on:done']);
-for (const g of [graph, sub]) {
-  if (!g) continue;
-  for (const id of g.nodes.keys()) {
-    mountPoints.add(id);
-    mountPoints.add(`pre:${id}`);
-    mountPoints.add(`post:${id}`);
-  }
+for (const id of graph.nodes.keys()) {
+  mountPoints.add(id);
+  mountPoints.add(`pre:${id}`);
+  mountPoints.add(`post:${id}`);
 }
 
 for (const [name, a] of agents) {
@@ -1167,23 +1181,8 @@ if (cfg && cfg.disabledAgents.length > 0) {
   pass('config.disabled_agents', `已声明: ${cfg.disabledAgents.join(', ')}`);
 }
 
-// C4. 子图节点 required（子图契约保留在 multimodel-graph.yaml）每角色有履行者
-if (sub) {
-  for (const [id, n] of sub.nodes) {
-    if (!n.required) continue;
-    const roles = n.required.replace(/^\[|\]$/g, '').split(',').map((s) => s.trim()).filter(Boolean);
-    for (const role of roles) {
-      const fulfillers = [...agents.keys()].filter(
-        (name) => (roleOf(name) === role || name === role) && agents.get(name).mount.some((m) => m.at === id)
-      );
-      if (fulfillers.length > 0) {
-        pass(`subgraph.${id}.role.${role}`, `履行者: ${fulfillers.join(', ')}`);
-      } else {
-        fail(`subgraph.${id}.role.${role}`, `无智能体履行（需 mount at: ${id}）`);
-      }
-    }
-  }
-}
+// C4. 旧子图节点 required 角色检查已废弃（multimodel-graph.yaml / inquiry-multimodel-graph.yaml 已删除）。
+// 阶段级多模型并行下，角色契约由 stages/{planning,executing,quality}.md frontmatter required_roles 声明。
 
 // ============================================================
 // D. 配置校验
@@ -1213,9 +1212,7 @@ if (cfg) {
     for (const t of bad1) fail('config.tier.keys', `tier_defaults "${t}" ⊄ {T0,T1,T2,T3}`);
     for (const t of bad2) fail('config.tier.keys', `inquiry_tier_defaults "${t}" ⊄ {T0,T1,T2,T3}`);
   }
-    // D4. tier 开关键应对应"带 when 的智能体"（防僵尸开关）
-    // 例外白名单：multiModel 主控行为开关（非智能体挂载开关，无对应 agent when 引用）
-    const TIER_BEHAVIOR_KEYS = new Set(['mm_worktree']);
+    // D4. tier 开关键应对应"带 when 的智能体"（防僵尸开关，全量校验无豁免）
     {
     const whenKeys = new Set();
     for (const [, a] of agents) {
@@ -1227,7 +1224,6 @@ if (cfg) {
     }
     for (const [tier, keys] of cfg.tierAgents) {
       for (const k of keys) {
-        if (TIER_BEHAVIOR_KEYS.has(k)) continue;  // 行为开关豁免
         if (!whenKeys.has(k)) {
           warn(`config.tier.${tier}.${k}`, `无任何智能体 when 引用 config.agents.${k}（僵尸开关）`);
         }
@@ -1235,7 +1231,6 @@ if (cfg) {
     }
     for (const [tier, keys] of cfg.inquiryTierAgents) {
       for (const k of keys) {
-        if (TIER_BEHAVIOR_KEYS.has(k)) continue;  // 行为开关豁免
         if (!whenKeys.has(k)) {
           warn(`config.inquiry_tier.${tier}.${k}`, `无任何智能体 when 引用 config.agents.${k}（僵尸开关）`);
         }
@@ -1298,8 +1293,17 @@ if (cfg) {
 // F. stages 正文硬编码智能体名检测（[DOC_DRIFT]）
 // ============================================================
 
-// 框架级名称（executor / provider），非硬编码
-const FRAMEWORK_NAMES = new Set(['conductor', 'multiModel']);
+// 框架级名称（executor / provider），从 kilo.json agent.*.mode==='primary' 动态派生
+const FRAMEWORK_NAMES = (() => {
+  try {
+    const kjText = readText(KILO_JSON_PATH);
+    if (kjText) {
+      const kj = parseKiloJson(kjText);
+      return new Set([...kj.agents.entries()].filter(([, v]) => v.mode === 'primary').map(([k]) => k));
+    }
+  } catch {}
+  return new Set(['conductor', 'multiModel']);
+})();
 
 {
   const stageFiles = fs.readdirSync(STAGES_DIR).filter((f) => f.endsWith('.md') && f !== 'README.md');
@@ -1348,7 +1352,7 @@ if (kjText) {
 }
 
 if (kj) {
-  const KJ_MODES = new Set(['primary', 'subagent', 'standby']);
+  const KJ_MODES = new Set(['primary', 'subagent', 'standby', 'local']);
 
   // G1. agent 条目 ↔ agent/*.md 双向一致
   {
@@ -1380,6 +1384,81 @@ if (kj) {
       }
     }
     if (bad === 0) pass('kilojson.agent.model', `全部 agent model 合法（${kj.agents.size} 个）`);
+
+    // G2 补充：agent 有 mode 但 model 为空 → WARN
+    for (const [name, cfg] of kj.agents) {
+      if (cfg.mode && !cfg.model) {
+        warn('kilojson.agent.model', `agent.${name} mode="${cfg.mode}" 但未声明 model`);
+      }
+    }
+  }
+
+  // G2.5. 关键路径模型策略校验（deprecated_for_critical 不得用于关键路径）
+  {
+    const REGISTRY_PATH = path.join(ROOT, 'docs', 'model-registry.md');
+    const regText = readText(REGISTRY_PATH);
+    let deprecatedModels = [];
+    if (regText) {
+      const regFm = extractFrontmatter(regText);
+      if (regFm) {
+        const parsed = parseDiversityMap(regFm);
+        deprecatedModels = parsed.deprecated;
+      }
+    }
+
+    if (deprecatedModels.length === 0) {
+      pass('kilojson.agent.model_policy', '无 deprecated_for_critical 声明（跳过策略校验）');
+    } else {
+      // 从结构派生关键路径 agent 名单（禁止硬编码）
+      const criticalAgents = new Set();
+
+      // 1) kilo.json default_agent
+      if (kj.defaultAgent) criticalAgents.add(kj.defaultAgent);
+
+      // 2) model-registry.md diversity_rule.applies_to（旧 multimodel-graph.yaml diversity_rule 已废弃）
+      let divRule = null;
+      if (regText) {
+        const regFm = extractFrontmatter(regText);
+        if (regFm) {
+          const parsed = parseDiversityMap(regFm);
+          divRule = parsed.applies_to;
+        }
+      }
+      if (divRule && divRule.length > 0) {
+        for (const name of divRule) criticalAgents.add(name);
+      }
+
+      // 3) lifecycle/stages/{planning,executing,quality}.md frontmatter required_roles
+      for (const stageName of ['planning', 'executing', 'quality']) {
+        const stagePath = path.join(STAGES_DIR, `${stageName}.md`);
+        const stageText = readText(stagePath);
+        if (stageText) {
+          const stageFm = extractFrontmatter(stageText);
+          if (stageFm) {
+            const roles = parseStageFrontmatter(stageFm);
+            for (const role of roles) criticalAgents.add(role);
+          }
+        }
+      }
+
+      // 4) kilo.json agent.mode === 'primary'（conductor + multiModel 等关键路径编排者）
+      for (const [name, cfg] of kj.agents) {
+        if (cfg.mode === 'primary') criticalAgents.add(name);
+      }
+
+      let policyFail = 0;
+      for (const name of criticalAgents) {
+        const cfg = kj.agents.get(name);
+        if (!cfg || !cfg.model) continue;
+        if (deprecatedModels.includes(cfg.model)) {
+          policyFail++;
+          fail('kilojson.agent.model_policy', `关键路径 agent.${name}.model="${cfg.model}" ∈ deprecated_for_critical [${deprecatedModels.join(', ')}]`);
+        }
+      }
+      if (policyFail === 0) {
+        pass('kilojson.agent.model_policy', `关键路径 ${criticalAgents.size} 个 agent 均未使用 deprecated 模型`);
+      }
+    }
   }
 
   // G3. mode 取值集
@@ -1406,14 +1485,18 @@ if (kj) {
   }
 
   // G5. multiModel diversity_rule 机械校验（conductor.md §启动期装配 第 5 条）
-  // 读取 model-registry.md diversity_map
   {
     const REGISTRY_PATH = path.join(ROOT, 'docs', 'model-registry.md');
     const regText = readText(REGISTRY_PATH);
     let divMap = null;
+    let divRule = null;
     if (regText) {
       const regFm = extractFrontmatter(regText);
-      if (regFm) divMap = parseDiversityMap(regFm);
+      if (regFm) {
+        const parsed = parseDiversityMap(regFm);
+        divMap = parsed.map;
+        divRule = parsed.applies_to;
+      }
     }
 
     if (divMap && Object.keys(divMap).length > 0) {
@@ -1422,18 +1505,13 @@ if (kj) {
       warn('kilojson.diversity.map', 'model-registry.md diversity_map 缺失，diversity 校验降级为人工');
     }
 
-    // 收集 diversity_rule 目标 agent
+    // 收集 diversity_rule 目标 agent（来源：model-registry.md diversity_rule.applies_to）
     const diversityTargets = new Set();
-    if (sub) {
-      const dr = sub.top?.diversity_rule;
-      if (dr && dr.applies_to) {
-        for (const name of (Array.isArray(dr.applies_to) ? dr.applies_to : [dr.applies_to])) {
-          diversityTargets.add(name);
-        }
-      }
+    if (divRule && divRule.length > 0) {
+      for (const name of divRule) diversityTargets.add(name);
     }
     if (diversityTargets.size === 0) {
-      pass('kilojson.diversity.applies', 'multimodel-graph.yaml 无 diversity_rule（无需校验）');
+      pass('kilojson.diversity.applies', '无 diversity_rule applies_to（无需校验）');
     } else {
       let divFail = 0;
       const collected = []; // { name, vendor, architecture }

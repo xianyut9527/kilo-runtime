@@ -288,7 +288,6 @@ function buildInitialContext(taskId) {
       agents: {
         reverse_auditor: false,
         side_checker: false,
-        synthesizer_fusion: false,
       },
       review_mode: 'none',
       custom_overrides: {},

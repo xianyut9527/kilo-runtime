@@ -31,8 +31,8 @@ T1: 多文件但单一目标 / 有测试需求 / 需简单验证
 T2: 多模块影响 / 需架构决策 / 有需求扩散风险 / 需完整 DAG
      → 完整设计门 → 单元 DAG → 设计门角色 → 编码角色 → 验证角色 → 审查角色(full)
 
-T3: 核心逻辑 / 安全敏感 / 用户明确要求多模型并行生命周期
-     → multiModel 并行生命周期（子图 lifecycle/multimodel-graph.yaml）
+T3: 核心逻辑 / 安全敏感 / 用户明确要求多模型并行
+     → multiModel 阶段级并行（PLANNING/EXECUTING 各阶段内调度 3 个不同厂商/架构变体，融合后写入 task_context）
 ```
 
 ### INQUIRY 类定级
@@ -49,9 +49,9 @@ T2: 多维度分析 / 需要跨文件/跨模块调研 / 需要对比/评估/建�
      → 完整分析门 → 研究 DAG（按信息来源拆分单元）→ 分析角色 → 验证结论准确性 → 审查角色(full)
 
 T3: 深度调研 / 架构级评估 / 需要多模型并行分析对比
-     → multiModel 并行分析生命周期（复用 multiModel 子图，模式=analysis）
-     → 3 个不同模型并行分析同一问题，synthesizer-fusion 独立融合最优结论
-     → ⚠️ INQUIRY T3 多模型并行分析为预留扩展，暂未接线（见 config.yaml `inquiry_tier_defaults` 注释），实际 INQUIRY T3 降级走 T2 单路分析门 + 全视角审查；仅 EXECUTION T3 接入 multiModel 子图
+     → multiModel 阶段级并行分析（模式=analysis）
+     → 3 个不同模型并行分析同一问题，multiModel 独立融合最优结论
+     → ⚠️ INQUIRY T3 多模型并行分析为预留扩展，暂未接线（见 config.yaml `inquiry_tier_defaults` 注释），实际 INQUIRY T3 降级走 T2 单路分析门 + 全视角审查；仅 EXECUTION T3 接入 multiModel 阶段级并行
 ```
 
 ### 定级输出
@@ -80,7 +80,7 @@ quality_gate:
 | EXECUTION | T0 | `EXECUTING` | 否 | N/A |
 | EXECUTION | T1 | `PLANNING`（短）→ `EXECUTING` | 短设计门 | full |
 | EXECUTION | T2 | `PLANNING`（完整）→ `EXECUTING` | 完整设计门 | full |
-| EXECUTION | T3 | `MM_SUBGRAPH`（多模型子图） | 完整设计门 | full |
+| EXECUTION | T3 | `PLANNING`（完整，multiModel 阶段级并行）→ `EXECUTING` | 完整设计门 | full |
 | INQUIRY | T0 | `DELIVERING` | 否 | N/A |
 | INQUIRY | T1 | `PLANNING`（短）→ `QUALITY` | 短分析门 | full |
 | INQUIRY | T2 | `PLANNING`（完整）→ `QUALITY` | 完整分析门 | full |
@@ -96,7 +96,7 @@ quality_gate:
 
 - **分析门硬门**：INQUIRY T1+ 回答前必须过分析门角色。"太简单不需要分析"是反模式——即使是咨询，未经结构化的分析也易产生偏见和遗漏。
 - **重复模式硬门**：涉及跨文件/模块重复实现模式时（UI 与非 UI 同等适用），定级必须包含「全量扫描清单 + 组件化/共享抽象方案」评估。
-- **多模型配额降级硬门**：触发多模型子图前必扫 `dispatch_log` 查过去 24h T3 失败率（≥30% → 跳过多模型子图降级为单路编码/单路分析）。
+- **多模型配额降级硬门**：触发多模型阶段级并行前必扫 `dispatch_log` 查过去 24h T3 失败率（≥30% → 跳过阶段级并行降级为单路编码/单路分析）。
 - **INQUIRY 禁止编码**：INQUIRY 全生命周期中，智能体**禁止调用修改性工具**（edit/write/create/delete）。若分析过程中发现需要修改代码才能回答 → 转为 EXECUTION 重新定级。
 - **流转必裁判**：SIZING → 下一节点前必须执行 `node scripts/transition-check.mjs <task_id> --from SIZING --to <NEXT>`。未执行 transition-check 直接推进 → `[PROCESS_VIOLATION]`。
 - **强制写入 tier 与合法性校验**：定级完成后必须 `task-context.mjs set <task_id> sizing.tier <T0|T1|T2|T3> --agent conductor`。非法 tier 或非空 current_stage 由 task-context.mjs 拒绝。

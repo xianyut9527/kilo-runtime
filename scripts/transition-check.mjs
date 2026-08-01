@@ -26,7 +26,6 @@
 //   reverse_result  → verification.reverse.reverse_result ?? verification.reverse.verdict ?? 'N/A'
 //   side_result     → verification.side.side_result ?? verification.side.verdict ?? 'N/A'
 //   review_result   → verification.review.review_result ?? verification.review.verdict
-//   subgraph_status → subgraph_status（顶层）
 // 变量为 undefined/null 时 ==/!=/in 比较结果恒为 false（条件不满足，流转拒绝）。
 //
 // 计数器规则（v2 响应式 Hooks：CHECKING+REVIEWING+FIXING 合并为 QUALITY）：
@@ -36,7 +35,7 @@
 //
 // gate 语义：
 //   MEMORY_WRITE_COMPLETE → memory_write_status ∈ {OK, DEGRADED} 或 memory_write_complete === true
-//   其他 gate（如 FUSION_SELF_CHECK_10，属子图）→ WARN 放行
+//   旧子图 gate 已废弃，若 graph.yaml 中仍声明则 WARN 放行
 //
 // 仅使用 Node 内置模块（Node 14 兼容）；graph 解析器为 lifecycle-doctor.mjs
 // 本地副本（仓库惯例：脚本自包含）。
@@ -45,7 +44,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { readContext, writeContext, appendTransitionLog, readHooksFromConfig as tcReadHooks } from './task-context-runtime.mjs';
+import { readContext, writeContext, appendTransitionLog, readHooksFromConfig as tcReadHooks, readConvergenceFromConfig } from './task-context-runtime.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
@@ -58,6 +57,61 @@ const CONVERGENCE_SOURCE = path.resolve(__dirname, '..', 'lifecycle', 'config.ya
 function die(code, msg) {
   process.stderr.write(msg + '\n');
   process.exit(code);
+}
+
+// 动态求值阶段必配角色（主槽 required_roles + POST 钩子审查角色）
+// 参考 lifecycle-doctor.mjs 的 extractFrontmatter / parseStageFrontmatter / parseAgentFrontmatter
+function getStageRequiredRoles(stageName) {
+  const stageLower = stageName.toLowerCase();
+  const stagesDir = path.resolve(__dirname, '..', 'lifecycle', 'stages');
+  const stagePath = path.resolve(stagesDir, `${stageLower}.md`);
+  const roles = [];
+
+  // 路径逃逸防护：fail-closed
+  if (!stagePath.startsWith(stagesDir + path.sep) && stagePath !== stagesDir) {
+    return roles;
+  }
+
+  // 1) 读 stage frontmatter required_roles（主槽角色）
+  if (fs.existsSync(stagePath)) {
+    const stageText = fs.readFileSync(stagePath, 'utf-8');
+    const fm = stageText.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (fm) {
+      const rm = fm[1].match(/^required_roles\s*:\s*\[(.*)\]\s*(?:#.*)?$/m);
+      if (rm) {
+        roles.push(...rm[1].split(',').map(s => s.trim()).filter(Boolean));
+      }
+    }
+  }
+
+  // 2) 扫 agent/*.md frontmatter mount[].at 匹配 stageName 或 post:stageName（POST 钩子审查角色）
+  const agentDir = path.resolve(__dirname, '..', 'agent');
+  if (fs.existsSync(agentDir)) {
+    for (const entry of fs.readdirSync(agentDir)) {
+      if (!entry.endsWith('.md')) continue;
+      const agentPath = path.join(agentDir, entry);
+      const agentText = fs.readFileSync(agentPath, 'utf-8');
+      const afm = agentText.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+      if (!afm) continue;
+      // 检查 mount 条目 at 是否匹配 stageName 或 post:stageName
+      const mountSection = afm[1].match(/mount\s*:\s*([\s\S]*?)(?=\n[a-z_]+\s*:|\n*$)/);
+      if (!mountSection) continue;
+      const mountLines = mountSection[1].split(/\r?\n/);
+      for (const line of mountLines) {
+        const atm = line.match(/^\s*-\s*at\s*:\s*(post:)?(\S+)\s*(?:#.*)?$/);
+        if (atm) {
+          const prefix = atm[1] || '';
+          const atVal = atm[2];
+          if (prefix + atVal === `post:${stageName}` || (prefix === '' && atVal === stageName)) {
+            const agentName = entry.replace(/\.md$/, '');
+            if (!roles.includes(agentName)) roles.push(agentName);
+          }
+        }
+      }
+    }
+  }
+
+  return roles;
 }
 
 function usage() {
@@ -74,7 +128,7 @@ function usage() {
       '  2 = usage error',
       '  3 = [CIRCUIT_BREAKER] (counters persisted before exit)',
       '',
-      'when variables: intent_type tier quality_verdict forward_result reverse_result side_result review_result subgraph_status',
+      'when variables: intent_type tier quality_verdict forward_result reverse_result side_result review_result',
     ].join('\n');
   process.stdout.write(txt + '\n');
   process.exit(0);
@@ -299,7 +353,6 @@ function resolveVars(ctx) {
     reverse_result: pick(rev.reverse_result, rev.verdict, 'N/A'),
     side_result: pick(side.side_result, side.verdict, 'N/A'),
     review_result: pick(review.review_result, review.verdict),
-    subgraph_status: pick(ctx.subgraph_status),
     memory_write_status: pick(ctx.memory_write_status, ctx.delivery && ctx.delivery.memory_write_status),
   };
 }
@@ -329,10 +382,10 @@ function main() {
   }
   const graph = parseGraphFile(graphText);
 
-  // 子图节点（MM_* 除 MM_SUBGRAPH 外）不在本脚本范围
+  // 主图已不存在子图节点；若仍出现 MM_* 节点则视为流程违规
   for (const n of [FROM, TO]) {
-    if (/^MM_/.test(n) && n !== 'MM_SUBGRAPH') {
-      die(1, `[PROCESS_VIOLATION] "${n}" 是子图内部节点，子图流转不在本脚本范围（multiModel 主权）`);
+    if (/^MM_/.test(n)) {
+      die(1, `[PROCESS_VIOLATION] "${n}" 已废弃（T3 改为阶段级多模型并行，主图不再有子图节点）`);
     }
     if (!graph.nodes.has(n)) {
       die(1, `[PROCESS_VIOLATION] unknown node "${n}"（graph.yaml 已声明节点: ${[...graph.nodes.keys()].join(', ')}）`);
@@ -440,18 +493,22 @@ function main() {
   if (!isExempt && !isCircuitBreakerExit) {
     const provenanceRequired = [];
     if (FROM === 'PLANNING' && TO === 'EXECUTING') {
-      // post:PLANNING 恒定挂载 plan-reviewer（不依赖 config.agents），与 planner 同记
-      provenanceRequired.push('planner', 'plan-reviewer');
+      // 动态求值：读 planning.md required_roles + 扫 agent/*.md post:PLANNING 挂载的审查角色
+      // 求值结果等价于原硬编码 [planner, plan-reviewer]
+      // T3 阶段级多模型并行仍走 PLANNING→EXECUTING，multiModel 替代 planner 主槽但同阶段输出仍由 planning.md required_roles 定义
+      provenanceRequired.push(...getStageRequiredRoles('PLANNING'));
     }
     if (FROM === 'EXECUTING' && TO === 'QUALITY') {
-      provenanceRequired.push('coder');
+      // 动态求值：读 executing.md required_roles
+      // 求值结果等价于原硬编码 [coder]
+      provenanceRequired.push(...getStageRequiredRoles('EXECUTING'));
     }
     if (FROM === 'QUALITY' && TO === 'DELIVERING') {
       // 动态求值（不静态要求 4 视角）：
-      //   必配视角（quality.md required_roles，恒定要求）→ verifier / reviewer
+      //   必配视角（quality.md required_roles，动态读取）→ verifier / reviewer
       //   可选视角（config.agents 中为 true 才要求）→ reverse_auditor / side_checker
       // T1 side_checker=false 时仅要求 reverse_auditor（可选视角），缺 side_checker 不阻塞。
-      const MANDATORY = ['verifier', 'reviewer'];
+      const MANDATORY = getStageRequiredRoles('QUALITY');
       const OPTIONAL = ['reverse_auditor', 'side_checker'];
       const agentsCfg = (ctx.config && ctx.config.agents && typeof ctx.config.agents === 'object') ? ctx.config.agents : null;
       if (agentsCfg) {
@@ -476,9 +533,10 @@ function main() {
 
   // quality 轮次机械递增（conductor 专属写权限的机械执行臂）
   if (!ctx.convergence || typeof ctx.convergence !== 'object') {
+    const convCfg = readConvergenceFromConfig();
     ctx.convergence = {
       mm_fusion_rounds: 0,
-      mm_fusion_max_rounds: 3,
+      mm_fusion_max_rounds: convCfg.mm_fusion_max_rounds,
     };
   }
   if (!ctx.quality || typeof ctx.quality !== 'object') {

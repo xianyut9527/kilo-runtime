@@ -53,22 +53,20 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │       └── contracts/            # 跨层契约（health_check.sql 健康度查询契约源；执行者 = python scripts/memory.py check）
 ├── agent/                        # Kilo 智能体定义（v6 单源：一智能体一文件，frontmatter 自注册生命周期路由）
 │   ├── conductor.md           # 工作流编排者（type: primary，内建执行 INTENT/SIZING/DELIVERING）
-│   ├── multiModel.md             # T3 子图编排者（type: lifecycle_provider，自带子图）
+│   ├── multiModel.md             # T3 阶段级并行调度者（type: primary，PLANNING 阶段调度 planner-a/b/c 三变体）
 │   ├── planner.md                # 规划智能体（mount: PLANNING；设计门、DAG、验收点）
+│   ├── planner-a.md              # T3 PLANNING 变体-A（kimi-k2.6；方案设计视角，由 multiModel 内部调度）
+│   ├── planner-b.md              # T3 PLANNING 变体-B（deepseek-v4-pro；架构分析视角，由 multiModel 内部调度）
+│   ├── planner-c.md              # T3 PLANNING 变体-C（glm-5.2；边界发现视角，由 multiModel 内部调度）
 │   ├── coder.md                  # 编码智能体（mount: EXECUTING；实现、自测、三件套）
-│   ├── coder-a.md                # multiModel 并行 coder-A / 逻辑推理派（mount: MM_EXECUTING）
-│   ├── coder-b.md                # multiModel 并行 coder-B / 安全边界派（mount: MM_EXECUTING）
-│   ├── coder-c.md                # multiModel 并行 coder-C / 代码生成派（mount: MM_EXECUTING）
-│   ├── verifier.md               # 正向验证（mount: QUALITY hook:verify + MM_CHECKING + MM_FCHECK；L1/L2/L3、5 元组证据）
+│   ├── verifier.md               # 正向验证（mount: QUALITY hook:verify；L1/L2/L3、5 元组证据）
 │   ├── reverse-auditor.md        # 反向审计（mount: QUALITY hook:verify, when: T2+；需求追溯、假设审计）
 │   ├── side-checker.md           # 侧向验证（mount: QUALITY hook:review, when: T2+；边界/安全/性能/兼容性实测）
 │   ├── reviewer.md               # 静态审查（mount: QUALITY hook:review；安全编码模式/架构/简化/SCOPE_CREEP 四视角）
 │   ├── fixer.md                  # 修复智能体（mount: QUALITY hook:fix, auto-trigger；定向修复阻塞问题）
-│   ├── synthesizer-fusion.md     # 融合编辑（mount: MM_FUSING, when: T3；取长补短生成综合最优方案）
 │   └── (models/ 目录已删除，能力矩阵迁至 docs/model-registry.md)
 ├── lifecycle/                    # 生命周期 v2（响应式 Hooks 架构：6 stage，QUALITY 合并原 CHECKING+REVIEWING+FIXING）
 │   ├── graph.yaml                # 主 DAG 单一真相来源（节点 INTENT/SIZING/.../DONE + 边 + 流转条件）
-│   ├── multimodel-graph.yaml     # T3 multiModel 子图（MM_INIT→...→MM_ARCHIVED + diversity_rule）
 │   ├── config.yaml               # 定级默认智能体组合 tier_defaults + 用户覆盖 overrides + hooks 熔断阈值（唯一真相）
 │   ├── stages/                   # 阶段执行逻辑（语义命名，文件名派生节点 ID，插入中间阶段无占号问题）
 │   │   ├── README.md             # 阶段索引 + 扩展指南（插拔式注册）

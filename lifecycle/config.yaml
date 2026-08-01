@@ -4,13 +4,13 @@
 # 用户可在 prompt 显式声明覆盖（conductor 写入 custom_overrides）。
 # 本文件是唯一"定级→差异化智能体开关"声明处。
 # ============================================================
-# 挂载两种模式（新增智能体默认零配置）：
+  # 挂载两种模式（新增智能体默认零配置）：
 #   1) 恒定挂载（默认，推荐）：frontmatter mount 无 when —— 图拓扑可达即加载。
-#      T0 不经 PLANNING/QUALITY，T3 走子图——拓扑即开关。
+#      T0 不经 PLANNING/QUALITY，T3 由 multiModel 在 PLANNING/EXECUTING 阶段主槽调度。
 #      新增智能体丢文件即用，**无需改本文件**。
 #   2) 开关挂载（仅"同阶段按 tier 差异化"的智能体）：frontmatter mount 有
 #      when: "config.agents.<key>" —— 需在下方 tier_defaults 声明开关。
-#      当前仅 reverse_auditor / side_checker / synthesizer_fusion 三个可选视角。
+#      当前仅 reverse_auditor / side_checker 两个可选视角。
 #
 # tier_defaults：按定级 T0/T1/T2/T3 声明差异化开关（布尔值）
 #   - conductor 在 SIZING 阶段把对应 tier 的 agents 表写入 task_context.config.agents
@@ -18,15 +18,13 @@
 #       true  → 该 agent 在声明挂载点会被加载
 #       false/未定义 → 跳过该 agent
 #   - review_mode：none（无审查）/ full（四视角：正向+反向+侧向+审查）
-#   - provider：仅 T3 用，声明子图提供者（对应 graph.yaml MM_SUBGRAPH 节点 provider）
+#   - 旧 T3 子图提供者字段已废弃；T3 改为阶段级多模型并行。
 #
 # agents 键命名规则（自动派生，无需手写映射表）：
 #   键 = agent 文件名去 .md 后连字符转下划线
 #   reverse-auditor.md → reverse_auditor
 #   side-checker.md    → side_checker
-#   synthesizer-fusion.md → synthesizer_fusion
-#   coder-a/b/c 不单独开关（由 T3 provider 隐含加载）
-#   例外：multiModel 行为开关（如 mm_worktree）也可在此声明，不对应 agent 文件
+#   例外：multiModel 行为开关也可在此声明
 # ============================================================
 version: 1
 
@@ -42,31 +40,29 @@ tier_defaults:
   # 可选视角默认全关（适合中等复杂度任务）
   T1:
     agents:
+      planner: true                # T1 起开（单路 planner 设计方案）
       reverse_auditor: true        # T1 起开（隐性需求遗漏是"一次性完成"失败最高频原因）
       side_checker: false         # T2+ 才开（运行时实测成本高，T1 不需要）
-      synthesizer_fusion: false   # 仅 T3 multiModel 用
     review_mode: full
 
   # T2 全视角交叉验证：正向+反向+侧向+审查全开
   # 适合复杂任务：架构变更、跨多文件重构、安全敏感改动
   T2:
     agents:
+      planner: true                # T2 单路 planner 设计方案
       reverse_auditor: true       # 需求追溯审计（从产物反推是否满足原始需求）
       side_checker: true          # 运行时行为视角验证（边界/安全/性能/兼容性实测）
-      synthesizer_fusion: false   # 仅 T3 multiModel 用
     review_mode: full
 
-  # T3 多模型并行融合：交给 multiModel 子图（lifecycle/multimodel-graph.yaml）
-  # 3 个不同厂商/架构的 coder 并行实现，verifier 交叉验证，synthesizer-fusion 独立融合
-  # 适合高难度任务：架构设计、关键算法、需要多家之长
-  # 子图回流后走 QUALITY hooks 自动循环验证（替代原 CHECKING+REVIEWING）
+  # T3 多模型阶段级并行：multiModel 挂载在 PLANNING 阶段主槽，
+  # 为 PLANNING 阶段并行调度 3 个不同厂商/架构的 planner 变体，融合后写入 task_context.plan
+  # EXECUTING 回归单路 coder，主图继续正常流转 QUALITY→DELIVERING
   T3:
-    provider: multiModel
     agents:
-      synthesizer_fusion: true    # 融合编辑智能体（隔离硬门：不读拆分意图/模型身份）
-      reverse_auditor: true       # T3 走主图 QUALITY 后激活反向审计（按融合方案实现的代码同样需需求追溯）
-      side_checker: true          # T3 走主图 QUALITY 后激活侧向验证（按融合方案实现的代码同样需运行时实测）
-      mm_worktree: true           # worktree 隔离默认启用（产物级聚合）；用户可通过 condition_overrides 设 false 关闭走 plan_level 方案级融合
+      planner: false               # T3 关闭单路 planner，由 multiModel 调度 planner-a/b/c 三变体
+      multiModel: true            # 阶段级多模型并行调度器（PLANNING 调度 3 变体）
+      reverse_auditor: true       # QUALITY 反向审计
+      side_checker: true          # QUALITY 侧向验证
     review_mode: full
 
 # ============================================================
@@ -85,28 +81,29 @@ inquiry_tier_defaults:
   # 短分析门 → 分析角色 → 验证结论准确性 → 审查角色(full)
   T1:
     agents:
+      planner: true                # T1 起开（单路 planner 设计方案）
       reverse_auditor: true        # T1 起开（隐性遗漏是分析失败最高频原因）
       side_checker: false         # T2+ 才开（深度调研成本高）
-      synthesizer_fusion: false   # 仅 T3 multiModel 用
     review_mode: full
 
   # T2 多维度调研：跨文件/跨模块调研 / 对比/评估/建议
   # 完整分析门 → 研究 DAG → 分析角色 → 验证结论准确性 → 审查角色(full)
   T2:
     agents:
+      planner: true                # T2 单路 planner 设计方案
       reverse_auditor: true       # 需求追溯审计（分析是否回答了原始问题）
       side_checker: true          # 侧向验证（极端值/反事实/来源可信度实测）
-      synthesizer_fusion: false   # 仅 T3 multiModel 用
     review_mode: full
 
-  # T3 深度多模型分析：架构级评估 / 需要多模型并行分析对比
-  # 注：INQUIRY T3 当前由主图 PLANNING（完整分析门）→ QUALITY 处理，
-  #     多模型并行分析（复用 multiModel 子图）是预留扩展，暂未接线。
-  #     以下 agents 在主图 QUALITY hooks 中加载（reverse_auditor/side_checker）。
+  # T3 深度多模型分析：multiModel 挂载在 PLANNING 阶段主槽，
+  # 并行调度 3 个不同厂商/架构的 planner 变体，融合报告后写入 plan
+  # 主图继续标准 QUALITY→DELIVERING
   T3:
     agents:
-      reverse_auditor: true       # T3 走主图 QUALITY 后激活反向审计
-      side_checker: true          # T3 走主图 QUALITY 后激活侧向验证
+      planner: false               # T3 关闭单路 planner，由 multiModel 调度 planner-a/b/c 三变体
+      multiModel: true            # 阶段级多模型并行调度器（PLANNING 调度 3 变体分析）
+      reverse_auditor: true       # QUALITY 反向审计
+      side_checker: true          # QUALITY 侧向验证
     review_mode: full
 
 # ============================================================
@@ -128,16 +125,13 @@ overrides:
   # 例: { "config.agents.reverse_auditor": true } → 强制加载 reverse-auditor（即使 tier_defaults 关闭）
   #
   # 防非法跳过硬门（2026-08-01）：强制全开可选验证视角，覆盖 tier_defaults 中所有 false 值。
-  # 语义：无论定级 T0-T3，reverse_auditor / side_checker / synthesizer_fusion 均强制加载，
-  #       杜绝任何 tier 静默跳过验证能力。
+  # 语义：无论定级 T0-T3，reverse_auditor / side_checker 均强制加载，杜绝任何 tier 静默跳过验证能力。
   # 注意：T0 执行类走 INTENT→SIZING→EXECUTING→DELIVERING 极速通道，本不经过 QUALITY，
   #       故此覆盖对 T0 EXECUTION 实际无加载点（拓扑不可达）；对 T0 INQUIRY 同理不经过 QUALITY。
   #       本覆盖生效范围：T1/T2/T3（均经 QUALITY 阶段，挂载点拓扑可达 → 强制加载）。
-  #       synthesizer_fusion 仅 T3 子图有挂载点，T1/T2 拓扑不可达 → 强制 true 无副作用。
   condition_overrides:
     "config.agents.reverse_auditor": true      # 强制开：需求追溯审计，杜绝 T1 close=false 静默跳过
     "config.agents.side_checker": true         # 强制开：运行时侧向实测，杜绝 T1 close=false 静默跳过
-    "config.agents.synthesizer_fusion": true   # 强制开：T3 融合智能体（T1/T2 拓扑不可达，无副作用）
 
 # ============================================================
 # convergence：收敛熔断阈值（唯一真相来源）
@@ -146,7 +140,7 @@ overrides:
 #   - 保留 mm_fusion_max_rounds 子图内部熔断
 # ============================================================
 convergence:
-  mm_fusion_max_rounds: 3    # T3 子图内部熔断：MM_FCHECK 打回 synthesizer-fusion 重新聚合的轮次上限
+  mm_fusion_max_rounds: 3    # T3 阶段级并行内部熔断：QUALITY 打回 multiModel 重新融合的轮次上限
 
 # ============================================================
 # hooks：响应式 Hooks 级熔断（v2 新增）
@@ -186,16 +180,13 @@ timeouts:
   stage_default_s: 600     # 单阶段默认预算（主槽执行时间上限；内建阶段守卫值）
   per_agent_s:
     coder: 1800            # coder 写代码可能较长，给 30min
-    coder_a: 1800
-    coder_b: 1800
-    coder_c: 1800
+    multiModel: 1200        # 阶段级并行调度（含 3 变体 dispatch + 融合）
     verifier: 900
     reverse_auditor: 600
     side_checker: 900
     reviewer: 600
     planner: 600
     fixer: 1200
-    synthesizer_fusion: 900
   per_tier_multiplier:     # 定级系数（per_agent_s × multiplier = 实际预算）
     T0: 0.5
     T1: 1.0

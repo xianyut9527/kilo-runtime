@@ -1,6 +1,6 @@
 # lifecycle/stages — 阶段执行逻辑导航
 
-> **本目录只是执行逻辑文档，不是图结构**。流转关系（节点/边/条件/门禁）的单一真相来源是 `lifecycle/graph.yaml`（T3 子图：`lifecycle/multimodel-graph.yaml`）。修改流转不要改本目录，改 graph.yaml。
+> **本目录只是执行逻辑文档，不是图结构**。流转关系（节点/边/条件/门禁）的单一真相来源是 `lifecycle/graph.yaml`。修改流转不要改本目录，改 graph.yaml。
 
 ## v2 响应式 Hooks 架构（当前版本）
 
@@ -16,7 +16,6 @@
 ```
 lifecycle/
 ├── graph.yaml              # 主 DAG：纯拓扑（节点 id/type/executor/on_fail + 边 + 流转条件）——稳定大框架，零智能体名
-├── multimodel-graph.yaml   # T3 multiModel 子图 DAG + diversity_rule 多样化硬规则（子图契约保留图内）
 ├── config.yaml             # 定级差异化开关 + 用户覆盖 + 熔断阈值 + hooks 级熔断（唯一真相）
 └── stages/                 # 阶段语义（本目录，文件名派生节点 ID）：执行逻辑 + frontmatter required_roles 契约
     ├── intent.md           # INTENT        — conductor 内建
@@ -64,7 +63,7 @@ lifecycle/
 | `post:<STAGE>` | 阶段主槽执行后、edges 流转前 |
 | `on:done` | DELIVERING 完成后、DONE 前（收尾挂载点） |
 
-> 子图节点（MM_*）同样派生 `pre:`/主/`post:` 三挂载点。
+> 阶段级并行节点同样派生 `pre:`/主/`post:` 三挂载点。
 
 **frontmatter 声明（每个智能体 .md 自注册，可挂载一个或多个点）**：
 

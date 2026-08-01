@@ -3,6 +3,8 @@
 > 生成时间：2026-08-01T15:25+08:00
 > 数据来源：`lifecycle/graph.yaml` v2、`lifecycle/config.yaml` v1
 > 本报告即 T1 样例任务验收产物
+>
+> **历史说明（2026-08-01）**：本报告记录的是旧版**子图架构**（MM_SUBGRAPH 节点 + multimodel-graph.yaml）。此后 T3 已重构为**阶段级多模型并行**（multiModel 在 PLANNING 阶段主槽调度 planner-a/b/c 变体），MM_SUBGRAPH 节点、multimodel-graph.yaml、subgraph_status 字段均已移除。以下 E6/E15 边与节点 8 为历史记录，不再存在于当前 graph.yaml；T3 现走 SIZING → PLANNING（multiModel 变体融合）→ EXECUTING → QUALITY → DELIVERING。
 
 ---
 

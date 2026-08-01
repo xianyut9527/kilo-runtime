@@ -312,7 +312,13 @@ function validateSingleWrite(agent, dotPath, value) {
 
   // 枚举硬门：sizing.tier 必须合法，intent.intent_type 必须合法，current_stage 必须非空字符串
   if (dotPath === 'sizing.tier') {
-    const validTiers = ['T0', 'T1', 'T2', 'T3'];
+    // 从 config.yaml tier_defaults / inquiry_tier_defaults 键并集派生合法 tier 集合
+    const tierDefaults = readTierDefaults();
+    const validTiers = [...new Set([
+      ...Object.keys(tierDefaults.execution || {}),
+      ...Object.keys(tierDefaults.inquiry || {}),
+    ])].sort();
+    if (validTiers.length === 0) validTiers.push('T0', 'T1', 'T2', 'T3'); // 兜底
     if (!validTiers.includes(value)) {
       return {
         allowed: false,
@@ -747,8 +753,8 @@ function cmdSizeCheck(taskId) {
 // conductor 每次 dispatch 前调用，记录 agent/mode/stage
 // 白名单（防任意伪造，如 test2 类记录）：
 //   --agent ∈ 注册智能体名（WRITE_MATRIX 键，含 conductor）∪ tier_defaults
-//             agents 键（下划线视角名：reverse_auditor / side_checker /
-//             synthesizer_fusion——dispatch_log 惯例与 config.agents 键一致，
+//             agents 键（下划线视角名：reverse_auditor / side_checker——
+//             dispatch_log 惯例与 config.agents 键一致，
 //             transition-check provenance 亦按此名校验，缺则死锁）
 //   --stage ∈ graph.yaml 节点集合（主图节点）
 // CLI 无调用方身份可校验，"白名单放行"即权限边界；保留 mode 枚举校验。

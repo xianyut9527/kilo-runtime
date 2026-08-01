@@ -1,5 +1,6 @@
 ---
 description: 模型能力倾向矩阵（人类可读版）+ 按智能体能力需求选择策略 + 多样性保障规则。模型 ID 绑定由 kilo.json agent.<name>.model 字段统一管理；能力匹配无机械校验，本文档供人类选模型参考。
+deprecated_for_critical: ["hx/kimi-k2.7-code"]
 diversity_map:
   "hx/glm-5.2":
     vendor: zhipu
@@ -25,6 +26,13 @@ diversity_map:
   "hx/MiniMax-M2.7-highspeed":
     vendor: minimax
     architecture: MiniMax-M2.7-highspeed
+diversity_rule:
+  applies_to:
+    - verifier
+    - reverse-auditor
+    - side-checker
+    - reviewer
+  note: T3 阶段级多模型并行中，PLANNING/EXECUTING 的 3 个变体由 multiModel 在运行时从 diversity_map 选择不同 vendor/architecture；此处 applies_to 取 QUALITY 四视角作为静态可校验集合，确保关键路径至少覆盖 4 个不同厂商/架构。
 ---
 
 # docs/model-registry
@@ -37,7 +45,7 @@ diversity_map:
 
 1. **模型是资源，不是角色**：`kilo.json` `agent.<name>.model` 字段统一声明每个智能体绑定哪个模型 ID；本文档**不绑定模型 ID**，只描述能力倾向供人类参考。
 2. **能力倾向优先**：按智能体的能力倾向选模型，而非按 agent 名称硬编码。选模型时对照本文档的能力倾向列。
-3. **多样性保障**：multiModel 模式下 3 个 coder 必须选不同厂商/不同架构模型（`lifecycle/multimodel-graph.yaml` `diversity_rule` 声明，人工对照本文档校验，违反 → `[DIVERSITY_VIOLATION]`）。
+3. **多样性保障**：T3 阶段级多模型并行中，PLANNING/EXECUTING 各阶段内并行 3 个不同厂商/不同架构的模型变体（由 multiModel 在运行时按 `diversity_map` 选择，违反 → `[DIVERSITY_VIOLATION]`）。QUALITY 四视角（verifier / reverse-auditor / reviewer / side-checker）已天然覆盖 4 个不同厂商/架构，形成交叉验证。
 4. **单一真相来源**：模型 ID 变更只在 `kilo.json` 一处修改；能力倾向描述只在本文档一处维护。
 
 ## 模型能力矩阵（参考，实际选择见 kilo.json）
@@ -55,7 +63,7 @@ diversity_map:
 | `hx/MiniMax-M2.7-highspeed` | minimax | MiniMax-M2.7-highspeed | ★★★☆☆ | ★★★☆☆ | 200K | ★★★☆☆ | 6 |
 | `hx/deepseek-v4-flash` | deepseek | deepseek-v4-flash | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 7 |
 
-> **厂商/架构列用途**：`multimodel-graph.yaml` `diversity_rule` 要求 coder-a/b/c 的 `(vendor, architecture)` 两两不同。人工选模型时对照此列确认。
+> **厂商/架构列用途**：T3 阶段级多模型并行中，multiModel 在 PLANNING/EXECUTING 各阶段内并行调度 3 个不同厂商/架构的变体；QUALITY 四视角天然覆盖 4 个不同厂商/架构。人工选模型时对照此列确认异源覆盖。
 > **稳定性排序用途**：`kilo.json` 中关键路径模型优先选用稳定性排序靠前的模型，当前默认 `glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6`。
 
 ## 稳定性优先选模型指南
@@ -80,19 +88,18 @@ diversity_map:
 | `reviewer` | `QUALITY`（review hook） | `deep-reasoning` | 架构视角、安全视角、强 reasoning |
 | `fixer` | `QUALITY`（fix hook, auto-trigger） | `code-generation` | 快速修复、最小改动、假设驱动调试 |
 
-### multiModel 并行（3 coder + 1 fusion）
+### multiModel 阶段级并行（T3）
 
 | 智能体 | 角色 | 能力倾向 | 能力要点 |
 |--------|------|----------|----------|
-| coder-A | 逻辑推理派 | `deep-reasoning` | 逻辑推理强，能发现边界条件 |
-| coder-B | 安全边界派 | `strict-verification` 倾向 | 安全/边界敏感，擅长防御性编程 |
-| coder-C | 代码生成派 | `code-generation` | 代码生成专精 |
-| verifier | 严格验证 | `strict-verification` | 严格验证，发现边界问题和逻辑漏洞 |
-| synthesizer-fusion | 独立融合编辑 | `long-context-synthesis` | 长上下文整合，代码风格统一 |
-| multiModel（主控） | 拆分/委派/调度 | `fast-reasoning` | 拆分任务、调度智能体、不参与融合 |
+| multiModel | 阶段级并行调度/融合 | `fast-reasoning` | PLANNING 阶段主槽拦截正常流程，串行调度 3 个不同厂商/架构的规划变体，收集方案后融合为单一结果写入 `task_context.plan`，主图继续流转 |
+| planner-a | T3 PLANNING 变体-A | `deep-reasoning` | 方案设计视角（hx/kimi-k2.6），只输出方案摘要，由 multiModel 内部调度 |
+| planner-b | T3 PLANNING 变体-B | `deep-reasoning` | 架构分析视角（hx/deepseek-v4-pro），只输出方案摘要，由 multiModel 内部调度 |
+| planner-c | T3 PLANNING 变体-C | `deep-reasoning` | 边界发现视角（hx/glm-5.2），只输出方案摘要，由 multiModel 内部调度 |
 
-> **多样化原则**：3 个 coder 必须选**不同厂商/不同架构**模型（`multimodel-graph.yaml` `diversity_rule`，人工对照本文档"厂商/架构"列校验，违反 → `[DIVERSITY_VIOLATION]`）。
-> **融合隔离原则**：synthesizer-fusion 不知道 coder 模型身份，避免按模型声誉而非方案质量取舍。
+> **多样化原则**：T3 PLANNING 3 个变体为不同厂商/不同架构模型（kimi-k2.6 / deepseek-v4-pro / glm-5.2），按 `diversity_map` 校验（违反 → `[DIVERSITY_VIOLATION]`）。QUALITY 四视角（verifier / reverse-auditor / reviewer / side-checker）已天然覆盖 4 个不同厂商/架构，形成交叉验证。
+> **融合隔离原则**：multiModel 融合阶段不知道变体模型身份，避免按模型声誉而非方案质量取舍。
+> **当前会话串行**：3 个变体由 multiModel 用 `task` 工具当前会话串行调度（各返回 ≤2000 字符方案摘要），无 worktree 依赖；EXECUTING 回归单路 coder。
 
 ## 模型降级规则
 

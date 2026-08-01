@@ -28,7 +28,9 @@
 | ID | 智能体名 | 职责 | 对应生命周期阶段 | 模型绑定 | mode | prompt 锚点 |
 |----|----------|------|------------------|----------|------|-------------|
 | 0 | **conductor** | 工作流编排者：意图判定、定级、阶段流转、智能体加载调度、上下文传递、门禁管理、记忆写入 | 全阶段（不亲自执行） | `kilo.json` `agent.conductor.model` | primary | `agent/conductor.md` |
-| 1 | **planner** | 规划智能体：设计门、方案设计、单元 DAG 拆分、验收点定义、全量扫描清单 | PLANNING | `kilo.json` `agent.planner.model` | subagent | `agent/planner.md` |
+| 1 | **planner** | 规划智能体：设计门、方案设计、单元 DAG 拆分、验收点定义、全量扫描清单 | PLANNING（T0-T2 主槽） | `kilo.json` `agent.planner.model` | subagent | `agent/planner.md` |
+| 2 | **multiModel** | T3 阶段级并行调度者：PLANNING 主槽拦截，串行调度 planner-a/b/c 三变体，融合选优写 plan | PLANNING（T3 主槽） | `kilo.json` `agent.multiModel.model` | primary | `agent/multiModel.md` |
+| 2a | **planner-a/b/c** | T3 PLANNING 变体：方案设计/架构分析/边界发现三视角（kimi-k2.6/deepseek-v4-pro/glm-5.2） | 由 multiModel 内部调度 | `kilo.json` `agent.planner-*.model` | subagent | `agent/planner-*.md` |
 
 | 3 | **coder** | 编码智能体：按方案实现代码、输出验收映射表+三件套、状态信号 | EXECUTING | `kilo.json` `agent.coder.model` | subagent | `agent/coder.md` |
 | 4 | **verifier** | 正向验证智能体：按验收标准逐条验证、L1/L2/L3 分层、5元组证据、独立重跑 | QUALITY（verify hook） | `kilo.json` `agent.verifier.model` | subagent | `agent/verifier.md` |
@@ -36,7 +38,6 @@
 | 6 | **side-checker** | 运行时行为视角验证智能体：实际执行/构造输入/实测对比验证边界/安全/性能/兼容性 | QUALITY（review hook, T2+） | `kilo.json` `agent.side-checker.model` | subagent | `agent/side-checker.md` |
 | 7 | **reviewer** | 静态代码审查智能体：阅读代码审查安全编码模式/架构/简化/SCOPE_CREEP 四视角 | QUALITY（review hook） | `kilo.json` `agent.reviewer.model` | subagent | `agent/reviewer.md` |
 | 8 | **fixer** | 修复智能体：定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题 | QUALITY（fix hook, auto-trigger） | `kilo.json` `agent.fixer.model` | subagent | `agent/fixer.md` |
-| 9 | **synthesizer-fusion**（v3.1 恢复） | 多模型融合编辑智能体：读取 3 个 coder 输出 + verifier 验证结果，取长补短生成综合最优方案 | MM_FUSING（multiModel 专属） | `kilo.json` `agent.synthesizer-fusion.model` | subagent | `agent/synthesizer-fusion.md` |
 
 > **memory-ops 不作为独立智能体**：记忆写入是 conductor 在 DELIVERING 阶段的内建职责（调用 `python scripts/memory.py`），不需要独立 context window。`docs/memory-ops-reference.md` 保留作为记忆操作的 SQL 模板参考。
 
@@ -55,7 +56,7 @@
 | side-checker | `deep-reasoning` | 边界/安全/性能多角度需要强推理 |
 | reviewer | `deep-reasoning` | 架构视角审查需要强 reasoning |
 | fixer | `code-generation` | 代码修复需要编码能力 |
-| synthesizer-fusion | `long-context-synthesis` | 长上下文整合、代码风格统一 |
+| multiModel | `fast-reasoning` | 调度与融合需要快速多轮推理 |
 
 > **verifier 和 reverse-auditor 同能力需求**：两者都是验证职能，模型能力需求一致。虽然可同模型，但 prompt 不同（正向 vs 反向视角），且独立 context window 保证视角隔离。
 > **v3.1 视角物理隔离原则**：仅靠独立 context window 不足以防止确认偏误——各验证智能体的**输入接口字段**必须物理隔离（详见 §视角物理隔离）。
@@ -72,10 +73,6 @@
     },
     "multiModel": {
       "mode": "primary",
-      "model": "<见 kilo.json 实际绑定>"
-    },
-    "synthesizer-fusion": {
-      "mode": "subagent",
       "model": "<见 kilo.json 实际绑定>"
     },
     "planner":     { "mode": "subagent", "model": "<见 kilo.json>" },
@@ -108,8 +105,6 @@ mode: subagent
 mount:
   - at: QUALITY                  # 主挂载点（v2 响应式 Hooks 阶段）
     hook: verify
-  - at: MM_CHECKING              # 一智能体可挂载多点
-  - at: MM_FCHECK
 # mount 可选字段：order（同挂载点执行顺序，升序数字；省略=串行组）
 #                 when（条件挂载）/ on_fail（abort|warn|skip|degrade）
 ```
@@ -143,7 +138,7 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 ### 可插拔机制（启动期装配 / bootstrap）
 
 #### 装配与运行时
-1. conductor 启动期读 `lifecycle/graph.yaml`（纯拓扑）+ `multimodel-graph.yaml`（派生挂载点全集：`on:bootstrap`/`on:done` + 每节点 `pre:`/主/`post:`）+ 全部 `agent/*.md` frontmatter（按 `mount[].at` 自注册，v6 单源）+ `lifecycle/stages/*.md` frontmatter（`required_roles` 契约）+ `lifecycle/config.yaml`（tier_defaults/overrides/convergence）
+1. conductor 启动期读 `lifecycle/graph.yaml`（纯拓扑，派生挂载点全集：`on:bootstrap`/`on:done` + 每节点 `pre:`/主/`post:`）+ 全部 `agent/*.md` frontmatter（按 `mount[].at` 自注册，v6 单源）+ `lifecycle/stages/*.md` frontmatter（`required_roles` 契约）+ `lifecycle/config.yaml`（tier_defaults/overrides/convergence）
 2. 同挂载点按 `hook` 类型分组 + `after` 相对依赖拓扑排序（同 hook 类型默认串行，避免并发 task 调度 abort；需要顺序时声明 after）；校验各阶段 `required_roles` 被主挂载点注册覆盖
 3. 装配 resolved 视图：`{ mountPoint → [{ agent, model, hook, after, trigger, deps, when, on_fail }]（已排序/分组）}` + edges 表；运行时查表，零重复解析
 4. 进入节点 N：`pre:N` → 主挂载点（串行组 + after 拓扑序，或 executor 内建）→ `post:N` → 按 edges + when/gate 流转；装配后立即执行 `on:bootstrap`，入 DONE 前执行 `on:done`
@@ -162,18 +157,18 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 |------|----|----|----|----|
 | INTENT | conductor | conductor | conductor | conductor |
 | SIZING | conductor | conductor | conductor | conductor |
-| PLANNING | — | planner（短设计门） | planner（完整规划） | —（T3 不走主图 PLANNING；MM_INIT 子图拆分写 plan） |
-| EXECUTING | coder | coder | coder（按 DAG） | coder（按 MM_SUBGRAPH 回流的融合方案实现代码；方案由子图 3×coder + synthesizer-fusion 产出） |
+| PLANNING | — | planner（短设计门） | planner（完整规划） | multiModel（调度 planner-a/b/c 三变体融合选优写 plan） |
+| EXECUTING | coder | coder | coder（按 DAG） | coder（按融合后 plan 单路实现） |
 | QUALITY（verify hook） | — | verifier | verifier | verifier |
 | QUALITY（verify hook, 反向审计） | — | — | reverse-auditor | reverse-auditor |
 | QUALITY（fix hook） | — | fixer（auto-trigger） | fixer（auto-trigger） | fixer（auto-trigger） |
 | QUALITY（review hook, 侧向） | — | — | side-checker | side-checker |
 | QUALITY（review hook, 审查） | — | reviewer | reviewer | reviewer |
-| DELIVERING | conductor | conductor | conductor | conductor（+synthesizer-fusion 在 MM_FUSING 阶段融合） |
+| DELIVERING | conductor | conductor | conductor | conductor |
 
 > **T0 直达**：conductor 直接加载 coder 执行，无 planner/verifier/reviewer，与现有 workflow-core.md §T0 直达一致。
 >
-> **post:PLANNING 钩子（非定级配置）**：`post:PLANNING` 挂载点可挂载方案审查等后处理智能体——`on_fail: abort` 可中止进入 EXECUTING。它属文件路由挂载机制而非 tier_defaults 定级组合，故不在上表按定级列出；T0 不经 PLANNING、T3 走子图，图拓扑天然限定仅 T1/T2 触发。
+> **post:PLANNING 钩子（非定级配置）**：`post:PLANNING` 挂载点可挂载方案审查等后处理智能体——`on_fail: abort` 可中止进入 EXECUTING。它属文件路由挂载机制而非 tier_defaults 定级组合，故不在上表按定级列出；T0 不经 PLANNING、T3 的 PLANNING 由 multiModel 接管主槽，图拓扑天然限定仅 T1/T2 触发标准 plan-reviewer。
 
 ---
 
@@ -345,7 +340,6 @@ warning（非 blocker）→ 标记但放行，写入 task_context 供后续参�
 | fixer | blockers + original_diff + forbidden_files + fixing_history | verification.* / execution.verification | 修复不得被前序结论锚定；自验声明不入 context 污染下一轮 verifier |
 | coder（输出） | — | 禁止写入 execution.verification | 自验声明由 verifier 独立重跑，不入 context |
 | fixer（输出） | — | 禁止写入 execution.verification | 修复后自验声明由 verifier 独立重跑，不入 context |
-| synthesizer-fusion | 3 份 coder 输出 + verifier 报告 + acceptance_criteria | 拆分意图 / 模型身份 / task_context.intent | 知道拆分意图会偏向"符合意图的方案"而非客观最优（v3.1 恢复独立智能体根因）|
 
 > **写入边界硬门**：`execution.verification` 字段只能由 verifier 智能体写入。coder/fixer 自验结果只保留在智能体本地输出，不得写入 task_context。违反 → `[TRUST_TRANSFER]`。
 > **校验机制**：`lifecycle-doctor.mjs` 自动校验视角物理隔离规则，check27 校验模型硬编码反查。

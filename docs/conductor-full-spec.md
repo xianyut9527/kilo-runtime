@@ -28,7 +28,7 @@
 
 会话首个任务进入 INTENT 前，conductor 执行一次性装配（结果缓存于会话内存，不落盘）。**架构三层正交**：graph.yaml 纯拓扑（零智能体名）/ stages/<id>.md 阶段语义（含 required_roles 契约）/ agent/*.md 智能体（mount 挂载 + task_context 权限）。机械化校验工具：`node scripts/lifecycle-doctor.mjs`（以下全部校验项的可执行实现）。
 
-1. **读图**：`lifecycle/graph.yaml`（主 DAG，纯拓扑：节点 id/type/executor/on_fail + 边）+ `lifecycle/multimodel-graph.yaml`（T3 子图，子图契约保留图内），派生挂载点全集——`{on:bootstrap, on:done}` ∪ 每个节点 N 的 `{pre:N, N, post:N}`。type: stage 的节点执行逻辑文件路径自动派生：`stages/<id 小写>.md`（如 PLANNING → stages/planning.md）。
+1. **读图**：`lifecycle/graph.yaml`（主 DAG，纯拓扑：节点 id/type/executor/on_fail + 边），派生挂载点全集——`{on:bootstrap, on:done}` ∪ 每个节点 N 的 `{pre:N, N, post:N}`。type: stage 的节点执行逻辑文件路径自动派生：`stages/<id 小写>.md`（如 PLANNING → stages/planning.md）。
 2. **读注册**：扫描 `agent/*.md` 全部 frontmatter（YAML 头），按 `mount[].at` 把智能体注册进对应挂载点（携带 `hook`/`after`/`when`/`on_fail`）——**文件制自动注册，丢一个 .md 文件即挂载**（manifest 与行为文件合二为一，单源无冗余）。
 3. **读契约**：扫描 `lifecycle/stages/*.md` frontmatter 的 `required_roles`（阶段必配角色契约，阶段语义内聚）。
 4. **读配置**：`lifecycle/config.yaml`（tier_defaults 差异化开关 + overrides + convergence + timeouts）。
@@ -40,7 +40,7 @@
    - `config.yaml timeouts` 段：`per_agent_s` 每个键必须有对应 agent 文件（防幽灵键，**单向**——agent 文件可无键，回退 `stage_default_s`）；`per_tier_multiplier` 键 ⊆ {T0,T1,T2,T3}；数值为正数
    - 每个非内建 stage 节点的 `required_roles: [role...]`（stages frontmatter），每角色必须有 ≥1 个智能体（frontmatter `role` ?? 文件名 = 角色名）在该节点主挂载点注册（`when` 求值后 active 覆盖在运行时再校验）
    - `config.yaml overrides.disabled_agents` 不得使某 `required_roles` 角色无履行者 → 报错（禁用了必配角色）
-   - multiModel 子图：coder-a/b/c 绑定模型的 `(vendor, architecture)` 两两不同（`multimodel-graph.yaml` `diversity_rule` 声明，人工校验，违反 → `[DIVERSITY_VIOLATION]`）
+    - multiModel 阶段级并行：planner-a/b/c 绑定模型的 `(vendor, architecture)` 两两不同（`diversity_rule` 声明，人工校验，违反 → `[DIVERSITY_VIOLATION]`）
    - > **能力匹配**：无机械校验；模型绑定在 `kilo.json` `agent.<name>.model`，能力倾向参考 `docs/model-registry.md` 人工维护。
 6. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, hook, after, when, on_fail } ]（同 hook 类型默认串行组（详见铁律 #12 / §智能体加载规则）；有 after 的按拓扑排序执行，检测环依赖报错）}` + `{ nodeId → on_fail_resolved }` + edges 表 + `{ agent → timeout_s }` 预算表（per_agent_s × tier_multiplier，缺 per_agent_s 回退 stage_default_s）。运行时查表，零重复解析。
 
@@ -55,8 +55,8 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
   → T0: EXECUTING [履行 required_roles: [coder] 的智能体] → DELIVERING
   → T1+: PLANNING [履行 required_roles: [planner] 的智能体] → EXECUTING [履行 required_roles: [coder] 的智能体]
          → QUALITY [hooks 自动挂载：verify + review + fix 循环] → DELIVERING（conductor 内建）
-  → T3: MM_SUBGRAPH [multiModel 接管: MM_WT_SETUP 创建 worktree → 3 coder 各自 worktree 独立实现 → verifier 方案级验证 → synthesizer-fusion fusion worktree 聚合] → ... → MM_ARCHIVED → EXECUTING [主图 coder git merge fusion 分支应用聚合产物]
-      → QUALITY（hooks 自动循环）→ DELIVERING（清理 fusion worktree）
+  → T3: PLANNING [multiModel 阶段级并行调度 planner-a/b/c 三变体出方案并融合选优] → EXECUTING [主图 coder 按融合方案实现]
+      → QUALITY（hooks 自动循环）→ DELIVERING
 ```
 
 > 智能体名**不出现在上述流程图**中。各阶段加载谁由 `agent/*.md` frontmatter `mount` 自注册决定，stage 文件只声明 `required_roles` 契约。
@@ -115,8 +115,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
   "config": {
     "agents": {
       "reverse_auditor": false,
-      "side_checker": false,
-      "synthesizer_fusion": false
+      "side_checker": false
     },
     "review_mode": "none" | "full",
     "custom_overrides": {}
@@ -125,8 +124,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
   "execution": {
     "mm_outputs": [...],
     "mm_artifacts": [...],
-    "mm_worktrees": [...],
-    "mm_mode": "worktree",
+    "mm_mode": "inline",
     "fused_output": {...},
     "diffs": [...],
     "changes": [...],
@@ -159,16 +157,13 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 
 > **字段语义**：
 >
-> - `status`：任务全局状态（RUNNING / PAUSED / DEGRADED / DONE / FAILED），由 conductor 内建阶段写入；multiModel 子图运行期间保持 RUNNING，MM_ARCHIVED 交还 conductor 后由 conductor 接管
-> - `subgraph_status`：子图出口信号（如 `ready_for_delivery`），由 multiModel 在 MM_ARCHIVED 写入，供 graph.yaml `MM_SUBGRAPH→EXECUTING` 边条件求值；与 `status` 分离避免枚举污染
-> - `quality.round`：当前 QUALITY hooks 循环轮次（verify→fix→review→fix 自动循环计数），每次 verify/review hooks 触发 fix hooks 后 +1
-> - `quality.max_rounds`：QUALITY 总轮次上限（见 `lifecycle/config.yaml` `hooks.quality.max_total_cycles`，当前值为 4），达到即 `[CIRCUIT_BREAKER]`
-> - `convergence.mm_fusion_rounds`：T3 子图内部 MM_FCHECK 打回 synthesizer-fusion 重新聚合轮次（仅 multiModel 写入，独立计数）
-> - `convergence.mm_fusion_max_rounds`：子图内部熔断阈值（默认 3，见 `lifecycle/config.yaml` convergence）
+> - `status`：任务全局状态（RUNNING / PAUSED / DEGRADED / DONE / FAILED），由 conductor 内建阶段写入；multiModel 阶段级并行运行期间保持 RUNNING，PLANNING 完成后交还 conductor 接管
+> - `convergence.mm_fusion_rounds`：T3 PLANNING 阶段内部融合轮次（仅 multiModel 写入，独立计数）
+> - `convergence.mm_fusion_max_rounds`：PLANNING 阶段内部融合熔断阈值（默认 3，见 `lifecycle/config.yaml` convergence）
 >
-> **v2 架构变更**：原 `convergence.round`/`total_rounds`/`max_rounds`/`max_total_rounds` 迁移到 `quality.round`/`quality.max_rounds`（QUALITY hooks 自动循环替代 FIXING 手动回流）。`mm_fusion_rounds` 保留（子图独立计数）。
+> **v2 架构变更**：原 `convergence.round`/`total_rounds`/`max_rounds`/`max_total_rounds` 迁移到 `quality.round`/`quality.max_rounds`（QUALITY hooks 自动循环替代 FIXING 手动回流）。`mm_fusion_rounds` 保留（PLANNING 阶段独立计数）。
 
-> **配置驱动加载（仅差异化开关）**：`config.agents` 承载"同阶段按 tier 差异化"的智能体开关（当前：reverse_auditor / side_checker / synthesizer_fusion）及 multiModel 行为开关（mm_worktree），由 conductor 在 SIZING 定级后按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户显式覆盖写入。frontmatter `mount[].when` 按 `config.agents.<key>` 求值。**恒定挂载智能体（无 `when`）不在此列**——图拓扑可达即加载（T0 不经 PLANNING/QUALITY，T3 走子图），新增智能体默认零配置。`custom_overrides` 供用户/高阶场景显式覆盖默认组合。
+> **配置驱动加载（仅差异化开关）**：`config.agents` 承载"同阶段按 tier 差异化"的智能体开关（当前：reverse_auditor / side_checker），由 conductor 在 SIZING 定级后按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户显式覆盖写入。frontmatter `mount[].when` 按 `config.agents.<key>` 求值。**恒定挂载智能体（无 `when`）不在此列**——图拓扑可达即加载（T0 不经 PLANNING/QUALITY，T3 走阶段级并行），新增智能体默认零配置。`custom_overrides` 供用户/高阶场景显式覆盖默认组合。
 
 ## 智能体加载规则（文件路由驱动）
 
@@ -179,14 +174,14 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
    1. 执行 `pre:N` 挂载点（有 `after` 的按拓扑排序执行；无 `after` 的激活智能体按全局默认串行策略逐个启动；`on_fail: abort` → `[SLOT_ABORT]` 中止进入主槽）
    2. 执行 `N` 主挂载点：`executor: conductor/multiModel` 内建节点直接内建；否则按全局默认串行策略或 `after` 拓扑排序执行同 hook 类型组，并校验 `required_roles` 激活覆盖（契约源：stages/<id>.md frontmatter；`when` 求值后缺一 → `[SLOT_UNFULFILLED]`）
 
-> **全局默认串行策略**（铁律 #12 见上）：任一挂载点（`on:bootstrap`、`pre:N`、`N`、`post:N`、子图节点等）若激活的智能体数量 ≥2，且这些智能体在该挂载点均未声明 `after`（或 `after` 为空），conductor 默认按 **resolved 视图顺序逐个串行启动** task 工具（等待上一个返回后再启动下一个），避免并发 task 调度触发底层执行器 `Tool execution aborted`；但**必须遵守铁律 #6 的零输出、零工具调用硬门**：每个 task 返回前不得输出文本或调用其他工具。resolved 视图顺序的确定规则：
+> **全局默认串行策略**（铁律 #12 见上）：任一挂载点（`on:bootstrap`、`pre:N`、`N`、`post:N` 等）若激活的智能体数量 ≥2，且这些智能体在该挂载点均未声明 `after`（或 `after` 为空），conductor 默认按 **resolved 视图顺序逐个串行启动** task 工具（等待上一个返回后再启动下一个），避免并发 task 调度触发底层执行器 `Tool execution aborted`；但**必须遵守铁律 #6 的零输出、零工具调用硬门**：每个 task 返回前不得输出文本或调用其他工具。resolved 视图顺序的确定规则：
 >   1. 先对声明了 `after` 的智能体做拓扑排序（按依赖链先后执行）；
 >   2. 未声明 `after` 的智能体按 **agent 文件名字典序** 排列，作为串行序列逐个启动；
 >   3. 两种顺序在 resolved 视图中合并为该挂载点的最终启动序列。
 > 
-> 该策略默认串行；`graph.yaml` / `multimodel-graph.yaml` 节点显式声明 `parallel: true`（当前仅 T3 子图 `MM_EXECUTING`）时，由 multiModel 按最大并行度执行；未声明 `parallel` 时默认串行，受上述零输出硬门约束。
+> 该策略默认串行；`graph.yaml` 节点显式声明 `parallel: true` 时，由 multiModel 按最大并行度执行；未声明 `parallel` 时默认串行，受上述零输出硬门约束。
 
-> **并发受限兜底**：对于默认串行序列，若底层执行器仍返回 `Tool execution aborted` / `Tool execution cancelled`，conductor 优先检查是否可通过 `after` 机制进一步拆分依赖链；（abort 不可恢复，见铁律 #9；前置杜绝优先：prompt ≤1500 字符 + 串行策略）无法避免时标记 `[AGENT_UNAVAILABLE]`，按节点 `on_fail` 派发。对于 `graph.yaml` 显式声明 `parallel: true` 的节点（当前仅 T3 子图 `MM_EXECUTING`），multiModel 按 `agent/multiModel.md` §异常处理 中的 `MM_EXECUTING 并发降级` 将剩余未启动 coder 切换为串行逐个启动，并标记 `[MM_DEGRADED_PARALLEL]`。
+> **并发受限兜底**：对于默认串行序列，若底层执行器仍返回 `Tool execution aborted` / `Tool execution cancelled`，conductor 优先检查是否可通过 `after` 机制进一步拆分依赖链；（abort 不可恢复，见铁律 #9；前置杜绝优先：prompt ≤1500 字符 + 串行策略）无法避免时标记 `[AGENT_UNAVAILABLE]`，按节点 `on_fail` 派发。
    3. 执行 `post:N` 挂载点（同 pre 语义）
    4. **机械流转裁判**：流转前必须执行 `node scripts/transition-check.mjs <task_id> --from <当前节点> --to <目标节点>`；
       - exit 0 → 允许流转（`quality.round` 已由框架自动递增，conductor 禁止手工 set convergence/quality 计数字段）；
@@ -212,7 +207,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 | ------------------------------- | ---------------------- | ------------------------------ |
 | verify hooks PASS               | `QUALITY`              | FAIL → fix hooks 自动触发修复  |
 | review hooks PASS（条件加载）  | `QUALITY`              | FAIL → fix hooks 自动触发修复  |
-| T3 子图回流实现 | `MM_SUBGRAPH → EXECUTING` | 子图完成（聚合产物就绪）→ 回流主图 EXECUTING（coder 执行 git merge fusion 分支应用聚合代码产物），然后走标准 QUALITY hooks 自动循环验证 |
+| T3 阶段级并行回流 | `PLANNING → EXECUTING` | PLANNING 完成（融合方案就绪）→ 回流主图 EXECUTING（coder 按融合方案实现），然后走标准 QUALITY hooks 自动循环验证 |
 | `[MISSING_MEMORY_WRITE]`        | `DELIVERING → DONE`    | 未执行阻塞交付                 |
 | verify 单点重试 ≥ max_retries   | `QUALITY`              | `[CIRCUIT_BREAKER]` → 人工决策 |
 | review 单点重试 ≥ max_retries | `QUALITY`              | `[CIRCUIT_BREAKER]` → 人工决策 |
@@ -284,7 +279,7 @@ T1+ 任务在交付阶段 conductor 直接调用 memory.db（SQL 模板见 `docs
 
 > **T0 任务**：记忆写入**不按定级一刀切**，按"价值信号"触发——命中以下任一信号即执行 M4-M8：① 用户明确指正错误 ② 发现流程或规则缺陷 ③ 形成可复用 pattern/antipattern ④ 连续失败后的根因 ⑤ 架构决策依据。纯执行日志（`dispatch_log` 已覆盖）或无信息增量的"任务完成"不写。
 > **INQUIRY 咨询类**：M1 召回必选（同 T0）；记忆写入按同一"价值信号"触发——咨询类完全可能产生高价值经验（如用户指正规则缺陷、发现可复用 pattern），不得因"只分析不改文件"而跳过。命中价值信号时，conductor 在回答完成后、入 DONE 前执行轻量 M4-M8（仅 SQL 写入，无需完整 DELIVERING 交付流程）。
-> **multiModel 任务**：由 multiModel 主控在 `MM_DELIVERING` 阶段统一调用记忆能力。
+> **multiModel 任务**：由 multiModel 主控在 DELIVERING 阶段统一调用记忆能力。
 
 > **降级处理**见下方 §异常处理 §降级处理（基础设施层）段，统一并入 on_fail 派发表后不再单列。
 
@@ -296,7 +291,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 
 > 错误处理是 conductor 内建职责，**不是独立流程支线**——用户全程在场，无需 Teardown/Destroy 销毁流程。每个阶段通过 graph.yaml `on_fail` 字段声明失败策略，conductor 捕获异常后查表派发。
 >
-> **子图例外**：MM\_\* 节点（T3 子图）的异常处理主权在 `agent/multiModel.md` §异常处理（表格形式，独立语义），不适用本节 on_fail 派发；timeouts 仍适用（子图智能体也走 task 工具）。
+> **T3 变体调度例外**：multiModel 在 PLANNING 阶段调度 planner-a/b/c 变体时的异常处理主权在 `agent/multiModel.md` §异常处理（表格形式，独立语义），不适用本节 on_fail 派发；timeouts 仍适用（变体也走 task 工具）。
 
 ### 触发条件
 
@@ -349,8 +344,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 - 多个智能体不可用 → 降级为单 conductor 模式 + `[DEGRADED_SINGLE_AGENT]`
 - task_context 读写失败 → 降级为信号传递模式 + `[CONTEXT_SHARING_DEGRADED]`
 - bootstrap 装配失败 → `[ASSEMBLY_FAIL]`，输出具体缺失项（角色/文件/模型能力/on_fail 校验/timeouts 校验），停止进入运行
-- multiModel worktree 创建失败或子图降级 → multiModel 清理已创建 worktree（`git worktree remove --force`），fusion worktree 由主图 DELIVERING 阶段清理
-- **worktree 注册表失效**：子图退出（MM_ARCHIVED）后，主图 DELIVERING 阶段清理 fusion worktree 时，`execution.mm_worktrees` 注册表不再维护（status 保持 stale 不影响主流程）。主图 DELIVERING 的 cleanup 是物理删除（`git worktree remove --force`），注册表字段仅用于子图运行期追踪，不用于主图持久化状态。
+- multiModel 变体调度失败 → 标 `[MM_DEGRADED]`，降级为单 planner `task` dispatch（plan_level 方案），不强行串行 dispatch 3 变体
 
 ## 输出
 

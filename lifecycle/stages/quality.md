@@ -35,7 +35,7 @@ QUALITY 不是"一个阶段做三件事"，而是**一个响应式容器，内�
 | 插入新 hook 只写一行，不碰其他代码 | `order: 15` 要知道前后编号 | `after: [agent]` 只引用前驱 |
 | 同类 hook 隐含串行/顺序语义 | 靠数字碰巧相同实现并行 | `hook: verify` 默认串行启动组（详见 agent/conductor.md §全局默认串行策略） |
 
-**核心原则**：hook 类型（`verify` / `fix` / `review`）**本身就定义了执行顺序**——`verify → fix → review → fix` 循环是框架内置的，不需要数字重复表达。同 hook 类型默认按 `agent/conductor.md` §智能体加载规则串行启动（无 `after` 时默认串行，按 agent 文件名字典序逐个启动，遵守零输出硬门）；需要顺序时声明 `after: [agent-name]`。仅 `graph.yaml` 声明 `parallel: true` 的节点（如 T3 子图 `MM_EXECUTING`）保留最大并行语义。详见 `agent/conductor.md` §智能体加载规则。
+**核心原则**：hook 类型（`verify` / `fix` / `review`）**本身就定义了执行顺序**——`verify → fix → review → fix` 循环是框架内置的，不需要数字重复表达。同 hook 类型默认按 `agent/conductor.md` §智能体加载规则串行启动（无 `after` 时默认串行，按 agent 文件名字典序逐个启动，遵守零输出硬门）；需要顺序时声明 `after: [agent-name]`。T3 阶段级并行的并行由 Agent Manager worktree 模式实现。详见 `agent/conductor.md` §智能体加载规则。
 
 ```
 QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：

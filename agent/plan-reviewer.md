@@ -18,7 +18,7 @@ subagent_type: plan-reviewer
 
 # mount：挂载点声明（纯钩子，不进编排层/配置层——无 graph 门禁、无 tier_defaults 开关）
 #   at    挂载点（post:PLANNING，planner 主槽后、edges 流转前）
-#   无 when = 恒定挂载：T0 不经 PLANNING、T3 走子图，图拓扑天然限定仅 T1/T2 触发，无需 config.agents 开关
+#   无 when = 恒定挂载：T0 不经 PLANNING、T3 走阶段级并行，图拓扑天然限定仅 T1/T2 触发，无需 config.agents 开关
 #   on_fail 挂载点失败策略（abort|warn|skip|degrade）；plan-reviewer 是方案硬门审查者，失败用 abort 中止进入 EXECUTING
 mount:
   - at: post:PLANNING
@@ -47,7 +47,7 @@ isolation:
 ## 智能体定位
 
 **生命周期阶段**：`post:PLANNING`（钩子智能体，planner 主槽后、edges 流转前）
-**加载条件**：恒定挂载（无 `when`）——T0 不经过 PLANNING 阶段、T3 走子图，图拓扑天然限定仅 T1/T2 触发
+**加载条件**：恒定挂载（无 `when`）——T0 不经过 PLANNING 阶段、T3 走阶段级并行，图拓扑天然限定仅 T1/T2 触发
 **模型**：见 `kilo.json` `agent.plan-reviewer.model`（方案审查、逻辑推理、架构分析能力需求）
 
 **做什么**：独立审查 planner 输出的方案（单元 DAG、验收标准、风险、扫描结论），输出 PASS/FAIL verdict。

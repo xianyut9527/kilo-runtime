@@ -94,19 +94,9 @@ task_context:
 > **注意**：`INTENT`、`SIZING`、`DELIVERING` 的 executor 为 `conductor`（内建），主槽本身由 conductor 占据，但 `pre:`/`post:` 钩子仍可挂载自定义智能体。
 > **v2 QUALITY hooks**：QUALITY 阶段内部不使用 `pre:`/`post:` 挂载，而是通过 `hook` + `after` + `deps` + `trigger` 声明响应式挂载——`verify → fix → review → fix` 自动循环。
 
-### 子图挂载点（multiModel）
+### T3 阶段级多模型并行
 
-T3 子图节点同样派生 `pre:`/主/`post:` 三挂载点：
-
-| 子图节点 | 主槽挂载点 | 说明 |
-|----------|-----------|------|
-| MM_INIT | `MM_INIT` | 子图初始化 |
-| MM_EXECUTING | `MM_EXECUTING` | 3 coder 并行执行（`coder-a`/`coder-b`/`coder-c` 挂载此点） |
-| MM_CHECKING | `MM_CHECKING` | 子图验证（`verifier` 挂载此点） |
-| MM_FUSING | `MM_FUSING` | 融合阶段（`synthesizer-fusion` 挂载此点） |
-| MM_ARCHIVED | `MM_ARCHIVED` | 归档/交接回主图 |
-
-完整列表见 `lifecycle/multimodel-graph.yaml`。
+T3 走主图 `PLANNING→EXECUTING→QUALITY→DELIVERING` 全链路（与 T1/T2 一致），无独立 DAG。PLANNING 阶段由 `multiModel` 调度 3 个 planner 变体（kimi-k2.6 / deepseek-v4-pro / glm-5.2）出方案并融合选优，写入 `plan`；EXECUTING 单路 coder 按融合方案实现；QUALITY 四视角交叉验证不变。
 
 ---
 
@@ -139,8 +129,8 @@ at: pre:PLANNING
 # 阶段后钩子
 at: post:QUALITY
 
-# 子图节点
-at: MM_CHECKING
+# T3 阶段级并行
+at: PLANNING                  # multiModel 调度 planner-a/b/c 三变体
 ```
 
 ### `after`（可选）
@@ -162,7 +152,7 @@ mount:
     hook: review
 ```
 
-> **T3 子图并行场景**（如 3 coder 在 `MM_EXECUTING` 节点，`graph.yaml` 声明 `parallel: true`）省略 `after`，由 multiModel 按最大并行度执行。主图同 hook 类型默认串行，声明 `after` 控制相对顺序。
+> **T3 阶段级并行场景**（如 3 个 planner 变体在 PLANNING 阶段由 multiModel 调度，`graph.yaml` 声明 `provider: multiModel`）省略 `after`，由 multiModel 按最大并行度执行。主图同 hook 类型默认串行，声明 `after` 控制相对顺序。
 
 > v2 废弃 `order: <数字>` 绝对编号系统。QUALITY 内部顺序由 `hook` 类型内置定义（`verify → fix → review → fix`），同 hook 类型内默认串行（避免并发 task 调度 abort），需要相对顺序时用 `after` 声明前驱。仅 `graph.yaml` 声明 `parallel: true` 的节点保留并行语义。
 
@@ -209,7 +199,7 @@ when: "config.agents.reverse_auditor"
 |--------|------------|----|----|----|----|
 | `reverse-auditor` | `config.agents.reverse_auditor` | ❌ | ❌ | ✅ | ✅ |
 | `side-checker` | `config.agents.side_checker` | ❌ | ❌ | ✅ | ✅ |
-| `synthesizer-fusion` | `config.agents.synthesizer_fusion` | ❌ | ❌ | ❌ | ✅ |
+
 
 开关声明在 `lifecycle/config.yaml`：
 
@@ -230,9 +220,13 @@ tier_defaults:
     agents:
       reverse_auditor: true
       side_checker: true
-      synthesizer_fusion: true    # T3 加载融合者
     review_mode: full
-    provider: multiModel          # T3 走子图
+  T3:
+    agents:
+      reverse_auditor: true
+      side_checker: true
+    review_mode: full
+     provider: multiModel          # T3 走阶段级并行
 ```
 
 > **新增智能体默认零配置**：恒定挂载（无 `when`）的智能体无需在 `config.yaml` 声明，图拓扑可达即加载。
@@ -306,7 +300,7 @@ mount:
 
 在 PLANNING 结束后、edges 流转到 EXECUTING **前**执行。它是 `post:PLANNING` 目前唯一挂载的智能体，无需 `after` 声明；`on_fail: abort` 表示审查 FAIL 则中止进入 EXECUTING。
 
-### 示例 C：跨主图+子图多阶段挂载
+### 示例 C：跨阶段多挂载
 
 `agent/verifier.md`：
 
@@ -314,11 +308,9 @@ mount:
 mount:
   - at: QUALITY                  # 主图验证
     hook: verify
-  - at: MM_CHECKING            # 子图验证（multiModel 内部）
-  - at: MM_FCHECK              # 子图融合后验证
 ```
 
-同一智能体挂载 3 个点，无 `when`（恒定挂载），无 `after`（每个点独立，不与其他 verifier 竞争）。
+同一智能体可挂载多个点，无 `when`（恒定挂载），无 `after`（每个点独立，不与其他 verifier 竞争）。
 
 ### 示例 D：条件挂载 + 降级
 
@@ -334,25 +326,29 @@ mount:
 
 仅当 `config.agents.side_checker = true` 时挂载（T2+ 默认 true）。失败时跳过该视角，标记 `DEGRADED`，不阻塞 QUALITY hooks 主流程。
 
-### 示例 E：并行组（T3 子图 `parallel: true` 节点）
+### 示例 E：QUALITY 四视角挂载示例
 
-`agent/coder-a.md`、`coder-b.md`、`coder-c.md`：
+`agent/verifier.md`、`agent/reviewer.md`、`agent/fixer.md`：
 
 ```yaml
-# coder-a.md
+# verifier.md
 mount:
-  - at: MM_EXECUTING           # 与 coder-b、c 同号并行（graph.yaml 声明 parallel: true）
+  - at: QUALITY
+    hook: verify
 
-# coder-b.md
+# reviewer.md
 mount:
-  - at: MM_EXECUTING           # 同槽，无 after = 并行组成员（仅 parallel: true 节点保留并行）
+  - at: QUALITY
+    hook: review
 
-# coder-c.md
+# fixer.md
 mount:
-  - at: MM_EXECUTING           # 3 个视角隔离，parallel: true 节点并行启动
+  - at: QUALITY
+    hook: fix
+    trigger: onFail
 ```
 
-三者都挂 `MM_EXECUTING`（`graph.yaml` 显式声明 `parallel: true`），都省略 `after`，bootstrap 将其归入同一并行组，运行时 multiModel 同时启动 3 个 task。**主图非 `parallel: true` 节点的同 hook 类型默认串行**，避免并发 task 调度触发 `Tool execution aborted`。
+三者分别挂载 QUALITY 的 verify/review/fix hooks，按 hook 类型内置顺序执行（verify → fix → review → fix）。同 hook 类型默认串行（按 agent 文件名字典序逐个启动），避免并发 task 调度触发 `Tool execution aborted`。
 
 ---
 
@@ -364,20 +360,16 @@ mount:
 |--------|--------|------|--------|-----------|------|
 | `planner` | `PLANNING` | 主槽 | 无 | 默认 | 设计方案 |
 | `coder` | `EXECUTING` | 主槽 | 无 | 默认 | 标准编码 |
-| `verifier` | `QUALITY hook:verify`, `MM_CHECKING`, `MM_FCHECK` | 主图hook+子图×2 | 无 | 默认 | 正向验证（3 点） |
+| `verifier` | `QUALITY hook:verify` | 主图hook | 无 | 默认 | 正向验证 |
 | `reviewer` | `QUALITY hook:review` | 主图hook | 无 | 默认 | 代码审查 |
 | `fixer` | `QUALITY hook:fix` | 主图hook | 无 | 默认 | 定向修复（auto-trigger） |
 | `plan-reviewer` | `post:PLANNING` | 后钩子 | 无 | `abort` | 方案硬门审查 |
 | `reverse-auditor` | `QUALITY hook:verify` | 主图hook | `config.agents.reverse_auditor` | `degrade` | 反向审计（可选） |
 | `side-checker` | `QUALITY hook:review` | 主图hook | `config.agents.side_checker` | `degrade` | 侧向验证（可选） |
-| `coder-a` | `MM_EXECUTING` | 子图主槽 | 无 | 默认 | 逻辑推理派 |
-| `coder-b` | `MM_EXECUTING` | 子图主槽 | 无 | 默认 | 安全边界派 |
-| `coder-c` | `MM_EXECUTING` | 子图主槽 | 无 | 默认 | 代码生成派 |
-| `synthesizer-fusion` | `MM_FUSING` | 子图主槽 | `config.agents.synthesizer_fusion` | 默认 | 融合输出 |
-| `multiModel` | — | lifecycle_provider | — | — | 子图编排者（不经 mount） |
-| `conductor` | — | primary | — | — | 主图编排者（不经 mount） |
+| `multiModel` | `PLANNING` | primary | — | `config.agents.multiModel` | T3 阶段级并行调度者（mount: PLANNING，内部调度 planner-a/b/c） |
+| `conductor` | — | primary | — | — | 主图编排者（不经 mount，内建执行 INTENT/SIZING/DELIVERING） |
 
-> **multiModel** 与 **conductor** 是特殊 `type`（`lifecycle_provider` / `primary`），由 `graph.yaml` 的 `provider`/`executor` 直接绑定，**不经 `mount` 挂载**。
+> **multiModel** 与 **conductor** 是 `mode: primary` 智能体。conductor 不经 mount（内建执行）；multiModel 经 `mount: PLANNING` + `when: config.agents.multiModel` 挂载（T3 时激活）。
 
 ---
 
@@ -434,7 +426,7 @@ foreach ($f in $files) {
 | `[ASSEMBLY_FAIL]` 角色无人履行 | 某 `required_roles` 角色无智能体在主槽注册 | 创建 `agent/<role>.md` 并挂载到对应主槽 |
 | `[SLOT_ABORT]` | `post:PLANNING` 的 `on_fail: abort` 触发 | 检查方案审查输出，修复方案后重试 |
 | `[AGENT_TIMEOUT]` | wall-clock 超过 `timeout_s` | 检查 `config.yaml timeouts.per_agent_s` 是否过小 |
-| `[DIVERSITY_VIOLATION]` | T3 coder-a/b/c 模型 (vendor, architecture) 不两两不同 | 在 `kilo.json` 绑定不同 vendor 的模型 |
+| `[DIVERSITY_VIOLATION]` | T3 planner-a/b/c 模型 (vendor, architecture) 不两两不同 | 在 `kilo.json` 绑定不同 vendor 的模型 |
 | `DEGRADED` | 可选视角（reverse-auditor/side-checker）挂载失败 | 检查模型可用性或降级为单机模式 |
 | `${HOME}` 占位符残留 | `install.ps1`/`install.sh` 替换不完整 | 确保脚本替换 `${KILO_CONFIG_DIR}` 和 `${HOME}` |
 | 全局未同步 | 提交后漏跑 install | 提交后执行 `./install.ps1` 或 `./install.sh`，重启 Kilo |
@@ -446,7 +438,7 @@ foreach ($f in $files) {
 ```yaml
 ---
 description: 一句话说明智能体职责
-mode: subagent                    # primary | subagent | lifecycle_provider
+mode: subagent                    # primary | subagent
 hidden: true                      # true = 不在 TUI 展示
 steps: 80                         # 预估步数（调度参考）
 color: "#8B5CF6"                  # TUI 展示颜色（hidden=true 时可省略）
@@ -477,14 +469,6 @@ task_context:
 # isolation：视角物理隔离（防止确认偏误）
 isolation:
   forbid_read: [verification.forward, verification.reverse]
-
-# type: lifecycle_provider 专用（普通 subagent 不需要）
-# subgraph: multimodel-graph.yaml
-# handoff:
-#   enter: "..."
-#   exit: "..."
-# invariants:
-#   - "..."
 ---
 ```
 

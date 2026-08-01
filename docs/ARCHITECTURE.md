@@ -8,7 +8,7 @@
 
 ## 1. 架构全景（一句话）
 
-> 6 个语义阶段的主图 DAG + T3 multiModel 子图。智能体通过 `agent/<name>.md` frontmatter `mount` 自注册挂载，新增/替换/排序 = 丢/改一个文件，**零改 `graph.yaml`/`config.yaml`**。
+> 6 个语义阶段的主图 DAG + T3 阶段级多模型并行。智能体通过 `agent/<name>.md` frontmatter `mount` 自注册挂载，新增/替换/排序 = 丢/改一个文件，**零改 `graph.yaml`/`config.yaml`**。
 
 ### 1.1 主图 6 Stage（生命周期主干）
 
@@ -24,7 +24,7 @@ SIZING（conductor 内建）→ 定级 T0–T3，写入 config.agents
   ├─ T0 ────────────────→ EXECUTING → DELIVERING → DONE
   ├─ T1 ──→ PLANNING ──→ EXECUTING → QUALITY → DELIVERING → DONE
   ├─ T2 ──→ PLANNING ──→ EXECUTING → QUALITY → DELIVERING → DONE
-  └─ T3 ────────────────→ MM_SUBGRAPH → EXECUTING → QUALITY → DELIVERING → DONE
+  └─ T3 ──→ PLANNING(multiModel 阶段级并行) → EXECUTING → QUALITY → DELIVERING → DONE
 ```
 
 | 阶段 | 类型 | 执行者 | 必配角色 | 挂载点 | 说明 |
@@ -37,7 +37,7 @@ SIZING（conductor 内建）→ 定级 T0–T3，写入 config.agents
 | **DELIVERING** | stage | conductor | — | `pre:DELIVERING` / `DELIVERING` / `post:DELIVERING` | 交付 + 记忆写入 |
 | **DONE** | terminal | — | — | `on:done` | 终态 |
 
-> **挂载点命名空间**（派生，零声明）：节点存在即挂载点存在。`pre:<NODE>`（主槽前）/ `<NODE>`（主槽）/ `post:<NODE>`（主槽后、流转前）。QUALITY 内部额外派生 `hook:verify` / `hook:fix` / `hook:review`。子图节点（MM_*）同样派生三挂载点。
+> **挂载点命名空间**（派生，零声明）：节点存在即挂载点存在。`pre:<NODE>`（主槽前）/ `<NODE>`（主槽）/ `post:<NODE>`（主槽后、流转前）。QUALITY 内部额外派生 `hook:verify` / `hook:fix` / `hook:review`。阶段级并行节点同样派生三挂载点。
 
 ### 1.2 QUALITY 内部响应式 Hooks 循环
 
@@ -65,22 +65,16 @@ QUALITY 容器内自动循环：
   └─ 熔断：quality.round ≥ hooks.quality.max_total_cycles → CIRCUIT_BREAKER → DELIVERING（带降级标记）
 ```
 
-### 1.3 T3 multiModel 子图
+### 1.3 T3 阶段级多模型并行
 
 ```
 SIZING（定级 T3）
   │
   ▼
-MM_SUBGRAPH（multiModel 主控接管）
-  │
-  ├─ MM_INIT → MM_EXECUTING（coder-a/b/c 并行，各自独立 worktree）
-  ├─ MM_CHECKING（verifier 交叉验证）
-  ├─ MM_FUSING（synthesizer-fusion 独立融合）
-  ├─ MM_FCHECK（verifier 验证融合产物）
-  └─ MM_ARCHIVED（写 subgraph_status=ready_for_delivery）
+PLANNING（multiModel 阶段级并行调度 planner-a/b/c 三变体）
   │
   ▼
-回流主图 EXECUTING（coder 按融合方案 git merge + 实现）
+EXECUTING（单路 coder 按融合方案实现）
   │
   ▼
 QUALITY hooks（标准 verify→fix→review→fix 循环）
@@ -96,19 +90,18 @@ QUALITY hooks（标准 verify→fix→review→fix 循环）
 | 智能体 | 挂载点 / hook | after | trigger | when | 职责 |
 |--------|--------------|-------|---------|------|------|
 | **conductor** | —（内建） | — | — | — | 编排者：意图判定→定级→挂载调度→流转裁判 |
-| **multiModel** | —（lifecycle_provider） | — | — | — | T3 子图编排者 |
+| **multiModel** | —（primary） | — | — | — | T3 阶段级并行调度者 |
 | **planner** | `PLANNING` | — | — | — | 设计门、DAG、验收点 |
 | **coder** | `EXECUTING` | — | — | — | 编码实现、三件套 |
-| **verifier** | `QUALITY hook:verify`, `MM_CHECKING`, `MM_FCHECK` | — | — | — | 正向验证（L1/L2/L3） |
+| **verifier** | `QUALITY hook:verify` | — | — | — | 正向验证（L1/L2/L3） |
 | **reverse-auditor** | `QUALITY hook:verify` | — | — | `config.agents.reverse_auditor` | 反向审计（T2+） |
 | **reviewer** | `QUALITY hook:review` | — | — | — | 代码审查（四视角） |
 | **side-checker** | `QUALITY hook:review` | — | — | `config.agents.side_checker` | 侧向验证（T2+） |
 | **fixer** | `QUALITY hook:fix` | — | `onFail` | — | 定向修复（auto-trigger） |
 | **plan-reviewer** | `post:PLANNING` | — | — | — | 方案硬门审查 |
-| **coder-a** | `MM_EXECUTING` | — | — | — | 逻辑推理派 |
-| **coder-b** | `MM_EXECUTING` | — | — | — | 安全边界派 |
-| **coder-c** | `MM_EXECUTING` | — | — | — | 代码生成派 |
-| **synthesizer-fusion** | `MM_FUSING` | — | — | `config.agents.synthesizer_fusion` | 融合编辑（T3） |
+| **planner-a** | `PLANNING`（multiModel 调度） | — | — | — | 方案设计变体（kimi-k2.6） |
+| **planner-b** | `PLANNING`（multiModel 调度） | — | — | — | 架构分析变体（deepseek-v4-pro） |
+| **planner-c** | `PLANNING`（multiModel 调度） | — | — | — | 边界发现变体（glm-5.2） |
 
 ---
 
@@ -125,7 +118,6 @@ QUALITY hooks（标准 verify→fix→review→fix 循环）
 | `<NODE>` | 节点主槽（阶段本体） | 阶段核心执行者（planner/coder） |
 | `post:<NODE>` | 节点主槽执行**后**、edges 流转**前** | 后置审查（plan-reviewer）、风险检查 |
 | `QUALITY hook:*` | QUALITY 内部响应式 Hooks | verify / fix / review |
-| `MM_*` | multiModel 子图节点 | MM_EXECUTING / MM_CHECKING / MM_FUSING / MM_FCHECK |
 | `on:done` | DELIVERING 完成后、DONE 前（一次性） | 收尾钩子 |
 
 > 新增智能体 = 丢一个 `agent/<name>.md` + `kilo.json` 绑模型。graph.yaml / config.yaml / stages 全不动（除非引入新必配角色才需改该阶段 `required_roles`）。
@@ -290,8 +282,7 @@ hooks:
 | `agent/side-checker.md` | 侧向验证（T2+） |
 | `agent/fixer.md` | 定向修复（auto-trigger） |
 | `agent/plan-reviewer.md` | 方案硬门审查（post:PLANNING） |
-| `agent/multiModel.md` | T3 子图编排者 |
-| `agent/synthesizer-fusion.md` | 融合编辑（MM_FUSING） |
+| `agent/multiModel.md` | T3 阶段级并行调度者 |
 
 ### 校验与调试
 

@@ -17,9 +17,10 @@ subagent_type: planner
 
 # mount：挂载点声明
 #   at    挂载点（PLANNING 阶段主槽，派生自 graph.yaml PLANNING 节点）
-#   无 when = 恒定挂载：T0 不经 PLANNING、T3 走子图，图拓扑天然限定仅 T1/T2 触发，无需 config.agents 开关
+#   when  config.agents.planner == true 时激活（T1/T2）；T3 时 planner: false，由 multiModel 替代调度 planner-a/b/c 三变体
 mount:
   - at: PLANNING
+    when: "config.agents.planner"
 
 # task_context：读写边界声明
 #   read   可读的 task_context 切片（intent + sizing 由 conductor 在 INTENT/SIZING 写入；
