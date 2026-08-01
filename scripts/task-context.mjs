@@ -426,6 +426,11 @@ function cmdSetBatch(taskId, batchInput, agent) {
   let rawBatch;
   if (batchInput === '-') {
     rawBatch = fs.readFileSync(0, 'utf8');
+    // 1MB 大小守卫，防 stdin 内存撑爆
+    const MAX_STDIN_BYTES = 1 * 1024 * 1024;
+    if (rawBatch.length > MAX_STDIN_BYTES) {
+      die(2, `Error: stdin input exceeds ${MAX_STDIN_BYTES} byte limit (got ${rawBatch.length})`);
+    }
   } else {
     rawBatch = batchInput;
   }
@@ -665,10 +670,15 @@ const ASSERTIONS = {
     if (!gate) return { pass: false, detail: 'usage: assert <task_id> gate <GATE_NAME>' };
     if (gate === 'MEMORY_WRITE_COMPLETE') {
       const mws = ctx.memory_write_status;
-      if (mws === 'OK' || mws === 'DEGRADED' || ctx.memory_write_complete === true) {
-        return { pass: true, detail: `memory_write_status=${mws}` };
+      const tier = ctx.sizing && ctx.sizing.tier;
+      // T0 允许 SKIPPED（按价值信号触发，可能不写 memory）；T1+ 必须 OK/DEGRADED
+      const ok = (tier === 'T0' && (mws === 'OK' || mws === 'DEGRADED' || mws === 'SKIPPED'))
+        || (tier !== 'T0' && (mws === 'OK' || mws === 'DEGRADED'))
+        || ctx.memory_write_complete === true;
+      if (ok) {
+        return { pass: true, detail: `memory_write_status=${mws} tier=${tier}` };
       }
-      return { pass: false, detail: `[MISSING_MEMORY_WRITE] memory_write_status=${mws || '(未设置)'}` };
+      return { pass: false, detail: `[MISSING_MEMORY_WRITE] memory_write_status=${mws || '(未设置)'} tier=${tier || '(未设置)'}` };
     }
     return { pass: false, detail: `unknown gate "${gate}"` };
   },

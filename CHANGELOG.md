@@ -39,11 +39,11 @@
     - 新增 `idx_project_scope` 复合索引（对齐 `idx_fact_scope`）
     - `v_active_project_context` 视图加 scope / project_name 列
     - 8 条种子回填 scope：4 global（PC-004/005/006/008 通用流程/约束）+ 4 project=kilo_config（PC-001/002/003/007 架构/配置/记忆模块规则）
-  - **query A 加 scope 过滤**：`policy/query_strategy.md` §1 query A+A' 子查询加 `(scope = 'global' OR (scope = 'project' AND project_name = :current_project))`，对齐 query B/C。`KILO_PROJECT_NAME` 未设置时仅注入 global 行（业务项目安全默认）
+  - **query A 加 scope 过滤**：`docs/memory-ops-reference.md` §1 query A+A' 子查询加 `(scope = 'global' OR (scope = 'project' AND project_name = :current_project))`，对齐 query B/C。`KILO_PROJECT_NAME` 未设置时仅注入 global 行（业务项目安全默认）
   - **fact_store 重新分类**：6 条 kilo_config 专属经验（AP-007/008/010/011/012/PAT-002）scope 从 global 改为 project=kilo_config；10 条通用经验保持 global
   - **新增迁移脚本**：`api/migrate_project_context_scope.sql`（既有 DB 升级：ALTER TABLE + 索引 + 回填 8 条 scope）
   - **health_check 新增 2 项**：#19 `PROJECT_CONTEXT_SCOPE_COLUMN_PRESENT`（硬检查，列存在性）+ #20 `PROJECT_CONTEXT_SCOPE_DISTRIBUTION`（soft-warn，分布健康度）；索引数 21→22
-  - **三文件同步**：schema/init.sql + api/seed_project_context.sql + policy/project_context_seed.md（种子 scope 值一致）；policy/query_strategy.md（注入门槛表 + query A SQL）；policy/fact_dedup.md（scope 写入规则扩展 project_context）；policy/init_check.md（§6e 迁移表 + 失败处理）；validate-config.mjs（required 清单加迁移脚本）；MODULE_GUIDE.md（§3.4 表加 scope/project_name 行）
+  - **三文件同步**：schema/init.sql + api/seed_project_context.sql + policy/project_context_seed.md（种子 scope 值一致）；docs/memory-ops-reference.md（注入门槛表 + query A SQL）；policy/fact_dedup.md（scope 写入规则扩展 project_context）；policy/init_check.md（§6e 迁移表 + 失败处理）；validate-config.mjs（required 清单加迁移脚本）；MODULE_GUIDE.md（§3.4 表加 scope/project_name 行）
   - **验证**：20/20 health_check PASS；18/18 validate-config PASS；scope 隔离注入测试通过（KILO_PROJECT_NAME 未设 → 仅 1 条 global；=kilo_config → 3 条含 project；=business_app → 仅 1 条 global，无 kilo_config 噪音）
 
 
@@ -113,7 +113,7 @@
 
 - **2026-07-19**: 架构审计 — 删除 5 处冗余 + 修 1 处 runtime 引用错误。
   - **D10 修 runtime 引用**：workflow-core.md §收尾三步 第 3 项「经验沉淀与自进化」原本指向已变成指针文件的 `evolution.md`，现简化为指向同文件 §收尾自检（已有完整 checklist + M 节点编号）。**消除 runtime 引用错误**（coderAgent 之前会多绕一道读指针文件）。
-  - **D1 删除重复示例表**：`query_strategy.md` §输出格式示例 的 8 行表格与 `agent/coderAgent.md` §记忆节点日志 完全重复，删除 query_strategy.md 中的表格，改为单行指向。
+  - **D1 删除重复示例表**：`docs/memory-ops-reference.md` §输出格式示例 的 8 行表格与 `agent/coderAgent.md` §记忆节点日志 完全重复，删除 query_strategy.md 中的表格，改为单行指向。
   - **D5 删除 AGENTS.md 公共 API 重复表**：AGENTS.md §公共 API 9 行表与 README.md §公共 API 10 行表重复，且 AGENTS.md 顶部还自称"完整列表见 README.md"。现 AGENTS.md 仅保留 4 条常用入口 + 单行指向 README.md。
   - **D8 删除 AGENTS.md 收尾自检重复 checklist**：AGENTS.md §收尾自检 6 行 checklist 与 workflow-core.md §收尾自检 10 行（含 M 编号）重复，且 AGENTS.md 顶部还自称"详见 workflow-core.md"。现 AGENTS.md 仅保留 4 条核心原则 + 单行指向。
   - **D11 修过期注释**：`validate-config.mjs` 顶部注释 `[14/16]` → `[14/17]`（实际是 17 项），并补齐 `[17/17] 全局 sqlite 记忆层健康度` 注释行（之前漏了）。
@@ -124,15 +124,15 @@
   - **状态图标**：🔍 query / 📝 write / 🔄 update / ✅ success / ⚠️ partial / ❌ failure / ⏭️ skipped — 与任务流区分。
   - **markdown 模板**：在 `agent/coderAgent.md` §记忆节点日志 新增模板 + 完整示例；T1+ 任务必须输出此表格。
   - **M1-M8 ↔ 收尾自检 checklist 打通**：workflow-core.md §收尾自检 每条 checklist 现在标 M 编号（M4/M5/M6/M7/M8），并加一条「M1-M8 节点日志输出」确保用户能直观看到记忆系统在做什么。
-  - **节点定义唯一源**：`.kilo/memory/policy/query_strategy.md` §节点定义 M1-M8（含触发时机 / 操作类型 / 必填输出 / 触发顺序图 / 状态图标表）。
+  - **节点定义唯一源**：`docs/memory-ops-reference.md` §节点定义 M1-M8（含触发时机 / 操作类型 / 必填输出 / 触发顺序图 / 状态图标表）。
   - **解决核心痛点**：之前 memory 操作是「无声」的（SQL 执行但无可见输出），现在每次任务都能看到「读了哪些 fact / 写了哪些 dispatch / 哪些 hit_count 自增」，**与任务流程日志对齐输出**，reviewer 和用户可一眼审计。
 
 - **2026-07-19**: 记忆检索 v2.0 — 查询带 ID + tags + 标准注入格式 + hit_count 自增回路。
-  - **P0 query_strategy.md SELECT 强化**：所有查询**必须带 ID 字段**（fact_id / failure_id / context_id / calibration_id）+ tags + evidence；同时引入**置信度门槛**（fact_store confidence ≥ 0.7 + hit_count ≥ 2，failure_db resolved_at 非空，model_calibration sample_count ≥ 3），过滤低质噪音；早期项目 commit < 10 时自动放宽至 confidence ≥ 0.5 兜底。
+  - **P0 query_strategy.md SELECT 强化**：所有查询**必须带 ID 字段**（fact_id / failure_id / context_id / calibration_id）+ tags + evidence；同时引入**置信度门槛**（fact_store confidence ≥ 0.7 + hit_count ≥ 2，failure_db resolved_at 非空，model_calibration sample_count ≥ 3），过滤低质噪音；早期项目 commit < 10 时自动放宽至 confidence ≥ 0.5 兜底。（v2.6.2 后策略文档已迁至 `docs/memory-ops-reference.md`）
   - **P0 索引化 LIKE 匹配**：`tags LIKE '%keyword%'` → `tags LIKE '%,%keyword%,%'`（逗号分隔精确匹配），**真正走 `idx_fact_tags` 索引**；trigger / action 字段兜底模糊匹配。
   - **P1-1 标准注入格式**：定义 `[memory:fact_id={id} category={...} confidence={...} hit_count={...} tags=[...]]` 强制标记，agent 引用经验时**必须保留标记**让 reviewer 可审计；fact_store / failure_db / project_context / model_calibration 各有专属模板。
   - **P1-3 hit_count 自增回路**：每次 T1+ 任务收尾时，从 agent 输出中的 `[memory:fact_id=...]` 标记提取用到的 fact_id 列表，对每个执行 `UPDATE hit_count + 1, confidence + 0.02 (封顶 0.95)`；failure_db 同症状复发时 `same_symptom_count + 1`。**解决"经验被反复使用但 hit_count 永远=1"的回路断裂问题**。列入 workflow-core.md §收尾自检 checklist。
-  - **P1-5 描述合并**：core.md §自进化触发点 + reflection.md §强制跨会话根因回溯 的重复 SQL 段全部删除，改为指向 `.kilo/memory/policy/query_strategy.md` §3（SQL 唯一源）；统一强制带 ID + 置信度门槛。
+  - **P1-5 描述合并**：core.md §自进化触发点 + reflection.md §强制跨会话根因回溯 的重复 SQL 段全部删除，改为指向 `docs/memory-ops-reference.md` §3（SQL 唯一源）；统一强制带 ID + 置信度门槛。
   - **R-3 MEMORY.md vs fact_store 边界**：README.md 新增「MEMORY.md vs fact_store 边界」章节，明确分工——可复用模式→fact_store，用户偏好/安全约束→md 兜底，归档索引→MEMORY.md 指向 fact_id；禁止把任务经验直接 append 到 MEMORY.md / SKILL.md。
 
 - **2026-07-19**: 记忆模块 v2.0 边界封装（S3 方案：模块边界 + 4 层分离，零行为变更）。
@@ -143,7 +143,7 @@
     - `policy/failure_recorder.md` — failure_db 写入规则
     - `policy/skill_upgrade.md` — fact_store 触发 skill 升级检测
     - `policy/model_calibration.md` — model_calibration 更新规则
-    - `policy/query_strategy.md` — 任务开始 + 失败回溯查询规则
+    - `policy/query_strategy.md` — 任务开始 + 失败回溯查询规则（v2.6.2 已迁至 `docs/memory-ops-reference.md`）
     - `policy/init_check.md` — memory.db 4 步初始化 SOP
     - `contracts/health_check.sql` — 标准化健康度 SQL（5 项检查）
     - `README.md` — 公共 API 文档（外部模块唯一应看的入口）

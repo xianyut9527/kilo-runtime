@@ -14,7 +14,7 @@ permission:
 type: primary
 
 task_context:
-  write: [intent, sizing, status, convergence, quality.verdict, quality.max_rounds, memory_injection, config, memory_write_status, memory_write_complete, current_stage, dispatch_log, overload_count]
+  write: [intent, sizing, status, convergence, quality.verdict, quality.max_rounds, memory_injection, config, memory_write_status, memory_write_complete, current_stage, dispatch_log, overload_count, subgraph_status, mm_fusion_degrade_flag]
   forbid_write: [execution.verification]
 ---
 
@@ -104,10 +104,15 @@ INTENT(内建) → SIZING(内建)
 
 - **交叉验证**：各视角 verdict 做机械汇总 AND 运算（反自验），任一 FAIL 触发 fix hooks。不投票，不补判。
 - **convergence-auditor 反向校验**（T2+ 可选硬门）：收齐各视角 verdict 后执行 `node "${KILO_CONFIG_DIR}/scripts/trust-transfer-check.mjs" <task_id> [--round N]`（读 `%TEMP%/kilo/task_context_<task_id>.json`，校验独立 evidence/信任传递措辞/fresh），任一 FAIL → `[TRUST_TRANSFER]` 重跑。
-- **熔断**：`quality.round >= quality.max_rounds`（默认 4）→ `[CIRCUIT_BREAKER]` → 流转到 DELIVERING（带降级标记 `[QUALITY_CB]`，由用户决策是否继续）。与 `graph.yaml`/`quality.md`/`e2e-smoke` 一致。
+- **熔断**：`quality.round >= quality.max_rounds`（默认 4）→ `[CIRCUIT_BREAKER]` → 流转到 DELIVERING（带降级标记 `[QUALITY_CB]`，由用户决策是否继续）。与 `graph.yaml`/`quality.md` 一致。
 - **on_fail 派发**：abort(硬停) / retry_once(重跑1次) / degrade(跳过可选视角) / escalate(升级) / pause(挂起等人)。
 - **流程级即停**：跳步/SCOPE_CREEP/TRUST_TRANSFER → 标记回退重走，不走 on_fail。
 - **降级**：memory.db 不存在→DEGRADED 静默；agent 不可用→按 on_fail；bootstrap 失败→`[ASSEMBLY_FAIL]` 停止。
+- **MM_SUBGRAPH 降级回流**（T3 子图融合失败 → PLANNING 重入降级）：当 `subgraph_status == 'fusion_failed'` 且流转到 PLANNING 时（graph.yaml MM_SUBGRAPH→PLANNING 降级边），conductor 执行以下降级序列：
+  1. `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> sizing.tier T2 --agent conductor`（tier 降级为 T2，修正标记失真）
+  2. `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> subgraph_status "" --agent conductor`（清空 subgraph_status，防止状态污染后续 DELIVERING 记忆写入等阶段）
+  3. 写入 `mm_fusion_degrade_flag: true` 承载降级信号（`set <task_id> mm_fusion_degrade_flag true --agent conductor`；独立字段，不污染 dispatch_log 数组结构；PLANNING 重入降级完成后 conductor 负责清空该标记——`set <task_id> mm_fusion_degrade_flag false --agent conductor`，防止后续正常 T2 任务误判重入降级）
+  4. PLANNING 按 T2 单路编码语义走（不再触发多模型拆分），planner 识别 `mm_fusion_degrade_flag == true` 进入重入降级模式（见 `lifecycle/stages/planning.md` §重入降级模式）
 - **配置驱动**：SIZING 定级后按 `lifecycle/config.yaml` tier_defaults 写入 `task_context.config.agents`（差异化开关）+ `review_mode` + `custom_overrides`（用户自定义覆盖入口）。frontmatter `mount[].when` 按 `config.agents.<key>` 求值。
 - **kilo.json 读取规约**：conductor 启动时读一次 `kilo.json` 并缓存（`compaction.reserved` 等合法字段），运行期间不重复读盘。**size-check 阈值写死常量 120000**（kilo.json 无此字段——官方 schema 拒绝自定义字段，历史曾致配置整体被跳过，见 fix-config-20260801），用于 pre-dispatch size-check 硬门。
 - **overload_count 语义**：per-dispatch 累加计数器，每次 task 返回 >2000 字符时 `overload_count++`（写入 task_context），用于跨 dispatch 追踪返回契约违规频率。不跨 task 重置。**阈值闭环**：`overload_count >= 3` 触发 `[CONTEXT_UNSAFE]` 强制切 `agent_manager`（铁律 #6 pre-dispatch 硬门），禁止继续 `task` dispatch；需 conductor 显式清零（`set <task_id> overload_count 0 --agent conductor`）后且 size-check 过关才可回退 `task` dispatch。

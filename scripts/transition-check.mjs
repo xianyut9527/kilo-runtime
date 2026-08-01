@@ -300,6 +300,7 @@ function resolveVars(ctx) {
     side_result: pick(side.side_result, side.verdict, 'N/A'),
     review_result: pick(review.review_result, review.verdict),
     subgraph_status: pick(ctx.subgraph_status),
+    memory_write_status: pick(ctx.memory_write_status, ctx.delivery && ctx.delivery.memory_write_status),
   };
 }
 
@@ -404,9 +405,13 @@ function main() {
   if (edge.gate) {
     if (edge.gate === 'MEMORY_WRITE_COMPLETE') {
       const mws = pick(ctx.memory_write_status, ctx.delivery && ctx.delivery.memory_write_status);
-      const gateOk = mws === 'OK' || mws === 'DEGRADED' || ctx.memory_write_complete === true;
+      const tier = pick(ctx.sizing && ctx.sizing.tier);
+      // T0/INQUIRY 按价值信号触发，可能不写 memory → SKIPPED 放行；T1+ 必须 OK/DEGRADED
+      const gateOk = (tier === 'T0' && (mws === 'OK' || mws === 'DEGRADED' || mws === 'SKIPPED'))
+        || (tier !== 'T0' && (mws === 'OK' || mws === 'DEGRADED'))
+        || ctx.memory_write_complete === true;
       if (!gateOk) {
-        die(1, `[MISSING_MEMORY_WRITE] gate MEMORY_WRITE_COMPLETE failed: memory_write_status=${JSON.stringify(mws)} memory_write_complete=${JSON.stringify(ctx.memory_write_complete)}（DELIVERING 须先执行 M4-M8 并写入 memory_write_status）`);
+        die(1, `[MISSING_MEMORY_WRITE] gate MEMORY_WRITE_COMPLETE failed: memory_write_status=${JSON.stringify(mws)} memory_write_complete=${JSON.stringify(ctx.memory_write_complete)} tier=${JSON.stringify(tier)}（DELIVERING 须先执行 M4-M8 并写入 memory_write_status；T0 允许 SKIPPED）`);
       }
     } else {
       process.stdout.write(`WARN unknown gate "${edge.gate}"（子图 gate 不在主图校验范围），放行\n`);

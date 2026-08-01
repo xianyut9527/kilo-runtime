@@ -36,25 +36,28 @@ invariants:
   - MM_* 期间 conductor 不并发写 task_context（单写者原则）
   - quality.round 只能由 conductor 递增，multiModel 经 status 信号交还计数
 
-  # task_context：读写边界声明（WRITE_MATRIX 经 task-context.mjs 从本字段自动派生）
-  #   write  可写切片（子图编排者专属：plan / plan.subtasks / memory_injection /
-  #          execution.mm_outputs / execution.mm_artifacts / execution.mm_worktrees /
-  #          execution.mm_mode / execution.fused_output / subgraph_status /
-  #          status / convergence / intent / sizing /
-  #          config.agents.synthesizer_fusion（MM_INIT 手动模式写入）/
-  #          config.agents.mm_worktree（可选：false = 用户主动关闭 worktree 隔离，走方案级融合））
-  #   plan：T3 不走主图 PLANNING，MM_INIT 子任务委派包 + MM_FUSING 聚合方案等价物写入 plan，
-  #          供主图 EXECUTING 阶段 coder 读取并按聚合产物实现代码
-  #   execution.mm_outputs：3 份方案摘要，轻量，由 coder 输出经 multiModel 写入
-  #   execution.mm_artifacts：3 份产物指针（worktree 路径/分支/commit_sha/diff 摘要/验收映射表），由 coder 经 multiModel 代写
-  #   execution.mm_worktrees：worktree 注册表（4 条：3 coder + 1 fusion，含路径/分支/status），MM_WT_SETUP 写入
-  #   execution.mm_mode：模式标志 "worktree"（产物级，默认）/ "plan_level"（降级方案级融合）
-  #   execution.fused_output：语义变更——聚合产物指针（fusion worktree 路径/分支/commit_sha/聚合 diff 摘要/基底选择/冲突裁决），供主图 EXECUTING 阶段 coder 执行 git merge
-  #   subgraph_status：子图出口信号（ready_for_delivery），供 graph.yaml MM_SUBGRAPH→EXECUTING 边条件求值
-  #   status：子图运行期间状态（RUNNING/PAUSED/DEGRADED），MM_ARCHIVED 后由 conductor 接管
-  #   execution.diffs/changes/acceptance_map：由主图 EXECUTING 阶段 coder 实现代码后写入，子图不碰这些代码产物字段
-  task_context:
-    write: [plan, plan.subtasks, memory_injection, execution.mm_outputs, execution.mm_artifacts, execution.mm_worktrees, execution.mm_mode, execution.fused_output, subgraph_status, status, convergence, intent, sizing, config.agents.synthesizer_fusion, config.agents.mm_worktree]
+# task_context：读写边界声明（WRITE_MATRIX 经 task-context.mjs 从本字段自动派生）
+# 注意：必须是 frontmatter 顶层键（无缩进）——task-context.mjs 的 extractTaskContextWrite
+#       仅识别顶层无缩进 `^task_context\s*:`；曾嵌套在 invariants 内导致 WRITE_MATRIX
+#       漏识别（subgraph_status 写入被拒），2026-08-01 修复提升为顶层键。
+#   write  可写切片（子图编排者专属：plan / plan.subtasks / memory_injection /
+#          execution.mm_outputs / execution.mm_artifacts / execution.mm_worktrees /
+#          execution.mm_mode / execution.fused_output / subgraph_status /
+#          status / convergence / intent / sizing /
+#          config.agents.synthesizer_fusion（MM_INIT 手动模式写入）/
+#          config.agents.mm_worktree（可选：false = 用户主动关闭 worktree 隔离，走方案级融合））
+#   plan：T3 不走主图 PLANNING，MM_INIT 子任务委派包 + MM_FUSING 聚合方案等价物写入 plan，
+#          供主图 EXECUTING 阶段 coder 读取并按聚合产物实现代码
+#   execution.mm_outputs：3 份方案摘要，轻量，由 coder 输出经 multiModel 写入
+#   execution.mm_artifacts：3 份产物指针（worktree 路径/分支/commit_sha/diff 摘要/验收映射表），由 coder 经 multiModel 代写
+#   execution.mm_worktrees：worktree 注册表（4 条：3 coder + 1 fusion，含路径/分支/status），MM_WT_SETUP 写入
+#   execution.mm_mode：模式标志 "worktree"（产物级，默认）/ "plan_level"（降级方案级融合）
+#   execution.fused_output：语义变更——聚合产物指针（fusion worktree 路径/分支/commit_sha/聚合 diff 摘要/基底选择/冲突裁决），供主图 EXECUTING 阶段 coder 执行 git merge
+#   subgraph_status：子图出口信号（ready_for_delivery / fusion_failed），供 graph.yaml MM_SUBGRAPH 出边条件求值
+#   status：子图运行期间状态（RUNNING/PAUSED/DEGRADED），MM_ARCHIVED 后由 conductor 接管
+#   execution.diffs/changes/acceptance_map：由主图 EXECUTING 阶段 coder 实现代码后写入，子图不碰这些代码产物字段
+task_context:
+  write: [plan, plan.subtasks, memory_injection, execution.mm_outputs, execution.mm_artifacts, execution.mm_worktrees, execution.mm_mode, execution.fused_output, subgraph_status, status, convergence, intent, sizing, config.agents.synthesizer_fusion, config.agents.mm_worktree]
 ---
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
@@ -116,7 +119,7 @@ multiModel 期间产生的全部状态写入 `$env:TEMP/kilo/task_context_<task_
 - `convergence.mm_fusion_rounds` 字段：专用于追踪 MM_FCHECK 打回 synthesizer-fusion 重新聚合的轮次，与主图 `quality.round` 正交（子图 invariant 规定主图计数只能由 conductor/框架递增）。
 - v2 响应式 Hooks 架构下，主图 QUALITY 阶段使用 `hooks.quality.max_*` 熔断阈值（替代原 `convergence.round`/`total_rounds` 计数）；子图内部仍使用 `mm_fusion_rounds` 独立计数。
 - `[TRUST_TRANSFER]` / `[PROCESS_VIOLATION]` 边界与 conductor.md 保持一致，违反即整阶段降级 FAIL。
-- **subgraph_status 语义**：MM_ARCHIVED 写入 `subgraph_status=ready_for_delivery` 仅当融合产物成功就绪；若 3 份全 FAIL 或聚合失败（FUSION_FAILED），`subgraph_status` 保持未定义或写入 `fusion_failed`，主图 MM_SUBGRAPH→EXECUTING 边条件不满足，不会误执行 git merge。
+- **subgraph_status 语义**：MM_ARCHIVED 写入 `subgraph_status=ready_for_delivery` 仅当融合产物成功就绪；若 3 份全 FAIL（连续 2 次）或聚合失败（FUSION_FAILED）或 [MULTIMODEL_ABANDONED]，**必须显式写入 `subgraph_status=fusion_failed`**——主图 MM_SUBGRAPH→EXECUTING 边条件不满足（不会误执行 git merge），且命中 graph.yaml 新增 MM_SUBGRAPH→PLANNING 降级边，conductor 把 tier 降 T2 后重走 PLANNING 单路编码。
 
 ## 当前模式
 

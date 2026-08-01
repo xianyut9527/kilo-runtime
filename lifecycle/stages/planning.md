@@ -104,6 +104,23 @@ execution:
 - 挂载点审查失败/超时/异常 → 挂载点 `on_fail: abort` → `[SLOT_ABORT]`，停在 PLANNING 等用户决策（不自动回流）
 - 绕过审查直接进入下一阶段 → 下游验证/审查角色标 `[PLAN_REVIEW_MISS]` FAIL（见 stages/quality.md）
 
+## 重入降级模式（T3 子图融合失败回流）
+
+> 触发条件：T3 子图 MM_SUBGRAPH 融合失败后，graph.yaml 降级边 `MM_SUBGRAPH→PLANNING` 将流程回流到 PLANNING 阶段。conductor 在流转前执行降级序列（见 `agent/conductor.md` §MM_SUBGRAPH 降级回流），planner 进入本模式。
+
+**识别条件**（满足即进入重入降级模式）：
+- `task_context.mm_fusion_degrade_flag == true`（conductor 降级序列 step2 已清空 `subgraph_status`，故 `subgraph_status == 'fusion_failed'` 不可用作识别条件——planner 读到时已为空；`mm_fusion_degrade_flag` 为唯一可靠标记）
+
+**处理方式**：
+- 按 **T2 单路编码**规划（`sizing.tier` 已由 conductor 降为 T2），不再触发多模型拆分（不生成多路并行实现方案、不写 `mm_worktrees` 等 T3 特有字段，编码实现由实现角色单路承担）
+- 复用原任务需求与验收标准，重新产出单路 `units` DAG（与正常 T2 EXECUTION 设计门流程一致）
+- 输出 `transition_context.task_type` 标注为 `T2`（非 T3），`design_gate_type` 按 T2 规则（`full`）
+
+**与正常 design/analysis 模式的关系**：
+- 重入降级模式是 **EXECUTION 设计门的子模式**（`intent_type == 'EXECUTION'`），不改变 intent_type
+- 与正常 T2 设计门的区别仅在于：planner 需在方案中注明「原 T3 多模型融合失败，本次为降级单路规划」，并在风险与应对中记录原融合失败原因（从 `task_context` 或 `mm_fusion_degrade_flag` 中提取）
+- 不触发 INQUIRY 分析门（intent_type 仍为 EXECUTION）
+
 ## 硬规则（两种模式通用）
 
 - ❌ "太简单不需要设计/分析" — 简单任务正是未审视假设造成返工的高发区。

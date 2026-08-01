@@ -129,11 +129,11 @@ function main() {
   const lines = [];
 
   // 步骤 1：独立 evidence
-  for (const p of PERSPECTIVES) {
-    const view = v[p];
+  for (const persp of PERSPECTIVES) {
+    const view = v[persp];
     if (!isPerspectiveFilled(view)) {
       // 未填充 — 跳过（不计入失败；该视角可能未启用）
-      lines.push(`PASS verification.${p}.evidence: not filled (skipped)`);
+      lines.push(`PASS verification.${persp}.evidence: not filled (skipped)`);
       continue;
     }
     // 已填充视角必须有独立 evidence 字段
@@ -141,47 +141,47 @@ function main() {
     if (!isIndependentEvidence(ev)) {
       hasFail = true;
       lines.push(
-        `FAIL verification.${p}.evidence: missing or not independent (string references are not accepted as evidence)`
+        `FAIL verification.${persp}.evidence: missing or not independent (string references are not accepted as evidence)`
       );
     } else {
-      lines.push(`PASS verification.${p}.evidence: independent evidence present`);
+      lines.push(`PASS verification.${persp}.evidence: independent evidence present`);
     }
   }
 
   // 步骤 2：信任传递措辞扫描
-  for (const p of PERSPECTIVES) {
-    const view = v[p];
+  for (const persp of PERSPECTIVES) {
+    const view = v[persp];
     if (!isPerspectiveFilled(view)) continue;
     const text = JSON.stringify(view);
     const m = text.match(TRUST_TRANSFER_RE);
     if (m) {
       hasFail = true;
       lines.push(
-        `FAIL verification.${p}: trust-transfer phrase detected: "${m[0]}"`
+        `FAIL verification.${persp}: trust-transfer phrase detected: "${m[0]}"`
       );
     } else {
-      lines.push(`PASS verification.${p}: no trust-transfer phrase`);
+      lines.push(`PASS verification.${persp}: no trust-transfer phrase`);
     }
   }
 
   // 步骤 3：fresh 性
   if (round !== null) {
-    for (const p of PERSPECTIVES) {
-      const view = v[p];
+    for (const persp of PERSPECTIVES) {
+      const view = v[persp];
       if (!isPerspectiveFilled(view)) continue;
       if (!Object.prototype.hasOwnProperty.call(view, 'round')) {
         lines.push(
-          `WARN verification.${p}.round: missing round field (warning, not fail)`
+          `WARN verification.${persp}.round: missing round field (warning, not fail)`
         );
         continue;
       }
       if (view.round !== round) {
         hasFail = true;
         lines.push(
-          `FAIL verification.${p}.round: expected ${round}, got ${JSON.stringify(view.round)}`
+          `FAIL verification.${persp}.round: expected ${round}, got ${JSON.stringify(view.round)}`
         );
       } else {
-        lines.push(`PASS verification.${p}.round: ${round} matches current round`);
+        lines.push(`PASS verification.${persp}.round: ${round} matches current round`);
       }
     }
   }

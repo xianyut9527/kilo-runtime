@@ -74,7 +74,7 @@ token_budget: 6000
 
 ### 交付门禁不可跳过
 
-- `DELIVERING → DONE` 由 `transition-check.mjs` 的 `MEMORY_WRITE_COMPLETE` gate 守卫。`memory_write_status` 必须为 `OK` 或 `DEGRADED`，或 `memory_write_complete === true`。`MISSING` 或其他任意值均会被拒绝，报 `[MISSING_MEMORY_WRITE]`。
+- `DELIVERING → DONE` 由 `transition-check.mjs` 的 `MEMORY_WRITE_COMPLETE` gate 守卫。`memory_write_status` 必须为 `OK` 或 `DEGRADED`，或 `memory_write_complete === true`；T0 任务（tier=='T0'）额外允许 `SKIPPED`（T0/INQUIRY 按价值信号触发记忆写入，见 `graph.yaml` DELIVERING→DONE when 条件）。`MISSING` 或其他任意值均会被拒绝，报 `[MISSING_MEMORY_WRITE]`。
 - 任何从 DELIVERING 出发的 transition 必须满足 `task_context.current_stage === 'DELIVERING'` 的阶段顺序硬门，防止未进入 DELIVERING 直接跳到 DONE。
 
 #### 4. 分支收尾协议（仅 EXECUTION）
@@ -83,7 +83,7 @@ token_budget: 6000
 3. 告知用户分支去向，不擅自 push 合并
 4. worktree 隔离清理（如适用）
 
-> **T0 直达前置**：T0 任务绕过 QUALITY 直达 DELIVERING，须在 EXECUTING 阶段完成轻量验证（`scan-encoding.mjs` 通过 + `encoding_clean: true` + `no_debug_leftovers: true`，见 `executing.md` 路由规则）。DELIVERING 接收 T0 产物时默认信任前置已通过；若 EXECUTING 输出 `DONE_WITH_CONCERNS` 则已回流 QUALITY 兜底，不会直达。
+> **T0 直达前置**：T0 任务绕过 QUALITY 直达 DELIVERING，须在 EXECUTING 阶段完成轻量验证（`scan-encoding.mjs` 通过 + `encoding_clean: true` + `no_debug_leftovers: true`，见 `executing.md` 路由规则）。DELIVERING 接收 T0 产物时默认信任前置已通过；若 EXECUTING 输出 `DONE_WITH_CONCERNS`（graph.yaml EXECUTING 出边仅按 tier 分流，T0 无边可回流 QUALITY），仍直达 DELIVERING，DELIVERING 必须在交付中显式披露遗留风险。
 
 ## 输出信号
 

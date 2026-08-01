@@ -101,7 +101,7 @@ nodes:
   # 必配角色契约：stages/quality.md frontmatter required_roles
   - id: QUALITY
     type: stage
-    on_fail: escalate          # 连续失败 → 升级根因分析 / 人工
+    on_fail: escalate          # 连续失败 → 升级根因分析 / 人工（escalate 由 conductor 内建处理，不依赖图内出边）
 
   # 交付收尾：conductor 执行记忆写入(M4-M8)、git 分支收尾协议、输出闭环确认
   - id: DELIVERING
@@ -204,8 +204,17 @@ edges:
     to: EXECUTING
     when: "subgraph_status == 'ready_for_delivery'"
 
+  # 子图失败降级链 → 回流 PLANNING（multiModel.md 降级链：连续 2 次全 FAIL / FUSION_FAILED /
+  # [MULTIMODEL_ABANDONED] 时 multiModel 显式写 subgraph_status=fusion_failed，conductor 把 tier
+  # 降 T2 后经本边重走 PLANNING 单路编码；无本边则 MM_SUBGRAPH 无出边可走 → 死锁）
+  - from: MM_SUBGRAPH
+    to: PLANNING
+    when: "subgraph_status == 'fusion_failed'"
+
   # 交付完成 → 终态
   # memory_write_status=DEGRADED 不阻塞；MISSING → [MISSING_MEMORY_WRITE]
+  # T0/INQUIRY 按价值信号触发，可能不写 memory → SKIPPED 放行；T1+ 必须 OK/DEGRADED
   - from: DELIVERING
     to: DONE
+    when: "(tier == 'T0' and memory_write_status in ['OK','SKIPPED','DEGRADED']) or (tier in ['T1','T2','T3'] and memory_write_status in ['OK','DEGRADED'])"
     gate: MEMORY_WRITE_COMPLETE

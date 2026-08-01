@@ -414,18 +414,18 @@ QUALITY（响应式 Hooks 容器）
 
 | 文件 | 修改内容 |
 |------|----------|
-| `kilo.json` | `coderAgent` → `orchestrator`；prompt 锚点更新 |
-| `agent/coderAgent.md` | 重命名为 `agent/orchestrator.md`；更新为多智能体编排逻辑 |
-| `agent/multiModel.md` | 更新引用：`coderAgent` → `orchestrator`；executor 引用更新 |
-| `agent/lifecycle/README.md` | 状态机图更新：每阶段标注加载的智能体；组合规则更新 |
-| `agent/lifecycle/01-intent.md` | frontmatter 加 `agents: [orchestrator]` |
-| `agent/lifecycle/02-sizing.md` | frontmatter 加 `agents: [orchestrator]` |
-| `agent/lifecycle/03-design.md` | frontmatter 加 `agents: [planner]`；引用改为 planner 智能体 |
-| `agent/lifecycle/04-implementation.md` | frontmatter 加 `agents: [coder]` |
-| `agent/lifecycle/05-verification.md` | frontmatter 加 `agents: [verifier, reverse-auditor]`；反向验证逻辑 |
-| `agent/lifecycle/06-review.md` | frontmatter 加 `agents: [side-checker, reviewer]` |
-| `agent/lifecycle/07-repair.md` | frontmatter 加 `agents: [fixer]` |
-| `agent/lifecycle/08-delivering.md` | frontmatter 加 `agents: [orchestrator]`；task_context 归档逻辑 |
+| `kilo.json` | `coderAgent` → `orchestrator`（后改 `conductor`）；prompt 锚点更新 |
+| `agent/coderAgent.md` | 重命名为 `agent/orchestrator.md`（后改 `agent/conductor.md`）；更新为多智能体编排逻辑 |
+| `agent/multiModel.md` | 更新引用：`coderAgent` → `orchestrator`（后改 `conductor`）；executor 引用更新 |
+| `agent/lifecycle/README.md` | 状态机图更新：每阶段标注加载的智能体；组合规则更新（v6 已迁移至 `lifecycle/stages/README.md`） |
+| `agent/lifecycle/01-intent.md` | frontmatter 加 `agents: [orchestrator]`（v6 已迁移至 `lifecycle/stages/intent.md`） |
+| `agent/lifecycle/02-sizing.md` | frontmatter 加 `agents: [orchestrator]`（v6 已迁移至 `lifecycle/stages/sizing.md`） |
+| `agent/lifecycle/03-design.md` | frontmatter 加 `agents: [planner]`；引用改为 planner 智能体（v6 已迁移至 `lifecycle/stages/planning.md`） |
+| `agent/lifecycle/04-implementation.md` | frontmatter 加 `agents: [coder]`（v6 已迁移至 `lifecycle/stages/executing.md`） |
+| `agent/lifecycle/05-verification.md` | frontmatter 加 `agents: [verifier, reverse-auditor]`；反向验证逻辑（v6 已迁移至 `lifecycle/stages/quality.md`） |
+| `agent/lifecycle/06-review.md` | frontmatter 加 `agents: [side-checker, reviewer]`（v6 已迁移至 `lifecycle/stages/quality.md`） |
+| `agent/lifecycle/07-repair.md` | frontmatter 加 `agents: [fixer]`（v6 已迁移至 `lifecycle/stages/quality.md`） |
+| `agent/lifecycle/08-delivering.md` | frontmatter 加 `agents: [orchestrator]`；task_context 归档逻辑（v6 已迁移至 `lifecycle/stages/delivering.md`） |
 | `agent/models/registry.md` | 按阶段选择策略表更新为按智能体选择 |
 | `AGENTS.md` | 锚点更新：`coderAgent` → `orchestrator`；新增多智能体协作锚点 |
 | `README.md` | 目录树更新：agent/ 结构变更 |
@@ -436,7 +436,7 @@ QUALITY（响应式 Hooks 容器）
 
 | 文件 | 内容 |
 |------|------|
-| `agent/orchestrator.md` | 编排者智能体（从 coderAgent.md 演化） |
+| `agent/orchestrator.md` | 编排者智能体（从 coderAgent.md 演化，后改 `agent/conductor.md`） |
 | `agent/planner.md` | 规划智能体（从 capabilities/architecture-design.md 演化） |
 | `agent/coder.md` | 编码智能体（从 capabilities/implementation.md 演化） |
 | `agent/verifier.md` | 正向验证智能体（从 capabilities/verification.md 演化） |
@@ -450,7 +450,7 @@ QUALITY（响应式 Hooks 容器）
 
 | 文件 | 理由 |
 |------|------|
-| `agent/coderAgent.md` | 重命名为 orchestrator.md |
+| `agent/coderAgent.md` | 重命名为 orchestrator.md（后改 `agent/conductor.md`） |
 | `agent/capabilities/*.md`（8 文件） | 能力插件合并到对应智能体文件；memory-ops.md 保留作为 SQL 模板参考移至 `docs/memory-ops-reference.md` |
 | `agent/capabilities/` 目录 | 不再需要 |
 

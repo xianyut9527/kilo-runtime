@@ -297,8 +297,7 @@ hooks:
 
 | 文件 | 用途 |
 |------|------|
-| `scripts/lifecycle-doctor.mjs` | 全量装配校验（56 项）：图/挂载/契约/配置/矩阵 |
-| `scripts/e2e-smoke.mjs` | 流转回归测试（38 场景）：T0/T1/T2/T3/熔断/gate |
+| `scripts/lifecycle-doctor.mjs` | 全量装配校验（52 项）：图/挂载/契约/配置/矩阵 |
 | `scripts/task-context.mjs` | task_context 读写 + 权限硬门 |
 | `scripts/transition-check.mjs` | 状态流转裁判 + 熔断判定 |
 
@@ -318,11 +317,8 @@ hooks:
 ## 6. 验证命令
 
 ```powershell
-# 全量装配校验（56 项）
+# 全量装配校验（52 项）
 node scripts/lifecycle-doctor.mjs --verbose
-
-# 流转回归测试（38 场景）
-node scripts/e2e-smoke.mjs
 
 # 记忆层健康度
 python scripts/memory.py check
