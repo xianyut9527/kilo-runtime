@@ -106,7 +106,7 @@ execution:
 
 ## 重入降级模式（T3 阶段内并行融合失败降级）
 
-> 触发条件：T3 阶段内 multiModel 并行调度时，若 3 个变体输出全 FAIL 或 diversity 违规，multiModel 标 `[MULTIMODEL_DEGRADED]`，conductor 将 tier 降 T2 后重入 PLANNING。planner 进入本模式。
+> 触发条件：T3 阶段内 multiModel 并行调度时，若 3 个变体输出全 FAIL（可用性故障）或评分全员 <10（质量故障）或 diversity 违规，multiModel 标 `[MULTIMODEL_DEGRADED]`，conductor 将 tier 降 T2 后重入 PLANNING。planner 进入本模式。
 
 **识别条件**（满足即进入重入降级模式）：
 - `task_context.mm_fusion_degrade_flag == true`（conductor 降级序列写入的唯一可靠标记）

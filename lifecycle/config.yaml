@@ -185,6 +185,7 @@ timeouts:
     reverse_auditor: 600
     side_checker: 900
     reviewer: 600
+    plan-reviewer: 600
     planner: 600
     fixer: 1200
   per_tier_multiplier:     # 定级系数（per_agent_s × multiplier = 实际预算）

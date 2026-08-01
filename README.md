@@ -55,9 +55,9 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   ├── conductor.md           # 工作流编排者（type: primary，内建执行 INTENT/SIZING/DELIVERING）
 │   ├── multiModel.md             # T3 阶段级并行调度者（type: primary，PLANNING 阶段调度 planner-a/b/c 三变体）
 │   ├── planner.md                # 规划智能体（mount: PLANNING；设计门、DAG、验收点）
-│   ├── planner-a.md              # T3 PLANNING 变体-A（kimi-k2.6；方案设计视角，由 multiModel 内部调度）
-│   ├── planner-b.md              # T3 PLANNING 变体-B（deepseek-v4-pro；架构分析视角，由 multiModel 内部调度）
-│   ├── planner-c.md              # T3 PLANNING 变体-C（glm-5.2；边界发现视角，由 multiModel 内部调度）
+│   ├── planner-a.md              # T3 PLANNING 变体-A（kimi-k2.6；综合方案变体，独到点：方案完整性，由 multiModel 内部调度）
+│   ├── planner-b.md              # T3 PLANNING 变体-B（deepseek-v4-pro；综合方案变体，独到点：架构落点，由 multiModel 内部调度）
+│   ├── planner-c.md              # T3 PLANNING 变体-C（glm-5.2；综合方案变体，独到点：边界条件，由 multiModel 内部调度）
 │   ├── coder.md                  # 编码智能体（mount: EXECUTING；实现、自测、三件套）
 │   ├── verifier.md               # 正向验证（mount: QUALITY hook:verify；L1/L2/L3、5 元组证据）
 │   ├── reverse-auditor.md        # 反向审计（mount: QUALITY hook:verify, when: T2+；需求追溯、假设审计）

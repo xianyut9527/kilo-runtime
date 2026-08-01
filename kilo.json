@@ -33,17 +33,17 @@
     "planner-a": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
-      "prompt": "T3 多模型方案设计变体 A（hx/kimi-k2.6）。由 multiModel 在 PLANNING 阶段内部调度，输出方案摘要供融合。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "T3 多模型综合方案变体 A（hx/kimi-k2.6）。由 multiModel 在 PLANNING 阶段内部调度，输出完整方案摘要供融合，独到点聚焦方案完整性+实现路径。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
     },
     "planner-b": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-pro",
-      "prompt": "T3 多模型方案设计变体 B（hx/deepseek-v4-pro）。由 multiModel 在 PLANNING 阶段内部调度，输出方案摘要供融合。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "T3 多模型综合方案变体 B（hx/deepseek-v4-pro）。由 multiModel 在 PLANNING 阶段内部调度，输出完整方案摘要供融合，独到点聚焦架构落点+影响面。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
     },
     "planner-c": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
-      "prompt": "T3 多模型方案设计变体 C（hx/glm-5.2）。由 multiModel 在 PLANNING 阶段内部调度，输出方案摘要供融合。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "T3 多模型综合方案变体 C（hx/glm-5.2）。由 multiModel 在 PLANNING 阶段内部调度，输出完整方案摘要供融合，独到点聚焦边界条件+反模式。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
     },
     "plan-reviewer": {
       "mode": "subagent",
@@ -123,8 +123,8 @@
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "baseURL": "https://huixin.nat100.top/v1",
-        "timeout": 600000,
-        "chunkTimeout": 600000,
+        "timeout": 3600000,
+        "chunkTimeout": 3600000,
         "maxRetries": 2
       },
       "models": {

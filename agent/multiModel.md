@@ -39,17 +39,17 @@ task_context:
 
 ## 智能体定位
 
-**阶段级多模型并行调度器**。T3 时挂载在 PLANNING 阶段主槽，替代单一 planner，**当前会话串行**调度 **3 个不同厂商/架构的 planner 变体**（planner-a/b/c），收集方案后融合为单一结果写入 task_context.plan，主图继续正常流转。EXECUTING 阶段回归单路 coder，不挂载。无 worktree 依赖（变体只输出方案文本，不并行写文件）。
+**阶段级多模型并行调度器**。T3 时挂载在 PLANNING 阶段主槽，替代单一 planner，**当前会话串行**调度 **3 个不同厂商/架构的 planner 变体**（planner-a/b/c），采用**综合竞赛式**——每个变体独立产出完整方案，multiModel 评分选优 + 补丁吸收独到点，融合为单一结果写入 task_context.plan，主图继续正常流转。EXECUTING 阶段回归单路 coder，不挂载。无 worktree 依赖（变体只输出方案文本，不并行写文件）。
 
 ```
 T3 主图流程（与 T1/T2 完全一致）：
 INTENT → SIZING → PLANNING → EXECUTING → QUALITY(hooks) → DELIVERING → DONE
 
 PLANNING 阶段内部（T3）：
-├─ planner-A（kimi-k2.6）  → 方案 1（≤2000字符摘要）
-├─ planner-B（deepseek-v4-pro）→ 方案 2（≤2000字符摘要）
-└─ planner-C（glm-5.2）   → 方案 3（≤2000字符摘要）
-     ↓ multiModel 融合（选最佳 / 合并吸收 / 冲突裁决）
+├─ planner-A（kimi-k2.6）  → 完整方案 A（含独到点，≤2000字符摘要）
+├─ planner-B（deepseek-v4-pro）→ 完整方案 B（含独到点，≤2000字符摘要）
+└─ planner-C（glm-5.2）   → 完整方案 C（含独到点，≤2000字符摘要）
+     ↓ multiModel 评分选优 → champion + 补丁吸收独到点
      → 单一 plan 写入 task_context.plan
      → 主图继续 EXECUTING（单路 coder）
 ```
@@ -62,12 +62,35 @@ PLANNING 阶段内部（T3）：
 
 ## 融合策略（阶段内）
 
-| 优先级 | 规则 |
-|--------|------|
-| 1 | **正确性** > 完整性 > 风格 > 变动最小化 |
-| 2 | 若 2/3 答案一致，采纳多数意见 |
-| 3 | 若 3 份全不同，multiModel 按正确性+完整性综合裁决，标注冲突点供 QUALITY 阶段 verifier 重点审查 |
-| 4 | 输出单一融合结果 + 三份原始摘要（轻量，≤2000字符/份）供下游审计 |
+### 评分公式
+
+**总分 = 2 × 正确性 + 完整性 + 落地性 + 风险覆盖**（满分 25，每项 1-5 分）
+
+> **评分执行者**：4 维初评由 multiModel 自身执行（按评分公式逐项打分，附证据引用）；champion 二次校验由独立第 4 模型执行（见 §评分偏倚缓解）。
+
+### 三段式选优
+
+| 总分区间 | 处理 |
+|----------|------|
+| ≥15 | 正常 champion：最高分方案为主，补丁吸收其他方案独到点 |
+| 10-14 | champion + `[MM_BELOW_THRESHOLD]` 标注，plan-reviewer 重点审查 |
+| <10 | `[MULTIMODEL_DEGRADED]`，降 T2 重走单路 |
+
+> **同分并列 tie-breaker**：同分时取"正确性"子分最高者；若正确性也并列，取证据完整度（独到点数量+引用密度）高者；最终并列则 multiModel 随机选取 + 记录种子值（`task_context.plan.tie_break_seed`）供审计。
+
+### 补丁吸收规则
+
+对非 champion 方案的独到点（champion 未覆盖的维度/方案/风险点）：
+
+| 情况 | 处理 | 标注格式 |
+|------|------|----------|
+| 独到点与 champion 不矛盾 | 吸收追加 | 无标注 |
+| 独到点与 champion 矛盾 | 保留冲突，不吸收 | `[冲突标注] 来源:<模型>\|冲突内容:<简述>\|建议:留待QUALITY审查` |
+| 独到点属全新维度 | 作为补充点追加 | `[补充点] 来源:<模型>\|补充内容:<简述>` |
+
+### 输出
+
+单一融合结果 + 三份原始摘要（轻量，≤2000字符/份）供下游审计。
 
 ## 委派稳定性硬门
 
@@ -86,11 +109,28 @@ PLANNING 阶段内部（T3）：
 
 ## 异常处理
 
+### 可用性故障（abort / 超时 / 空返回）
+
 | 异常 | 处理 |
-|---|---|
-| 3 份输出全 FAIL | 不融合，标 `[MULTIMODEL_DEGRADED]`，conductor 把 tier 降 T2 重走单路 |
+|------|------|
+| 3 份输出全 FAIL | `[MULTIMODEL_DEGRADED]`，降 T2 重走单路 |
 | diversity 违规 | `[DIVERSITY_VIOLATION]`，终止并降级 T2 |
 | RATE_LIMIT 连续 3 次 | 降级为单路执行（multiModel 退出，正常走 planner/coder） |
+
+### 质量故障（评分驱动）
+
+| 异常 | 处理 |
+|------|------|
+| 评分全员 <10 | `[MULTIMODEL_DEGRADED]`，降 T2 重走单路 |
+| 评分 10-14 | `[MM_BELOW_THRESHOLD]` + plan-reviewer 重点审查（不降级） |
+
+## 评分偏倚缓解
+
+1. **同 prompt 模板**：3 个变体使用完全相同的 prompt 模板（仅模型不同），消除 prompt 偏差
+2. **多维平均两两校准**：对正确性/完整性/落地性/风险覆盖 4 维，取 3 个变体两两交叉评分的均值作为该维得分，降低单一评分者偏差
+3. **LLM-as-judge 二次校验**：评分完成后，用第 4 个模型（独立于 A/B/C）对 champion 方案做二次校验，若二次评分与原始评分偏差 >3 分，触发人工复核标记
+
+> **第 4 模型来源**：`kilo.json` `agent.judge.model`（若未配置则跳过二次校验，标 `[SKIP_JUDGE]`）。**多样性约束**：第 4 模型 vendor ∉ {A,B,C 的 vendor}，违反则标 `[JUDGE_DIVERSITY_VIOLATION]` 并跳过二次校验。
 
 ## skill 使用记录
 

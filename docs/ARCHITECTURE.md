@@ -99,9 +99,9 @@ QUALITY hooks（标准 verify→fix→review→fix 循环）
 | **side-checker** | `QUALITY hook:review` | — | — | `config.agents.side_checker` | 侧向验证（T2+） |
 | **fixer** | `QUALITY hook:fix` | — | `onFail` | — | 定向修复（auto-trigger） |
 | **plan-reviewer** | `post:PLANNING` | — | — | — | 方案硬门审查 |
-| **planner-a** | `PLANNING`（multiModel 调度） | — | — | — | 方案设计变体（kimi-k2.6） |
-| **planner-b** | `PLANNING`（multiModel 调度） | — | — | — | 架构分析变体（deepseek-v4-pro） |
-| **planner-c** | `PLANNING`（multiModel 调度） | — | — | — | 边界发现变体（glm-5.2） |
+| **planner-a** | `PLANNING`（multiModel 调度） | — | — | — | 综合方案变体（独到点：方案完整性，kimi-k2.6） |
+| **planner-b** | `PLANNING`（multiModel 调度） | — | — | — | 综合方案变体（独到点：架构落点，deepseek-v4-pro） |
+| **planner-c** | `PLANNING`（multiModel 调度） | — | — | — | 综合方案变体（独到点：边界条件，glm-5.2） |
 
 ---
 

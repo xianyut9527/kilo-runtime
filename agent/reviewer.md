@@ -30,7 +30,7 @@ mount:
 #   read   可读切片（diff 审查对象；plan 验收标准；project_context 项目级约束）
 #   write  可写切片（verification.review 审查结论）
 task_context:
-  read: [execution.diffs, plan, acceptance_criteria, project_context, execution.analysis]
+  read: [execution.diffs, execution.acceptance_map, execution.changes, plan, acceptance_criteria, project_context, execution.analysis]
   write: [verification.review]
 
 # isolation：视角物理隔离声明（防止确认偏误——审查者不见验证者/审计者结论，独立判断）

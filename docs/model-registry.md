@@ -93,9 +93,9 @@ diversity_rule:
 | 智能体 | 角色 | 能力倾向 | 能力要点 |
 |--------|------|----------|----------|
 | multiModel | 阶段级并行调度/融合 | `fast-reasoning` | PLANNING 阶段主槽拦截正常流程，串行调度 3 个不同厂商/架构的规划变体，收集方案后融合为单一结果写入 `task_context.plan`，主图继续流转 |
-| planner-a | T3 PLANNING 变体-A | `deep-reasoning` | 方案设计视角（hx/kimi-k2.6），只输出方案摘要，由 multiModel 内部调度 |
-| planner-b | T3 PLANNING 变体-B | `deep-reasoning` | 架构分析视角（hx/deepseek-v4-pro），只输出方案摘要，由 multiModel 内部调度 |
-| planner-c | T3 PLANNING 变体-C | `deep-reasoning` | 边界发现视角（hx/glm-5.2），只输出方案摘要，由 multiModel 内部调度 |
+| planner-a | T3 PLANNING 变体-A | `deep-reasoning` | 综合方案变体（独到点：方案完整性，hx/kimi-k2.6），只输出方案摘要，由 multiModel 内部调度 |
+| planner-b | T3 PLANNING 变体-B | `deep-reasoning` | 综合方案变体（独到点：架构落点，hx/deepseek-v4-pro），只输出方案摘要，由 multiModel 内部调度 |
+| planner-c | T3 PLANNING 变体-C | `deep-reasoning` | 综合方案变体（独到点：边界条件，hx/glm-5.2），只输出方案摘要，由 multiModel 内部调度 |
 
 > **多样化原则**：T3 PLANNING 3 个变体为不同厂商/不同架构模型（kimi-k2.6 / deepseek-v4-pro / glm-5.2），按 `diversity_map` 校验（违反 → `[DIVERSITY_VIOLATION]`）。QUALITY 四视角（verifier / reverse-auditor / reviewer / side-checker）已天然覆盖 4 个不同厂商/架构，形成交叉验证。
 > **融合隔离原则**：multiModel 融合阶段不知道变体模型身份，避免按模型声誉而非方案质量取舍。

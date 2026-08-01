@@ -431,6 +431,22 @@ function main() {
     if (vars.quality_verdict !== 'PASS' && vars.quality_verdict !== 'CIRCUIT_BREAKER') {
       die(1, `[MISSING_QUALITY_VERDICT] QUALITY 阶段未写入合法 verdict（当前=${JSON.stringify(vars.quality_verdict)}）。T1/T2/T3 必须经过 QUALITY hooks（verify/review/fix 循环），写入 quality.verdict ∈ {PASS, CIRCUIT_BREAKER} 后才能离开。`);
     }
+    // QUALITY→DELIVERING full 模式：reverse/side 非 PASS/FAIL/CONDITIONAL_PASS 时拒绝流转
+    // 判据改为白名单：仅 PASS/FAIL/CONDITIONAL_PASS 为合法值；N/A/PENDING/SKIPPED/''/null/undefined/0/false 均拒绝
+    // 修复 I1 U9 逃逸：原 === 'N/A' 严格比较可被 PENDING/SKIPPED/''/0/false 绕过
+    if (TO === 'DELIVERING' && vars.quality_verdict === 'PASS') {
+      const reviewMode = (ctx.config && ctx.config.review_mode) || 'none';
+      if (reviewMode === 'full') {
+        const VALID_RESULTS = new Set(['PASS', 'FAIL', 'CONDITIONAL_PASS']);
+        const missing = [];
+        const normalizeResult = (v) => (v != null ? String(v).trim().toUpperCase() : '');
+        if (!VALID_RESULTS.has(normalizeResult(vars.reverse_result))) missing.push('reverse_auditor');
+        if (!VALID_RESULTS.has(normalizeResult(vars.side_result))) missing.push('side_checker');
+        if (missing.length > 0) {
+          die(1, `[DEGRADED] full 模式 QUALITY→DELIVERING 缺少审查视角结果: ${missing.join(', ')} 非 PASS/FAIL/CONDITIONAL_PASS（reverse_result=${JSON.stringify(vars.reverse_result)} side_result=${JSON.stringify(vars.side_result)}）。请确认对应 agent 已执行并写入 verification 结果。`);
+        }
+      }
+    }
   }
 
   // 多边求值：找第一条 when 满足的边；无 when 的边直接匹配
@@ -474,18 +490,18 @@ function main() {
   // ============================================================
   // provenance gate（edge-conditioned，仅 T1/T2 EXECUTION 边）
   // 检查 dispatch_log 中是否包含对应阶段的 agent 记录
-  // 豁免：T0 边（SIZING→DELIVERING / SIZING→EXECUTING）、T3（子图 flow 不产生
-  // 主图同名 agent 记录）、INQUIRY 全部边（含 PLANNING→QUALITY / QUALITY→DELIVERING）
-  // QUALITY→DELIVERING 的 required 集合按 task_context.config.agents 中为 true 的
-  // 视角动态求值（不静态要求 4 视角）；CIRCUIT_BREAKER 出口豁免本门（熔断逃逸
-  // 不受缺日志阻塞，CB 路径 hooks 可能未全跑）。
+  // 豁免：T0 边（SIZING→DELIVERING / SIZING→EXECUTING）、INQUIRY 全部边
+  // （含 PLANNING→QUALITY / QUALITY→DELIVERING）
+  // T3 已无子图，主图正常产生 dispatch 记录；QUALITY→DELIVERING 的 required
+  // 集合按 task_context.config.agents 中为 true 的视角动态求值（不静态要求 4 视角）；
+  // CIRCUIT_BREAKER 出口豁免本门（熔断逃逸不受缺日志阻塞，CB 路径 hooks 可能未全跑）。
   // ============================================================
   const tier = vars.tier;
   const intentType = vars.intent_type;
   const dispatchLog = Array.isArray(ctx.dispatch_log) ? ctx.dispatch_log : [];
 
-  // 门仅对 EXECUTION 意图的 T1/T2 生效；T0/T3/INQUIRY 一律豁免
-  const isT1orT2 = tier === 'T1' || tier === 'T2';
+  // 门仅对 EXECUTION 意图的 T1/T2/T3 生效；T0/INQUIRY 一律豁免
+  const isT1orT2 = tier === 'T1' || tier === 'T2' || tier === 'T3';
   const isExempt = intentType !== 'EXECUTION' || !isT1orT2;
   // CIRCUIT_BREAKER 出口豁免：熔断逃逸不受 provenance 缺记录阻塞
   const isCircuitBreakerExit = FROM === 'QUALITY' && TO === 'DELIVERING' && vars.quality_verdict === 'CIRCUIT_BREAKER';
@@ -496,12 +512,46 @@ function main() {
       // 动态求值：读 planning.md required_roles + 扫 agent/*.md post:PLANNING 挂载的审查角色
       // 求值结果等价于原硬编码 [planner, plan-reviewer]
       // T3 阶段级多模型并行仍走 PLANNING→EXECUTING，multiModel 替代 planner 主槽但同阶段输出仍由 planning.md required_roles 定义
-      provenanceRequired.push(...getStageRequiredRoles('PLANNING'));
+      const planningRoles = getStageRequiredRoles('PLANNING');
+      // 按 config.agents 过滤 when 条件：planner:false 时移除 planner；multiModel:false 时移除 multiModel
+      // T3（planner:false+multiModel:true）→ 要求 [multiModel, plan-reviewer]
+      // T1/T2（planner:true+multiModel:false）→ 要求 [planner, plan-reviewer]
+      const agentsCfgP = (ctx.config && ctx.config.agents && typeof ctx.config.agents === 'object') ? ctx.config.agents : null;
+      for (const role of planningRoles) {
+        if (role === 'planner' && agentsCfgP && agentsCfgP.planner === false) continue;
+        if (role === 'multiModel' && agentsCfgP && agentsCfgP.multiModel === false) continue;
+        provenanceRequired.push(role);
+      }
     }
     if (FROM === 'EXECUTING' && TO === 'QUALITY') {
       // 动态求值：读 executing.md required_roles
       // 求值结果等价于原硬编码 [coder]
       provenanceRequired.push(...getStageRequiredRoles('EXECUTING'));
+      // 额外校验：execution.acceptance_map 存在性 + 每条含 implementation+verification 双字段
+      // 迁移宽限：仅当 task_context 存在 execution.changes 或 execution.code 时要求 acceptance_map
+      // （旧飞行任务无此字段则跳过校验，避免误伤历史 context；有 changes/code 说明是新执行任务，必须提供）
+      const hasExecutionArtifacts = (ctx.execution && (
+        (Array.isArray(ctx.execution.changes) ? ctx.execution.changes.length > 0 : !!ctx.execution.changes) ||
+        (Array.isArray(ctx.execution.code) ? ctx.execution.code.length > 0 : !!ctx.execution.code)
+      ));
+      if (hasExecutionArtifacts) {
+        const am = ctx.execution && ctx.execution.acceptance_map;
+        if (!am || !Array.isArray(am) || am.length === 0) {
+          die(1, `[MISSING_ACCEPTANCE_MAP] execution.acceptance_map 缺失或为空（EXECUTING→QUALITY 必须包含验收映射表）`);
+        }
+        for (let i = 0; i < am.length; i++) {
+          const item = am[i];
+          if (!item || typeof item !== 'object') {
+            die(1, `[MISSING_ACCEPTANCE_MAP] execution.acceptance_map[${i}] 不是有效对象`);
+          }
+          if (!item.implementation) {
+            die(1, `[MISSING_ACCEPTANCE_MAP] execution.acceptance_map[${i}] 缺少 implementation 字段`);
+          }
+          if (!item.verification) {
+            die(1, `[MISSING_ACCEPTANCE_MAP] execution.acceptance_map[${i}] 缺少 verification 字段`);
+          }
+        }
+      }
     }
     if (FROM === 'QUALITY' && TO === 'DELIVERING') {
       // 动态求值（不静态要求 4 视角）：
@@ -552,7 +602,7 @@ function main() {
   if (TO === 'QUALITY') quality.round += 1;
 
   // 熔断判定（先持久化再退出）
-  const maxR = typeof quality.max_rounds === 'number' ? quality.max_rounds : 7;
+  const maxR = typeof quality.max_rounds === 'number' ? quality.max_rounds : 4;
   if (quality.round >= maxR) {
     quality.status = 'tripped';
     quality.verdict = 'CIRCUIT_BREAKER';

@@ -84,16 +84,16 @@ function assertValidTaskId(taskId) {
 }
 
 // 从 lifecycle/config.yaml 读取响应式 Hooks 阈值（v2：hooks.quality.max_total_cycles）
-// 失败降级到 7
+// 失败降级到 4
 function readHooksFromConfig() {
   try {
     const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
     const mtc = text.match(/max_total_cycles:\s*(\d+)/);
     return {
-      max_total_cycles: mtc ? parseInt(mtc[1], 10) : 7,
+      max_total_cycles: mtc ? parseInt(mtc[1], 10) : 4,
     };
   } catch {
-    return { max_total_cycles: 7 };
+    return { max_total_cycles: 4 };
   }
 }
 
