@@ -3,7 +3,7 @@
 # IMPORTANT: EXCLUDE lists must be kept in sync with install.sh
 #
 # v6.1 architecture sync:
-#   lifecycle/              - graph.yaml (DAG), config.yaml (tier defaults), multimodel-graph.yaml, stages/*.md
+#   lifecycle/              - graph.yaml (DAG), config.yaml (tier defaults), stages/*.md
 #   agent/                  - one .md per agent; frontmatter mount auto-registers into lifecycle
 #   .kilo/instructions/     - cross-agent baseline rules
 #   .kilo/memory/           - sqlite-backed memory module
@@ -110,7 +110,6 @@ try {
         "agent/verifier.md",
         "lifecycle/graph.yaml",
         "lifecycle/config.yaml",
-        "lifecycle/multimodel-graph.yaml",
         "lifecycle/stages/README.md"
     )
 
