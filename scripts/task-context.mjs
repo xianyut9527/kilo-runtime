@@ -188,7 +188,7 @@ function usage() {
     '  set         Write JSON value to dot.path. Enforces write matrix.',
     '  apply-tier  Apply config.yaml tier_defaults to config.agents + review_mode (SIZING helper).',
     '  validate    Check required top-level fields, quality integers, and convergence mm_fusion integers.',
-    '  size-check  Print task_context file character count (pre-dispatch safety gate vs context_safety_threshold_chars).',
+    '  size-check  Print task_context file character count (pre-dispatch safety gate vs hard-coded 120000).',
     '  log-dispatch  Append {agent, mode, stage, timestamp} to dispatch_log[] (dispatch provenance). --agent must be in write-matrix agent set; --stage must be a graph.yaml node. Whitelist-enforced, rejects forged records.',
     '',
     'Agents in write matrix: ' + Object.keys(WRITE_MATRIX).join(', '),
@@ -709,7 +709,8 @@ function cmdAssert(taskId, assertionType, args) {
 
 // ============================================================
 // size-check 子命令：返回 task_context 文件字符数
-// conductor pre-dispatch 硬门：超 kilo.json context_safety_threshold_chars
+// conductor pre-dispatch 硬门：超写死常量 120000（kilo.json 无此字段，
+// 官方 schema 拒绝自定义字段，历史曾致配置整体被跳过，见 fix-config-20260801）
 // 强制切 agent_manager，禁止 task dispatch
 // ============================================================
 
@@ -722,7 +723,7 @@ function cmdSizeCheck(taskId) {
   }
   try {
     // 字符数（非字节）：UTF-8 解码后按 JS 字符串 length 计，与
-    // kilo.json context_safety_threshold_chars 阈值口径一致
+    // conductor 侧写死常量 120000 阈值口径一致
     const text = fs.readFileSync(p, 'utf8');
     process.stdout.write(String(text.length) + '\n');
     process.exit(0);

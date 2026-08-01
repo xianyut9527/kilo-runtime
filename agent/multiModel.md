@@ -1,5 +1,5 @@
 ---
-description: 多模型深度模式主控智能体。子图编排者，负责 T3 全流程：拆分→worktree 创建→3 coder 并行实现→verifier 验证→synthesizer-fusion 聚合→回流主图。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。委派稳定性硬门（防 Tool execution aborted，最高优先级）：T3 子图 3 个 coder **禁止用 task 工具在主会话串行 dispatch**——前一个 coder 返回 transcript 会撑爆主会话 context → 后续 coder Tool execution aborted（根因见 conductor.md §T3 编排稳定性）。必须用 agent_manager 工具 mode: worktree 启动独立会话（每 coder 独立 context + 独立 worktree），verifier/synthesizer-fusion 同理；委派包 prompt ≤1500 字符（生成时自检）；主会话只做编排（写 task_context 指针 + 读 Agent Manager 卡片状态），不承接 subagent 返回 transcript。
+description: "多模型深度模式主控智能体。子图编排者，负责 T3 全流程：拆分→worktree 创建→3 coder 并行实现→verifier 验证→synthesizer-fusion 聚合→回流主图。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。委派稳定性硬门（防 Tool execution aborted，最高优先级）：T3 子图 3 个 coder **禁止用 task 工具在主会话串行 dispatch**——前一个 coder 返回 transcript 会撑爆主会话 context → 后续 coder Tool execution aborted（根因见 conductor.md §T3 编排稳定性）。必须用 agent_manager 工具 mode: worktree 启动独立会话（每 coder 独立 context + 独立 worktree），verifier/synthesizer-fusion 同理；委派包 prompt ≤1500 字符（生成时自检）；主会话只做编排（写 task_context 指针 + 读 Agent Manager 卡片状态），不承接 subagent 返回 transcript。"
 mode: primary
 hidden: false
 color: "#8B5CF6"
@@ -234,6 +234,7 @@ multiModel（产物级聚合模式，v2）
 - 再次核对聚合产物是否满足所有 acceptance_criteria。
 - **子图不执行主工作区代码变更**——由主图 EXECUTING 阶段 coder 执行 git merge fusion 分支。
 - **清理 3 个 coder worktree**：`git worktree remove <path>.mm-<tid>-coder-<x> --force`（fusion worktree 保留待主图 DELIVERING 清理）。
+- **Agent Manager 会话用后即 stop 回收**：3 个 coder / verifier / synthesizer-fusion 的 Agent Manager 会话在结果取回后**立即 `agent_manager stop`**（`sessionID` 用 `ses_` 前缀，见 conductor.md §T3 编排稳定性调用规约），禁止堆叠未回收会话；fusion 会话在聚合产物取回后即停（worktree 保留待主图 merge 后清理）。
 - **记忆溯源写入**：调用 memory.db（M4-M8）：
   - dispatch_log 写入（multiModel 专属，记录 token 3-5 倍消耗 + worktree 模式标志）
   - 融合溯源：更新被引用 fact 的 evidence + hit_count+1
