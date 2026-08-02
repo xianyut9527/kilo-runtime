@@ -39,8 +39,6 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   │   ├── reflection.md          # 反思与错误恢复规则
 │   │   ├── security-checklist.md  # 安全/性能检查清单（由 verifier 在 L3 调用）
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
-│   │   ├── evolution.md           # 自进化闭环（执行→反思→提炼→固化写入规则）
-│   │   ├── skill-upgrade.md       # Skill 升级提案生成（fact_store 置信度达标时触发）
 │   │   ├── skill-usage-tracking.md # skill 使用记录规范（v2.5 起写入 SQLite skill_usage_events 表）
 │   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
 │   ├── skills/                   # 长期知识库（运行时由 Kilo 从全局目录注入，非仓库内容；30+ 个 skill，完整列表见系统 available_skills）
@@ -76,7 +74,6 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   │   ├── quality.md            # QUALITY 响应式 Hooks [verifier + reverse-auditor? → fix → reviewer + side-checker? → fix]
 │   │   └── delivering.md         # DELIVERING 交付 [conductor 内建]
 ├── docs/                           # 参考文档
-│   ├── agent-mount-guide.md        # 智能体挂载注册指南（frontmatter mount 字段）
 │   ├── model-registry.md          # 模型能力倾向矩阵人类可读版（v6.1 唯一能力参考，无机器可读副本）
 │   └── memory-ops-reference.md    # 记忆操作 SQL 模板参考
 │   # 历史文档已归档至 archive/docs/

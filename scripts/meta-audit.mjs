@@ -24,8 +24,6 @@ function scanDeadRefs() {
     'reflection.md': '.kilo/instructions/reflection.md',
     'security-checklist.md': '.kilo/instructions/security-checklist.md',
     'output-schema.md': '.kilo/instructions/output-schema.md',
-    'evolution.md': '.kilo/instructions/evolution.md',
-    'skill-upgrade.md': '.kilo/instructions/skill-upgrade.md',
     'skill-usage-tracking.md': '.kilo/instructions/skill-usage-tracking.md',
     'skills-lifecycle.md': '.kilo/instructions/skills-lifecycle.md',
     'workflow-reference.md': '.kilo/instructions/workflow-reference.md',
@@ -53,7 +51,6 @@ function scanDeadRefs() {
     'lifecycle-doctor.mjs': 'scripts/lifecycle-doctor.mjs',
     'scan-encoding.mjs': 'scripts/scan-encoding.mjs',
     'sync-agent-prompt.mjs': 'scripts/sync-agent-prompt.mjs',
-    'agent-mount-guide.md': 'docs/agent-mount-guide.md',
     'model-registry.md': 'docs/model-registry.md',
     'conductor.md': 'agent/conductor.md',
     'planner.md': 'agent/planner.md',
@@ -65,10 +62,6 @@ function scanDeadRefs() {
     'side-checker.md': 'agent/side-checker.md',
     'plan-reviewer.md': 'agent/plan-reviewer.md',
     'meta-auditor.md': 'agent/meta-auditor.md',
-    'multiModel.md': 'archive/agents/multiModel.md',
-    'planner-a.md': 'archive/agents/planner-a.md',
-    'planner-b.md': 'archive/agents/planner-b.md',
-    'planner-c.md': 'archive/agents/planner-c.md',
   };
 
   for (const dir of scanDirs) {

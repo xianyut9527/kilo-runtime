@@ -1,5 +1,5 @@
 ---
-description: 元审计智能体。死引用扫描/重复规则检测/doc drift审计/健康度评分。手动触发不自动挂载。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。
+description: 元审计智能体。死引用扫描/重复规则检测/doc drift审计/健康度评分。手动触发不自动挂载。输出契约见 output-schema.md。
 mode: subagent
 hidden: false
 color: "#F59E0B"
@@ -43,5 +43,4 @@ task_context:
 
 ## 输出契约
 
-- 返回 ≤2000 字符结构化摘要（verdict + 证据 file:line + 关键结论）。
-- 禁止完整报告/长表/复述文件内容。
+见 `output-schema.md` §共享输出契约（≤2000 字符结构化摘要）。

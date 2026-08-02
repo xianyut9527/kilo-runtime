@@ -1,5 +1,5 @@
 ---
-description: 规划智能体。分析需求、调研代码、输出设计方案、定义验收点。只设计不写代码。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。
+description: 规划智能体。分析需求、调研代码、输出设计方案、定义验收点。只设计不写代码。输出契约见 output-schema.md。
 mode: subagent
 hidden: true
 color: "#10B981"
@@ -57,17 +57,9 @@ INQUIRY 模式下 planner 承担研究执行角色（因 INQUIRY 无 EXECUTING �
 
 这是设计特例，非 planner 默认职责。EXECUTION 模式下 planner 仅设计方案，不执行研究。
 
-## 记忆召回接口（M1-sub，subagent 自召回）
+## 记忆召回（M1-sub，详见 output-schema.md §共享记忆召回接口）
 
-> **记忆下沉**：planner 在 PLANNING 规划前**自行调用 memory.db** 召回同类任务历史，不再依赖 conductor 在 INTENT/SIZING 的集中注入。这避免 conductor 上下文压力 + 让规划直接触达历史经验。
-> 降级不阻塞：memory.db 不可用时跳过，按当前 task_context 规划。
-
-**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
-- 同类任务历史失败模式（`failure_db` MATCH task keywords，LIMIT 5）— 避免重蹈覆辙
-- 同类 pattern（`fact_store` MATCH task keywords，category=PATTERN，LIMIT 10）— 复用已验证设计模式
-- 同类 anti-pattern（`fact_store` MATCH task keywords，category=ANTIPATTERN，LIMIT 5）— 规避已知反模式
-
-**召回产物**：写入 task_context.plan.memory_injection = `{ failures: [...], patterns: [...], antipatterns: [...] }`，供后续 coder/verifier 共享。
+召回产物写入 `task_context.plan.memory_injection = { failures, patterns, antipatterns }`，供后续 coder/verifier 共享。
 
 ## 输入接口（从 task_context 注入）
 
@@ -96,7 +88,7 @@ memory_injection:
 - 任务 DAG（依赖+可并行/串行）
 - 影响面分析
 - 风险及应对
-- 重复点扫描结论（UI 与非 UI 同等适用，不限于样式/布局/交互）
+- 重复点扫描结论
 - 组件化/共享抽象方案（如适用）
 - 扩展点设计（高频变更领域必填：表单/列表/权限/数据获取/第三方集成/错误处理/日志/配置）
 
@@ -139,17 +131,15 @@ forbidden_files: ["string"]
 # 方案放行由 post:PLANNING 的独立审查者判定，planner 不自验
 ```
 
-## 返回契约（防主会话 context 撑爆）
+## 返回契约
 
-- 本智能体是 task 子会话，返回给 conductor 的最终消息**只允许 ≤2000 字符结构化摘要**（verdict + 证据 file:line + 关键结论）。
-- 禁止返回完整报告/长表格/复述文件内容——详细产物写入 task_context（verdict/plan/execution 字段），返回消息只留指针与结论。
-- 返回超限 → 主会话历史膨胀 → 后续 task 调用 Tool execution aborted（cbbbf83 根因形态）。
+见 `output-schema.md` §共享输出契约（≤2000 字符结构化摘要）。
 
 ## 硬规则
 
-- 短设计门可以只有几句话，但必须输出
+- 短设计门可只有几句话，但必须输出
 - 方案须经 post:PLANNING 独立审查或按授权放行，不得自行进入执行阶段
-- 重复实现模式（UI 与非 UI 同等适用）必须产出全量扫描清单 + 组件化方案
+- 重复实现模式必须产出全量扫描清单 + 组件化方案
 - 高频变更领域必须产出扩展点设计，即使当前只有 1 处实现
 - T2+ 必须包含单元 DAG + 依赖关系 + 风险应对
 - 跨层 unit 必须显式标注理由，不得默认放行

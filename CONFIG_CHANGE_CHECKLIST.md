@@ -60,8 +60,8 @@
 - **输出格式规范**（交付输出的最小公共字段、`[MARKER]` 标记语言规范、状态枚举）→ 集中维护在 `.kilo/instructions/output-schema.md`；其他文件只做引用。
 - **memory 触发条件与总控开关** → 不再由 `kilo.json` 控制，改为以 `.kilo/memory/` 目录存在性为准。相关规则条件化描述分散在 `core.md` / `workflow-core.md` / `reflection.md` / `skill-usage-tracking.md` / `agent/*.md`。启用记忆时确保目录存在且含有效文件；禁用时清空或删除该目录即可，无需修改 `kilo.json`。
 - **SKILL.md frontmatter 规范**（含 keywords 数量 3–20、name 与目录名一致、兼容 agentskills.io 标准）→ 集中维护在 `.kilo/instructions/skills-lifecycle.md`「SKILL.md frontmatter 规范」章节；name 必须与目录名一致。
-- **自进化闭环**（执行→反思→提炼→固化的写入规则与优先级）→ 集中维护在 `.kilo/instructions/evolution.md`；其他文件只做引用。
-- **Skill 升级提案**（fact_store 置信度/命中数达标后的固化流程）→ 集中维护在 `.kilo/instructions/skill-upgrade.md`；其他文件只做引用。
+- **自进化闭环**（执行→反思→提炼→固化的写入规则与优先级）→ 集中维护在 `docs/memory-ops-reference.md`；其他文件只做引用。
+- **Skill 升级提案**（fact_store 置信度/命中数达标后的固化流程）→ 集中维护在 `docs/memory-ops-reference.md` §M8；其他文件只做引用。
 - **skill 使用记录**（v2.5 起写入 SQLite `skill_usage_events` 表）→ 集中维护在 `.kilo/instructions/skill-usage-tracking.md`；其他文件只做引用。
 - **工作流参考**（small_model 触发规则、程序化记忆、需求扩散与同类点扫描）→ 集中维护在 `.kilo/instructions/workflow-reference.md`；README 与其他文件只做引用。
 

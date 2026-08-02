@@ -1,5 +1,5 @@
 ---
-description: 修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。
+description: 修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约见 output-schema.md。
 mode: subagent
 hidden: true
 color: "#3B82F6"
@@ -54,20 +54,15 @@ isolation:
 
 **不做什么**：不重新设计架构、不扩大修复范围、不跳过验证。
 
-## 记忆召回接口（M3-sub，subagent 自召回失败回溯）
+## 记忆召回（M3-sub，详见 output-schema.md §共享记忆召回接口）
 
-> **记忆下沉**：fixer 在 QUALITY fix hook 修复前**自行调用 memory.db** 召回同类 symptom 的历史修复策略（M3 失败回溯），不再依赖 conductor 集中注入。这是"避免防空转"的关键——同症状修复失败 2 轮时，必须查历史是否已有成功修复策略。
-> 降级不阻塞：memory.db 不可用时跳过，按当前 blockers 修复。
+> fixer 用 M3 失败回溯：同症状修复失败 2 轮时，必须查历史是否已有成功修复策略（防空转）。
 
-**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M3 查询）：
-- 同 symptom 历史修复策略（`failure_db` MATCH blockers[0].message 关键词，symptom 相似度匹配，LIMIT 5）— 复用已验证修复策略
-- 同 symptom 历史失败修复（`failure_db` MATCH，fix_strategy 字段非空 AND root_cause_level != 'demand'，LIMIT 3）— 避免重复踩坑
-
-**召回产物**：写入 task_context.fixing_history[current_round].memory_injection = `{ historical_fixes: [...], historical_failures: [...] }`，供本轮修复参考。
+召回产物写入 `task_context.fixing_history[current_round].memory_injection = { historical_fixes, historical_failures }`，供本轮修复参考。
 
 ## 输入接口（从 task_context 注入）
 
-> **写入边界**：fixer 读取 `blockers + original_diff + acceptance_criteria + forbidden_files + fixing_history`；写入 `task_context.fixing_history + execution.diffs`。**禁止写入 `task_context.execution.verification`**——fixer 自验声明会污染下一轮 verifier 的独立重跑。
+> **写入边界**：读取 `blockers + original_diff + acceptance_criteria + forbidden_files + fixing_history`；写入 `task_context.fixing_history + execution.diffs`。**禁止写入 `task_context.execution.verification`**——fixer 自验声明会污染下一轮 verifier 的独立重跑。
 
 ```yaml
 unit_id: "string"
@@ -111,7 +106,7 @@ quality:
 
 ## 输出接口（写入 task_context.fixing_history + execution.diffs）
 
-> **写入边界**：fixer 只写入 `fixing_history` + `execution.diffs`，**不写入 `execution.verification`**——修复后自验声明会污染下一轮 verifier 的独立重跑。fixer 自验结果只保留在智能体本地输出供 conductor 参考，不进入 task_context。
+> **写入边界**：只写入 `fixing_history` + `execution.diffs`，**不写入 `execution.verification`**——修复后自验声明污染下一轮 verifier 独立重跑。自验结果保留本地输出供 conductor 参考。
 
 ```yaml
 status_signal: "DONE" | "DONE_WITH_CONCERNS" | "BLOCKED"
@@ -130,11 +125,9 @@ same_symptom_recurring: true | false
 # 自验声明（commands/exit_code/stdout）保留在本地输出，不写入 task_context.execution.verification
 ```
 
-## 返回契约（防主会话 context 撑爆）
+## 返回契约
 
-- 本智能体是 task 子会话，返回给 conductor 的最终消息**只允许 ≤2000 字符结构化摘要**（verdict + 证据 file:line + 关键结论）。
-- 禁止返回完整报告/长表格/复述文件内容——详细产物写入 task_context（verdict/plan/execution 字段），返回消息只留指针与结论。
-- 返回超限 → 主会话历史膨胀 → 后续 task 调用 Tool execution aborted（cbbbf83 根因形态）。
+见 `output-schema.md` §共享输出契约（≤2000 字符结构化摘要）。
 
 ## 硬规则
 
@@ -142,5 +135,5 @@ same_symptom_recurring: true | false
 - 连续 2 轮同症状 → 自动判定方法层失败，升级 reviewer 做根因分析
 - 同一状态循环 ≥3 次 → `[CIRCUIT_BREAKER]`
 - `[PARTIAL_IMPLEMENTATION]` 必须回到需求扩散包补齐同类点
-- 修复后同样适用「完成声明三件套」
+- 修复后同样适用「完成声明三件套」（见 `executing.md` §硬规则）
 - 修复后自动触发 QUALITY verify hooks 重新验证（不跳过验证）

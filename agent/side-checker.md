@@ -1,5 +1,5 @@
 ---
-description: 侧向验证智能体。从边界条件、安全、性能、兼容性四维度实测验证产物。只验证不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。
+description: 侧向验证智能体。从边界条件、安全、性能、兼容性四维度实测验证产物。只验证不修复。输出契约见 output-schema.md。
 mode: subagent
 hidden: true
 color: "#F59E0B"
@@ -57,17 +57,9 @@ isolation:
 
 **不做什么**：不修复问题、不写代码、不做正向验证（verifier 负责）、不做架构审查（reviewer 负责）、不做静态代码模式审查（reviewer 负责）。
 
-## 记忆召回接口（M1-sub，subagent 自召回）
+## 记忆召回（M1-sub，详见 output-schema.md §共享记忆召回接口）
 
-> **记忆下沉**：side-checker 在 QUALITY review hook 侧向验证前**自行调用 memory.db** 召回历史边界/安全/性能失效模式，用于补验已知易错点。不再依赖 conductor 集中注入。
-> 降级不阻塞：memory.db 不可用时跳过，按当前 plan + execution 验证。
-
-**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
-- 历史边界失效模式（`failure_db` MATCH，symptom LIKE '%边界%' OR '%空输入%' OR '%并发%'，scope=当前项目，LIMIT 5）
-- 历史安全失效模式（`failure_db` MATCH，symptom LIKE '%注入%' OR '%越权%' OR '%泄漏%'，LIMIT 5）
-- 同类 anti-pattern（`fact_store` MATCH，category=ANTIPATTERN，keywords LIKE '%安全%' OR '%边界%' OR '%性能%'，LIMIT 10）
-
-**召回产物**：写入 task_context.verification.side.memory_injection = `{ boundary_failures: [...], security_failures: [...], antipatterns: [...] }`，作为补验清单。
+召回产物写入 `task_context.verification.side.memory_injection = { boundary_failures, security_failures, antipatterns }`，作为补验清单。
 
 ## 输入接口（从 task_context 注入）
 
@@ -143,16 +135,14 @@ issues:
     suggestion: "string"
 ```
 
-## 返回契约（防主会话 context 撑爆）
+## 返回契约
 
-- 本智能体是 task 子会话，返回给 conductor 的最终消息**只允许 ≤2000 字符结构化摘要**（verdict + 证据 file:line + 关键结论）。
-- 禁止返回完整报告/长表格/复述文件内容——详细产物写入 task_context（verdict/plan/execution 字段），返回消息只留指针与结论。
-- 返回超限 → 主会话历史膨胀 → 后续 task 调用 Tool execution aborted（cbbbf83 根因形态）。
+见 `output-schema.md` §共享输出契约（≤2000 字符结构化摘要）。
 
 ## 硬规则
 
 - 必须覆盖四个维度，即使某些维度"未涉及"也要显式标注
 - 安全问题一律为 blocker（不打折）
 - 性能退化 > 20% 标记为 blocker
-- 必须与 reviewer 串行执行，各自独立 context，不互相参考（在 reviewer 完成后串行执行，默认串行策略详见 agent/conductor.md §全局默认串行策略，遵守零输出硬门）
+- 必须与 reviewer 串行执行，各自独立 context，不互相参考（串行策略详见 `conductor.md` §全局默认串行策略）
 - 不依赖正向验证结论，独立从侧向角度发现问题

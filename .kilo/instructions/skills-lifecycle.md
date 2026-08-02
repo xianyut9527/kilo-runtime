@@ -35,11 +35,7 @@ keywords: skills, lifecycle, sqlite, fact-store, no-md-append
 | 工程方法论 | `workflow/` | 通用工作流模式 |
 | 工程方法论 | `component-driven-fixes/` | 重复实现模式组件化修复（UI 与非 UI 通用） |
 | 知识库 | `patterns/` | 正向模式库 |
-| 知识库 | `anti-patterns/` | 反模式总览与回写指引 |
-| 知识库 | `anti-patterns-encoding/` | 反模式：编码类 |
-| 知识库 | `anti-patterns-process/` | 反模式：流程类 |
-| 知识库 | `anti-patterns-coordination/` | 反模式：协同类 |
-| 知识库 | `anti-patterns-contract/` | 反模式：契约类 |
+| 知识库 | `anti-patterns/` | 反模式索引（14 条 AP-XXX 已全部迁入 fact_store；4 个子 skill 目录已于 v2.3 删除，查询 SQL 见 docs/memory-ops-reference.md） |
 | 知识库 | `writing-skills/` | Skill 编写规范 |
 | UI 设计 | `design-system/` | 设计系统 |
 | UI 设计 | `ui-accessibility/` | 无障碍 |
@@ -51,8 +47,6 @@ keywords: skills, lifecycle, sqlite, fact-store, no-md-append
 | UI 设计 | `ui-seo/` | SEO |
 | UI 设计 | `ui-shadcn/` | shadcn 组件 |
 | UI 设计 | `ui-vocabulary/` | 设计词汇 |
-| 工程方法论 | `project-intelligence-report/` | 项目情报周报（GitNexus 信号聚合 + 风险仪表盘） |
-| 工程方法论 | `report-analyzer/` | 团队日报分析（AdsPower 浏览器 + 项目工时分布） |
 
 ## 回写触发条件
 

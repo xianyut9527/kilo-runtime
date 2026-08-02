@@ -18,52 +18,52 @@
     "conductor": {
       "mode": "primary",
       "model": "hx/glm-5.2",
-      "prompt": "工作流编排者。启动期装配 lifecycle/ 元数据，按挂载点加载智能体，管理 task_context 与流转门禁。核心动作：判定意图→定级→委派→流转→验证→记忆。输出 ≤2000 字符结构化摘要。禁止完整报告/长表/复述。"
+      "prompt": "工作流编排者。启动期装配 lifecycle/ 元数据，按挂载点加载智能体，管理 task_context 与流转门禁。核心动作：判定意图→定级→委派→流转→验证→记忆。输出契约见 output-schema.md。"
     },
     "planner": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
-      "prompt": "规划智能体。分析需求、调研代码、输出设计方案、定义验收点。只设计不写代码。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "规划智能体。分析需求、调研代码、输出设计方案、定义验收点。只设计不写代码。输出契约见 output-schema.md。"
     },
     "plan-reviewer": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
-      "prompt": "独立审查 planner 方案，输出 PASS/FAIL verdict。只审查不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "独立审查 planner 方案，输出 PASS/FAIL verdict。只审查不修复。输出契约见 output-schema.md。"
     },
     "coder": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-pro",
-      "prompt": "编码智能体。按方案实现代码、输出验收映射表+三件套。端到端闭环：读取→编码→测试→修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "编码智能体。按方案实现代码、输出验收映射表+三件套。端到端闭环：读取→编码→测试→修复。输出契约见 output-schema.md。"
     },
     "verifier": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
-      "prompt": "正向验证智能体。按验收标准逐条验证、L1-L3 分层、5 元组证据、独立重跑。只验证不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "正向验证智能体。按验收标准逐条验证、L1-L3 分层、5 元组证据、独立重跑。只验证不修复。输出契约见 output-schema.md。"
     },
     "reverse-auditor": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
-      "prompt": "反向审计智能体。从产物反推是否满足原始意图，审计隐含假设与隐性遗漏。只审计不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "反向审计智能体。从产物反推是否满足原始意图，审计隐含假设与隐性遗漏。只审计不修复。输出契约见 output-schema.md。"
     },
     "side-checker": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-pro",
-      "prompt": "侧向验证智能体。从边界条件、安全、性能、兼容性四维度实测验证产物。只验证不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "侧向验证智能体。从边界条件、安全、性能、兼容性四维度实测验证产物。只验证不修复。输出契约见 output-schema.md。"
     },
     "reviewer": {
       "mode": "subagent",
       "model": "hx/MiniMax-M3",
-      "prompt": "静态代码审查智能体。从安全、架构、简化、SCOPE_CREEP 四视角审查代码质量。只审查不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "静态代码审查智能体。从安全、架构、简化、SCOPE_CREEP 四视角审查代码质量。只审查不修复。输出契约见 output-schema.md。"
     },
     "fixer": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-pro",
-      "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约见 output-schema.md。"
     },
     "meta-auditor": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
-      "prompt": "元审计智能体。死引用扫描/重复规则检测/doc drift审计/健康度评分。手动触发不自动挂载。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "元审计智能体。死引用扫描/重复规则检测/doc drift审计/健康度评分。手动触发不自动挂载。输出契约见 output-schema.md。"
     }
   },
   "skills": {

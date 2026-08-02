@@ -108,15 +108,6 @@ LIMIT 3;
 4. 命中 → `UPDATE fact_store SET hit_count=hit_count+1, confidence=?, updated_at=?`
 5. SKILL.md 保持纯索引状态
 
-## sub-skill 文件状态（v2.2：内容已清空）
+## sub-skill 文件状态（v2.3：目录已删除）
 
-| 文件 | 状态 |
-|---|---|
-| `anti-patterns-encoding/SKILL.md` | 📦 **v2.2 内容已清空**（仅保留 frontmatter + 迁移指引） |
-| `anti-patterns-process/SKILL.md` | 📦 **v2.2 内容已清空** |
-| `anti-patterns-coordination/SKILL.md` | 📦 **v2.2 内容已清空** |
-| `anti-patterns-contract/SKILL.md` | 📦 **v2.2 内容已清空** |
-
-> **v2.2 关键变更**：4 个 sub-skill 文件不仅加 archived 警告，**AP-XXX 全文已彻底删除**，仅保留 frontmatter + 迁移指引。即使 agent 误加载归档文件，最大消耗 = 30 行（vs 之前 ~250 行/条目 × 14 条 = 3500+ 行）。
->
-> **完全去 md 化**：14 条 AP 全文唯一权威源 = 全局 sqlite `fact_store` 表，无任何 md 副本。
+> 4 个 sub-skill 目录（`anti-patterns-{contract,coordination,encoding,process}/`）已于 v2.3 彻底删除。14 条 AP 全文唯一权威源 = 全局 sqlite `fact_store` 表，无任何 md 副本。

@@ -47,7 +47,7 @@ metadata:
 | L6 代码图谱 | `gitnexus_context` / `gitnexus_impact` / `gitnexus_query` | 调用链、影响面、数据依赖、API 消费者 | Cypher 查询 + 自然语言检索 | git 索引持久 |
 | L7 持久经验 | `git log` / `git diff` | commit message 中的经验标注 | `git log --grep` | git 永久 |
 
-> **关键（v2 起）**：L1-L3 是**经验沉淀的主目标**，由 `evolution.md` 步骤 1-4 + `skill-upgrade.md` 触发；v2.6.2 起 `MEMORY.md` / `USER.md` 已删除，用户偏好/安全约束统一入 sqlite `project_context` 表，SKILL.md 仅作为 fact_store 升级固化产物。
+> **关键（v2 起）**：L1-L3 是**经验沉淀的主目标**，由 `docs/memory-ops-reference.md` M4-M8 触发；v2.6.2 起 `MEMORY.md` / `USER.md` 已删除，用户偏好/安全约束统一入 sqlite `project_context` 表，SKILL.md 仅作为 fact_store 升级固化产物。
 
 ## 触发条件
 
@@ -80,7 +80,7 @@ Step 4: 经验回写评估（**sqlite 优先**，md 仅作索引兜底）
     │   ├─ 触发失败/fixer 多轮 → 同时 INSERT failure_db
     │   └─ 用户偏好/安全约束写入 sqlite `project_context` 表（v2.6.2 起 `MEMORY.md` / `USER.md` 已删除，统一由 project_context 承载）
     ├─ **次路径：dispatch_log / model_calibration 写入**（T1+ 必走，见 workflow-core.md 收尾自检）
-    ├─ **Skill 升级检测**：当 fact_store.confidence ≥ 0.8 且 hit_count ≥ 3 时，按 skill-upgrade.md 生成 `[AUTO_DRAFT]` 草稿，人工审批后由 `skill_manage(action='create'/'patch')` 落盘
+    ├─ **Skill 升级检测**：当 fact_store.confidence ≥ 0.8 且 hit_count ≥ 3 时，按 `docs/memory-ops-reference.md` §M8 生成 `[AUTO_DRAFT]` 草稿，人工审批后由 `skill_manage(action='create'/'patch')` 落盘
     └─ **仅本次**：commit message 标注（git history 留痕）
     ↓
 Step 5: 回写后验证
@@ -133,7 +133,7 @@ Step 5: 回写后验证
 | 任务调度 | 全局 sqlite `dispatch_log`（**T1+ 必走**） | 任何 T1+ 任务结束 | conductor |
 | 模型校准 | 全局 sqlite `model_calibration` | 每次 dispatch 后 | conductor |
 | 系统级约束 / 用户偏好 | sqlite `project_context`（category='user_preference' / 'security_constraint'） | 用户直接编辑 / reviewer 标 `[建议写入 project_context]` | 用户 / reviewer |
-| Skill 固化 | `SKILL.md`（**仅当 fact_store 触发升级**） | `confidence ≥ 0.8 && hit_count ≥ 3`，由 `skill-upgrade.md` 生成 `[AUTO_DRAFT]` 草稿，人工审批后落盘 | 人工审批 + `skill_manage(action='create'/'patch')` |
+| Skill 固化 | `SKILL.md`（**仅当 fact_store 触发升级**） | `confidence ≥ 0.8 && hit_count ≥ 3`，由 `docs/memory-ops-reference.md` §M8 生成 `[AUTO_DRAFT]` 草稿，人工审批后落盘 | 人工审批 + `skill_manage(action='create'/'patch')` |
 
 **回写后验证**：
 - sqlite 主路径：`SELECT fact_id, hit_count, confidence FROM fact_store WHERE fact_id = ?` 确认落盘

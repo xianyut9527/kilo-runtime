@@ -41,3 +41,6 @@ kilo.json.bak.*
 
 # MCP 运行时产物（playwright 等本地 MCP 生成的临时目录）
 .playwright-mcp/
+
+# 已归档目录（历史遗留，不应提交）
+archive/

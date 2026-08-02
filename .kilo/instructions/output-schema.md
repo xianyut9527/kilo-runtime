@@ -6,6 +6,32 @@ keywords: output-schema, deliverable, marker, verdict
 
 # Output Schema
 
+## 共享输出契约（所有 agent 必须遵守）
+
+所有 agent 交付输出必须遵守：只返回 ≤2000 字符结构化摘要（verdict + 证据 file:line + 关键结论），禁止完整报告/长表/复述文件内容。详细产物写入 task_context，返回消息只留指针与结论。
+
+> **返回超限后果**：主会话历史膨胀 → 后续 task 调用 Tool execution aborted。conductor 检测返回 >2000 字符 → 标 `[RETURN_OVER_LIMIT]`，`overload_count++`；`overload_count >= 3` → `[CONTEXT_UNSAFE]` 强制切 agent_manager worktree。
+
+## 共享记忆召回接口（subagent 自召回，M1-sub / M3-sub）
+
+> **记忆下沉**：subagent 在自身阶段执行前**自行调用 memory.db** 召回同类历史经验，不再依赖 conductor 集中注入。让执行直接触达历史经验，避免重复造轮子。
+> **降级不阻塞**：memory.db 不可用时跳过，按当前 task_context 执行。
+
+**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1/M3）：
+- 同类 pattern（`fact_store` MATCH 任务关键词 + 目标文件符号名，category=PATTERN，LIMIT 10）— 复用已验证实现模式
+- 同类 anti-pattern（`fact_store` MATCH，category=ANTIPATTERN，LIMIT 5）— 规避已知反模式
+- 同类历史失败（`failure_db` MATCH 任务关键词，LIMIT 5）— 避免重蹈覆辙
+- fixer 额外召回同 symptom 历史修复策略（M3 失败回溯，`failure_db` MATCH blockers 关键词，symptom 相似度匹配，LIMIT 5）
+
+**召回产物**：写入对应 task_context 切片的 `memory_injection` 子字段（plan/execution/verification.*/fixing_history 各自归属），供后续阶段共享。
+
+**各 agent 召回侧重**：
+- planner：失败模式 + pattern + anti-pattern（规划前规避）
+- coder：pattern + anti-pattern（编码前复用/规避）
+- verifier / reverse-auditor / reviewer / side-checker：anti-pattern + 历史失败（补验已知易错点）
+- fixer：同 symptom 历史修复策略 + 同 symptom 历史失败修复（M3，防空转）
+- plan-reviewer：同类方案历史失败 + anti-pattern（方案审查前规避）
+
 ## 最小公共字段
 
 所有 agent 交付输出必须包含：
@@ -217,10 +243,8 @@ agent 返回后、进入下游流程前，conductor 必须按以下规则自检�
 | `[BLOCKED]` | coder/coder 遇阻塞需升级 | coder/coder |
 | `[NEEDS_CONTEXT]` | coder/coder 缺少上下文 | coder/coder |
 | `[DONE_WITH_CONCERNS]` | 完成功能但有遗留风险 | coder/coder |
-| `[MISSING_FIXER_WRITE]` | fixer 完成后未写 dispatch_log.error_code | conductor（evolution.md §1.5）|
+| `[MISSING_FIXER_WRITE]` | fixer 完成后未写 dispatch_log.error_code | conductor（docs/memory-ops-reference.md §M7）|
 | `[MISSING_MEMORY_WRITE]` | T1+ 任务收尾未按 SQL 模板写入 dispatch_log / fact_store / failure_db / model_calibration 任一项 | conductor（workflow-core.md §收尾自检）|
 | `[MEMORY_LAYER_HOLLOW]` | memory.db 表结构齐全但 dispatch_log/fact_store 全空行，疑似 sqlite 层空跑 | lifecycle-doctor.mjs 记忆层健康度检查 |
-| `[MULTIMODEL_DEGRADED]` | **[已归档]** 旧 multiModel 触发限流降级；T3 改用 worktree 副本竞赛 | conductor |
-| `[MULTIMODEL_ABANDONED]` | **[已归档]** multiModel 累计 3 次失败；T3 改用 worktree 副本竞赛 | conductor |
 
 **写法规则**：全大写，下划线分隔；就近引用；路径格式 `文件:行号`；空值显式写 `无`。

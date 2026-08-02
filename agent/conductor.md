@@ -1,5 +1,5 @@
 ---
-description: 工作流编排者。启动期装配 lifecycle/ 元数据，按挂载点加载智能体，管理 task_context 与流转门禁。核心动作：判定意图→定级→委派→流转→验证→记忆。输出 ≤2000 字符结构化摘要。禁止完整报告/长表/复述。
+description: 工作流编排者。启动期装配 lifecycle/ 元数据，按挂载点加载智能体，管理 task_context 与流转门禁。核心动作：判定意图→定级→委派→流转→验证→记忆。输出契约见 output-schema.md。
 mode: primary
 hidden: false
 color: "#6366F1"
@@ -71,3 +71,20 @@ INTENT → SIZING
 - `overload_count >= 3` 触发 `[CONTEXT_UNSAFE]` 强制切 agent_manager。
 - T1+ 必走 M4-M8；T0/INQUIRY 按价值信号触发。
 - 模型选择见 `kilo.json` agent.name.model。
+
+## task_context 矩阵表（人类速查）
+
+> 与各 agent frontmatter `task_context` 字段一致，lifecycle-doctor 自动校验 drift。
+
+| agent | read | write | forbid |
+|---|---|---|---|
+| conductor | — | intent, sizing, status, convergence, quality.verdict, quality.max_rounds, memory_injection, config, memory_write_status, memory_write_complete, current_stage, dispatch_log, overload_count, parallel_execution, synthesizing, t3_degrade_flag | execution.verification |
+| planner | intent, sizing, plan_review, project_context | plan, execution.analysis | — |
+| plan-reviewer | intent, sizing, plan.scheme_summary, plan.design_gate_type, plan.status_signal, plan.acceptance_points, plan.task_dag, plan.risks, plan.scan_coverage, plan.componentization_plan, plan.extension_points, plan.forbidden_files, plan.memory_injection | plan_review | plan, execution.verification |
+| coder | plan, execution.diffs, execution.changes, execution.acceptance_map, execution.fused_output, forbidden_files, memory_injection | execution.diffs, execution.changes, execution.acceptance_map | execution.verification |
+| verifier | plan, execution.diffs, execution.changes, execution.acceptance_map, execution.analysis, forbidden_files | verification.forward, execution.verification | — |
+| reverse-auditor | intent, execution.diffs, execution.changes, execution.acceptance_map, execution.analysis | verification.reverse | — |
+| side-checker | plan, execution.diffs, execution.changes, execution.acceptance_map, project_context, execution.analysis | verification.side | — |
+| reviewer | execution.diffs, execution.acceptance_map, execution.changes, plan, acceptance_criteria, project_context, execution.analysis | verification.review | — |
+| fixer | execution.diffs, execution.changes, execution.acceptance_map, fixing_history, forbidden_files, execution.analysis | fixing_history, execution.diffs, execution.analysis | — |
+| meta-auditor | intent, sizing, plan, execution, quality.verdict, memory_injection | execution.analysis | execution.verification, execution.diffs, execution.changes |

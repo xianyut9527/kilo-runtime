@@ -11,10 +11,10 @@ required_roles: [verifier, reviewer]
 # lifecycle/stages/quality
 
 > v2 响应式 Hooks 架构核心阶段。合并原 `CHECKING` + `REVIEWING` + `FIXING`，数据驱动自动循环。
-> **v2.1 模式切换**：QUALITY 阶段根据 `task_context.intent_type` 在「代码验证（execution）」与「分析结论验证（analysis）」之间自动切换。hook 类型和循环结构不变，但验证/审查标准按模式适配。
-> **v2.2 四视角独立子槽**：QUALITY 四视角（正向验证 / 反向审计 / 静态审查 / 侧向验证）是 **4 个独立子槽**，非 hook 链。每个子槽由 conductor 通过 `task` 工具**串行主通道**独立 dispatch（T1/T2，逐个串行，遵守零输出硬门；**size-check 前置门**不过或 `overload_count >= 3` 时强制切 `agent_manager` `mode: worktree` 兜底，见 conductor.md 铁律 #6 pre-dispatch 硬门），T3 默认 AM local 4 session 并行（非叠加），task 串行作为降级（size-check 超限 / overload_count ≥3 / AM 不可用）。**AM local 并行时视角只返回 verdict 文本，conductor 串行收口写 task_context（机械强制）**。子槽之间无共享状态、无顺序依赖，各自独立产出 verdict。conductor 收齐 4 个 verdict 后做机械 AND 汇总。这与 hook 链（verify→fix→review→fix 循环）是正交的两个维度：hook 链定义 QUALITY 容器内的自动循环逻辑，子槽定义每个 hook 阶段内并发/串行的 agent 实例化方式。
+> **v2.1 模式切换**：QUALITY 按 `task_context.intent_type` 在「代码验证（execution）」与「分析结论验证（analysis）」间自动切换。hook 类型和循环结构不变，验证/审查标准按模式适配。
+> **v2.2 四视角独立子槽**：QUALITY 四视角（正向验证 / 反向审计 / 静态审查 / 侧向验证）是 **4 个独立子槽**，非 hook 链。conductor 通过 `task` 串行 dispatch（T1/T2，逐个串行；size-check 前置门不过或 `overload_count >= 3` 时切 `agent_manager` `mode: worktree` 兜底），T3 默认 AM local 并行，task 串行为降级。AM local 并行时视角只返回 verdict 文本，conductor 串行收口写 task_context。子槽无共享状态、无顺序依赖，各自独立产出 verdict，conductor 收齐后做机械 AND 汇总。hook 链定义 QUALITY 容器内自动循环逻辑，子槽定义每个 hook 阶段内并发/串行的 agent 实例化方式——两维度正交。
 > **v2.3 隔离违规回退**：视角越权写（修改文件/写入 task_context 非自身字段）→ 标 `[ISOLATION_BREAK]` → 回退 worktree 重验 + `git diff` 比对确认无污染。
-> 流转关系见 `lifecycle/graph.yaml`（纯拓扑，QUALITY → DELIVERING）；必配角色契约见本文件 frontmatter `required_roles`；智能体经 frontmatter `mount` 自注册挂载。
+> 流转关系见 `lifecycle/graph.yaml`；必配角色契约见本文件 frontmatter `required_roles`；智能体经 frontmatter `mount` 自注册挂载。
 
 ## 设计理念
 
@@ -25,24 +25,15 @@ QUALITY 不是"一个阶段做三件事"，而是**一个响应式容器，内�
 - `code/analysis` 修复后 → `code/analysis` 变化 → 自动重新触发 **verify hooks**
 - conductor **不需要手动回流**，框架自动管理循环
 
-### 为什么不用 `order` 绝对编号
+### 为什么用 hook 类型而非 `order` 绝对编号
 
-~~旧设计用 `order: 10/20/30/40` 绝对编号排序智能体~~。这与 React/Vue hooks 的设计哲学矛盾：
-
-| React hooks | 旧 `order` 系统 | 新 `after` 系统 |
-|-------------|----------------|-----------------|
-| `useEffect` 按声明顺序执行，无编号 | `order: 10` 绝对坐标 | `hook` 类型定义阶段顺序 |
-| `useEffect(fn, [deps])` deps 变化才执行 | 无 deps 机制 | `deps: [field]` 响应式触发 |
-| 插入新 hook 只写一行，不碰其他代码 | `order: 15` 要知道前后编号 | `after: [agent]` 只引用前驱 |
-| 同类 hook 隐含串行/顺序语义 | 靠数字碰巧相同实现并行 | `hook: verify` 默认串行启动组（详见 agent/conductor.md §全局默认串行策略） |
-
-**核心原则**：hook 类型（`verify` / `fix` / `review`）**本身就定义了执行顺序**——`verify → fix → review → fix` 循环是框架内置的，不需要数字重复表达。同 hook 类型默认按 `agent/conductor.md` §智能体加载规则串行启动（无 `after` 时默认串行，按 agent 文件名字典序逐个启动，遵守零输出硬门）；需要顺序时声明 `after: [agent-name]`。T3 阶段级并行的并行由 Agent Manager worktree 模式实现。详见 `agent/conductor.md` §智能体加载规则。
+旧设计用 `order: 10/20/30/40` 绝对编号排序智能体，与 React/Vue hooks 设计哲学矛盾。新设计：hook 类型（`verify` / `fix` / `review`）本身就定义执行顺序——`verify → fix → review → fix` 循环是框架内置的，不需要数字重复表达。同 hook 类型默认串行启动组（详见 `conductor.md` §全局默认串行策略）；需要顺序时声明 `after: [agent-name]`（相对依赖，类似 React hooks 声明顺序，只引用前驱）。框架对 `after` 做拓扑排序，检测环依赖报错。
 
 ```
 QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
-  code/analysis 就绪 → verify hooks 串行启动（hook: verify，无 after = 默认串行，按 agent 文件名字典序逐个启动；遵守零输出硬门）
+  code/analysis 就绪 → verify hooks 串行启动（hook: verify，无 after = 默认串行；详见 conductor.md §全局默认串行策略）
     → 任一 FAIL → fix hooks（hook: fix, trigger: onFail）→ code/analysis 变化 → 重新 verify
-    → 全 PASS → review hooks 串行启动（hook: review, trigger: afterPass，无 after = 默认串行，按 agent 文件名字典序逐个启动；遵守零输出硬门）
+    → 全 PASS → review hooks 串行启动（hook: review, trigger: afterPass，无 after = 默认串行；详见 conductor.md §全局默认串行策略）
       → 任一 FAIL → fix hooks（同一修复角色，trigger: onFail）→ code/analysis 变化 → 重新 verify
       → 全 PASS → quality_verdict=PASS → 离开 QUALITY → DELIVERING
 ```
@@ -80,7 +71,7 @@ execution:
 
 ## Hooks 挂载（内部自动编排）
 
-> **编排规则**：hook 类型（`verify` / `fix` / `review`）定义执行顺序，不需要绝对编号。同 hook 类型默认按 `agent/conductor.md` §智能体加载规则串行启动（无 `after` 时默认串行，按 agent 文件名字典序逐个启动，遵守零输出硬门）。需要顺序时声明 `after: [agent-name]`（相对依赖，类似 React hooks 的声明顺序）。框架对 `after` 做拓扑排序，检测环依赖报错。
+> **编排规则**：hook 类型（`verify` / `fix` / `review`）定义执行顺序，不需要绝对编号。同 hook 类型默认串行启动组（详见 `conductor.md` §全局默认串行策略）。需要顺序时声明 `after: [agent-name]`（相对依赖，类似 React hooks 声明顺序）。框架对 `after` 做拓扑排序，检测环依赖报错。
 
 ### hook: verify — 验证 hooks（串行启动组，无 after 时默认串行）
 
@@ -90,7 +81,7 @@ mount:
   - at: QUALITY
     hook: verify
     deps: ["execution.code", "execution.analysis", "plan"]
-    # 无 after = 默认串行（按 agent 文件名字典序逐个启动；遵守零输出硬门）
+    # 无 after = 默认串行（详见 conductor.md §全局默认串行策略）
 ```
 
 **触发时机**：当 `execution.code` / `execution.analysis` 或 `plan` 变化时自动执行。
@@ -116,7 +107,7 @@ mount:
     hook: verify
     deps: ["execution.code", "execution.analysis", "intent"]
     when: "config.agents.reverse_auditor"
-    # after: [verifier] 使反向审计角色在 verifier 完成后串行启动，避免 verify 组内并发 task 触发底层执行器 Tool execution aborted（遵守零输出硬门），见 agent/reverse-auditor.md
+    # after: [verifier] 使反向审计角色在 verifier 完成后串行启动（详见 conductor.md §全局默认串行策略）
 ```
 
 **触发时机**：在 verifier 完成后串行启动（after: [verifier]）。
@@ -181,7 +172,7 @@ while (round < config.hooks.quality.max_total_cycles) {
     continue;
   }
 
-  // Step 3: review hooks 串行启动（hook: review 组，trigger: afterPass，无 after = 默认串行，按 agent 文件名字典序逐个启动；遵守零输出硬门）
+  // Step 3: review hooks 串行启动（hook: review 组，trigger: afterPass，无 after = 默认串行；详见 conductor.md §全局默认串行策略）
   const reviewResults = await runSerially(
     agentsWithHook('review').map(a => () => a.run(executionCodeOrAnalysis, plan))
   );
@@ -214,7 +205,7 @@ mount:
     hook: review
     trigger: afterPass       # 当 verify hooks 全 PASS 后触发
     deps: ["execution.code", "execution.analysis", "plan"]
-    # 无 after = 默认串行（按 agent 文件名字典序逐个启动；遵守零输出硬门）
+    # 无 after = 默认串行（详见 conductor.md §全局默认串行策略）
 ```
 
 **触发时机**：`forward_result == 'PASS' && (reverse_result in ['PASS','N/A'])` 后自动执行。
@@ -242,7 +233,7 @@ mount:
     trigger: afterPass
     deps: ["execution.code", "execution.analysis", "project_context"]
     when: "config.agents.side_checker"
-    # after: [reviewer] 使侧向验证角色在 reviewer 完成后串行启动，避免 review 组内并发 task 触发底层执行器 Tool execution aborted（遵守零输出硬门），见 agent/side-checker.md
+    # after: [reviewer] 使侧向验证角色在 reviewer 完成后串行启动（详见 conductor.md §全局默认串行策略）
 ```
 
 **触发时机**：在 reviewer 完成后串行启动（after: [reviewer]）。
@@ -351,20 +342,10 @@ quality_gate:
 
 - `quality_verdict == 'PASS'` → DELIVERING（EXECUTION + INQUIRY 统一出口）
 - `quality_verdict == 'CIRCUIT_BREAKER'` → DELIVERING（带降级标记 `[QUALITY_CB]`）
-- T1 路径（两种模式）：反向审计角色加载（`config.agents.reverse_auditor` 默认 true）；侧向验证角色默认 false，但 `config.yaml overrides.condition_overrides` 强制 true（防非法跳过硬门，2026-08-01 起生效）
+- T1 路径（两种模式）：反向审计角色加载（`config.agents.reverse_auditor` 默认 true）；侧向验证角色默认 false，但 `config.yaml overrides.condition_overrides` 强制 true（防非法跳过硬门）
 - T2/T3 路径（两种模式）：全 hooks 加载（反向审计 + 侧向验证 + 合成融合）
 
-## 与传统阶段的兼容性
-
-| 旧阶段 | 新 hooks | 说明 |
-|--------|---------|------|
-| CHECKING | verify hooks（hook: verify） | 语义一致，只是挂载点从 CHECKING 改为 QUALITY |
-| REVIEWING | review hooks（hook: review） | 语义一致，触发条件从"阶段入口"改为"verify 全 PASS" |
-| FIXING | fix hooks（hook: fix, trigger: onFail） | 语义一致，触发条件从"conductor 手动回流"改为"自动 onFail" |
-
-**迁移说明**：现有 agent/*.md 的 `mount: at: CHECKING/REVIEWING/FIXING` 需要改为 `mount: at: QUALITY` + 新增 `hook` 和 `trigger` 字段。但旧格式仍兼容（框架识别旧 `at: CHECKING` 自动映射到 `at: QUALITY hook: verify`）。
-
-> **v2.1 迁移**：~~`order: 10/20/30/40` 绝对编号~~已废弃，改为 hook 类型定义顺序 + `after` 声明相对依赖。旧 agent frontmatter 中的 `order` 字段会被框架忽略（不报错，但不再影响排序）。
+> **迁移说明**：旧 `at: CHECKING/REVIEWING/FIXING` 已全部迁移到 `at: QUALITY` + `hook` + `trigger` 字段。旧 `order: 10/20/30/40` 绝对编号已废弃，框架忽略不报错。
 
 ## 硬规则
 

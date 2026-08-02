@@ -1,5 +1,5 @@
 ---
-description: 独立审查 planner 方案，输出 PASS/FAIL verdict。只审查不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。
+description: 独立审查 planner 方案，输出 PASS/FAIL verdict。只审查不修复。输出契约见 output-schema.md。
 mode: subagent
 hidden: true
 color: "#10B981"
@@ -58,17 +58,9 @@ isolation:
 
 planner 产出方案，**不得自验方案是否可放行**。plan-reviewer 是独立的方案审查者，只读方案内容本身，独立判定。这与代码层"coder 不得自验、verifier 独立重跑"同一原则在方案层的应用。
 
-## 记忆召回接口（M1-sub，subagent 自召回）
+## 记忆召回（M1-sub，详见 output-schema.md §共享记忆召回接口）
 
-> **记忆下沉**：plan-reviewer 在审查前**自行调用 memory.db** 召回同类方案的历史失败模式，避免放行已知有问题的方案设计。
-> 降级不阻塞：memory.db 不可用时跳过，按当前 plan 审查。
-
-**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
-
-- 同类方案的历史失败模式（`failure_db` MATCH task keywords，root_cause_level='plan'，LIMIT 5）— 避免放行重蹈覆辙的方案
-- 同类 anti-pattern（`fact_store` MATCH task keywords，category=ANTIPATTERN，LIMIT 5）— 规避已知反模式在方案中复现
-
-**召回产物**：写入 task_context.plan_review.memory_injection = `{ plan_failures: [...], antipatterns: [...] }`。
+召回产物写入 `task_context.plan_review.memory_injection = { plan_failures, antipatterns }`。
 
 ## 输入接口（从 task_context 注入）
 
@@ -125,8 +117,8 @@ plan:                             # planner 输出的方案（审查对象）
 ### 3. 风险与扫描结论审查
 
 - 检查 `plan.risks` 是否覆盖已知失败模式（对照 memory_injection.plan_failures）
-- 检查 `plan.scan_coverage`：UI 与非 UI 任务同等要求全量扫描，partial 需说明理由（不限于样式/布局/交互）
-- 检查 `plan.componentization_plan`：重复实现模式 ≥2 处必须有组件化方案（UI 与非 UI 同等适用）
+- 检查 `plan.scan_coverage`：全量扫描要求（不限于样式/布局/交互），partial 需说明理由
+- 检查 `plan.componentization_plan`：重复实现模式 ≥2 处必须有组件化方案
 - 检查 `plan.extension_points`：高频变更领域（表单/列表/权限/数据获取/第三方集成/错误处理/日志/配置）必须产出扩展点设计，即使当前只有 1 处实现；缺失 → `[MISSING_EXTENSION_DESIGN]`
 - 标注 `[RISK_UNCOVERED]` / `[MISSING_SCAN]` / `[MISSING_COMPONENTIZATION]` / `[MISSING_EXTENSION_DESIGN]`
 
@@ -168,11 +160,9 @@ issues:
     evidence: "string"
 ```
 
-## 返回契约（防主会话 context 撑爆）
+## 返回契约
 
-- 本智能体是 task 子会话，返回给 conductor 的最终消息**只允许 ≤2000 字符结构化摘要**（verdict + 证据 file:line + 关键结论）。
-- 禁止返回完整报告/长表格/复述文件内容——详细产物写入 task_context（verdict/plan/execution 字段），返回消息只留指针与结论。
-- 返回超限 → 主会话历史膨胀 → 后续 task 调用 Tool execution aborted（cbbbf83 根因形态）。
+见 `output-schema.md` §共享输出契约（≤2000 字符结构化摘要）。
 
 ## 硬规则
 

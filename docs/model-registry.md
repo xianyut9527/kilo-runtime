@@ -95,9 +95,7 @@ diversity_rule:
 | 触发条件 | 降级策略 |
 |----------|----------|
 | RATE_LIMIT 连续 3 次 | 降级为同能力倾向的次优模型（改 `kilo.json` `agent.<name>.model`） |
-| 次优模型也不可用 | **[已归档]** T3 改用 worktree 副本竞赛，降级见 `lifecycle/stages/synthesizing.md` |
-| 累计 3 次 T3 失败 | **[已归档]** T3 改用 worktree 副本竞赛，降级见 `lifecycle/stages/synthesizing.md` |
-| T3 过去 24h 失败率 ≥30% | **[已归档]** T3 改用 worktree 副本竞赛，降级见 `lifecycle/stages/synthesizing.md` |
+| T3 副本竞赛降级 | 见 `lifecycle/stages/synthesizing.md` §降级路径 |
 
 ## 校准机制
 
