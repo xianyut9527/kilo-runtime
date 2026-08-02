@@ -34,7 +34,7 @@ metadata:
 | `skill_name` | skill 目录名（如 `verification-before-completion`） |
 | `trigger` | 短描述（≤40 字符，如 `U1 前置加载` / `反思触发`） |
 | `outcome` | `success` / `fail` / `partial` |
-| `agent` | 哪个智能体触发（conductor / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel） |
+| `agent` | 哪个智能体触发（conductor / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer） |
 | `task_tier` | T0/T1/T2/T3 |
 | `created_at` | 写入 SQLite 的时间（默认 `datetime('now')`） |
 
@@ -58,7 +58,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'));
 - 仅记录 skill 元数据（skill_name / trigger / outcome），不记录内容
 - 失败重试算 1 次 `partial`，不重复写多行
 - 同会话同 skill 连续 3 次同 outcome 合并为 1 行（trigger 标注 `merged`）
-- coder-A / B / C（multiModel 模式下）、multiModel 自身、verifier、reverse-auditor、side-checker 不参与本协议（仅主流程 conductor + planner + coder + fixer + reviewer 记录）
+- verifier、reverse-auditor、side-checker 不参与本协议（仅主流程 conductor + planner + coder + fixer + reviewer 记录）
 
 ## 5. 统计消费（v2.5 推荐 SQL 查询）
 

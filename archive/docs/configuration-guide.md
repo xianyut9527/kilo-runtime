@@ -37,9 +37,9 @@ kilo_config/
 │   ├── side-checker.md                    #   侧向验证（mount: QUALITY hook:review, when: T2+）
 │   ├── reviewer.md                        #   静态审查（mount: QUALITY hook:review）
 │   ├── fixer.md                           #   修复（mount: QUALITY hook:fix, auto-trigger）
-│   ├── planner-a.md                       #   multiModel 调度变体（kimi-k2.6）
-│   ├── planner-b.md                       #   multiModel 调度变体（deepseek-v4-pro）
-│   ├── planner-c.md                       #   multiModel 调度变体（glm-5.2）
+│   ├── planner-a.md                       #   [已归档 2026-08-02] multiModel 调度变体（kimi-k2.6），T3 现走 worktree 端到端
+│   ├── planner-b.md                       #   [已归档 2026-08-02] multiModel 调度变体（deepseek-v4-pro），T3 现走 worktree 端到端
+│   ├── planner-c.md                       #   [已归档 2026-08-02] multiModel 调度变体（glm-5.2），T3 现走 worktree 端到端
 ├── lifecycle/
 │   ├── graph.yaml                         # 主生命周期 DAG（节点 + 边 + 流转条件）
 │   ├── config.yaml                        # 定级默认组合 + 用户覆盖 + 熔断阈值（唯一真相）

@@ -29,7 +29,6 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 ## 实施原则
 
 - 先定位后修改，先读后写，先复用后新建。
-- **组件化优先 / 重复模式拦截**：当同一实现模式（UI 样式/布局/交互、后端逻辑、数据访问、错误处理、日志、配置读取、第三方集成等）在 ≥2 个文件/模块出现，或用户提示存在同类问题时，禁止逐处复制粘贴式修复。必须先扫描全仓同类点，优先通过共享抽象（组件/util/hook/service/adapter/design token/mixin/全局样式/策略接口/配置驱动）统一修复；无法组件化时须在验收映射表中说明原因并请求用户确认。UI 与非 UI 同等适用，不人为割裂。
 - 最小必要改动：不多改无关逻辑，但需求覆盖完整性优先于 diff 最小化。
 - 禁止整文件重写；用增量编辑。
 - 删除文件/模块后，必须全仓搜索残留引用并同步修正。
@@ -41,55 +40,14 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 ### Memory 探测
 
-记忆系统采用 **全局 sqlite 优先 + 项目 md 兜底** 架构：
-
-**sqlite 层**（全局共享，`~/.config/kilo-data/memory.db`，通过 **`python scripts/memory.py`** 访问（v2.6 主通道，Python stdlib sqlite3 封装，跨平台免安装；sqlite3 CLI 可选替代）；数据目录独立于配置目录，install 同步不会清除）：
-- `fact_store`：结构化经验教训（PATTERN / ANTIPATTERN / RECIPE / WARNING）
-- `failure_db`：失败案例库（含根因、修复策略、复发次数）
-- `dispatch_log`：全链路任务日志
-- `project_context`：项目专属架构决策与约束
-- `model_calibration`：模型能力积累与偏差补偿
-
-**md 层**（静态规则兜底，v2.5 起不累积时序数据）：
-- `.kilo/memory/README.md`：公共 API 文档
-- `.kilo/memory/AGENTS.md`：agent 注入入口
-- 用户偏好 / 安全约束等低频内容通过 sqlite `project_context` 表承载，不再单独维护 `MEMORY.md` / `USER.md`
-
-**全局 Skill 层**（跨项目复用）：
-- `~/.config/kilo/.kilo/skills/`：全局通用 Skill（与 install.ps1 实际安装路径一致；另通过 `kilo.json` `skills.paths` 接入 `~/.agents/skills/` 社区技能源）
-- `.kilo/skills/`：项目专属 Skill（覆盖全局同名 Skill）
-
-**初始化检查**：`~/.config/kilo-data/memory.db` 不存在时，优先重新运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）— 脚本会自动检测 `sqlite3` CLI，缺失时提示安装并自动初始化 `memory.db`（建表 + 迁移 bootstrap 经验 + 补种 project_context）。手动建表作为 fallback：执行 `sqlite3 ~/.config/kilo-data/memory.db < .kilo/memory/schema/init.sql`。模块入口：`.kilo/memory/README.md`；SQL 模板见 `docs/memory-ops-reference.md`。
+记忆系统采用 **全局 sqlite 优先 + 项目 md 兜底** 架构（`~/.config/kilo-data/memory.db`，主通道 `python scripts/memory.py`，跨平台免安装）：
+- `fact_store`：结构化经验教训 / `failure_db`：失败案例库 / `dispatch_log`：全链路任务日志
+- `project_context`：项目专属架构决策与约束 / `model_calibration`：模型能力积累
+- md 层：`.kilo/memory/README.md`（公共 API）+ `.kilo/memory/AGENTS.md`（agent 注入入口）
+- 全局 Skill 层：`~/.config/kilo/.kilo/skills/` + `~/.agents/skills/`（社区技能源）
+- 初始化：`install.ps1`/`install.sh` 自动检测 sqlite3 CLI 并初始化 `memory.db`；SQL 模板见 `docs/memory-ops-reference.md`
 
 `gitnexus_*`：代码图谱（调用链/影响面）—— 由 `kilo.json` `mcp.gitnexus.enabled` 独立控制。
-
-## 自进化触发点
-
-`.kilo/memory/` 目录存在时，以下条件命中后**强制**执行回溯查询，再决定修复策略：
-
-> 4 个触发条件 + 强制回溯查询协议**单一源**在 `.kilo/instructions/reflection.md` §强制跨会话根因回溯，本节不重复。
-
-### 强制回溯查询（优先级顺序）
-
-**第一步：sqlite 查询（必须）**
-
-完整 SQL 模板见 `docs/memory-ops-reference.md` §M1/M3（失败/回溯查询）。该文件是 SQL 唯一源，本节不再重复。
-
-**关键要求**（`memory-ops.md` 已强制）：
-- SELECT **必须带 ID 字段**（failure_id / fact_id）用于回溯
-- 检索主路径：FTS5 trigram `MATCH`（`fact_fts` / `failure_fts`，中文需 ≥3 字符）；LIKE 仅用于试用期/ANTIPATTERN 精确类别过滤等保留场景（`tags LIKE '%,%keyword%,%'` 逗号分隔精确匹配）
-- 注入门槛：fact_store confidence ≥ 0.7 + hit_count ≥ 2；failure_db resolved_at 非空
-
-**第二步：kilo_local_recall（补充）**
-- 搜索历史同类问题
-- 对比历史修复方案
-
-**第三步：gitnexus 验证（影响面确认）**
-- `gitnexus_*` 验证修改影响面
-
-**未执行 sqlite 查询 → `[MISSING_RECALL]`，不得进入修复阶段。**
-
-`.kilo/memory/` 目录不存在时，跳过 sqlite 查询，`kilo_local_recall` 仍可作为独立工具手动调用。
 
 ## 验证与安全
 
@@ -130,7 +88,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 1. **先读后写**：搜索现有实现，优先复用或扩展。
 2. **最小增量编辑**：保持项目既有风格、分层和命名。
 3. **边界覆盖**：每个函数包含正常路径、空值/边界、错误/异常路径。缺失 → `[MISSING_EDGE_CASE]`。
-4. **检查调用方与同类点**：修改后搜索调用方和同类平行实现，确认兼容性和同步调整。若同一实现模式在 ≥2 处出现，必须按 workflow-core.md「重复模式修复 / 组件化 SOP」执行，禁止逐处复制粘贴（UI 与非 UI 同等适用）。
+4. **检查调用方与同类点**：修改后搜索调用方和同类平行实现，确认兼容性和同步调整。
 
 ### 验证与交付
 
@@ -148,8 +106,6 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 |------|----------|------|
 | 修改 ≥3 个文件 | `gitnexus_impact` | 影响面分析 |
 | 修改 API/Router/Handler | `gitnexus_route_map` 或 `gitnexus_api_impact` | 接口消费方检查 |
-| 修改核心工具/配置 | `gitnexus_query` | 架构约束检索 |
-| 同类实现模式 ≥2 处（UI 与非 UI 同等适用） | `grep` / `glob` / `gitnexus_query` | 全量扫描同类点，优先组件化/共享抽象修复 |
 | 使用陌生第三方库 | `context7_query-docs` | 文档查询 |
 | 修复失败/报错 | `kilo_local_recall` | 历史同类问题回溯 |
 
@@ -163,32 +119,10 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 2. **等级确认**：已确认任务等级（T0/T1/T2/T3），非 T0 绝不跳过 verifier。
 3. **搜索确认**：已搜索现有实现和同类模式，确认可复用点。
 4. **Context 确认**：已按「Context Engine 自动查询规则」调用必要工具，确认影响面。
-5. **重复点/同类模式扫描确认**：已用 grep/glob/gitnexus 扫描同类实现，确认修复策略（共享组件 vs 单点例外）并记录理由。
-6. **清理确认**：已确认临时文件存放位置（$env:TEMP / /tmp/）。
+5. **清理确认**：已确认临时文件存放位置（$env:TEMP / /tmp/）。
 
 未执行 → `[CHECKPOINT_MISSED]`，暂停编码。
 
 ## 压缩后结构化恢复
 
-上下文压缩触发 `[RECOVERED_FROM_INSTRUCTIONS]` 时，按以下模板输出恢复摘要：
-
-```
-## [RECOVERED_FROM_INSTRUCTIONS] 任务恢复摘要
-### Goal
-[用户想要完成什么]
-### Progress
-#### Done
-[已完成的工作 — 具体文件路径、命令、结果]
-#### In Progress
-[正在进行的工作]
-#### Blocked
-[遇到的阻塞或问题]
-### Key Decisions
-[重要的技术决策及原因]
-### Relevant Files
-[读取/修改/创建的文件 — 简要说明]
-### Next Steps
-[下一步需要做什么]
-```
-
-恢复后立即输出当前进度快照（7 节点流程日志），标注 `[PROCESS_VIOLATION]`（若存在跳步）。
+上下文压缩触发 `[RECOVERED_FROM_INSTRUCTIONS]` 时，输出恢复摘要（Goal/Progress/Key Decisions/Relevant Files/Next Steps），标注 `[PROCESS_VIOLATION]`（若存在跳步）。

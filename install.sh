@@ -170,11 +170,14 @@ CRITICAL_FILES=(
     ".kilo/instructions/core.md"
     ".kilo/instructions/workflow-core.md"
     ".kilo/instructions/reflection.md"
+    ".kilo/instructions/guardrails.md"
     "agent/conductor.md"
     "agent/verifier.md"
+    "agent/meta-auditor.md"
     "lifecycle/graph.yaml"
     "lifecycle/config.yaml"
     "lifecycle/stages/README.md"
+    "scripts/meta-audit.mjs"
 )
 
 MISSING=()

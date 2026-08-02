@@ -99,9 +99,9 @@ QUALITY hooks（标准 verify→fix→review→fix 循环）
 | **side-checker** | `QUALITY hook:review` | — | — | `config.agents.side_checker` | 侧向验证（T2+） |
 | **fixer** | `QUALITY hook:fix` | — | `onFail` | — | 定向修复（auto-trigger） |
 | **plan-reviewer** | `post:PLANNING` | — | — | — | 方案硬门审查 |
-| **planner-a** | `PLANNING`（multiModel 调度） | — | — | — | 综合方案变体（独到点：方案完整性，kimi-k2.6） |
-| **planner-b** | `PLANNING`（multiModel 调度） | — | — | — | 综合方案变体（独到点：架构落点，deepseek-v4-pro） |
-| **planner-c** | `PLANNING`（multiModel 调度） | — | — | — | 综合方案变体（独到点：边界条件，glm-5.2） |
+| **planner-a** | [已归档 2026-08-02] `PLANNING`（multiModel 调度，已废弃） | — | — | — | 综合方案变体（独到点：方案完整性，kimi-k2.6）。T3 现走 PARALLEL_EXECUTION worktree 端到端 |
+| **planner-b** | [已归档 2026-08-02] `PLANNING`（multiModel 调度，已废弃） | — | — | — | 综合方案变体（独到点：架构落点，deepseek-v4-pro）。T3 现走 PARALLEL_EXECUTION worktree 端到端 |
+| **planner-c** | [已归档 2026-08-02] `PLANNING`（multiModel 调度，已废弃） | — | — | — | 综合方案变体（独到点：边界条件，glm-5.2）。T3 现走 PARALLEL_EXECUTION worktree 端到端 |
 
 ---
 

@@ -14,7 +14,7 @@ required_roles: [coder]
 
 - `PLANNING` 输出的任务 DAG（T1/T2）或用户请求（T0）
 - 设计门方案（T1/T2）
-- **T3 场景**：`plan`（multiModel 在 PLANNING 阶段融合后的单一方案）+ 正常需求描述；coder 按融合方案执行编码，不读取阶段内 3 个变体的原始产物
+- **T3 场景**：`plan`（T3 worktree 端到端副本竞赛后由 SYNTHESIZING 选优合并产出的单一方案）+ 正常需求描述；coder 按融合方案执行编码
 - 验收标准清单
 - 已知失败模式（来自 `fact_store` / `failure_db`，M1 注入）
 - 禁止触碰的边界声明（`forbidden_files`）
@@ -51,12 +51,9 @@ quality_gate:
 - `DONE` → T1+ 进入 `QUALITY`；T0 直达 `DELIVERING`（**T0 交付前置硬门**：直达 DELIVERING 前必须完成轻量验证——`node scripts/scan-encoding.mjs` 通过 + `encoding_clean: true` + `no_debug_leftovers: true`，否则输出 `DONE_WITH_CONCERNS` 并随交付显式披露风险。注：EXECUTING 出边仅按 tier 分流（T0→DELIVERING / T1+→QUALITY），机械系统无边可回流 QUALITY——T0 兜底由 DELIVERING 交付标注承担）
 - `DONE_WITH_CONCERNS` → 附带风险说明进入 `QUALITY`
 - `NEEDS_CONTEXT` / `BLOCKED` → 停止并回传，不推进
-- **T3 阶段内并行**：EXECUTING 阶段主槽由 multiModel 挂载时，调度 3 个不同厂商/架构的 coder 变体并行编码，融合为单一 `execution.diffs/changes/acceptance_map` 写入 task_context，主图继续 `QUALITY → DELIVERING`（QUALITY hooks 自动循环验证融合产物）
 
 ## 硬规则
 
 - **完成声明三件套**：每条"通过/修复/完成"声明 MUST 同时附：完整命令字符串、数字 exit code、stdout/stderr 关键行截取 ≤5 行。
 - **禁止信任传递**：不得以"agent X 报告成功"替代独立验证。
 - **编码健康度扫描**：对修改过的文件跑 `node scripts/scan-encoding.mjs`。
-- **架构意识（编码前必过）**：落点识别（目标文件所属层，不越层）→ 依赖方向（符合项目既有分层方向）→ 影响面分析（高扇入符号改动列影响清单）→ 复用优先（先扫描同类抽象再新建）→ 扩展点评估（高频变更领域留扩展点/slot/策略接口/配置驱动）→ 组件化前摄扫描（grep/glob 同类实现 ≥1 处命中需评估）。违反任一项 → 输出 `BLOCKED`/`NEEDS_CONTEXT`，由 conductor 判断是否回流 PLANNING 阶段。
-- **T3 隔离原则**：主图 coder 不读取阶段内 3 个变体的原始产物，只读取 multiModel 融合后写入 task_context 的单一结果；主操作是正常编码/修复，无需额外 merge 分支。

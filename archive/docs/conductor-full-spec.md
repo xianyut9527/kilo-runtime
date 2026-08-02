@@ -40,7 +40,7 @@
    - `config.yaml timeouts` 段：`per_agent_s` 每个键必须有对应 agent 文件（防幽灵键，**单向**——agent 文件可无键，回退 `stage_default_s`）；`per_tier_multiplier` 键 ⊆ {T0,T1,T2,T3}；数值为正数
    - 每个非内建 stage 节点的 `required_roles: [role...]`（stages frontmatter），每角色必须有 ≥1 个智能体（frontmatter `role` ?? 文件名 = 角色名）在该节点主挂载点注册（`when` 求值后 active 覆盖在运行时再校验）
    - `config.yaml overrides.disabled_agents` 不得使某 `required_roles` 角色无履行者 → 报错（禁用了必配角色）
-    - multiModel 阶段级并行：planner-a/b/c 绑定模型的 `(vendor, architecture)` 两两不同（`diversity_rule` 声明，人工校验，违反 → `[DIVERSITY_VIOLATION]`）
+    - > **[已归档 2026-08-02]** ~~multiModel 阶段级并行：planner-a/b/c 绑定模型的 `(vendor, architecture)` 两两不同（`diversity_rule` 声明，人工校验，违反 → `[DIVERSITY_VIOLATION]`）~~ T3 现走 PARALLEL_EXECUTION worktree 端到端副本竞赛 + SYNTHESIZING 选优合并，不再使用 multiModel 调度变体。
    - > **能力匹配**：无机械校验；模型绑定在 `kilo.json` `agent.<name>.model`，能力倾向参考 `docs/model-registry.md` 人工维护。
 6. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, hook, after, when, on_fail } ]（同 hook 类型默认串行组（详见铁律 #12 / §智能体加载规则）；有 after 的按拓扑排序执行，检测环依赖报错）}` + `{ nodeId → on_fail_resolved }` + edges 表 + `{ agent → timeout_s }` 预算表（per_agent_s × tier_multiplier，缺 per_agent_s 回退 stage_default_s）。运行时查表，零重复解析。
 
@@ -55,7 +55,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
   → T0: EXECUTING [履行 required_roles: [coder] 的智能体] → DELIVERING
   → T1+: PLANNING [履行 required_roles: [planner] 的智能体] → EXECUTING [履行 required_roles: [coder] 的智能体]
          → QUALITY [hooks 自动挂载：verify + review + fix 循环] → DELIVERING（conductor 内建）
-  → T3: PLANNING [multiModel 阶段级并行调度 planner-a/b/c 三变体出方案并融合选优] → EXECUTING [主图 coder 按融合方案实现]
+  → T3: PARALLEL_EXECUTION [worktree 端到端副本竞赛：3 worktree 并行执行完整 T2 流程（plan→exec→quality）] → SYNTHESIZING [选优合并]
       → QUALITY（hooks 自动循环）→ DELIVERING
 ```
 
@@ -291,7 +291,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 
 > 错误处理是 conductor 内建职责，**不是独立流程支线**——用户全程在场，无需 Teardown/Destroy 销毁流程。每个阶段通过 graph.yaml `on_fail` 字段声明失败策略，conductor 捕获异常后查表派发。
 >
-> **T3 变体调度例外**：multiModel 在 PLANNING 阶段调度 planner-a/b/c 变体时的异常处理主权在 `agent/multiModel.md` §异常处理（表格形式，独立语义），不适用本节 on_fail 派发；timeouts 仍适用（变体也走 task 工具）。
+> **[已归档 2026-08-02]** ~~T3 变体调度例外：multiModel 在 PLANNING 阶段调度 planner-a/b/c 变体时的异常处理主权在 `agent/multiModel.md` §异常处理（表格形式，独立语义），不适用本节 on_fail 派发；timeouts 仍适用（变体也走 task 工具）。~~ T3 现走 PARALLEL_EXECUTION worktree 端到端副本竞赛，异常处理见 graph.yaml PARALLEL_EXECUTION 节点 `on_fail: escalate`。
 
 ### 触发条件
 

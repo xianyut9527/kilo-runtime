@@ -220,7 +220,7 @@ agent 返回后、进入下游流程前，conductor 必须按以下规则自检�
 | `[MISSING_FIXER_WRITE]` | fixer 完成后未写 dispatch_log.error_code | conductor（evolution.md §1.5）|
 | `[MISSING_MEMORY_WRITE]` | T1+ 任务收尾未按 SQL 模板写入 dispatch_log / fact_store / failure_db / model_calibration 任一项 | conductor（workflow-core.md §收尾自检）|
 | `[MEMORY_LAYER_HOLLOW]` | memory.db 表结构齐全但 dispatch_log/fact_store 全空行，疑似 sqlite 层空跑 | lifecycle-doctor.mjs 记忆层健康度检查 |
-| `[MULTIMODEL_DEGRADED]` | **[已废弃]** 旧 multiModel 触发限流降级为单 coder；T3 改用 worktree 副本竞赛，降级信号为 `[T3_PARALLEL_DEGRADED]` | conductor |
-| `[MULTIMODEL_ABANDONED]` | multiModel 累计 3 次失败，放弃融合 | conductor（workflow-core.md multiModel 并发配额）|
+| `[MULTIMODEL_DEGRADED]` | **[已归档]** 旧 multiModel 触发限流降级；T3 改用 worktree 副本竞赛 | conductor |
+| `[MULTIMODEL_ABANDONED]` | **[已归档]** multiModel 累计 3 次失败；T3 改用 worktree 副本竞赛 | conductor |
 
 **写法规则**：全大写，下划线分隔；就近引用；路径格式 `文件:行号`；空值显式写 `无`。

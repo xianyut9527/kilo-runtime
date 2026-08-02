@@ -53,17 +53,14 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │       └── contracts/            # 跨层契约（health_check.sql 健康度查询契约源；执行者 = python scripts/memory.py check）
 ├── agent/                        # Kilo 智能体定义（v6 单源：一智能体一文件，frontmatter 自注册生命周期路由）
 │   ├── conductor.md           # 工作流编排者（type: primary，内建执行 INTENT/SIZING/DELIVERING）
-│   ├── multiModel.md             # T3 阶段级并行调度者（type: primary，PLANNING 阶段调度 planner-a/b/c 三变体）
 │   ├── planner.md                # 规划智能体（mount: PLANNING；设计门、DAG、验收点）
-│   ├── planner-a.md              # T3 PLANNING 变体-A（kimi-k2.6；综合方案变体，独到点：方案完整性，由 multiModel 内部调度）
-│   ├── planner-b.md              # T3 PLANNING 变体-B（deepseek-v4-pro；综合方案变体，独到点：架构落点，由 multiModel 内部调度）
-│   ├── planner-c.md              # T3 PLANNING 变体-C（glm-5.2；综合方案变体，独到点：边界条件，由 multiModel 内部调度）
 │   ├── coder.md                  # 编码智能体（mount: EXECUTING；实现、自测、三件套）
 │   ├── verifier.md               # 正向验证（mount: QUALITY hook:verify；L1/L2/L3、5 元组证据）
 │   ├── reverse-auditor.md        # 反向审计（mount: QUALITY hook:verify, when: T2+；需求追溯、假设审计）
 │   ├── side-checker.md           # 侧向验证（mount: QUALITY hook:review, when: T2+；边界/安全/性能/兼容性实测）
 │   ├── reviewer.md               # 静态审查（mount: QUALITY hook:review；安全编码模式/架构/简化/SCOPE_CREEP 四视角）
 │   ├── fixer.md                  # 修复智能体（mount: QUALITY hook:fix, auto-trigger；定向修复阻塞问题）
+│   ├── meta-auditor.md           # 元审计智能体（on:done 手动触发，审计规则仓库自身一致性）
 │   └── (models/ 目录已删除，能力矩阵迁至 docs/model-registry.md)
 ├── lifecycle/                    # 生命周期 v2（响应式 Hooks 架构：6 stage，QUALITY 合并原 CHECKING+REVIEWING+FIXING）
 │   ├── graph.yaml                # 主 DAG 单一真相来源（节点 INTENT/SIZING/.../DONE + 边 + 流转条件）
@@ -74,16 +71,15 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   │   ├── sizing.md             # SIZING 任务定级 [conductor 内建]
 │   │   ├── planning.md           # PLANNING 设计门 [planner]
 │   │   ├── executing.md          # EXECUTING 实现 [coder]
+│   │   ├── parallel_execution.md  # PARALLEL_EXECUTION T3 端到端副本竞赛 [conductor 内建]
+│   │   ├── synthesizing.md        # SYNTHESIZING 选优合并 [conductor 内建]
 │   │   ├── quality.md            # QUALITY 响应式 Hooks [verifier + reverse-auditor? → fix → reviewer + side-checker? → fix]
 │   │   └── delivering.md         # DELIVERING 交付 [conductor 内建]
 ├── docs/                           # 参考文档
-│   ├── ARCHITECTURE.md              # 架构全景导航（v2.1 综合速查手册）
 │   ├── agent-mount-guide.md        # 智能体挂载注册指南（frontmatter mount 字段）
-│   ├── conductor-full-spec.md      # conductor 完整设计规范（运行时精简版的完整版）
-│   ├── configuration-guide.md      # 配置指南（快速上手：新增智能体/阶段/模型/定级调整）
-│   ├── multi-agent-lifecycle-architecture.md  # 多智能体协作生命周期架构（设计门产物）
 │   ├── model-registry.md          # 模型能力倾向矩阵人类可读版（v6.1 唯一能力参考，无机器可读副本）
 │   └── memory-ops-reference.md    # 记忆操作 SQL 模板参考
+│   # 历史文档已归档至 archive/docs/
 ├── install.ps1                   # Kilo 配置安装脚本（Windows）
 ├── install.sh                    # Kilo 配置安装脚本（macOS/Linux）
 └── README.md

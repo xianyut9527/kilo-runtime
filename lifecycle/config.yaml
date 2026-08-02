@@ -30,7 +30,8 @@ tier_defaults:
   # T0 极速通道：INTENT → SIZING → EXECUTING → DELIVERING
   # 无可选视角；恒定挂载智能体（coder）由图拓扑限定自动加载
   T0:
-    agents: {}
+    agents:
+      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
     review_mode: none
 
   # T1 标准闭环
@@ -41,6 +42,7 @@ tier_defaults:
       planner: true                # T1 起开（单路 planner 设计方案）
       reverse_auditor: true        # T1 起开（隐性需求遗漏是"一次性完成"失败最高频原因）
       side_checker: false         # T2+ 才开（运行时实测成本高，T1 不需要）
+      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
     review_mode: full
 
   # T2 全视角交叉验证：正向+反向+侧向+审查全开
@@ -50,16 +52,17 @@ tier_defaults:
       planner: true                # T2 单路 planner 设计方案
       reverse_auditor: true       # 需求追溯审计（从产物反推是否满足原始需求）
       side_checker: true          # 运行时行为视角验证（边界/安全/性能/兼容性实测）
+      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
     review_mode: full
 
   # T3 端到端副本竞赛：3 worktree 并行，各执行完整 T2 流程（PLAN→EXEC→QUALITY），
-  # conductor 直接调度 worktree session（无需 multiModel），SYNTHESIZING 选优合并后交付
+  # conductor 直接调度 worktree session，SYNTHESIZING 选优合并后交付
   T3:
     agents:
       planner: false               # T3 关闭单路 planner，各 worktree 副本自有 planner
-      multiModel: false           # T3 不再使用 multiModel（已替换为 worktree 端到端）
       reverse_auditor: true      # QUALITY_FINAL 可选视角（默认启用）
       side_checker: true         # QUALITY_FINAL 可选视角（默认启用）
+      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
     review_mode: full
 
 # ============================================================
@@ -71,7 +74,8 @@ inquiry_tier_defaults:
   # T0 咨询快答：简单问答 / 已明确的知识点 / 单一事实确认
   # SIZING 后直接 DELIVERING，无分析门，无审查
   T0:
-    agents: {}
+    agents:
+      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
     review_mode: none
 
   # T1 项目分析：需要阅读当前项目文件 / 单一视角分析
@@ -81,6 +85,7 @@ inquiry_tier_defaults:
       planner: true                # T1 起开（单路 planner 设计方案）
       reverse_auditor: true        # T1 起开（隐性遗漏是分析失败最高频原因）
       side_checker: false         # T2+ 才开（深度调研成本高）
+      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
     review_mode: full
 
   # T2 多维度调研：跨文件/跨模块调研 / 对比/评估/建议
@@ -90,6 +95,7 @@ inquiry_tier_defaults:
       planner: true                # T2 单路 planner 设计方案
       reverse_auditor: true       # 需求追溯审计（分析是否回答了原始问题）
       side_checker: true          # 侧向验证（极端值/反事实/来源可信度实测）
+      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
     review_mode: full
 
   # 注：INQUIRY 类无 T3。T3 仅用于 EXECUTION 端到端副本竞赛。
@@ -126,11 +132,9 @@ overrides:
 # convergence：收敛熔断阈值（唯一真相来源）
 # v2 响应式 Hooks 架构：
 #   - 旧版 max_rounds/max_total_rounds 迁移到 hooks.quality
-#   - mm_fusion_max_rounds 已废弃（旧 multiModel PLANNING-only 模式残留）
+#   - mm_fusion_max_rounds 已废弃（旧阶段级并行模式残留）
 # ============================================================
 convergence:
-  mm_fusion_max_rounds: 3    # [已废弃] 旧 multiModel PLANNING-only 模式内部熔断，保留兼容但不生效
-
 # ============================================================
 # hooks：响应式 Hooks 级熔断（v2 新增）
 # QUALITY 阶段内部 hooks 自动循环的熔断阈值
@@ -168,7 +172,6 @@ timeouts:
   size_check_threshold: 120000   # task_context 文件字符数硬门（超限强制切 agent_manager），与 kilo.json schema 隔离
   per_agent_s:
     coder: 1800            # coder 写代码可能较长，给 30min
-    multiModel: 1200        # [已废弃] 旧 multiModel 阶段级并行调度预算，保留兼容
     verifier: 900
     reverse_auditor: 600
     side_checker: 900

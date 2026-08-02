@@ -42,8 +42,7 @@ quality_gate:
 - **v2.1 变更**：INQUIRY 不再直通 DONE，而是与 EXECUTION 同样进入 `SIZING` 定级，走完整闭环提升质量：
   - `INQUIRY` → `SIZING` → `PLANNING`（分析门）→ `QUALITY`（分析结论验证）→ `DELIVERING`（记忆沉淀）→ `DONE`
    - T0 咨询快答：`SIZING` → `DELIVERING`（跳过 PLANNING/QUALITY）
-   - T1/T2/T3 咨询分析：`SIZING` → `PLANNING`（分析门）→ `QUALITY` → `DELIVERING`
-   - T3 深度调研在 PLANNING（分析门）后由 multiModel 阶段级并行接管（若启用），回流主图 QUALITY
+   - T1/T2 咨询分析：`SIZING` → `PLANNING`（分析门）→ `QUALITY` → `DELIVERING`
 - `EXECUTION` → `SIZING`（任务定级）
 - `NEEDS_CONTEXT` → 回传用户请求补充信息，不推进
 - 旧路由 `INQUIRY → DONE`（直接结束）已移除，全部咨询走闭环

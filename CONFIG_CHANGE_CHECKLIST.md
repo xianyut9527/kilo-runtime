@@ -19,7 +19,7 @@
 | 修改内容 | 必查项 |
 |---------|--------|
 | 首次 clone / 初始化本仓库 | ① 运行 `./install.ps1` 或 `./install.sh` 完成全局部署；② 复制 `tools/hooks/post-commit` → `.git/hooks/post-commit`（防部署漂移提醒）；③ 运行 `node scripts/lifecycle-doctor.mjs` 确认校验全绿 |
-| 新增/删除/改名 agent | 同步 `AGENTS.md` 清单、`README.md` 目录树、`agent/` 文件（必须含完整 YAML frontmatter：`description` / `mode` / `hidden` / `color` / `permission` / `steps` / `mount` / `task_context` / `isolation`），参考现有 `agent/conductor.md` 的写法；**重跑 `./install.ps1` 或 `./install.sh`** |
+| 新增/删除/改名 agent | 同步 `AGENTS.md` 清单、`README.md` 目录树、`agent/` 文件（必须含完整 YAML frontmatter：`description` / `mode` / `hidden` / `color` / `permission` / `steps` / `mount` / `task_context` / `isolation`），参考现有 `agent/conductor.md` 的写法；同步 `kilo.json` 中 `agent.<name>.model` 绑定 + 运行 `node scripts/sync-agent-prompt.mjs` 生成 prompt；可选同步 `install.ps1` / `install.sh` 的 `CRITICAL_FILES` 数组；**重跑 `./install.ps1` 或 `./install.sh`** |
 | 修改 `lifecycle/graph.yaml` 节点 `on_fail` / `required_roles` / 新增节点 | ① 节点 `on_fail` 取值 ∈ {abort, retry_once, degrade, escalate, pause}；② `stages/README.md` 阶段索引表同步 `on_fail` 列；③ `agent/conductor.md` §异常处理派发表覆盖新取值（如新增取值需扩表）；④ 新增节点须丢 `lifecycle/stages/<id-lower>.md` |
 | 修改 `lifecycle/config.yaml` `timeouts` 段 | ① `per_agent_s` 键名与 `agent/*.md` 智能体名（去 .md + 连字符转下划线）一致；② `per_tier_multiplier` 键 ⊆ {T0,T1,T2,T3}；③ 新增智能体时同步加 `per_agent_s` 键；④ 数值为正整数 |
 | 修改 `lifecycle/config.yaml` `hooks.quality` 段 | ① 阈值变更同步 `agent/conductor.md` §task_context 结构 `quality.max_rounds` 注释；② 同步 `lifecycle/graph.yaml` edges 注释引用的阈值描述 |
@@ -38,7 +38,7 @@
 
 - [ ] 修改 `.kilo/memory/` 模板时是否同步 README.md 目录树？
 - [ ] 修改 memory 触发条件时是否同步 `.kilo/instructions/workflow-reference.md` 的「程序化记忆」章节？
-- [ ] 是否同步更新 `agent/conductor.md` / `agent/multiModel.md` 的相关职责描述？（生命周期驱动后，记忆操作 SQL 模板在 `docs/memory-ops-reference.md`）
+- [ ] 是否同步更新 `agent/conductor.md` 的相关职责描述？（记忆操作 SQL 模板在 `docs/memory-ops-reference.md`）
 
 ### instructions 与 prompt 联动检查
 

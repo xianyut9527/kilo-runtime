@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS skill_usage_events (
     skill_name TEXT NOT NULL,                   -- skill 目录名
     trigger TEXT NOT NULL,                      -- 短描述（≤40 字符）
     outcome TEXT NOT NULL CHECK(outcome IN ('success','fail','partial')),
-    agent TEXT,                                 -- 哪个智能体触发（conductor / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel）
+    agent TEXT,                                 -- 哪个智能体触发（conductor / planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer）
     task_tier TEXT,                             -- T0/T1/T2/T3
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

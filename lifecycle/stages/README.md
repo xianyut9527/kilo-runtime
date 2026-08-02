@@ -34,7 +34,7 @@ lifecycle/
 | INTENT | `intent.md` | conductor 内建 | `pause` | 类型明确 |
 | SIZING | `sizing.md` | conductor 内建 | `pause` | T0-T3 准确 + 写入 `config.agents` 差异化开关 |
 | PLANNING | `planning.md` | `planner` | `escalate` | post:PLANNING 挂载点审查（`on_fail: abort` 中止流转） |
-| EXECUTING | `executing.md` | `coder` | `retry_once` | 验收映射表 + 三件套 |
+| EXECUTING | `executing.md` | `coder` | `retry_once` | 验收映射表 + 三件套（T3 走 worktree 端到端副本竞赛） |
 | **QUALITY** | `quality.md` | `verifier` + `reviewer`（hooks 自动挂载） | `escalate` | hooks 全 PASS |
 | DELIVERING | `delivering.md` | conductor 内建 | `pause` | `[MISSING_MEMORY_WRITE]` 检查 |
 
@@ -59,7 +59,7 @@ lifecycle/
 |------|----------|
 | `on:bootstrap` | 装配完成后、INTENT 前（任务启动挂载点） |
 | `pre:<STAGE>` | 阶段主槽执行前 |
-| `<STAGE>` | 阶段主槽（阶段本体；`executor:` 内建阶段由 conductor/multiModel 占据） |
+| `<STAGE>` | 阶段主槽（阶段本体；`executor:` 内建阶段由 conductor 占据） |
 | `post:<STAGE>` | 阶段主槽执行后、edges 流转前 |
 | `on:done` | DELIVERING 完成后、DONE 前（收尾挂载点） |
 

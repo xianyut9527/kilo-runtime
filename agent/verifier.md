@@ -33,13 +33,12 @@ mount:
 
 # task_context：读写边界声明（bootstrap 注入上下文切片 + 运行时强制隔离）
 #   read      可读的 task_context 切片（plan 核对范围；execution.diffs/changes/acceptance_map 验证代码产物；
-#             execution.mm_outputs multiModel 阶段级并行 3 份 planner 输出；
-#             execution.fused_output multiModel 阶段级并行融合方案（QUALITY 验证对象）；
+#             T3 场景：plan 为 SYNTHESIZING 选优合并后的单一方案（PARALLEL_EXECUTION worktree 副本竞赛产出）；
 #             forbidden_files 边界）
 #   write     可写的 task_context 切片（verification.forward + execution.verification 双独占——写入边界硬门，
 #             task-context.mjs 的 WRITE_MATRIX 从本字段自动派生，缺一项运行时即拒写）
 task_context:
-  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, execution.mm_outputs, execution.fused_output, execution.analysis, forbidden_files, execution.inquiry_mm_outputs, execution.inquiry_fused_output]
+  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, execution.analysis, forbidden_files]
   write: [verification.forward, execution.verification]      # verifier 双独占写入（写入边界硬门）
 
 # isolation：视角物理隔离声明（防止确认偏误）
@@ -64,7 +63,7 @@ isolation:
 
 > **双上下文验证对象**：
 > - 主图 `QUALITY`（verify hook）：验证**代码产物**（`execution.diffs/changes/acceptance_map`），L1-L3 全量（含运行测试/构建）。
-> - 阶段级并行验证：验证**方案**（`execution.mm_outputs` / `execution.fused_output`）——方案级验证：推理正确性、边界覆盖、逻辑自洽、验收覆盖、SCOPE_CREEP（方案超出委派包范围）。**L1 运行类验证不适用**——阶段级并行无代码产物（代码由主图 EXECUTING 阶段 coder 按融合方案实现后，于主图 QUALITY verify hooks 全量验证）。
+> **[已归档 2026-08-02]** 阶段级并行验证：验证**方案**（`execution.mm_outputs` / `execution.fused_output`）——方案级验证：推理正确性、边界覆盖、逻辑自洽、验收覆盖、SCOPE_CREEP（方案超出委派包范围）。**L1 运行类验证不适用**——阶段级并行无代码产物（代码由主图 EXECUTING 阶段 coder 按融合方案实现后，于主图 QUALITY verify hooks 全量验证）。T3 现走 PARALLEL_EXECUTION worktree 端到端副本竞赛，各 worktree 内独立完成完整 T2 流程（plan→exec→quality），主图 QUALITY verify hooks 验证的是 SYNTHESIZING 选优合并后的代码产物。
 
 ## 记忆召回接口（M1-sub，subagent 自召回）
 

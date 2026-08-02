@@ -32,7 +32,7 @@ diversity_rule:
     - reverse-auditor
     - side-checker
     - reviewer
-  note: T3 阶段级多模型并行中，PLANNING/EXECUTING 的 3 个变体由 multiModel 在运行时从 diversity_map 选择不同 vendor/architecture；此处 applies_to 取 QUALITY 四视角作为静态可校验集合，确保关键路径至少覆盖 4 个不同厂商/架构。
+  note: T3 端到端 worktree 副本竞赛中，PLANNING/EXECUTING 的 3 个变体由 conductor 在运行时从 diversity_map 选择不同 vendor/architecture；此处 applies_to 取 QUALITY 四视角作为静态可校验集合，确保关键路径至少覆盖 4 个不同厂商/架构。
 ---
 
 # docs/model-registry
@@ -45,7 +45,7 @@ diversity_rule:
 
 1. **模型是资源，不是角色**：`kilo.json` `agent.<name>.model` 字段统一声明每个智能体绑定哪个模型 ID；本文档**不绑定模型 ID**，只描述能力倾向供人类参考。
 2. **能力倾向优先**：按智能体的能力倾向选模型，而非按 agent 名称硬编码。选模型时对照本文档的能力倾向列。
-3. **多样性保障**：T3 阶段级多模型并行中，PLANNING/EXECUTING 各阶段内并行 3 个不同厂商/不同架构的模型变体（由 multiModel 在运行时按 `diversity_map` 选择，违反 → `[DIVERSITY_VIOLATION]`）。QUALITY 四视角（verifier / reverse-auditor / reviewer / side-checker）已天然覆盖 4 个不同厂商/架构，形成交叉验证。
+3. **多样性保障**：T3 端到端 worktree 副本竞赛中，PLANNING/EXECUTING 各阶段内并行 3 个不同厂商/不同架构的模型变体（由 conductor 在运行时按 `diversity_map` 选择，违反 → `[DIVERSITY_VIOLATION]`）。QUALITY 四视角（verifier / reverse-auditor / reviewer / side-checker）已天然覆盖 4 个不同厂商/架构，形成交叉验证。
 4. **单一真相来源**：模型 ID 变更只在 `kilo.json` 一处修改；能力倾向描述只在本文档一处维护。
 
 ## 模型能力矩阵（参考，实际选择见 kilo.json）
@@ -63,13 +63,13 @@ diversity_rule:
 | `hx/MiniMax-M2.7-highspeed` | minimax | MiniMax-M2.7-highspeed | ★★★☆☆ | ★★★☆☆ | 200K | ★★★☆☆ | 6 |
 | `hx/deepseek-v4-flash` | deepseek | deepseek-v4-flash | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 7 |
 
-> **厂商/架构列用途**：T3 阶段级多模型并行中，multiModel 在 PLANNING/EXECUTING 各阶段内并行调度 3 个不同厂商/架构的变体；QUALITY 四视角天然覆盖 4 个不同厂商/架构。人工选模型时对照此列确认异源覆盖。
+> **厂商/架构列用途**：T3 端到端 worktree 副本竞赛中，conductor 在 PLANNING/EXECUTING 各阶段内并行调度 3 个不同厂商/架构的变体；QUALITY 四视角天然覆盖 4 个不同厂商/架构。人工选模型时对照此列确认异源覆盖。
 > **稳定性排序用途**：`kilo.json` 中关键路径模型优先选用稳定性排序靠前的模型，当前默认 `glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6`。
 
 ## 稳定性优先选模型指南
 
 当前稳定性排序（由稳定到不稳定）：`glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6` > `kimi-k2.7-code` > `MiniMax-M3` > `MiniMax-M2.7-highspeed` > `deepseek-v4-flash`。
-`kimi-k2.7-code` 已降级使用，不再担任 conductor / multiModel / coder 等关键路径模型；`deepseek-v4-pro` 作为主力高性能模型补充到关键路径。
+`kimi-k2.7-code` 已降级使用，不再担任 conductor / coder 等关键路径模型；`deepseek-v4-pro` 作为主力高性能模型补充到关键路径。
 
 ## 按智能体能力倾向矩阵
 
@@ -88,27 +88,16 @@ diversity_rule:
 | `reviewer` | `QUALITY`（review hook） | `deep-reasoning` | 架构视角、安全视角、强 reasoning |
 | `fixer` | `QUALITY`（fix hook, auto-trigger） | `code-generation` | 快速修复、最小改动、假设驱动调试 |
 
-### multiModel 阶段级并行（T3）
-
-| 智能体 | 角色 | 能力倾向 | 能力要点 |
-|--------|------|----------|----------|
-| multiModel | 阶段级并行调度/融合 | `fast-reasoning` | PLANNING 阶段主槽拦截正常流程，串行调度 3 个不同厂商/架构的规划变体，收集方案后融合为单一结果写入 `task_context.plan`，主图继续流转 |
-| planner-a | T3 PLANNING 变体-A | `deep-reasoning` | 综合方案变体（独到点：方案完整性，hx/kimi-k2.6），只输出方案摘要，由 multiModel 内部调度 |
-| planner-b | T3 PLANNING 变体-B | `deep-reasoning` | 综合方案变体（独到点：架构落点，hx/deepseek-v4-pro），只输出方案摘要，由 multiModel 内部调度 |
-| planner-c | T3 PLANNING 变体-C | `deep-reasoning` | 综合方案变体（独到点：边界条件，hx/glm-5.2），只输出方案摘要，由 multiModel 内部调度 |
-
-> **多样化原则**：T3 PLANNING 3 个变体为不同厂商/不同架构模型（kimi-k2.6 / deepseek-v4-pro / glm-5.2），按 `diversity_map` 校验（违反 → `[DIVERSITY_VIOLATION]`）。QUALITY 四视角（verifier / reverse-auditor / reviewer / side-checker）已天然覆盖 4 个不同厂商/架构，形成交叉验证。
-> **融合隔离原则**：multiModel 融合阶段不知道变体模型身份，避免按模型声誉而非方案质量取舍。
-> **当前会话串行**：3 个变体由 multiModel 默认 `agent_manager` AM local 3 session 并行调度（各返回 ≤2000 字符方案摘要），收齐融合；task 串行作为降级。
+### [已归档] T3 现走 worktree 端到端（PARALLEL_EXECUTION+SYNTHESIZING）
 
 ## 模型降级规则
 
 | 触发条件 | 降级策略 |
 |----------|----------|
 | RATE_LIMIT 连续 3 次 | 降级为同能力倾向的次优模型（改 `kilo.json` `agent.<name>.model`） |
-| 次优模型也不可用 | **[已废弃]** 旧 single-coder 直办 + `[MULTIMODEL_DEGRADED]`；T3 改用 worktree 副本竞赛，降级见 `lifecycle/stages/synthesizing.md` |
-| 累计 3 次 multiModel 失败 | 停止 multiModel + single-coder + `[MULTIMODEL_ABANDONED]` |
-| T3 过去 24h 失败率 ≥30% | 跳过 multiModel，直接 single-coder |
+| 次优模型也不可用 | **[已归档]** T3 改用 worktree 副本竞赛，降级见 `lifecycle/stages/synthesizing.md` |
+| 累计 3 次 T3 失败 | **[已归档]** T3 改用 worktree 副本竞赛，降级见 `lifecycle/stages/synthesizing.md` |
+| T3 过去 24h 失败率 ≥30% | **[已归档]** T3 改用 worktree 副本竞赛，降级见 `lifecycle/stages/synthesizing.md` |
 
 ## 校准机制
 

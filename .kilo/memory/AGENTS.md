@@ -54,7 +54,7 @@
 
 ## 与 AGENTS.md（仓库根）的关系
 
-仓库根 `AGENTS.md` 锚点 8「memory / skills / 自进化合规」指向本模块。生命周期驱动后，记忆操作统一由 `docs/memory-ops-reference.md` 定义，本文件保留为模块入口和 sqlite 契约说明。
+仓库根 `AGENTS.md` 锚点 7「memory / skills / 自进化合规」指向本模块。生命周期驱动后，记忆操作统一由 `docs/memory-ops-reference.md` 定义，本文件保留为模块入口和 sqlite 契约说明。
 
 ## 模块不生效的降级行为
 

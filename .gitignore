@@ -32,7 +32,6 @@ kilo.json.bak.*
 .kilo/skills/**/reports/*.json
 .kilo/skills/**/_archive/
 .kilo/skills/report-analyzer/项目成员工作报告-*.json
-.kilo/skills/
 
 # 多模型审计临时产物
 .kilo_tmp/

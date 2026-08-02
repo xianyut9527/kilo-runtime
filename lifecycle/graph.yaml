@@ -17,7 +17,7 @@
 #   type      node 类型：
 #               virtual   - 占位（如 START），无阶段文件、不挂载智能体
 #               stage     - 阶段节点，有 stages/<id-lower>.md 执行逻辑文件（路径自动派生）
-#   executor  内建执行者（conductor 或 multiModel）；声明后该节点主槽不经 task 启动外部智能体
+#   executor  内建执行者（conductor）；声明后该节点主槽不经 task 启动外部智能体
 #             未声明 executor 的节点 → 主槽由 frontmatter `mount: at: <NODE>` 注册的智能体填充
 #   provider  （已废弃：旧子图提供者）
 #   graph     （已废弃：旧子图 DAG 文件路径）
@@ -43,7 +43,7 @@
 #   on:bootstrap   装配完成后、INTENT 前（任务启动挂载点）
 #   on:done        DELIVERING 完成后、DONE 前（收尾挂载点）
 #   pre:<NODE>     节点主槽执行前
-#   <NODE>         节点主槽（阶段本体；executor 内建阶段由 conductor/multiModel 占据）
+#   <NODE>         节点主槽（阶段本体；executor 内建阶段由 conductor 占据）
 #   post:<NODE>    节点主槽执行后、edges 流转前
 # 智能体在自身 agent/*.md frontmatter `mount` 声明挂载点 +
 #   hook/after/when/on_fail；同 hook 类型默认串行（需要顺序时声明 after: [agent-name]）。

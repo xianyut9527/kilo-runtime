@@ -510,14 +510,12 @@ function main() {
     const provenanceRequired = [];
     if (FROM === 'PLANNING' && TO === 'EXECUTING') {
       // 动态求值：读 planning.md required_roles + 扫 agent/*.md post:PLANNING 挂载的审查角色
-      // T3 走 PARALLEL_EXECUTION 不经此门；T1/T2（planner:true+multiModel:false）→ 要求 [planner, plan-reviewer]
+      // T3 走 PARALLEL_EXECUTION 不经此门；T1/T2（planner:true）→ 要求 [planner, plan-reviewer]
       const planningRoles = getStageRequiredRoles('PLANNING');
-      // 按 config.agents 过滤 when 条件：planner:false 时移除 planner；multiModel:false 时移除 multiModel
-      // （multiModel 已归档，config.agents.multiModel 恒 false，此处过滤保留向后兼容）
+      // 按 config.agents 过滤 when 条件：planner:false 时移除 planner
       const agentsCfgP = (ctx.config && ctx.config.agents && typeof ctx.config.agents === 'object') ? ctx.config.agents : null;
       for (const role of planningRoles) {
         if (role === 'planner' && agentsCfgP && agentsCfgP.planner === false) continue;
-        if (role === 'multiModel' && agentsCfgP && agentsCfgP.multiModel === false) continue;
         provenanceRequired.push(role);
       }
     }

@@ -29,8 +29,8 @@
 |----|----------|------|------------------|----------|------|-------------|
 | 0 | **conductor** | 工作流编排者：意图判定、定级、阶段流转、智能体加载调度、上下文传递、门禁管理、记忆写入 | 全阶段（不亲自执行） | `kilo.json` `agent.conductor.model` | primary | `agent/conductor.md` |
 | 1 | **planner** | 规划智能体：设计门、方案设计、单元 DAG 拆分、验收点定义、全量扫描清单 | PLANNING（T0-T2 主槽） | `kilo.json` `agent.planner.model` | subagent | `agent/planner.md` |
-| 2 | **multiModel** | T3 阶段级并行调度者：PLANNING 主槽拦截，串行调度 planner-a/b/c 三变体，融合选优写 plan | PLANNING（T3 主槽） | `kilo.json` `agent.multiModel.model` | primary | `agent/multiModel.md` |
-| 2a | **planner-a/b/c** | T3 PLANNING 变体：综合竞赛式——各变体独立完整方案，独到点：方案完整性/架构落点/边界条件（kimi-k2.6/deepseek-v4-pro/glm-5.2） | 由 multiModel 内部调度 | `kilo.json` `agent.planner-*.model` | subagent | `agent/planner-*.md` |
+| 2 | **multiModel** | [已归档 2026-08-02] T3 阶段级并行调度者（已废弃：T3 现走 PARALLEL_EXECUTION worktree 端到端副本竞赛 + SYNTHESIZING 选优合并） | PLANNING（T3 主槽，已废弃） | `kilo.json` `agent.multiModel.model` | primary | `agent/multiModel.md` |
+| 2a | **planner-a/b/c** | [已归档 2026-08-02] T3 PLANNING 变体（已废弃：T3 现走 worktree 端到端，不再使用 multiModel 调度变体） | 由 multiModel 内部调度（已废弃） | `kilo.json` `agent.planner-*.model` | subagent | `agent/planner-*.md` |
 
 | 3 | **coder** | 编码智能体：按方案实现代码、输出验收映射表+三件套、状态信号 | EXECUTING | `kilo.json` `agent.coder.model` | subagent | `agent/coder.md` |
 | 4 | **verifier** | 正向验证智能体：按验收标准逐条验证、L1/L2/L3 分层、5元组证据、独立重跑 | QUALITY（verify hook） | `kilo.json` `agent.verifier.model` | subagent | `agent/verifier.md` |

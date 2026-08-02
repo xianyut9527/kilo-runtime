@@ -20,7 +20,7 @@ metadata:
 > | 初始化建表脚本 | `.kilo/memory/schema/init.sql`（install 自动执行） |
 > | md 文件保留范围 | `.kilo/memory/AGENTS.md` §公共 API |
 >
-> 本文件保留作为兼容性指针（AGENTS.md 第 8 条 `strategy: "memory-strategy.md"` 仍可命中），新代码请直接引用 `docs/memory-ops-reference.md` + `.kilo/memory/AGENTS.md`。
+> 本文件保留作为兼容性指针（AGENTS.md 第 7 条 `strategy: "memory-strategy.md"` 仍可命中），新代码请直接引用 `docs/memory-ops-reference.md` + `.kilo/memory/AGENTS.md`。
 
 ---
 

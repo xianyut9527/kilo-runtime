@@ -8,7 +8,7 @@
     "auto": true,
     "prune": true,
     "tail_turns": 4,
-    "preserve_recent_tokens": 40000,
+    "preserve_recent_tokens": 50000,
     "reserved": 20000
   },
   "commit_message": {
@@ -18,32 +18,12 @@
     "conductor": {
       "mode": "primary",
       "model": "hx/glm-5.2",
-      "prompt": "工作流编排者（conductor）。启动期装配 lifecycle/ 元数据，按挂载点加载职能智能体，管理 task_context 共享上下文与交叉验证门禁。核心动作：1)判定后写入 intent.intent_type ∈ {INQUIRY,EXECUTION}；2)定级后写入 sizing.tier ∈ {T0,T1,T2,T3} 与 config.agents/review_mode；3)委派 planner/coder/verifier/reviewer 等 subagent；4)流转前运行 transition-check.mjs；5)QUALITY verdict PASS 后写入 quality.verdict；6)DELIVERING 执行 M4-M8 记忆写入。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。委派稳定性硬门（防 Tool execution aborted，最高优先级）：一次只发起一个 task，禁止同一响应内并行发起多个 task；task 发起瞬间到 result 返回前，禁止输出任何文本、禁止调用任何其他工具（bash/read/edit/grep/glob 等一律禁止），task 调用必须是该响应的最后一个动作；违者立即自纠为串行；并行经 Agent Manager 承载（local 同目录或 worktree 隔离；T3 默认 worktree 端到端并行——3 worktree 各执行完整 T2 流程后汇总选优；写文件角色 coder/fixer 永不并行），task 工具默认串行（防 Tool execution aborted），并发 abort 防护不变。"
-    },
-    "multiModel": {
-      "mode": "primary",
-      "model": "hx/deepseek-v4-pro",
-      "prompt": "[已归档] 旧 multiModel PLANNING-only 阶段级并行调度器（2026-08-02 前）。由 multiModel 在 PLANNING 阶段主槽调度 planner-a/b/c 三变体出方案→融合选最优→写 task_context.plan，EXECUTING 回归单路 coder 不挂载。T3 已升级为端到端 worktree 并行模式（PARALLEL_EXECUTION + SYNTHESIZING），multiModel 不再被 T3 使用（config.agents.multiModel: false），保留为向后兼容参考文档。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "工作流编排者。启动期装配 lifecycle/ 元数据，按挂载点加载智能体，管理 task_context 与流转门禁。核心动作：判定意图→定级→委派→流转→验证→记忆。输出 ≤2000 字符结构化摘要。禁止完整报告/长表/复述。"
     },
     "planner": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
       "prompt": "规划智能体。分析需求、调研代码、输出设计方案、定义验收点。只设计不写代码。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
-    },
-    "planner-a": {
-      "mode": "subagent",
-      "model": "hx/kimi-k2.6",
-      "prompt": "T3 多模型综合方案变体 A（hx/kimi-k2.6）。由 multiModel 在 PLANNING 阶段内部调度，输出完整方案摘要供融合，独到点聚焦方案完整性+实现路径。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
-    },
-    "planner-b": {
-      "mode": "subagent",
-      "model": "hx/deepseek-v4-pro",
-      "prompt": "T3 多模型综合方案变体 B（hx/deepseek-v4-pro）。由 multiModel 在 PLANNING 阶段内部调度，输出完整方案摘要供融合，独到点聚焦架构落点+影响面。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
-    },
-    "planner-c": {
-      "mode": "subagent",
-      "model": "hx/glm-5.2",
-      "prompt": "T3 多模型综合方案变体 C（hx/glm-5.2）。由 multiModel 在 PLANNING 阶段内部调度，输出完整方案摘要供融合，独到点聚焦边界条件+反模式。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
     },
     "plan-reviewer": {
       "mode": "subagent",
@@ -79,6 +59,11 @@
       "mode": "subagent",
       "model": "hx/deepseek-v4-pro",
       "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+    },
+    "meta-auditor": {
+      "mode": "subagent",
+      "model": "hx/kimi-k2.6",
+      "prompt": "元审计智能体。死引用扫描/重复规则检测/doc drift审计/健康度评分。手动触发不自动挂载。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
     }
   },
   "skills": {

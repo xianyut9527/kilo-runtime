@@ -991,8 +991,7 @@ for (const [id, n] of graph.nodes) {
 if (subgraphNodeCount === 0) pass('graph.subgraph', '无 type:subgraph 节点（阶段级并行模式）');
 
 // A7/A8. T3 回流守护（已移除：MM_SUBGRAPH/INQUIRY_MM_SUBGRAPH 已废弃，T3 走 PARALLEL_EXECUTION→SYNTHESIZING）
-// 阶段级多模型并行模式下，T3 走 PARALLEL_EXECUTION PLANNING→EXECUTING→QUALITY→DELIVERING，
-// multiModel 挂载在 PLANNING 阶段主槽调度 planner-a/b/c 变体输出方案，EXECUTING 回归单路 coder，无需子图回流守护。
+// T3 走 PARALLEL_EXECUTION worktree 端到端副本竞赛，无需子图回流守护。
 
 
 // ============================================================
@@ -1302,7 +1301,7 @@ const FRAMEWORK_NAMES = (() => {
       return new Set([...kj.agents.entries()].filter(([, v]) => v.mode === 'primary').map(([k]) => k));
     }
   } catch {}
-  return new Set(['conductor', 'multiModel']);
+  return new Set(['conductor']);
 })();
 
 {
@@ -1441,7 +1440,7 @@ if (kj) {
         }
       }
 
-      // 4) kilo.json agent.mode === 'primary'（conductor + multiModel 等关键路径编排者）
+      // 4) kilo.json agent.mode === 'primary'（conductor 等关键路径编排者）
       for (const [name, cfg] of kj.agents) {
         if (cfg.mode === 'primary') criticalAgents.add(name);
       }
@@ -1484,78 +1483,9 @@ if (kj) {
     warn('kilojson.default_agent', 'default_agent 未设置');
   }
 
-  // G5. multiModel diversity_rule 机械校验（conductor.md §启动期装配 第 5 条）
-  {
-    const REGISTRY_PATH = path.join(ROOT, 'docs', 'model-registry.md');
-    const regText = readText(REGISTRY_PATH);
-    let divMap = null;
-    let divRule = null;
-    if (regText) {
-      const regFm = extractFrontmatter(regText);
-      if (regFm) {
-        const parsed = parseDiversityMap(regFm);
-        divMap = parsed.map;
-        divRule = parsed.applies_to;
-      }
-    }
-
-    if (divMap && Object.keys(divMap).length > 0) {
-      pass('kilojson.diversity.map', `model-registry diversity_map 已加载（${Object.keys(divMap).length} 个模型）`);
-    } else {
-      warn('kilojson.diversity.map', 'model-registry.md diversity_map 缺失，diversity 校验降级为人工');
-    }
-
-    // 收集 diversity_rule 目标 agent（来源：model-registry.md diversity_rule.applies_to）
-    const diversityTargets = new Set();
-    if (divRule && divRule.length > 0) {
-      for (const name of divRule) diversityTargets.add(name);
-    }
-    if (diversityTargets.size === 0) {
-      pass('kilojson.diversity.applies', '无 diversity_rule applies_to（无需校验）');
-    } else {
-      let divFail = 0;
-      const collected = []; // { name, vendor, architecture }
-      for (const name of diversityTargets) {
-        const cfg = kj.agents.get(name);
-        if (!cfg || !cfg.model) {
-          fail('kilojson.diversity.model', `diversity 目标 agent ${name} 未声明 model`);
-          divFail++;
-          continue;
-        }
-        if (!divMap || !divMap[cfg.model]) {
-          if (divMap) {
-            fail('kilojson.diversity.model', `diversity 目标 agent ${name} model="${cfg.model}" 不在 diversity_map 中`);
-            divFail++;
-          }
-          continue;
-        }
-        const d = divMap[cfg.model];
-        collected.push({ name, vendor: d.vendor, architecture: d.architecture });
-      }
-
-      if (collected.length >= 2) {
-        // 两两比较
-        let violationFound = false;
-        for (let i = 0; i < collected.length; i++) {
-          for (let j = i + 1; j < collected.length; j++) {
-            const a = collected[i], b = collected[j];
-            if (a.vendor === b.vendor || a.architecture === b.architecture) {
-              violationFound = true;
-              fail('kilojson.diversity', `[DIVERSITY_VIOLATION] ${a.name}(${a.model || kj.agents.get(a.name)?.model}) vs ${b.name}(${b.model || kj.agents.get(b.name)?.model}): vendor=${a.vendor} arch=${a.architecture}`);
-              divFail++;
-            }
-          }
-        }
-        if (!violationFound) pass('kilojson.diversity', `diversity_rule 通过（${collected.length} 个目标全部不同 vendor/architecture）`);
-      }
-
-      if (divFail === 0 && collected.length === 0 && diversityTargets.size > 0 && !divMap) {
-        // diversity_map 缺失但有目标，仅 warn
-        warn('kilojson.diversity', `有 ${diversityTargets.size} 个 diversity 目标但 diversity_map 缺失，无法机械校验`);
-      }
-    }
-  }
+  // G5. diversity_rule 已移除（T3 走 worktree 端到端副本竞赛，不再需要 multiModel diversity 校验）
 }
+
 
 // 静态检查代码块结束后调用 report()
 report();

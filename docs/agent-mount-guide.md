@@ -94,9 +94,9 @@ task_context:
 > **注意**：`INTENT`、`SIZING`、`DELIVERING` 的 executor 为 `conductor`（内建），主槽本身由 conductor 占据，但 `pre:`/`post:` 钩子仍可挂载自定义智能体。
 > **v2 QUALITY hooks**：QUALITY 阶段内部不使用 `pre:`/`post:` 挂载，而是通过 `hook` + `after` + `deps` + `trigger` 声明响应式挂载——`verify → fix → review → fix` 自动循环。
 
-### T3 阶段级多模型并行
+### T3 端到端 worktree 副本竞赛
 
-T3 走主图 `PLANNING→EXECUTING→QUALITY→DELIVERING` 全链路（与 T1/T2 一致），无独立 DAG。PLANNING 阶段由 `multiModel` 调度 3 个 planner 变体（kimi-k2.6 / deepseek-v4-pro / glm-5.2）出方案并融合选优，写入 `plan`；EXECUTING 单路 coder 按融合方案实现；QUALITY 四视角交叉验证不变。
+T3 走主图 `PARALLEL_EXECUTION→SYNTHESIZING→DELIVERING` 全链路。PARALLEL_EXECUTION 由 conductor 内建调度 3 个 worktree 副本（各执行完整 T2 流程），SYNTHESIZING 选优合并后交付。
 
 ---
 
@@ -129,8 +129,8 @@ at: pre:PLANNING
 # 阶段后钩子
 at: post:QUALITY
 
-# T3 阶段级并行
-at: PLANNING                  # multiModel 调度 planner-a/b/c 三变体
+# T3 端到端 worktree
+at: PARALLEL_EXECUTION        # conductor 内建调度 3 worktree 副本
 ```
 
 ### `after`（可选）
@@ -152,7 +152,7 @@ mount:
     hook: review
 ```
 
-> **T3 阶段级并行场景**（如 3 个 planner 变体在 PLANNING 阶段由 multiModel 调度，`graph.yaml` 声明 `provider: multiModel`）省略 `after`，由 multiModel 按最大并行度执行。主图同 hook 类型默认串行，声明 `after` 控制相对顺序。
+> **T3 端到端 worktree 场景**：PARALLEL_EXECUTION 由 conductor 内建调度 3 个 worktree 副本并行执行，各副本内独立完成完整 T2 流程。主图同 hook 类型默认串行，声明 `after` 控制相对顺序。
 
 > v2 废弃 `order: <数字>` 绝对编号系统。QUALITY 内部顺序由 `hook` 类型内置定义（`verify → fix → review → fix`），同 hook 类型内默认串行（避免并发 task 调度 abort），需要相对顺序时用 `after` 声明前驱。仅 `graph.yaml` 声明 `parallel: true` 的节点保留并行语义。
 
@@ -226,7 +226,6 @@ tier_defaults:
       reverse_auditor: true
       side_checker: true
     review_mode: full
-     provider: multiModel          # T3 走阶段级并行
 ```
 
 > **新增智能体默认零配置**：恒定挂载（无 `when`）的智能体无需在 `config.yaml` 声明，图拓扑可达即加载。
@@ -354,7 +353,7 @@ mount:
 
 ## 7. 实际仓库案例
 
-当前仓库 14 个智能体的挂载分布：
+当前仓库 10 个智能体的挂载分布：
 
 | 智能体 | 挂载点 | 类型 | `when` | `on_fail` | 说明 |
 |--------|--------|------|--------|-----------|------|
@@ -366,10 +365,9 @@ mount:
 | `plan-reviewer` | `post:PLANNING` | 后钩子 | 无 | `abort` | 方案硬门审查 |
 | `reverse-auditor` | `QUALITY hook:verify` | 主图hook | `config.agents.reverse_auditor` | `degrade` | 反向审计（可选） |
 | `side-checker` | `QUALITY hook:review` | 主图hook | `config.agents.side_checker` | `degrade` | 侧向验证（可选） |
-| `multiModel` | `PLANNING` | primary | — | `config.agents.multiModel` | T3 阶段级并行调度者（mount: PLANNING，内部调度 planner-a/b/c） |
 | `conductor` | — | primary | — | — | 主图编排者（不经 mount，内建执行 INTENT/SIZING/DELIVERING） |
 
-> **multiModel** 与 **conductor** 是 `mode: primary` 智能体。conductor 不经 mount（内建执行）；multiModel 经 `mount: PLANNING` + `when: config.agents.multiModel` 挂载（T3 时激活）。
+> **conductor** 是唯一的 `mode: primary` 智能体，不经 mount（内建执行）。
 
 ---
 
@@ -426,7 +424,6 @@ foreach ($f in $files) {
 | `[ASSEMBLY_FAIL]` 角色无人履行 | 某 `required_roles` 角色无智能体在主槽注册 | 创建 `agent/<role>.md` 并挂载到对应主槽 |
 | `[SLOT_ABORT]` | `post:PLANNING` 的 `on_fail: abort` 触发 | 检查方案审查输出，修复方案后重试 |
 | `[AGENT_TIMEOUT]` | wall-clock 超过 `timeout_s` | 检查 `config.yaml timeouts.per_agent_s` 是否过小 |
-| `[DIVERSITY_VIOLATION]` | T3 planner-a/b/c 模型 (vendor, architecture) 不两两不同 | 在 `kilo.json` 绑定不同 vendor 的模型 |
 | `DEGRADED` | 可选视角（reverse-auditor/side-checker）挂载失败 | 检查模型可用性或降级为单机模式 |
 | `${HOME}` 占位符残留 | `install.ps1`/`install.sh` 替换不完整 | 确保脚本替换 `${KILO_CONFIG_DIR}` 和 `${HOME}` |
 | 全局未同步 | 提交后漏跑 install | 提交后执行 `./install.ps1` 或 `./install.sh`，重启 Kilo |
