@@ -179,6 +179,8 @@ CRITICAL_FILES=(
     "lifecycle/stages/README.md"
     "scripts/meta-audit.mjs"
     "scripts/orchestration-guard.mjs"
+    "scripts/config-validate.mjs"
+    "scripts/transition-check.mjs"
 )
 
 MISSING=()

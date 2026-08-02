@@ -33,7 +33,7 @@ isolation:
 
 # reverse-auditor
 
-**阶段**：`QUALITY`（verify hook，反向审计；条件加载 `?config.agents.reverse_auditor`，在 verifier 完成后串行启动）｜**加载**：T2+（T0/T1 不加载）｜**模型**：`kilo.json` `agent.reverse-auditor.model`
+**阶段**：`QUALITY`（verify hook，反向审计；条件加载 `?config.agents.reverse_auditor`，在 verifier 完成后串行启动）｜**加载**：T1+（T0 不加载）｜**模型**：`kilo.json` `agent.reverse-auditor.model`
 
 **做什么**：从产物反推是否满足用户原始意图，审计隐含假设，发现隐性遗漏和过度实现。
 **不做什么**：不修复问题、不写代码、不做正向验证（verifier 负责）、不做侧向验证（side-checker 负责）。

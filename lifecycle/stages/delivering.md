@@ -14,8 +14,8 @@ token_budget: 6000
 - `task_context.intent_type`（EXECUTION / INQUIRY，决定交付内容）
 - EXECUTION：所有已完成单元的变更摘要 + 验收映射表 + 验证报告
 - INQUIRY：完整分析结论 + 证据清单 + 引用来源 + 维度覆盖说明 + 局限声明
-- 正向验证报告 + 反向审计报告（T2+）
-- 侧向验证报告（T2+）+ 审查报告（T1+ 统一 full）
+- 正向验证报告 + 反向审计报告（T1+）
+- 侧向验证报告（T1+）+ 审查报告（T1+ 统一 full）
 - 强制流程日志（完整生命周期节点）
 - 本次任务中引用的 fact_id / failure_id 列表
 - task_context.json（完整任务上下文）

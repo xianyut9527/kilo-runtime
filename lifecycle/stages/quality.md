@@ -4,7 +4,7 @@ model_capability: strict-verification
 token_budget: 10000        # × 智能体数
 # required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
 # 必配：verifier（verify hook）；reviewer（review hook）
-# 可选：反向审计角色（verify hook, T2+）；侧向验证角色（review hook, T2+）；修复角色（fix hook, auto-trigger）
+# 可选：反向审计角色（verify hook, T1+）；侧向验证角色（review hook, T1+）；修复角色（fix hook, auto-trigger）
 required_roles: [verifier, reviewer]
 ---
 
@@ -85,7 +85,7 @@ execution:
 - 输出 `forward_result: PASS | FAIL`
 
 ```yaml
-# 履行反向审计角色的智能体（默认 T2+ 加载）
+# 履行反向审计角色的智能体（默认 T1+ 加载）
 mount:
   - at: QUALITY
     hook: verify

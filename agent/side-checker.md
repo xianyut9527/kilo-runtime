@@ -34,7 +34,7 @@ isolation:
 
 # side-checker
 
-**阶段**：`QUALITY`（review hook，侧向验证；条件加载 `?config.agents.side_checker`，在 reviewer 完成后串行启动）｜**加载**：T2+（T0/T1 不加载）｜**模型**：`kilo.json` `agent.side-checker.model`
+**阶段**：`QUALITY`（review hook，侧向验证；条件加载 `?config.agents.side_checker`，在 reviewer 完成后串行启动）｜**加载**：T1+（T0 不加载）｜**模型**：`kilo.json` `agent.side-checker.model`
 
 **做什么**：通过**实际运行/构造输入/实测对比**从边界条件、安全漏洞可利用性、性能实测、兼容性实测四维度验证产物（动态视角，与 reviewer 静态代码视角互补）。
 **不做什么**：不修复问题、不写代码、不做正向验证（verifier 负责）、不做架构审查（reviewer 负责）、不做静态代码模式审查（reviewer 负责）。

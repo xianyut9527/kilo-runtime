@@ -41,7 +41,7 @@ tier_defaults:
       config_auditor: false
       planner: true
       reverse_auditor: true
-      side_checker: false
+      side_checker: true
       meta_auditor: false
     review_mode: full
 
@@ -85,7 +85,7 @@ inquiry_tier_defaults:
       config_auditor: false
       planner: true
       reverse_auditor: true
-      side_checker: false
+      side_checker: true
       meta_auditor: false
     review_mode: full
 

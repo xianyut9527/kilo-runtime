@@ -11,7 +11,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 - **扩展入口内置**：默认仅启用 `context7` 远程文档检索；`gitnexus`、`playwright` 按需手动开启。
 - **职责分层**：通用规则集中在 `.kilo/instructions/`；`agent/*.md` 定义智能体行为与挂载点；`kilo.json` 提供运行时模型与 prompt 锚点。
 - **项目知识隔离**：项目特化知识下沉到项目根目录的 `AGENTS.md` 和 `.kilo/skills/`，不混入全局配置。
-- **配置验证前置**：修改后必须跑 `node scripts/lifecycle-doctor.mjs` 和 `node scripts/config-validate.mjs`（若存在），确保装配与 schema 校验通过。`node scripts/orchestration-guard.mjs --strict` 检测非编排直接篡改 governance 文件（`.md`/`.yaml`/`.json`、`agent/*`、`lifecycle/*`），已通过 `--install-hook` 集成到 git pre-commit 钩子中（`install.ps1`/`install.sh` 自动安装）；`--strict` 模式下绕过提交会被阻断（exit 1），默认模式仅警告（exit 0，避免 CI 误伤）。
+- **配置验证前置**：修改后必须跑 `node scripts/lifecycle-doctor.mjs` 和 `node scripts/config-validate.mjs`，确保装配与 schema 校验通过。`node scripts/orchestration-guard.mjs --strict` 检测非编排直接篡改 governance 文件（`.md`/`.yaml`/`.json`、`agent/*`、`lifecycle/*`），已通过 `--install-hook` 集成到 git pre-commit 钩子中（`install.ps1`/`install.sh` 自动安装）；`--strict` 模式下绕过提交会被阻断（exit 1），默认模式仅警告（exit 0，避免 CI 误伤）。
 
 ## 模型路由原则
 
@@ -52,8 +52,8 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   ├── plan-reviewer.md          # 方案审查（mount: post:PLANNING；PASS/FAIL verdict）
 │   ├── coder.md                  # 编码智能体（mount: EXECUTING；实现、自测、三件套）
 │   ├── verifier.md               # 正向验证（mount: QUALITY hook:verify；L1/L2/L3、5 元组证据）
-│   ├── reverse-auditor.md        # 反向审计（mount: QUALITY hook:verify, when: T2+；需求追溯、假设审计）
-│   ├── side-checker.md           # 侧向验证（mount: QUALITY hook:review, when: T2+；边界/安全/性能/兼容性实测）
+│   ├── reverse-auditor.md        # 反向审计（mount: QUALITY hook:verify, when: T1+；需求追溯、假设审计）
+│   ├── side-checker.md           # 侧向验证（mount: QUALITY hook:review, when: T1+；边界/安全/性能/兼容性实测）
 │   ├── reviewer.md               # 静态审查（mount: QUALITY hook:review；安全编码模式/架构/简化/SCOPE_CREEP 四视角）
 │   ├── fixer.md                  # 修复智能体（mount: QUALITY hook:fix, auto-trigger；定向修复阻塞问题）
 │   ├── config-auditor.md         # 配置审计（mount: post:DELIVERING；装配/schema/健康度回归）
