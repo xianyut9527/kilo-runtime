@@ -12,50 +12,33 @@ permission:
   glob: allow
   grep: allow
 subagent_type: reviewer
-# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
-# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
+# v6 生命周期路由声明（bootstrap 扫 frontmatter 自动注册）
 
-# mount：挂载点声明
-#   at    挂载点（QUALITY 阶段 review hook，派生自 graph.yaml QUALITY 节点）
-#   when  省略 = 必加载（QUALITY 仅 T1+ 可达，可达性即开关）
 mount:
-  # v2 响应式 Hooks：QUALITY 阶段 review hook，trigger: afterPass 确保 review hooks
-  # 在 verify hooks 全 PASS 后自动触发；side-checker 作为 review hook 另一成员在 reviewer 完成后串行启动（遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）。
+  # QUALITY review hook，trigger: afterPass = verify 全 PASS 后自动触发
   - at: QUALITY
     hook: review
     trigger: afterPass
     deps: ["execution.code", "execution.analysis", "plan"]
 
-# task_context：读写边界声明
-#   read   可读切片（diff 审查对象；plan 验收标准；project_context 项目级约束）
-#   write  可写切片（verification.review 审查结论）
 task_context:
   read: [execution.diffs, execution.acceptance_map, execution.changes, plan, acceptance_criteria, project_context, execution.analysis]
   write: [verification.review]
 
-# isolation：视角物理隔离声明（防止确认偏误——审查者不见验证者/审计者结论，独立判断）
-#   forbid_read  禁止读取的 task_context 切片
 isolation:
-  forbid_read: [verifier_report, reverse_auditor_report, verification.forward, verification.reverse]
+  forbid_read: [verifier_report, reverse_auditor_report, verification.forward, verification.reverse]   # 视角物理隔离：审查者独立判断
 ---
 
 # reviewer
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 智能体定位
-
-**生命周期阶段**：`QUALITY`（review hook，审查；side-checker 作为 review hook 另一成员在 reviewer 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §全局默认串行策略）
-**加载条件**：T1+（T0 不加载）
-**模型**：见 `kilo.json` `agent.reviewer.model`（架构视角审查需要强 reasoning 能力需求）
+**阶段**：`QUALITY`（review hook，审查；side-checker 作为 review hook 另一成员在 reviewer 完成后串行启动）｜**加载**：T1+（T0 不加载）｜**模型**：`kilo.json` `agent.reviewer.model`
 
 **做什么**：通过**阅读代码**从安全编码模式、架构、简化、SCOPE_CREEP 四视角审查代码质量（静态视角，与 side-checker 运行时行为视角互补）。
-
 **不做什么**：不修复代码、不执行验证（verifier 已完成）、不做设计门、不做运行时行为验证（side-checker 负责）。
 
-## 记忆召回（M1-sub，详见 output-schema.md §共享记忆召回接口）
+## 记忆召回
 
-召回产物写入 `task_context.verification.review.memory_injection = { arch_antipatterns, scope_creep_history }`，作为补审清单。
+subagent 自召回（M1-sub），见 `output-schema.md` §共享记忆召回接口。召回产物写入 `task_context.verification.review.memory_injection = { arch_antipatterns, scope_creep_history }`，作为补审清单。
 
 ## 输入接口（从 task_context 注入）
 

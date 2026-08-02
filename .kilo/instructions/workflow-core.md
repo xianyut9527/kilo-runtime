@@ -203,44 +203,32 @@ conductor 解析 agent 返回或工具调用结果时，按以下分级路由处
 
 ### 标记 → 硬动作映射（conductor 必须执行）
 
-以下标记由 conductor 在解析子 agent 输出时自动检测，检测后必须执行对应硬动作，不得跳过：
+完整标记清单见 `output-schema.md` §标记语言。以下为 conductor 检测后必须执行的硬动作（不得跳过）：
 
-| 标记 | 检测方式 | 硬动作 | 失败后果 |
-|------|----------|--------|----------|
-| `[MALFORMED_OUTPUT]` | JSON.parse 失败 / XML 标签缺失 / 必需字段缺失 | 1. 要求子 agent 用更严格格式重输出<br>2. 第 2 次仍失败 → 调用 reviewer | 流程中断，不得进入下游 |
-| `[MISSING_STATUS_SIGNAL]` | 无法提取 `DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED` | 1. 要求子 agent 显式输出状态<br>2. 仍失败 → 调用 reviewer | 流程中断，不得进入下游 |
-| `[MISSING_RECALL]` | 回溯阶段未执行 sqlite 查询 | 1. 立即执行 sqlite 查询<br>2. 查询完成前不得进入修复阶段 | 阻塞修复，直到查询完成 |
-| `[MISSING_MEMORY_WRITE]` | T1+ 任务结束未写入 `dispatch_log` | 1. 立即补写 `dispatch_log`<br>2. 写入完成前不得标记任务完成 | 阻塞交付，直到写入完成 |
-| `[MISSING_CONTEXT_QUERY]` | 编码前未按规则调用 Context Engine | 1. 立即补调必要工具<br>2. 完成后重新检查点 | 阻塞编码，直到查询完成 |
-| `[PROCESS_VIOLATION]` | 流程跳步 | 1. 标记违规<br>2. 暂停执行<br>3. 修正后从上一个检查点恢复 | 任务暂停 |
-| `[CIRCUIT_BREAKER]` | 连续 3 次无法收敛 | 1. 停止修复<br>2. 生成降级交付报告<br>3. 建议用户决策 | 任务终止 |
-| `[NEEDS_REVIEW]` | fixer 连续 2 轮同症状 | 1. 停止 fixer<br>2. 升级 reviewer<br>3. reviewer 结论作为最终状态 | fixer 终止 |
+| 标记 | 硬动作 |
+|------|--------|
+| `[MALFORMED_OUTPUT]` | 要求 agent 用更严格格式重输出；第 2 次仍失败 → 调用 reviewer |
+| `[MISSING_STATUS_SIGNAL]` | 要求 agent 显式输出状态；仍失败 → 调用 reviewer |
+| `[MISSING_RECALL]` | 立即执行 sqlite 查询；查询完成前不得进入修复阶段 |
+| `[MISSING_MEMORY_WRITE]` | 立即补写 dispatch_log；写入完成前不得标记任务完成 |
+| `[MISSING_CONTEXT_QUERY]` | 立即补调必要工具；完成后重新检查点 |
+| `[PROCESS_VIOLATION]` | 标记违规 + 暂停执行 + 修正后从上一个检查点恢复 |
+| `[CIRCUIT_BREAKER]` | 停止修复 + 生成降级交付报告 + 建议用户决策 |
+| `[NEEDS_REVIEW]` | 停止 fixer + 升级 reviewer，reviewer 结论作为最终状态 |
 
-**执行要求**：
-- 所有标记检测必须在子 agent 返回后 **10 秒内**完成
-- 标记触发后，conductor 必须在回复中显式输出「检测到 `[标记名]`，执行动作：...」
-- 任何标记未处理即进入下游 → `[PROCESS_VIOLATION]`
-
-## 规范统一 / 审计类任务 SOP
-
-触发条件：「统一 XX 规范」「全量审计」「批量整改」「全局替换」类任务。必须按以下五步执行，缺步即 `[PROCESS_VIOLATION]`：
-
-1. **全量扫描清单先行**：grep/glob 产出完整命中清单（文件数+行数+分类），作为验收基准；禁止边改边发现。
-2. **组件化优先**：重复 ≥3 处提炼为共享抽象（UI: 组件/layout/design token/mixin；非 UI: util/hook/service/adapter/策略接口/配置驱动），禁止逐处复制粘贴。
-3. **注释溯源**：每处整改标注规范条目编号，便于审计回归。
-4. **防复发产物**：交付必须包含至少一项防复发机制（token 体系/共享组件/lint 规则/文档硬约束条款）。
-5. **反向验证**：对「应清零项」反向 grep（命中数=0），对「应统一引用项」正向 grep（命中数=目标数），写入验收映射表。
+**执行要求**：所有标记检测必须在子 agent 返回后 **10 秒内**完成；触发后 conductor 必须显式输出「检测到 `[标记名]`，执行动作：...」；任何标记未处理即进入下游 → `[PROCESS_VIOLATION]`。
 
 ## 重复模式修复 / 组件化 SOP（UI 与非 UI 通用）
 
-同一实现模式在 ≥2 个文件/模块出现时，强制按以下流程执行，禁止逐处打补丁：
+同一实现模式在 ≥2 个文件/模块出现时，强制按以下流程执行，禁止逐处打补丁。"统一 XX 规范""全量审计""批量整改""全局替换"类任务同样适用本 SOP：
 
-1. **全量扫描清单先行**：grep/glob/gitnexus 产出完整命中清单，作为验收基准。
+1. **全量扫描清单先行**：grep/glob/gitnexus 产出完整命中清单（文件数+行数+分类），作为验收基准；禁止边改边发现。
 2. **根因分类**：A. 缺少共享抽象 → 创建/扩展；B. 已有但实现错误 → 修正并同步消费者；C. 独立上下文无法抽象 → 验收映射表写明理由+用户确认。
 3. **组件化优先**：重复 ≥2 处提炼为共享抽象（UI: 组件/layout/design token/mixin/全局 CSS；非 UI: util/hook/service/repository/adapter/策略接口/配置驱动/插件化）。
 4. **同步依赖**：所有受影响文件/模块同批修改，禁止「先改一个看看」。
-5. **防复发产物**：交付必须包含至少一项防复发机制。
-6. **反向验证**：旧模式反向 grep（命中数=0），新引用正向 grep（命中数=预期消费者数），写入验收映射表。
+5. **注释溯源**（审计类任务）：每处整改标注规范条目编号，便于审计回归。
+6. **防复发产物**：交付必须包含至少一项防复发机制（token 体系/共享组件/lint 规则/文档硬约束条款）。
+7. **反向验证**：旧模式反向 grep（命中数=0），新引用正向 grep（命中数=预期消费者数），写入验收映射表。
 
 违反任意一步 → `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` / `[MISSING_SCAN]` / `[MISSING_PREVENTION]`，verifier 必须 FAIL。
 
@@ -290,3 +278,7 @@ T2+ 任务执行 planner 计划前，conductor 必须：Critical Review → 创�
 ## 验证与修复通用原则
 
 见 `.kilo/instructions/reflection.md` §三层判定 + §Circuit Breaker。
+
+## small_model 路由规则
+
+`small_model` 仅在以下条件**全部满足**时使用：① 1-2 文件纯表面修改（文案/格式/命名/注释）；② 无逻辑变更、无跨模块依赖；③ 不需推理链（搜索/读取确认/机械替换）；④ 非安全敏感模块。任一不满足 → 用 `agent.model` 或更强。**禁止**把 verifier/fixer/reviewer 等质量门禁角色路由到 small_model。

@@ -12,40 +12,23 @@ permission:
   glob: allow
   grep: allow
 subagent_type: planner
-# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
-# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
+# v6 生命周期路由声明（bootstrap 扫 frontmatter 自动注册）
 
-# mount：挂载点声明
-#   at    挂载点（PLANNING 阶段主槽，派生自 graph.yaml PLANNING 节点）
-#   when  config.agents.planner == true 时激活（T1/T2）；T3 时 planner: false，由各 worktree 副本自有 planner 执行（PARALLEL_EXECUTION 阶段内建调度）
 mount:
   - at: PLANNING
-    when: "config.agents.planner"
+    when: "config.agents.planner"   # T1/T2 开；T3 由各 worktree 副本自有 planner
 
-# task_context：读写边界声明
-#   read   可读的 task_context 切片（intent + sizing 由 conductor 在 INTENT/SIZING 写入；
-#          plan_review 由 post:PLANNING 的审查者写入，planner 回流时读审查反馈）
-#   write  可写的 task_context 切片（plan 由 planner 设计方案后写入）
 task_context:
   read: [intent, sizing, plan_review, project_context]
   write: [plan, execution.analysis]
-
-# gate：planner 不设门禁字段——方案放行由 post:PLANNING 恒定挂载的独立审查者判定，
-# 其 verdict=FAIL/超时/异常 → 挂载点 on_fail: abort 中止流转（通用挂载机制，见 graph.yaml 头注释），planner 不自验方案
+# 方案放行由 post:PLANNING 独立审查者判定，planner 不自验
 ---
 
 # planner
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 智能体定位
-
-**生命周期阶段**：`PLANNING`（见 `lifecycle/graph.yaml` + `lifecycle/stages/planning.md`）
-**加载条件**：T1+（T0 不加载）
-**模型**：见 `kilo.json` `agent.planner.model`（架构分析、长上下文、复杂推理能力需求）
+**阶段**：`PLANNING`（`lifecycle/graph.yaml` + `lifecycle/stages/planning.md`）｜**加载**：T1+（T0 不加载）｜**模型**：`kilo.json` `agent.planner.model`
 
 **做什么**：分析需求、调研代码、输出设计方案（短方案或完整 DAG）、定义验收点、全量扫描清单。
-
 **不做什么**：不执行代码、不修改文件、不自行进入执行阶段、不做验证。
 
 ### INQUIRY 模式职责（A1）
@@ -53,13 +36,13 @@ task_context:
 INQUIRY 模式下 planner 承担研究执行角色（因 INQUIRY 无 EXECUTING 阶段，见 `planning.md` 模式 B）：
 - 执行 `research_units` 中每个研究单元（读文件/查证/记录证据）
 - 产出 `execution.analysis`（完整结构：conclusion_summary + evidence + dimensions_covered/missing + bias_flags + confidence）
-- **约束**：INQUIRY 模式禁止修改性工具（edit/write/create/delete），只产出分析文本。post:PLANNING 审查者的核对清单必须包含：planner 未调用任何修改性工具（edit/write/create/delete）
+- **约束**：INQUIRY 模式禁止修改性工具（edit/write/create/delete），只产出分析文本。post:PLANNING 审查者的核对清单必须包含：planner 未调用任何修改性工具。
 
 这是设计特例，非 planner 默认职责。EXECUTION 模式下 planner 仅设计方案，不执行研究。
 
-## 记忆召回（M1-sub，详见 output-schema.md §共享记忆召回接口）
+## 记忆召回
 
-召回产物写入 `task_context.plan.memory_injection = { failures, patterns, antipatterns }`，供后续 coder/verifier 共享。
+subagent 自召回（M1-sub），见 `output-schema.md` §共享记忆召回接口。召回产物写入 `task_context.plan.memory_injection = { failures, patterns, antipatterns }`，供后续 coder/verifier 共享。
 
 ## 输入接口（从 task_context 注入）
 

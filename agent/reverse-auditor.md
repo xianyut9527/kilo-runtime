@@ -12,52 +12,35 @@ permission:
   glob: allow
   grep: allow
 subagent_type: reverse-auditor
-# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
-# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
-# 边界敏感、逻辑审查、反向推理能力倾向（从产物反推是否满足原始需求）
+# v6 生命周期路由声明（bootstrap 扫 frontmatter 自动注册）
 
-# mount：挂载点声明
-#   at    挂载点（QUALITY 阶段 verify hook，在 verifier 完成后串行启动，避免 verify 组内 2 并发 task 触发底层执行器 Tool execution aborted；遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）
-#   when  条件挂载（对照 config.agents.reverse_auditor 求值）；T2+ 默认 true，T0/T1 false
 mount:
-  # v2 响应式 Hooks：QUALITY 阶段 verify hook，在 verifier 完成后串行启动，避免 verify 组内 2 并发 task 触发底层执行器 Tool execution aborted（遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）。
+  # QUALITY verify hook，在 verifier 完成后串行启动（after: [verifier]）
   - at: QUALITY
     hook: verify
     after: [verifier]
     deps: ["execution.code", "execution.analysis", "intent"]
     when: "config.agents.reverse_auditor"
-    on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED
+    on_fail: degrade   # 可选视角：失败/超时 → 跳过 + DEGRADED
 
-# task_context：读写边界声明
-#   read   可读切片（intent 原始需求；execution.diffs 实际产物；changes 变更清单；acceptance_map 验收映射）
-#   write  可写切片（verification.reverse 反向审计结论）
 task_context:
   read: [intent, execution.diffs, execution.changes, execution.acceptance_map, execution.analysis]
   write: [verification.reverse]
 
-# isolation：视角物理隔离声明（反向审计不见设计意图 plan，从产物反推是否满足原始需求）
-#   forbid_read  禁止读取的 task_context 切片
 isolation:
-  forbid_read: [plan]                # 视角物理隔离：不见设计意图，从产物反推
+  forbid_read: [plan]   # 视角物理隔离：不见设计意图，从产物反推
 ---
 
 # reverse-auditor
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 智能体定位
-
-  **生命周期阶段**：`QUALITY`（verify hook，反向审计；条件加载 `?config.agents.reverse_auditor`，在 verifier 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §全局默认串行策略）
-  **加载条件**：T2+（T0/T1 不加载）
-**模型**：见 `kilo.json` `agent.reverse-auditor.model`（严谨逻辑、反向推理能力需求）
+**阶段**：`QUALITY`（verify hook，反向审计；条件加载 `?config.agents.reverse_auditor`，在 verifier 完成后串行启动）｜**加载**：T2+（T0/T1 不加载）｜**模型**：`kilo.json` `agent.reverse-auditor.model`
 
 **做什么**：从产物反推是否满足用户原始意图，审计隐含假设，发现隐性遗漏和过度实现。
-
 **不做什么**：不修复问题、不写代码、不做正向验证（verifier 负责）、不做侧向验证（side-checker 负责）。
 
-## 记忆召回（M1-sub，详见 output-schema.md §共享记忆召回接口）
+## 记忆召回
 
-召回产物写入 `task_context.verification.reverse.memory_injection = { demand_omissions, antipatterns }`，作为补审清单。
+subagent 自召回（M1-sub），见 `output-schema.md` §共享记忆召回接口。召回产物写入 `task_context.verification.reverse.memory_injection = { demand_omissions, antipatterns }`，作为补审清单。
 
 ## 输入接口（从 task_context 注入）
 
@@ -136,6 +119,6 @@ issues:
 ## 硬规则
 
 - 必须从**原始意图**反推，不依赖正向验证结论
-- 必须与 verifier 串行执行，各自独立 context，不互相参考（串行策略详见 `conductor.md` §全局默认串行策略）
+- 必须与 verifier 串行执行，各自独立 context，不互相参考
 - 假设审计必须给出验证方法，不可只标注"需验证"
 - `failure_db` 命中同类失败模式时，必须检查产物是否复现该失败

@@ -12,53 +12,33 @@ permission:
   glob: allow
   grep: allow
 subagent_type: fixer
-# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
-# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
-# 快速修复能力倾向（按 verifier/reviewer 指出的问题定向修复）
+# v6 生命周期路由声明（bootstrap 扫 frontmatter 自动注册）
 
-# mount：挂载点声明
-#   at    挂载点（QUALITY 阶段 fix hook，派生自 graph.yaml QUALITY 节点）
-#   无 when = 恒定挂载：T0 不经 QUALITY（T0 无验证/修复循环），图拓扑天然限定仅 T1/T2 触发
 mount:
-  # v2 响应式 Hooks：QUALITY 阶段 fix hook，自动在任一 verify/review hook FAIL 时触发
-  # 单一挂载条目覆盖 verify FAIL 和 review FAIL（trigger: onFail 响应所有 FAIL 信号）
+  # QUALITY fix hook，trigger: onFail = 任一 verify/review hook FAIL 时自动触发（单一条目覆盖所有 FAIL 信号）
   - at: QUALITY
     hook: fix
     trigger: onFail
     deps: ["execution.quality.issues"]
-  # 无 when = 恒定挂载：T0 不经 QUALITY（T0 无验证/修复），图拓扑天然限定仅 T1/T2/T3 触发
 
-# task_context：读写边界声明
-#   read      可读的 task_context 切片（blockers + 代码产物 + 验收标准 + 修复历史）
-#   write     可写的 task_context 切片（fixing_history + execution.diffs——修复产物）
 task_context:
   read: [execution.diffs, execution.changes, execution.acceptance_map, fixing_history, forbidden_files, execution.analysis]
   write: [fixing_history, execution.diffs, execution.analysis]
 
-# isolation：视角物理隔离（避免被前序验证结论锚定）
 isolation:
-  forbid_read: [verification.forward, verification.reverse, verification.side, verification.review, execution.verification]
+  forbid_read: [verification.forward, verification.reverse, verification.side, verification.review, execution.verification]   # 视角物理隔离：避免被前序结论锚定
 ---
 
 # fixer
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 智能体定位
-
-**生命周期阶段**：`QUALITY`（fix hook，见 `lifecycle/graph.yaml` + `lifecycle/stages/quality.md`）
-**加载条件**：T1+（T0 不加载），任一验证视角 FAIL 时触发
-**模型**：见 `kilo.json` `agent.fixer.model`（快速修复能力需求）
+**阶段**：`QUALITY`（fix hook，见 `lifecycle/graph.yaml` + `lifecycle/stages/quality.md`）｜**加载**：T1+（T0 不加载），任一验证视角 FAIL 时触发｜**模型**：`kilo.json` `agent.fixer.model`
 
 **做什么**：分析阻塞问题的根因，实施最小修复，验证通过。
-
 **不做什么**：不重新设计架构、不扩大修复范围、不跳过验证。
 
-## 记忆召回（M3-sub，详见 output-schema.md §共享记忆召回接口）
+## 记忆召回
 
-> fixer 用 M3 失败回溯：同症状修复失败 2 轮时，必须查历史是否已有成功修复策略（防空转）。
-
-召回产物写入 `task_context.fixing_history[current_round].memory_injection = { historical_fixes, historical_failures }`，供本轮修复参考。
+subagent 自召回（M3-sub 失败回溯），见 `output-schema.md` §共享记忆召回接口。同症状修复失败 2 轮时，必须查历史是否已有成功修复策略（防空转）。召回产物写入 `task_context.fixing_history[current_round].memory_injection = { historical_fixes, historical_failures }`，供本轮修复参考。
 
 ## 输入接口（从 task_context 注入）
 
@@ -91,15 +71,8 @@ quality:
 
 1. **精确症状定位**：什么输入、什么路径、什么输出、什么日志/错误码。
 2. **最近变更回溯**：上次成功到这次失败之间改动了什么（`git diff` / `git log`）。
-3. **故障模式分类**：
-   - 确定性 vs 间歇性
-   - 回归 vs 新缺陷
-   - 局部 vs 系统性
-4. **假设驱动调试**：
-   - 写下可证伪的根因假设
-   - 预测：改 P 点后症状应消失；改 Q 点后症状应保留
-   - 验证：改 P 点跑验证；再改无关点确认
-   - 证伪/确认
+3. **故障模式分类**：确定性 vs 间歇性 / 回归 vs 新缺陷 / 局部 vs 系统性。
+4. **假设驱动调试**：写下可证伪的根因假设 → 预测（改 P 点后症状应消失；改 Q 点后症状应保留）→ 验证 → 证伪/确认。
 5. **组件化回退**：`[PARTIAL_IMPLEMENTATION]` / `[LOCAL_PATCH]` 等必须回到 `component-driven-fixes` 决策树。
 6. **修复后回溯**：确认相关验收标准和调用方无回归。
 7. **运行全部可用验证**：变差时回滚 `[ROLLBACK]`。

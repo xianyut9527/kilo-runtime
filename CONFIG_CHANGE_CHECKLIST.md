@@ -37,7 +37,7 @@
 ### 程序化记忆相关
 
 - [ ] 修改 `.kilo/memory/` 模板时是否同步 README.md 目录树？
-- [ ] 修改 memory 触发条件时是否同步 `.kilo/instructions/workflow-reference.md` 的「程序化记忆」章节？
+- [ ] 修改 memory 触发条件时是否同步 `.kilo/instructions/workflow-core.md` / `reflection.md` 的相关章节？
 - [ ] 是否同步更新 `agent/conductor.md` 的相关职责描述？（记忆操作 SQL 模板在 `docs/memory-ops-reference.md`）
 
 ### instructions 与 prompt 联动检查
@@ -51,7 +51,7 @@
 - fixer 轮次、升级阈值、Circuit Breaker：`.kilo/instructions/workflow-core.md`
 - 三层错误恢复：`.kilo/instructions/reflection.md`
 - 交付和验证底线：`.kilo/instructions/core.md` + `workflow-core.md`
-- 需求扩散、同类点扫描：`.kilo/instructions/workflow-reference.md`
+- 需求扩散、同类点扫描、small_model 路由：`.kilo/instructions/workflow-core.md`
 - 局部补丁拦截、重复模式修复 / 组件化 SOP：`.kilo/instructions/workflow-core.md`
 - 修复方法论（全链路审计、完整阅读、验证剩余路径、推测与验证区分）：`.kilo/instructions/workflow-core.md` + `core.md` + `reflection.md`
 - planner 设计门预审、verifier 分层、fixer 权限约束：`.kilo/instructions/workflow-core.md`（生命周期驱动后由 `lifecycle/stages/` 阶段文件 + `agent/*.md` frontmatter 生命周期声明 + 行为文件承载，v6 单源）
@@ -63,7 +63,7 @@
 - **自进化闭环**（执行→反思→提炼→固化的写入规则与优先级）→ 集中维护在 `docs/memory-ops-reference.md`；其他文件只做引用。
 - **Skill 升级提案**（fact_store 置信度/命中数达标后的固化流程）→ 集中维护在 `docs/memory-ops-reference.md` §M8；其他文件只做引用。
 - **skill 使用记录**（v2.5 起写入 SQLite `skill_usage_events` 表）→ 集中维护在 `.kilo/instructions/skill-usage-tracking.md`；其他文件只做引用。
-- **工作流参考**（small_model 触发规则、程序化记忆、需求扩散与同类点扫描）→ 集中维护在 `.kilo/instructions/workflow-reference.md`；README 与其他文件只做引用。
+- **工作流参考**（small_model 路由、需求扩散与同类点扫描）→ 集中维护在 `.kilo/instructions/workflow-core.md`；README 与其他文件只做引用。
 
 修改这些规则时，优先改主文档；agent 文件只保留必要引用和角色化执行要求。
 

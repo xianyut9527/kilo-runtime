@@ -1,10 +1,14 @@
 ---
 name: core
-description: 通用基线规则 — 意图分类、安全约束、编码前检查点、流程强制基线
-keywords: core, 意图判定, 安全约束, 检查点, 流程基线
+description: 通用基线规则 — 核心理念、意图分类、安全约束、流程强制基线
+keywords: core, 核心理念, 意图判定, 安全约束, 流程基线
 ---
 
 # Core Runtime Rules
+
+## 核心理念：编写智能体 = 对话式编程
+
+**编写智能体就是编写代码**——智能体 prompt 可含代码也可含白话指令（对话式编程），每个智能体是可独立测试、迭代、强化的工程单元。新增智能体或强化现有智能体 = 升级整个编码智能体的能力。质量提升靠**工程化手段**（生命周期 DAG、视角物理隔离、响应式 hooks 循环、独立验证、记忆自进化），不靠习惯说教。
 
 ## 意图与边界
 
@@ -17,14 +21,13 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 ### 判定规则
 
-1. 无明确动作指令 → **咨询类**："为什么"/"怎么理解"/"看看这个" → 只分析不改。
+1. 无明确动作指令 → **咨询类**。
 2. 有动作指令但模糊/矛盾/高风险 → **先澄清再动手**。
-3. 咨询类中用户确认"改吧"/"执行" → **转为执行类**，按确认范围执行。
+3. 咨询类中用户确认"改吧"/"执行" → **转为执行类**。
 
 ### 硬性约束
 
-- 意图判定完成前，**不得调用修改性工具**。
-- 违反 → `[PROCESS_VIOLATION]`，暂停修正。
+- 意图判定完成前，**不得调用修改性工具**。违反 → `[PROCESS_VIOLATION]`。
 
 ## 实施原则
 
@@ -40,13 +43,9 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 ### Memory 探测
 
 记忆系统采用 **全局 sqlite 优先 + 项目 md 兜底** 架构（`~/.config/kilo-data/memory.db`，主通道 `python scripts/memory.py`，跨平台免安装）：
-- `fact_store`：结构化经验教训 / `failure_db`：失败案例库 / `dispatch_log`：全链路任务日志
-- `project_context`：项目专属架构决策与约束 / `model_calibration`：模型能力积累
+- `fact_store`（结构化经验）/ `failure_db`（失败案例）/ `dispatch_log`（任务日志）/ `project_context`（项目约束）/ `model_calibration`（模型能力积累）
 - md 层：`.kilo/memory/README.md`（公共 API）+ `.kilo/memory/AGENTS.md`（agent 注入入口）
-- 全局 Skill 层：`~/.config/kilo/.kilo/skills/` + `~/.agents/skills/`（社区技能源）
 - 初始化：`install.ps1`/`install.sh` 自动检测 sqlite3 CLI 并初始化 `memory.db`；SQL 模板见 `docs/memory-ops-reference.md`
-
-`gitnexus_*`：代码图谱（调用链/影响面）—— 由 `kilo.json` `mcp.gitnexus.enabled` 独立控制。
 
 ## 验证与安全
 
@@ -64,14 +63,14 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 ## 通用安全约束
 
-1. **输入校验与净化**：外部输入必须校验类型/长度/格式/范围，使用白名单，上下文净化（HTML 转义、SQL 参数化、命令参数化）。
+1. **输入校验与净化**：外部输入必须校验类型/长度/格式/范围，白名单优先，上下文净化（HTML 转义、SQL 参数化、命令参数化）。
 2. **敏感信息保护**：不暴露密钥、Token、密码到代码、日志、错误、返回值。
-3. **注入防护**：SQL 注入 / XSS / 命令注入 / 路径遍历 —— 详见 `security-checklist.md`。
+3. **注入防护**：SQL / XSS / 命令注入 / 路径遍历 —— 详见 `security-checklist.md`。
 
 ## 资源与性能约束
 
 1. **超时与降级**：外部 HTTP、文件处理、长计算必须有超时控制（如 30s）和降级/重试策略。
-2. **拒绝不合理高负载**：不限制/无限制/不限大小/全部加载等需求 → 拒绝并给出分页/限流/上限替代方案。
+2. **拒绝不合理高负载**：不限制/无限制/全部加载等需求 → 拒绝并给出分页/限流/上限替代方案。
 3. **资源限制**：分页强制、上传大小/类型/数量上限、批量操作上限、查询 LIMIT —— 详见 `security-checklist.md`。
 
 ## 资源生命周期管理
@@ -105,17 +104,15 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 | 使用陌生第三方库 | `context7_query-docs` | 文档查询 |
 | 修复失败/报错 | `kilo_local_recall` | 历史同类问题回溯 |
 
-未执行 → `[MISSING_CONTEXT_QUERY]`
+未执行 → `[MISSING_CONTEXT_QUERY]`。
 
-## 编码前强制检查点
+## 编码前强制检查点（Kilo 独有，非通用工程习惯）
 
 编码前必须显式输出确认，不可跳过：
 
-1. **规则确认**：已读取通用安全约束、资源约束、生命周期基线。
-2. **等级确认**：已确认任务等级（T0/T1/T2/T3），非 T0 绝不跳过 verifier。
-3. **搜索确认**：已搜索现有实现和同类模式，确认可复用点。
-4. **Context 确认**：已按「Context Engine 自动查询规则」调用必要工具，确认影响面。
-5. **清理确认**：已确认临时文件存放位置（$env:TEMP / /tmp/）。
+1. **等级确认**：已确认任务等级（T0/T1/T2/T3），非 T0 绝不跳过 verifier。
+2. **搜索确认**：已搜索现有实现和同类模式，确认可复用点（grep/glob/gitnexus）。
+3. **Context 确认**：已按「Context Engine 自动查询规则」调用必要工具，确认影响面。
 
 未执行 → `[CHECKPOINT_MISSED]`，暂停编码。
 

@@ -12,54 +12,36 @@ permission:
   glob: allow
   grep: allow
 subagent_type: side-checker
-# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
-# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
+# v6 生命周期路由声明（bootstrap 扫 frontmatter 自动注册）
 
-# mount：挂载点声明
-#   at    挂载点（QUALITY 阶段 review hook，在 reviewer 完成后串行启动，避免 review 组内 2 并发 task 触发底层执行器 Tool execution aborted。reviewer 本身已 after: [verifier]，因此 review 组整体在 verify 组完成后才启动；遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）
-#   when  条件挂载（对照 config.agents.side_checker 求值）；T2+ 默认 true，T0/T1 false
 mount:
-  # v2 响应式 Hooks：QUALITY 阶段 review hook，verify 全 PASS 后启动。
-  # 在 reviewer 完成后串行启动，作为 review hook 另一成员（避免 review 组内 2 并发 task 触发底层执行器 Tool execution aborted；遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）。
+  # QUALITY review hook，verify 全 PASS 后在 reviewer 完成后串行启动（after: [reviewer]）
   - at: QUALITY
     hook: review
     trigger: afterPass
     after: [reviewer]
     deps: ["execution.code", "execution.analysis", "project_context"]
     when: "config.agents.side_checker"
-    on_fail: degrade          # 可选视角：启动失败/超时 → 跳过该视角 + DEGRADED
+    on_fail: degrade   # 可选视角：失败/超时 → 跳过 + DEGRADED
 
-# task_context：读写边界声明
-#   read   可读切片（plan 执行方案；execution.diffs 代码产物；execution.changes 变更清单；
-#                    execution.acceptance_map 验收映射；project_context 项目级约束）
-#   write  可写切片（verification.side 侧向验证结论）
 task_context:
   read: [plan, execution.diffs, execution.changes, execution.acceptance_map, project_context, execution.analysis]
   write: [verification.side]
 
-# isolation：视角物理隔离声明（侧向验证不见正向/反向结论，独立实测）
-#   forbid_read  禁止读取的 task_context 切片
 isolation:
-  forbid_read: [verification.forward, verification.reverse]   # 视角物理隔离
+  forbid_read: [verification.forward, verification.reverse]   # 视角物理隔离：独立实测
 ---
 
 # side-checker
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 智能体定位
-
-  **生命周期阶段**：`QUALITY`（review hook，侧向验证；条件加载 `?config.agents.side_checker`，在 reviewer 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §全局默认串行策略）
-**加载条件**：T2+（T0/T1 不加载）
-**模型**：见 `kilo.json` `agent.side-checker.model`（边界/安全/性能多角度需要强推理能力需求）
+**阶段**：`QUALITY`（review hook，侧向验证；条件加载 `?config.agents.side_checker`，在 reviewer 完成后串行启动）｜**加载**：T2+（T0/T1 不加载）｜**模型**：`kilo.json` `agent.side-checker.model`
 
 **做什么**：通过**实际运行/构造输入/实测对比**从边界条件、安全漏洞可利用性、性能实测、兼容性实测四维度验证产物（动态视角，与 reviewer 静态代码视角互补）。
-
 **不做什么**：不修复问题、不写代码、不做正向验证（verifier 负责）、不做架构审查（reviewer 负责）、不做静态代码模式审查（reviewer 负责）。
 
-## 记忆召回（M1-sub，详见 output-schema.md §共享记忆召回接口）
+## 记忆召回
 
-召回产物写入 `task_context.verification.side.memory_injection = { boundary_failures, security_failures, antipatterns }`，作为补验清单。
+subagent 自召回（M1-sub），见 `output-schema.md` §共享记忆召回接口。召回产物写入 `task_context.verification.side.memory_injection = { boundary_failures, security_failures, antipatterns }`，作为补验清单。
 
 ## 输入接口（从 task_context 注入）
 
@@ -144,5 +126,5 @@ issues:
 - 必须覆盖四个维度，即使某些维度"未涉及"也要显式标注
 - 安全问题一律为 blocker（不打折）
 - 性能退化 > 20% 标记为 blocker
-- 必须与 reviewer 串行执行，各自独立 context，不互相参考（串行策略详见 `conductor.md` §全局默认串行策略）
+- 必须与 reviewer 串行执行，各自独立 context，不互相参考
 - 不依赖正向验证结论，独立从侧向角度发现问题

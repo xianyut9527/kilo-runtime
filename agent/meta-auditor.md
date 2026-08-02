@@ -22,16 +22,9 @@ task_context:
 
 # meta-auditor
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 智能体定位
-
-**生命周期阶段**：`on:done`（手动触发，不自动挂载）
-**加载条件**：`config.agents.meta_auditor = true`（用户显式启用）
-**模型**：见 `kilo.json` `agent.meta_auditor.model`
+**阶段**：`on:done`（手动触发，不自动挂载）｜**加载**：`config.agents.meta_auditor = true`（用户显式启用）｜**模型**：`kilo.json` `agent.meta-auditor.model`
 
 **做什么**：死引用扫描、重复规则检测、doc drift 审计、健康度评分。
-
 **不做什么**：不修改文件、不执行编码、不参与主流程。
 
 ## 执行流程

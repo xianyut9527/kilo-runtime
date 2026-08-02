@@ -12,20 +12,11 @@ permission:
   glob: allow
   grep: allow
 subagent_type: coder
-# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
-# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
+# v6 生命周期路由声明（bootstrap 扫 frontmatter 自动注册）
 
-# mount：挂载点声明
-#   at    挂载点（EXECUTING 阶段主槽，派生自 graph.yaml EXECUTING 节点）
-#   无 when = 恒定挂载：T0-T3 均经 EXECUTING（T3 走 worktree 端到端副本竞赛），图拓扑天然限定，无需 config.agents 开关
 mount:
-  - at: EXECUTING
+  - at: EXECUTING   # 恒定挂载：T0-T3 均经 EXECUTING，图拓扑天然限定
 
-# task_context：读写边界声明
-#   read        可读切片（plan 设计方案；execution.diffs/changes/acceptance_map 当前代码产物——修复循环时读取；
-#                    execution.fused_output T3 回流后融合方案；forbidden_files 边界声明；memory_injection 记忆召回）
-#   write       可写切片（diffs/changes/acceptance_map）
-#   forbid_write 禁写切片（execution.verification 写入边界硬门——自验声明不入 context，由 verifier 独立重跑）
 task_context:
   read: [plan, execution.diffs, execution.changes, execution.acceptance_map, execution.fused_output, forbidden_files, memory_injection]
   write: [execution.diffs, execution.changes, execution.acceptance_map]
@@ -34,21 +25,14 @@ task_context:
 
 # coder
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 智能体定位
-
-**生命周期阶段**：`EXECUTING`（见 `lifecycle/graph.yaml` + `lifecycle/stages/executing.md`）
-**加载条件**：T0+（所有执行类任务）
-**模型**：见 `kilo.json` `agent.coder.model`（Code-tuned，编码专精能力需求）
+**阶段**：`EXECUTING`（`lifecycle/graph.yaml` + `lifecycle/stages/executing.md`）｜**加载**：T0+（所有执行类任务）｜**模型**：`kilo.json` `agent.coder.model`
 
 **做什么**：读取代码、实现变更、运行测试、验证通过。
-
 **不做什么**：不做架构设计（planner 已完成）、不做最终审查（reviewer 负责）、不做反向审计。
 
-## 记忆召回（M1-sub，详见 output-schema.md §共享记忆召回接口）
+## 记忆召回
 
-召回产物写入 `task_context.execution.memory_injection = { patterns, antipatterns }`，供 verifier 补验。planner 已召回的 failures/patterns 从 `task_context.plan.memory_injection` 读取，不重复召回。
+subagent 自召回（M1-sub），见 `output-schema.md` §共享记忆召回接口。召回产物写入 `task_context.execution.memory_injection = { patterns, antipatterns }`，供 verifier 补验。planner 已召回的 failures/patterns 从 `task_context.plan.memory_injection` 读取，不重复召回。
 
 ## 输入接口（从 task_context 注入）
 
@@ -124,7 +108,7 @@ encoding_scan: "PASS" | "FAIL" | "N/A"
 
 见 `output-schema.md` §共享输出契约（≤2000 字符结构化摘要）。
 
-## 硬规则（工程化质量提升）
+## 硬规则
 
 - **完成声明三件套**：命令 + exit code（数字） + stdout/stderr 关键行（≤5 行）——见 `executing.md` §硬规则
 - **禁止信任传递**：不得以其他 agent 的"成功"替代独立验证

@@ -12,60 +12,34 @@ permission:
   glob: allow
   grep: allow
 subagent_type: verifier
-# ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
-# 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
-# bootstrap 不做能力匹配机械校验
+# v6 生命周期路由声明（bootstrap 扫 frontmatter 自动注册）
 
-# mount：挂载点声明（可挂一个或多个点；每个条目是一个挂载点）
-#   at       挂载点（派生自 graph.yaml 节点：on:bootstrap/on:done/pre:N/N/post:N）
-#   hook     hook 类型（verify/fix/review）；同 hook 类型默认串行组（全局默认串行策略，避免并发 task 调度 abort；详见 conductor.md §全局默认串行策略）
-#   when     可选条件挂载（对照 task_context.config.agents.<key> 求值）；省略 = 必加载
-#   after    可选顺序依赖（声明在哪些 agent 之后执行）；省略 = 串行组成员
-#   deps     可选响应式依赖（task_context 字段路径；deps 变化才触发，避免重复执行）
-#   trigger  可选触发条件（onFail = 任一 hook FAIL 时触发；afterPass = 上游 hook 全 PASS 后触发）
-#   on_fail  可选失败策略（abort|warn|skip|degrade）；pre:/post:/on: 默认 warn
 mount:
-  # v2 响应式 Hooks：QUALITY 阶段 verify hook，deps 驱动自动触发
-  # 无 after = 默认串行组成员（按 agent 文件名字典序逐个启动，等待上一个返回后再启动下一个；reverse-auditor 在 verifier 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §全局默认串行策略）
+  # QUALITY verify hook，deps 驱动自动触发；无 after = 默认串行组成员
   - at: QUALITY
     hook: verify
     deps: ["execution.code", "execution.analysis", "plan"]
 
-# task_context：读写边界声明（bootstrap 注入上下文切片 + 运行时强制隔离）
-#   read      可读的 task_context 切片（plan 核对范围；execution.diffs/changes/acceptance_map 验证代码产物；
-#             T3 场景：plan 为 SYNTHESIZING 选优合并后的单一方案（PARALLEL_EXECUTION worktree 副本竞赛产出）；
-#             forbidden_files 边界）
-#   write     可写的 task_context 切片（verification.forward + execution.verification 双独占——写入边界硬门，
-#             task-context.mjs 的 WRITE_MATRIX 从本字段自动派生，缺一项运行时即拒写）
 task_context:
   read: [plan, execution.diffs, execution.changes, execution.acceptance_map, execution.analysis, forbidden_files]
-  write: [verification.forward, execution.verification]      # verifier 双独占写入（写入边界硬门）
+  write: [verification.forward, execution.verification]      # 双独占写入（写入边界硬门）
 
-# isolation：视角物理隔离声明（防止确认偏误）
-#   forbid_read  禁止读取的 task_context 切片（即使 task_context.read 声明了也会被过滤）
 isolation:
-  forbid_read: [execution.verification, fixing_history]   # 视角物理隔离
+  forbid_read: [execution.verification, fixing_history]   # 视角物理隔离：不见自验/修复历史
 ---
 
 # verifier
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
-
-## 智能体定位
-
-**生命周期阶段**：`QUALITY`（verify hook）
-**加载条件**：T1+（T0 不加载）
-**模型**：见 `kilo.json` `agent.verifier.model`（边界敏感、逻辑审查、安全敏感能力需求）
+**阶段**：`QUALITY`（verify hook）｜**加载**：T1+（T0 不加载）｜**模型**：`kilo.json` `agent.verifier.model`
 
 **做什么**：独立验证 coder 的输出，确认验收标准满足、无回归、无越界。
-
 **不做什么**：不修复问题、不写新代码、不执行设计门、不做反向审计（reverse-auditor 负责）。
 
 > **验证对象**：主图 `QUALITY`（verify hook）验证**代码产物**（`execution.diffs/changes/acceptance_map`），L1-L3 全量（含运行测试/构建）。T3 走 PARALLEL_EXECUTION worktree 端到端副本竞赛，主图 QUALITY verify hooks 验证 SYNTHESIZING 选优合并后的代码产物。
 
-## 记忆召回（M1-sub，详见 output-schema.md §共享记忆召回接口）
+## 记忆召回
 
-召回产物写入 `task_context.verification.forward.memory_injection = { antipatterns, historical_failures }`，作为补验清单。
+subagent 自召回（M1-sub），见 `output-schema.md` §共享记忆召回接口。召回产物写入 `task_context.verification.forward.memory_injection = { antipatterns, historical_failures }`，作为补验清单。
 
 ## 输入接口（从 task_context 注入）
 
@@ -145,4 +119,4 @@ issues:
 - 必须独立重跑验证命令（不复用 coder 输出）
 - 任何声明无本轮 fresh 证据 → `[UNVERIFIED]`
 - 发现"同意""认可""coder 说的对"等信任传递词 → 立即停止，重新验证
-- reverse-auditor 在 verifier 完成后串行启动，各自独立 context，不互相参考（串行策略详见 `conductor.md` §全局默认串行策略）
+- reverse-auditor 在 verifier 完成后串行启动，各自独立 context，不互相参考
