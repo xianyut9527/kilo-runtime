@@ -77,7 +77,7 @@ nodes:
     executor: conductor        # conductor 内建；按 config.yaml tier_defaults 写 config.agents
     on_fail: pause
 
-  # 设计门：方案设计、拆单元 DAG、定义验收标准。T1/T2 必经，T0 跳过，T3 走子图
+  # 设计门：方案设计、拆单元 DAG、定义验收标准。T1/T2 必经，T0 跳过，T3 走端到端副本
   # 必配角色契约：stages/planning.md frontmatter required_roles
   - id: PLANNING
     type: stage
@@ -99,6 +99,19 @@ nodes:
   - id: QUALITY
     type: stage
     on_fail: escalate          # 连续失败 → 升级根因分析 / 人工（escalate 由 conductor 内建处理，不依赖图内出边）
+
+  # T3 端到端副本竞赛：3 worktree 并行执行
+  # 各 worktree 内独立完成完整 T2 流程（plan→exec→quality），主图在此汇聚
+  - id: PARALLEL_EXECUTION
+    type: stage
+    executor: conductor        # conductor 内建调度 3 worktree 副本
+    on_fail: escalate          # 副本全 FAIL → 升级人工决策或降 T2
+
+  # 选优合并：汇总 3 worktree 结果，评分选优 + 合并 champion diff
+  - id: SYNTHESIZING
+    type: stage
+    executor: conductor        # conductor 内建评分选优 + 合并
+    on_fail: pause             # 选优 confidence 不足时暂停等人决策
 
   # 交付收尾：conductor 执行记忆写入(M4-M8)、git 分支收尾协议、输出闭环确认
   - id: DELIVERING
@@ -136,9 +149,9 @@ edges:
     to: PLANNING
     when: "intent_type == 'EXECUTION' and tier in ['T1','T2']"
 
-  # T3 执行类 → 进入设计门（和 T1/T2 一样，阶段内由 multiModel 并行调度）
+  # T3 执行类 → 进入端到端副本竞赛（3 worktree 并行，替代单路 PLANNING→EXECUTING→QUALITY）
   - from: SIZING
-    to: PLANNING
+    to: PARALLEL_EXECUTION
     when: "intent_type == 'EXECUTION' and tier == 'T3'"
 
   # T0 咨询类快答：无设计门/审查，SIZING 后直接交付（DELIVERING 执行轻量 M4-M8 记忆写入）
@@ -147,10 +160,9 @@ edges:
     when: "intent_type == 'INQUIRY' and tier == 'T0'"
 
   # T1/T2 咨询类 → 进入分析门（复用 PLANNING 阶段，模式切换为 analysis）
-  # T3 咨询类 → 同样进入分析门（阶段内由 multiModel 并行调度 researcher）
   - from: SIZING
     to: PLANNING
-    when: "intent_type == 'INQUIRY' and tier in ['T1','T2','T3']"
+    when: "intent_type == 'INQUIRY' and tier in ['T1','T2']"
 
   # 设计门完成 → 进入编码（EXECUTION 模式）
   - from: PLANNING
@@ -167,10 +179,15 @@ edges:
     to: DELIVERING
     when: "intent_type == 'EXECUTION' and tier == 'T0'"
 
-  # T1/T2/T3 执行类编码完成 → 进入质量保障
+  # T1/T2 执行类编码完成 → 进入质量保障
   - from: EXECUTING
     to: QUALITY
-    when: "intent_type == 'EXECUTION' and tier in ['T1','T2','T3']"
+    when: "intent_type == 'EXECUTION' and tier in ['T1','T2']"
+
+  # T3 副本执行完成（3 worktree 各自 QUALITY PASS）→ 进入选优合并
+  - from: PARALLEL_EXECUTION
+    to: SYNTHESIZING
+    when: "tier == 'T3' and parallel_execution.all_done == true"
 
   # INQUIRY 类分析完成 → 进入质量保障（经 QUALITY 验证分析结论）
   # PLANNING → QUALITY 已声明（见上）
@@ -184,6 +201,16 @@ edges:
   - from: QUALITY
     to: DELIVERING
     when: "quality_verdict == 'CIRCUIT_BREAKER'"
+
+  # T3 选优合并通过 → 进入交付
+  - from: SYNTHESIZING
+    to: DELIVERING
+    when: "tier == 'T3' and synth_verdict == 'PASS'"
+
+  # T3 选优合并熔断/降级 → 挂起等人决策
+  - from: SYNTHESIZING
+    to: DELIVERING
+    when: "tier == 'T3' and synth_verdict == 'CIRCUIT_BREAKER'"
 
   # 交付完成 → 终态
   # memory_write_status=DEGRADED 不阻塞；MISSING → [MISSING_MEMORY_WRITE]

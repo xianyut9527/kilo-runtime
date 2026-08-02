@@ -17,7 +17,7 @@ subagent_type: planner
 
 # mount：挂载点声明
 #   at    挂载点（PLANNING 阶段主槽，派生自 graph.yaml PLANNING 节点）
-#   when  config.agents.planner == true 时激活（T1/T2）；T3 时 planner: false，由 multiModel 替代调度 planner-a/b/c 三变体
+#   when  config.agents.planner == true 时激活（T1/T2）；T3 时 planner: false，由各 worktree 副本自有 planner 执行（PARALLEL_EXECUTION 阶段内建调度）
 mount:
   - at: PLANNING
     when: "config.agents.planner"

@@ -99,14 +99,14 @@ diversity_rule:
 
 > **多样化原则**：T3 PLANNING 3 个变体为不同厂商/不同架构模型（kimi-k2.6 / deepseek-v4-pro / glm-5.2），按 `diversity_map` 校验（违反 → `[DIVERSITY_VIOLATION]`）。QUALITY 四视角（verifier / reverse-auditor / reviewer / side-checker）已天然覆盖 4 个不同厂商/架构，形成交叉验证。
 > **融合隔离原则**：multiModel 融合阶段不知道变体模型身份，避免按模型声誉而非方案质量取舍。
-> **当前会话串行**：3 个变体由 multiModel 用 `task` 工具当前会话串行调度（各返回 ≤2000 字符方案摘要），无 worktree 依赖；EXECUTING 回归单路 coder。
+> **当前会话串行**：3 个变体由 multiModel 默认 `agent_manager` AM local 3 session 并行调度（各返回 ≤2000 字符方案摘要），收齐融合；task 串行作为降级。
 
 ## 模型降级规则
 
 | 触发条件 | 降级策略 |
 |----------|----------|
 | RATE_LIMIT 连续 3 次 | 降级为同能力倾向的次优模型（改 `kilo.json` `agent.<name>.model`） |
-| 次优模型也不可用 | single-coder 直办 + `[MULTIMODEL_DEGRADED]` |
+| 次优模型也不可用 | **[已废弃]** 旧 single-coder 直办 + `[MULTIMODEL_DEGRADED]`；T3 改用 worktree 副本竞赛，降级见 `lifecycle/stages/synthesizing.md` |
 | 累计 3 次 multiModel 失败 | 停止 multiModel + single-coder + `[MULTIMODEL_ABANDONED]` |
 | T3 过去 24h 失败率 ≥30% | 跳过 multiModel，直接 single-coder |
 

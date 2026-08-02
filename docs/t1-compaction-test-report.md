@@ -103,7 +103,7 @@ graph.yaml v2 注释记载"8 stage → 6 stage"（原 CHECKING+REVIEWING+FIXING 
 
 | 阈值 | 值 | 说明 |
 |------|-----|------|
-| `mm_fusion_max_rounds` | 3 | T3 子图内部熔断轮次上限 |
+| `mm_fusion_max_rounds` | 3 | **[已废弃]** 旧 multiModel 子图内部熔断轮次上限；T3 改用 worktree 副本竞赛 |
 | `hooks.quality.max_total_cycles` | 4 | QUALITY 总轮次上限（4 轮修不好→escalate） |
 | `hooks.quality.auto_fix` | true | 自动触发 fix hooks |
 

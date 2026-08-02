@@ -176,7 +176,7 @@ function stripComment(line) {
   return line;
 }
 
-// 解析 graph.yaml 的 nodes + edges + 顶层标量（旧子图文件已废弃，T3 走阶段级并行）
+// 解析 graph.yaml 的 nodes + edges + 顶层标量（旧子图文件已废弃，T3 走 worktree 端到端并行）
 // 返回 { nodes: Map<id, {type, executor, on_fail, provider, graph, required}>,
 //        edges: [{from,to,when,gate}], top: {provider, entry, exit, diversity_rule} }
 function parseGraphFile(text) {
@@ -985,13 +985,13 @@ let subgraphNodeCount = 0;
 for (const [id, n] of graph.nodes) {
   if (n.type === 'subgraph') {
     subgraphNodeCount++;
-    fail(`graph.subgraph.${id}`, 'type:subgraph 已废弃（T3 改为阶段级多模型并行，主图不再有子图节点）');
+    fail(`graph.subgraph.${id}`, 'type:subgraph 已废弃（T3 改为 worktree 端到端并行，主图不再有子图节点）');
   }
 }
 if (subgraphNodeCount === 0) pass('graph.subgraph', '无 type:subgraph 节点（阶段级并行模式）');
 
-// A7/A8. T3 回流守护（已移除：MM_SUBGRAPH/INQUIRY_MM_SUBGRAPH 已废弃，T3 回归主图流程）
-// 阶段级多模型并行模式下，T3 走正常主图 PLANNING→EXECUTING→QUALITY→DELIVERING，
+// A7/A8. T3 回流守护（已移除：MM_SUBGRAPH/INQUIRY_MM_SUBGRAPH 已废弃，T3 走 PARALLEL_EXECUTION→SYNTHESIZING）
+// 阶段级多模型并行模式下，T3 走 PARALLEL_EXECUTION PLANNING→EXECUTING→QUALITY→DELIVERING，
 // multiModel 挂载在 PLANNING 阶段主槽调度 planner-a/b/c 变体输出方案，EXECUTING 回归单路 coder，无需子图回流守护。
 
 

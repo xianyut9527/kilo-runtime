@@ -104,21 +104,21 @@ execution:
 - 挂载点审查失败/超时/异常 → 挂载点 `on_fail: abort` → `[SLOT_ABORT]`，停在 PLANNING 等用户决策（不自动回流）
 - 绕过审查直接进入下一阶段 → 下游验证/审查角色标 `[PLAN_REVIEW_MISS]` FAIL（见 stages/quality.md）
 
-## 重入降级模式（T3 阶段内并行融合失败降级）
+## 重入降级模式（T3 worktree 副本竞赛失败降级）
 
-> 触发条件：T3 阶段内 multiModel 并行调度时，若 3 个变体输出全 FAIL（可用性故障）或评分全员 <10（质量故障）或 diversity 违规，multiModel 标 `[MULTIMODEL_DEGRADED]`，conductor 将 tier 降 T2 后重入 PLANNING。planner 进入本模式。
+> 触发条件：T3 PARALLEL_EXECUTION 阶段 3 个 worktree 副本全 FAIL / 全 TIMEOUT，或 SYNTHESIZING 评分全员 < 阈值，或 diversity 违规，conductor 标 `[T3_PARALLEL_DEGRADED]`，将 tier 降 T2 后重入 PLANNING。planner 进入本模式。
 
 **识别条件**（满足即进入重入降级模式）：
-- `task_context.mm_fusion_degrade_flag == true`（conductor 降级序列写入的唯一可靠标记）
+- `task_context.t3_degrade_flag == true`（conductor 降级序列写入的唯一可靠标记）
 
 **处理方式**：
-- 按 **T2 单路编码**规划（`sizing.tier` 已由 conductor 降为 T2），不再触发多模型拆分（不生成多路并行实现方案，编码实现由单一 planner/coder 承担）
+- 按 **T2 单路编码**规划（`sizing.tier` 已由 conductor 降为 T2），不再触发 worktree 副本竞赛（不生成多路并行实现方案，编码实现由单一 planner/coder 承担）
 - 复用原任务需求与验收标准，重新产出单路 `units` DAG（与正常 T2 EXECUTION 设计门流程一致）
 - 输出 `transition_context.task_type` 标注为 `T2`（非 T3），`design_gate_type` 按 T2 规则（`full`）
 
 **与正常 design/analysis 模式的关系**：
 - 重入降级模式是 **EXECUTION 设计门的子模式**（`intent_type == 'EXECUTION'`），不改变 intent_type
-- 与正常 T2 设计门的区别仅在于：planner 需在方案中注明「原 T3 多模型融合失败，本次为降级单路规划」，并在风险与应对中记录原融合失败原因（从 `task_context` 或 `mm_fusion_degrade_flag` 中提取）
+- 与正常 T2 设计门的区别仅在于：planner 需在方案中注明「原 T3 worktree 副本竞赛失败，本次为降级单路规划」，并在风险与应对中记录原竞赛失败原因（从 `task_context` 或 `t3_degrade_flag` 中提取）
 - 不触发 INQUIRY 分析门（intent_type 仍为 EXECUTION）
 
 ## 硬规则（两种模式通用）

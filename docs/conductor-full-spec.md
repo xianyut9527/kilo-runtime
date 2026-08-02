@@ -150,7 +150,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
   "status": "RUNNING" | "PAUSED" | "DEGRADED" | "DONE" | "FAILED",
   "convergence": {
     "mm_fusion_rounds": 0,
-    "mm_fusion_max_rounds": 3
+    "mm_fusion_max_rounds": 3  // [已废弃] 旧 multiModel 模式残留，T3 改用 worktree 端到端
   }
 }
 ```
@@ -159,7 +159,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 >
 > - `status`：任务全局状态（RUNNING / PAUSED / DEGRADED / DONE / FAILED），由 conductor 内建阶段写入；multiModel 阶段级并行运行期间保持 RUNNING，PLANNING 完成后交还 conductor 接管
 > - `convergence.mm_fusion_rounds`：T3 PLANNING 阶段内部融合轮次（仅 multiModel 写入，独立计数）
-> - `convergence.mm_fusion_max_rounds`：PLANNING 阶段内部融合熔断阈值（默认 3，见 `lifecycle/config.yaml` convergence）
+> - `convergence.mm_fusion_max_rounds`：**[已废弃]** 旧 multiModel PLANNING-only 模式残留；T3 改用 worktree 端到端副本竞赛，熔断由 `parallel_execution.results[].verdict` 汇总判定（见 `lifecycle/stages/synthesizing.md`）
 >
 > **v2 架构变更**：原 `convergence.round`/`total_rounds`/`max_rounds`/`max_total_rounds` 迁移到 `quality.round`/`quality.max_rounds`（QUALITY hooks 自动循环替代 FIXING 手动回流）。`mm_fusion_rounds` 保留（PLANNING 阶段独立计数）。
 
@@ -344,7 +344,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 - 多个智能体不可用 → 降级为单 conductor 模式 + `[DEGRADED_SINGLE_AGENT]`
 - task_context 读写失败 → 降级为信号传递模式 + `[CONTEXT_SHARING_DEGRADED]`
 - bootstrap 装配失败 → `[ASSEMBLY_FAIL]`，输出具体缺失项（角色/文件/模型能力/on_fail 校验/timeouts 校验），停止进入运行
-- multiModel 变体调度失败 → 标 `[MM_DEGRADED]`，降级为单 planner `task` dispatch（plan_level 方案），不强行串行 dispatch 3 变体
+- **[已废弃]** 旧 multiModel 变体调度失败 → 标 `[MM_DEGRADED]`，降级为单 planner `task` dispatch；T3 改用 worktree 副本竞赛，失败降级见 `lifecycle/stages/synthesizing.md` 降级路径
 
 ## 输出
 

@@ -5,27 +5,25 @@
 # 本文件是唯一"定级→差异化智能体开关"声明处。
 # ============================================================
   # 挂载两种模式（新增智能体默认零配置）：
-#   1) 恒定挂载（默认，推荐）：frontmatter mount 无 when —— 图拓扑可达即加载。
-#      T0 不经 PLANNING/QUALITY，T3 由 multiModel 在 PLANNING/EXECUTING 阶段主槽调度。
-#      新增智能体丢文件即用，**无需改本文件**。
-#   2) 开关挂载（仅"同阶段按 tier 差异化"的智能体）：frontmatter mount 有
-#      when: "config.agents.<key>" —— 需在下方 tier_defaults 声明开关。
-#      当前仅 reverse_auditor / side_checker 两个可选视角。
-#
-# tier_defaults：按定级 T0/T1/T2/T3 声明差异化开关（布尔值）
-#   - conductor 在 SIZING 阶段把对应 tier 的 agents 表写入 task_context.config.agents
-#   - agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值
-#       true  → 该 agent 在声明挂载点会被加载
-#       false/未定义 → 跳过该 agent
-#   - review_mode：none（无审查）/ full（四视角：正向+反向+侧向+审查）
-#   - 旧 T3 子图提供者字段已废弃；T3 改为阶段级多模型并行。
-#
-# agents 键命名规则（自动派生，无需手写映射表）：
-#   键 = agent 文件名去 .md 后连字符转下划线
-#   reverse-auditor.md → reverse_auditor
-#   side-checker.md    → side_checker
-#   例外：multiModel 行为开关也可在此声明
-# ============================================================
+  #   1) 恒定挂载（默认，推荐）：frontmatter mount 无 when —— 图拓扑可达即加载。
+  #      T0 不经 PLANNING/QUALITY，T3 由 conductor 在 PARALLEL_EXECUTION 阶段主槽调度 worktree 副本。
+  #      新增智能体丢文件即用，**无需改本文件**。
+  #   2) 开关挂载（仅"同阶段按 tier 差异化"的智能体）：frontmatter mount 有
+  #      when: "config.agents.<key>" —— 需在下方 tier_defaults 声明开关。
+  #      当前仅 reverse_auditor / side_checker 两个可选视角。
+  #
+  # tier_defaults：按定级 T0/T1/T2/T3 声明差异化开关（布尔值）
+  #   - conductor 在 SIZING 阶段把对应 tier 的 agents 表写入 task_context.config.agents
+  #   - agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值
+  #       true  → 该 agent 在声明挂载点会被加载
+  #       false/未定义 → 跳过该 agent
+  #   - review_mode：none（无审查）/ full（四视角：正向+反向+侧向+审查）
+  #
+  # agents 键命名规则（自动派生，无需手写映射表）：
+  #   键 = agent 文件名去 .md 后连字符转下划线
+  #   reverse-auditor.md → reverse_auditor
+  #   side-checker.md    → side_checker
+  # ============================================================
 version: 1
 
 tier_defaults:
@@ -54,15 +52,14 @@ tier_defaults:
       side_checker: true          # 运行时行为视角验证（边界/安全/性能/兼容性实测）
     review_mode: full
 
-  # T3 多模型阶段级并行：multiModel 挂载在 PLANNING 阶段主槽，
-  # 为 PLANNING 阶段并行调度 3 个不同厂商/架构的 planner 变体，融合后写入 task_context.plan
-  # EXECUTING 回归单路 coder，主图继续正常流转 QUALITY→DELIVERING
+  # T3 端到端副本竞赛：3 worktree 并行，各执行完整 T2 流程（PLAN→EXEC→QUALITY），
+  # conductor 直接调度 worktree session（无需 multiModel），SYNTHESIZING 选优合并后交付
   T3:
     agents:
-      planner: false               # T3 关闭单路 planner，由 multiModel 调度 planner-a/b/c 三变体
-      multiModel: true            # 阶段级多模型并行调度器（PLANNING 调度 3 变体）
-      reverse_auditor: true       # QUALITY 反向审计
-      side_checker: true          # QUALITY 侧向验证
+      planner: false               # T3 关闭单路 planner，各 worktree 副本自有 planner
+      multiModel: false           # T3 不再使用 multiModel（已替换为 worktree 端到端）
+      reverse_auditor: true      # QUALITY_FINAL 可选视角（默认启用）
+      side_checker: true         # QUALITY_FINAL 可选视角（默认启用）
     review_mode: full
 
 # ============================================================
@@ -95,16 +92,8 @@ inquiry_tier_defaults:
       side_checker: true          # 侧向验证（极端值/反事实/来源可信度实测）
     review_mode: full
 
-  # T3 深度多模型分析：multiModel 挂载在 PLANNING 阶段主槽，
-  # 并行调度 3 个不同厂商/架构的 planner 变体，融合报告后写入 plan
-  # 主图继续标准 QUALITY→DELIVERING
-  T3:
-    agents:
-      planner: false               # T3 关闭单路 planner，由 multiModel 调度 planner-a/b/c 三变体
-      multiModel: true            # 阶段级多模型并行调度器（PLANNING 调度 3 变体分析）
-      reverse_auditor: true       # QUALITY 反向审计
-      side_checker: true          # QUALITY 侧向验证
-    review_mode: full
+  # 注：INQUIRY 类无 T3。T3 仅用于 EXECUTION 端到端副本竞赛。
+  # 咨询类最高到 T2，更高复杂度分析预留扩展但不接线。
 
 # ============================================================
 # overrides：用户/环境覆盖（默认全空 = 全量自动发现注册）
@@ -137,10 +126,10 @@ overrides:
 # convergence：收敛熔断阈值（唯一真相来源）
 # v2 响应式 Hooks 架构：
 #   - 旧版 max_rounds/max_total_rounds 迁移到 hooks.quality
-#   - 保留 mm_fusion_max_rounds 子图内部熔断
+#   - mm_fusion_max_rounds 已废弃（旧 multiModel PLANNING-only 模式残留）
 # ============================================================
 convergence:
-  mm_fusion_max_rounds: 3    # T3 阶段级并行内部熔断：QUALITY 打回 multiModel 重新融合的轮次上限
+  mm_fusion_max_rounds: 3    # [已废弃] 旧 multiModel PLANNING-only 模式内部熔断，保留兼容但不生效
 
 # ============================================================
 # hooks：响应式 Hooks 级熔断（v2 新增）
@@ -170,17 +159,16 @@ hooks:
 #
 # 守卫范围：
 #   - 经 task 工具启动的外部智能体 → per_agent_s / stage_default_s 守卫
-#   - executor: conductor/multiModel 内建阶段 → stage_default_s 守卫（conductor 自身
+#   - executor: conductor 内建阶段 → stage_default_s 守卫（conductor 自身
 #     卡住无自动守卫，用户 Ctrl-C 即手动 teardown——开发工具用户在场，不自动销毁）
-#   - 子图 MM_* 节点的智能体同样走 task 工具 → per_agent_s 守卫（子图异常处理主权
-#     在 agent/multiModel.md §异常处理，不适用主图 on_fail 派发）
 # ============================================================
 timeouts:
-  agent_startup_s: 90      # task 工具启动智能体，90s 未响应 → [AGENT_TIMEOUT]（启动卡死；原 60s 对重模型/网络抖动过严）
+  agent_startup_s: 180     # task 工具启动智能体，180s 未响应 → [AGENT_TIMEOUT]（启动卡死；90s 在多 AM session 并行启动 provider 排队时误报，2026-08-02 并行化改造提升）
   stage_default_s: 600     # 单阶段默认预算（主槽执行时间上限；内建阶段守卫值）
+  size_check_threshold: 120000   # task_context 文件字符数硬门（超限强制切 agent_manager），与 kilo.json schema 隔离
   per_agent_s:
     coder: 1800            # coder 写代码可能较长，给 30min
-    multiModel: 1200        # 阶段级并行调度（含 3 变体 dispatch + 融合）
+    multiModel: 1200        # [已废弃] 旧 multiModel 阶段级并行调度预算，保留兼容
     verifier: 900
     reverse_auditor: 600
     side_checker: 900

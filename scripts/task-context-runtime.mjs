@@ -199,7 +199,7 @@ function parseTierDefaults(text) {
       continue;
     }
 
-    // provider (T3 only, 4-space indent)
+    // provider (T3 worktree, 4-space indent)
     const provM = line.match(/^    provider\s*:\s*(\w+)\s*$/);
     if (provM) {
       curProvider = provM[1];
@@ -271,6 +271,17 @@ function readConditionOverrides() {
     return parseConditionOverrides(text);
   } catch {
     return {};
+  }
+}
+
+// 从 lifecycle/config.yaml 读取 size-check 阈值（v2.4 配置化，替代硬编码 120000）
+function readSizeCheckThreshold() {
+  try {
+    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
+    const m = text.match(/size_check_threshold:\s*(\d+)/);
+    return m ? parseInt(m[1], 10) : 120000;
+  } catch {
+    return 120000;
   }
 }
 
@@ -540,6 +551,7 @@ export {
   readConvergenceFromConfig,
   readTierDefaults,
   readConditionOverrides,
+  readSizeCheckThreshold,
   buildInitialContext,
   die,
   readContext,

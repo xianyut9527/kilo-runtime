@@ -103,7 +103,7 @@ function getStageRequiredRoles(stageName) {
           const prefix = atm[1] || '';
           const atVal = atm[2];
           if (prefix + atVal === `post:${stageName}` || (prefix === '' && atVal === stageName)) {
-            const agentName = entry.replace(/\.md$/, '');
+            const agentName = entry.replace(/\.md$/, '').replace(/-/g, '_');
             if (!roles.includes(agentName)) roles.push(agentName);
           }
         }
@@ -385,7 +385,7 @@ function main() {
   // 主图已不存在子图节点；若仍出现 MM_* 节点则视为流程违规
   for (const n of [FROM, TO]) {
     if (/^MM_/.test(n)) {
-      die(1, `[PROCESS_VIOLATION] "${n}" 已废弃（T3 改为阶段级多模型并行，主图不再有子图节点）`);
+      die(1, `[PROCESS_VIOLATION] "${n}" 已废弃（T3 走 PARALLEL_EXECUTION worktree 并行，主图不再有子图节点）`);
     }
     if (!graph.nodes.has(n)) {
       die(1, `[PROCESS_VIOLATION] unknown node "${n}"（graph.yaml 已声明节点: ${[...graph.nodes.keys()].join(', ')}）`);
@@ -492,8 +492,8 @@ function main() {
   // 检查 dispatch_log 中是否包含对应阶段的 agent 记录
   // 豁免：T0 边（SIZING→DELIVERING / SIZING→EXECUTING）、INQUIRY 全部边
   // （含 PLANNING→QUALITY / QUALITY→DELIVERING）
-  // T3 已无子图，主图正常产生 dispatch 记录；QUALITY→DELIVERING 的 required
-  // 集合按 task_context.config.agents 中为 true 的视角动态求值（不静态要求 4 视角）；
+  // T3 走 PARALLEL_EXECUTION→SYNTHESIZING（不进 PLANNING→EXECUTING provenance 门）；
+  // QUALITY→DELIVERING 的 required 集合按 task_context.config.agents 中为 true 的视角动态求值；
   // CIRCUIT_BREAKER 出口豁免本门（熔断逃逸不受缺日志阻塞，CB 路径 hooks 可能未全跑）。
   // ============================================================
   const tier = vars.tier;
@@ -510,12 +510,10 @@ function main() {
     const provenanceRequired = [];
     if (FROM === 'PLANNING' && TO === 'EXECUTING') {
       // 动态求值：读 planning.md required_roles + 扫 agent/*.md post:PLANNING 挂载的审查角色
-      // 求值结果等价于原硬编码 [planner, plan-reviewer]
-      // T3 阶段级多模型并行仍走 PLANNING→EXECUTING，multiModel 替代 planner 主槽但同阶段输出仍由 planning.md required_roles 定义
+      // T3 走 PARALLEL_EXECUTION 不经此门；T1/T2（planner:true+multiModel:false）→ 要求 [planner, plan-reviewer]
       const planningRoles = getStageRequiredRoles('PLANNING');
       // 按 config.agents 过滤 when 条件：planner:false 时移除 planner；multiModel:false 时移除 multiModel
-      // T3（planner:false+multiModel:true）→ 要求 [multiModel, plan-reviewer]
-      // T1/T2（planner:true+multiModel:false）→ 要求 [planner, plan-reviewer]
+      // （multiModel 已归档，config.agents.multiModel 恒 false，此处过滤保留向后兼容）
       const agentsCfgP = (ctx.config && ctx.config.agents && typeof ctx.config.agents === 'object') ? ctx.config.agents : null;
       for (const role of planningRoles) {
         if (role === 'planner' && agentsCfgP && agentsCfgP.planner === false) continue;

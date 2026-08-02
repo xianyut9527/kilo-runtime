@@ -50,7 +50,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readContext, writeContext, appendTransitionLog, contextPath, buildInitialContext,
          VALID_STATUSES, VERIFICATION_FIELDS, QUALITY_ROUND_FIELD, CURRENT_STAGE_FIELD,
-         TOTAL_ROUNDS_FIELD, readHooksFromConfig, readConvergenceFromConfig, readTierDefaults, readConditionOverrides,
+         TOTAL_ROUNDS_FIELD, readHooksFromConfig, readConvergenceFromConfig, readTierDefaults, readConditionOverrides, readSizeCheckThreshold,
          assertValidTaskId, getByPath, setByPath, pathAllowedBy, pathPrefix, parseValue,
          extractFrontmatter, die } from './task-context-runtime.mjs';
 
@@ -188,7 +188,7 @@ function usage() {
     '  set         Write JSON value to dot.path. Enforces write matrix.',
     '  apply-tier  Apply config.yaml tier_defaults to config.agents + review_mode (SIZING helper).',
     '  validate    Check required top-level fields, quality integers, and convergence mm_fusion integers.',
-    '  size-check  Print task_context file character count (pre-dispatch safety gate vs hard-coded 120000).',
+    '  size-check  Print task_context file character count (pre-dispatch safety gate vs config.size_check_threshold; exit=2 if exceeded).',
     '  log-dispatch  Append {agent, mode, stage, timestamp} to dispatch_log[] (dispatch provenance). --agent must be in write-matrix agent set; --stage must be a graph.yaml node. Whitelist-enforced, rejects forged records.',
     '',
     'Agents in write matrix: ' + Object.keys(WRITE_MATRIX).join(', '),
@@ -725,23 +725,23 @@ function cmdAssert(taskId, assertionType, args) {
 
 // ============================================================
 // size-check 子命令：返回 task_context 文件字符数
-// conductor pre-dispatch 硬门：超写死常量 120000（kilo.json 无此字段，
-// 官方 schema 拒绝自定义字段，历史曾致配置整体被跳过，见 fix-config-20260801）
+// conductor pre-dispatch 硬门：超 config.size_check_threshold 时 exit 2
 // 强制切 agent_manager，禁止 task dispatch
 // ============================================================
 
 function cmdSizeCheck(taskId) {
   assertValidTaskId(taskId);
   const p = contextPath(taskId);
+  const threshold = readSizeCheckThreshold();
   if (!fs.existsSync(p)) {
-    process.stdout.write('0\n');
+    process.stdout.write(`0 threshold=${threshold}\n`);
     process.exit(0);
   }
   try {
-    // 字符数（非字节）：UTF-8 解码后按 JS 字符串 length 计，与
-    // conductor 侧写死常量 120000 阈值口径一致
     const text = fs.readFileSync(p, 'utf8');
-    process.stdout.write(String(text.length) + '\n');
+    const len = text.length;
+    process.stdout.write(`${len} threshold=${threshold}\n`);
+    if (len > threshold) process.exit(2);
     process.exit(0);
   } catch (e) {
     die(1, `Error: cannot read task_context for task_id=${taskId}: ${e.message}`);
@@ -825,7 +825,7 @@ function cmdLogDispatch(taskId, agent, mode, stage) {
     ctx.dispatch_log = [];
   }
   ctx.dispatch_log.push({
-    agent,
+    agent: agent.replace(/-/g, '_'),
     mode,
     stage,
     timestamp: Date.now(),

@@ -1,5 +1,5 @@
 ---
-description: "PLANNING 阶段主槽调度 planner-a/b/c 三变体出方案→融合选最优→写 task_context.plan，EXECUTING 回归单路 coder 不挂载。T3 时激活（config.agents.multiModel == true），T1/T2 不激活。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+description: "[已归档] 旧 multiModel PLANNING-only 阶段级并行调度器（2026-08-02 前）。由 multiModel 在 PLANNING 阶段主槽调度 planner-a/b/c 三变体出方案→融合选最优→写 task_context.plan，EXECUTING 回归单路 coder 不挂载。T3 已升级为端到端 worktree 并行模式（PARALLEL_EXECUTION + SYNTHESIZING），multiModel 不再被 T3 使用（config.agents.multiModel: false），保留为向后兼容参考文档。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
 mode: primary
 hidden: false
 color: "#8B5CF6"
@@ -39,7 +39,7 @@ task_context:
 
 ## 智能体定位
 
-**阶段级多模型并行调度器**。T3 时挂载在 PLANNING 阶段主槽，替代单一 planner，**当前会话串行**调度 **3 个不同厂商/架构的 planner 变体**（planner-a/b/c），采用**综合竞赛式**——每个变体独立产出完整方案，multiModel 评分选优 + 补丁吸收独到点，融合为单一结果写入 task_context.plan，主图继续正常流转。EXECUTING 阶段回归单路 coder，不挂载。无 worktree 依赖（变体只输出方案文本，不并行写文件）。
+**阶段级多模型并行调度器**。T3 时挂载在 PLANNING 阶段主槽，替代单一 planner，默认 `agent_manager` AM local 3 session 并行调度 **3 个不同厂商/架构的 planner 变体**（planner-a/b/c），采用**综合竞赛式**——每个变体独立产出完整方案，multiModel 评分选优 + 补丁吸收独到点，融合为单一结果写入 task_context.plan，主图继续正常流转。EXECUTING 阶段回归单路 coder，不挂载。task 串行作为降级（size-check 超限 / overload_count ≥3 / AM 不可用）。
 
 ```
 T3 主图流程（与 T1/T2 完全一致）：
@@ -94,9 +94,20 @@ PLANNING 阶段内部（T3）：
 
 ## 委派稳定性硬门
 
-- **一次只 dispatch PLANNING 阶段**（3 个 planner 变体当前会话串行调度），融合完成后主图继续 EXECUTING（单路 coder）
-- 3 个变体由 `task` 工具**当前会话串行** dispatch（一次一个，遵守零输出硬门，无 worktree 依赖）
+- **一次只 dispatch PLANNING 阶段**（3 个 planner 变体默认 AM local 3 session 并行调度），融合完成后主图继续 EXECUTING（单路 coder）
+- 3 个变体默认由 `agent_manager` AM local 3 session 并行 dispatch（收齐融合；dry_run_output 护栏（变体仅返回文本不落盘）；融合/评分/熔断逻辑不变）；task 串行作为降级（size-check 超限 / overload_count ≥3 / AM 不可用）
 - 返回 ≤2000字符结构化摘要（verdict+证据file:line+关键结论）
+
+## AM local 并行护栏（来源：conductor.md:80-88）
+
+- 并发上限 ≤4 session
+- 轮询间隔 30-60s
+- AM 超时 = per_agent_s × multiplier（per-agent 独立计时）
+- 超时重试 1 次，仍超时标 `[AGENT_TIMEOUT]`
+- 先返回先 `stop` 回收（不等待全部完成）
+- 启动前 `agent_manager list` 清孤儿 session
+- prompt 注入 forbid_read + 只读约束 + 返回契约 ≤2000 字符
+- **provider 级限流**：并发 ≤4 session，同 provider 超限时排队等待（交错启动间隔 10-20s），429 退避 30-60s
 
 ## 与 T1/T2 的区别
 

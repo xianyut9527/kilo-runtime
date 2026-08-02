@@ -219,6 +219,8 @@ conductor 解析 agent 返回或工具调用结果时，按以下分级路由处
 | 任一组件触发 RATE_LIMIT | 自动串行化 coder（保 2 折并发，即 1+1+1 改为 1→1→1） | 3 次限流 → 降级为单 coder 直办 + 标记 `[MULTIMODEL_DEGRADED]` |
 | 累计 3 次 multiModel 失败（含 rate-limit / crash） | 停止 multiModel 模式，降级为 single-coder | 任务降级交付，标注 `[MULTIMODEL_ABANDONED]`，事后回写 failure_db |
 
+> **[已废弃] 上述 multiModel 并发配额表为旧 T3 PLANNING-only 模式残留**。T3 已升级为 worktree 端到端副本竞赛（PARALLEL_EXECUTION→SYNTHESIZING），不再使用 multiModel 当前会话并行；熔断/降级见 `lifecycle/stages/synthesizing.md` 降级路径（`[T3_PARALLEL_DEGRADED]` / `[T3_SYNTH_DEGRADED]`）。本表保留仅为历史参考。
+
 **执行要求**：
 - conductor 触发 multiModel 前必须先扫 `dispatch_log` 查过去 24h 内 `tier = 'T3'` 任务的失败率
 - 单次失败率 ≥ 30% → 跳过 multiModel 直接 single-coder（节省 token + 避免雪崩）
