@@ -113,7 +113,8 @@ try {
         "lifecycle/graph.yaml",
         "lifecycle/config.yaml",
         "lifecycle/stages/README.md",
-        "scripts/meta-audit.mjs"
+        "scripts/meta-audit.mjs",
+        "scripts/orchestration-guard.mjs"
     )
 
     $Missing = @()
@@ -127,6 +128,27 @@ try {
     if ($Missing.Count -gt 0) {
         Write-Host "[SYNC] FAIL: missing critical files: $($Missing -join ', ')" -ForegroundColor Red
         exit 1
+    }
+
+    # ============================================================
+    # Install git pre-commit hook (orchestration guard)
+    # ============================================================
+    Write-Host ""
+    Write-Host "Installing git pre-commit hook (orchestration guard)..." -ForegroundColor Cyan
+    $GuardScript = Join-Path $Source "scripts\orchestration-guard.mjs"
+    if (Test-Path $GuardScript) {
+        try {
+            $gitDir = git -C $Source rev-parse --git-dir 2>$null
+            if ($gitDir) {
+                & node $GuardScript --install-hook 2>&1 | ForEach-Object { Write-Host $_ }
+            } else {
+                Write-Host "[SKIP]   Not a git repository, skip hook installation" -ForegroundColor Gray
+            }
+        } catch {
+            Write-Host "[WARN]   Hook installation failed: $_" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[WARN]   orchestration-guard.mjs not found, skip hook installation" -ForegroundColor Yellow
     }
 
     # ============================================================

@@ -1,0 +1,125 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Kilo Global Config",
+  "type": "object",
+  "required": ["model", "default_agent", "agent", "provider"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "model": { "type": "string" },
+    "small_model": { "type": "string" },
+    "default_agent": { "type": "string" },
+    "snapshot": { "type": "boolean" },
+    "compaction": {
+      "type": "object",
+      "properties": {
+        "auto": { "type": "boolean" },
+        "prune": { "type": "boolean" },
+        "tail_turns": { "type": "integer", "minimum": 1 },
+        "preserve_recent_tokens": { "type": "integer", "minimum": 0 },
+        "reserved": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "commit_message": {
+      "type": "object",
+      "properties": {
+        "prompt": { "type": "string" }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-z0-9_-]+$": {
+          "type": "object",
+          "required": ["mode", "model"],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["primary", "subagent", "standby", "local"]
+            },
+            "model": { "type": "string" },
+            "prompt": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "skills": {
+      "type": "object",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "permission": {
+      "type": "object",
+      "properties": {
+        "bash": { "type": "string", "enum": ["allow", "ask", "deny"] }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-z0-9_-]+$": {
+          "type": "object",
+          "required": ["type", "enabled"],
+          "properties": {
+            "type": { "type": "string", "enum": ["remote", "local"] },
+            "url": { "type": "string" },
+            "command": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "enabled": { "type": "boolean" },
+            "timeout": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": true
+        }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-z0-9_-]+$": {
+          "type": "object",
+          "required": ["name", "models"],
+          "properties": {
+            "name": { "type": "string" },
+            "npm": { "type": "string" },
+            "options": { "type": "object" },
+            "models": {
+              "type": "object",
+              "patternProperties": {
+                "^[a-zA-Z0-9._-]+$": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "reasoning": { "type": "boolean" },
+                    "modalities": {
+                      "type": "object",
+                      "properties": {
+                        "input": { "type": "array", "items": { "type": "string" } },
+                        "output": { "type": "array", "items": { "type": "string" } }
+                      }
+                    },
+                    "limit": {
+                      "type": "object",
+                      "properties": {
+                        "context": { "type": "integer", "minimum": 1 },
+                        "output": { "type": "integer", "minimum": 1 }
+                      }
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

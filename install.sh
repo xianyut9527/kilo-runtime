@@ -178,6 +178,7 @@ CRITICAL_FILES=(
     "lifecycle/config.yaml"
     "lifecycle/stages/README.md"
     "scripts/meta-audit.mjs"
+    "scripts/orchestration-guard.mjs"
 )
 
 MISSING=()
@@ -190,6 +191,22 @@ done
 if [ ${#MISSING[@]} -gt 0 ]; then
     echo "[SYNC] FAIL: missing critical files: ${MISSING[*]}"
     exit 1
+fi
+
+# ============================================================
+# Install git pre-commit hook (orchestration guard)
+# ============================================================
+echo ""
+echo "Installing git pre-commit hook (orchestration guard)..."
+GUARD_SCRIPT="${SOURCE_DIR}/scripts/orchestration-guard.mjs"
+if [ -f "${GUARD_SCRIPT}" ]; then
+    if git -C "${SOURCE_DIR}" rev-parse --git-dir &>/dev/null; then
+        node "${GUARD_SCRIPT}" --install-hook
+    else
+        echo "[SKIP]   Not a git repository, skip hook installation"
+    fi
+else
+    echo "[WARN]   orchestration-guard.mjs not found, skip hook installation"
 fi
 
 echo ""

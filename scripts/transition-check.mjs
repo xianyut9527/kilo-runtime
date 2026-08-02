@@ -61,7 +61,7 @@ function die(code, msg) {
 
 // 动态求值阶段必配角色（主槽 required_roles + POST 钩子审查角色）
 // 参考 lifecycle-doctor.mjs 的 extractFrontmatter / parseStageFrontmatter / parseAgentFrontmatter
-function getStageRequiredRoles(stageName) {
+function getStageRequiredRoles(stageName, agentsCfg = null) {
   const stageLower = stageName.toLowerCase();
   const stagesDir = path.resolve(__dirname, '..', 'lifecycle', 'stages');
   const stagePath = path.resolve(stagesDir, `${stageLower}.md`);
@@ -85,6 +85,7 @@ function getStageRequiredRoles(stageName) {
   }
 
   // 2) 扫 agent/*.md frontmatter mount[].at 匹配 stageName 或 post:stageName（POST 钩子审查角色）
+  //    mount 条目含 when: "config.agents.<key>" 时按 agentsCfg 门控：null→fail-closed 计入；true→计入；false→跳过
   const agentDir = path.resolve(__dirname, '..', 'agent');
   if (fs.existsSync(agentDir)) {
     for (const entry of fs.readdirSync(agentDir)) {
@@ -93,17 +94,39 @@ function getStageRequiredRoles(stageName) {
       const agentText = fs.readFileSync(agentPath, 'utf-8');
       const afm = agentText.match(/^---\r?\n([\s\S]*?)\r?\n---/);
       if (!afm) continue;
-      // 检查 mount 条目 at 是否匹配 stageName 或 post:stageName
+      const agentName = entry.replace(/\.md$/, '').replace(/-/g, '_');
       const mountSection = afm[1].match(/mount\s*:\s*([\s\S]*?)(?=\n[a-z_]+\s*:|\n*$)/);
       if (!mountSection) continue;
       const mountLines = mountSection[1].split(/\r?\n/);
+      // 按 mount 条目块解析（每个条目以 "- at:" 开头），收集 at / when 门控键 / trigger 条件
+      let curEntry = null;
+      const entries = [];
       for (const line of mountLines) {
         const atm = line.match(/^\s*-\s*at\s*:\s*(post:)?(\S+)\s*(?:#.*)?$/);
         if (atm) {
-          const prefix = atm[1] || '';
-          const atVal = atm[2];
-          if (prefix + atVal === `post:${stageName}` || (prefix === '' && atVal === stageName)) {
-            const agentName = entry.replace(/\.md$/, '').replace(/-/g, '_');
+          if (curEntry) entries.push(curEntry);
+          curEntry = { at: (atm[1] || '') + atm[2], whenKey: null, trigger: null };
+          continue;
+        }
+        if (curEntry) {
+          const wm = line.match(/^\s+when\s*:\s*(?:"config\.agents\.(\w+)"|config\.agents\.(\w+))\s*(?:#.*)?$/);
+          if (wm) curEntry.whenKey = wm[1] || wm[2];
+          const tm = line.match(/^\s+trigger\s*:\s*(\S+)\s*(?:#.*)?$/);
+          if (tm) curEntry.trigger = tm[1];
+        }
+      }
+      if (curEntry) entries.push(curEntry);
+      for (const e of entries) {
+        const atVal = e.at;
+        if (atVal === `post:${stageName}` || atVal === stageName) {
+          // trigger==='onFail' 不计入必配 provenance（仅在失败时执行）；trigger==='afterPass' 计入（T2 时必然执行）
+          if (e.trigger === 'onFail') continue;
+          // when 门控：agentsCfg === null → fail-closed（计入）；agentsCfg[key] === true → 计入；false/undefined → 跳过
+          if (e.whenKey) {
+            if (agentsCfg === null || agentsCfg[e.whenKey] === true) {
+              if (!roles.includes(agentName)) roles.push(agentName);
+            }
+          } else {
             if (!roles.includes(agentName)) roles.push(agentName);
           }
         }
@@ -440,8 +463,11 @@ function main() {
         const VALID_RESULTS = new Set(['PASS', 'FAIL', 'CONDITIONAL_PASS']);
         const missing = [];
         const normalizeResult = (v) => (v != null ? String(v).trim().toUpperCase() : '');
-        if (!VALID_RESULTS.has(normalizeResult(vars.reverse_result))) missing.push('reverse_auditor');
-        if (!VALID_RESULTS.has(normalizeResult(vars.side_result))) missing.push('side_checker');
+        // 与 provenance gate 一致：读取 ctx.config.agents，仅要求启用的视角；agents 缺失时保守回退要求两者（fail-closed）
+        const agentsCfg = (ctx.config && ctx.config.agents && typeof ctx.config.agents === 'object') ? ctx.config.agents : null;
+        const shouldCheck = (key) => agentsCfg ? agentsCfg[key] === true : true;
+        if (shouldCheck('reverse_auditor') && !VALID_RESULTS.has(normalizeResult(vars.reverse_result))) missing.push('reverse_auditor');
+        if (shouldCheck('side_checker') && !VALID_RESULTS.has(normalizeResult(vars.side_result))) missing.push('side_checker');
         if (missing.length > 0) {
           die(1, `[DEGRADED] full 模式 QUALITY→DELIVERING 缺少审查视角结果: ${missing.join(', ')} 非 PASS/FAIL/CONDITIONAL_PASS（reverse_result=${JSON.stringify(vars.reverse_result)} side_result=${JSON.stringify(vars.side_result)}）。请确认对应 agent 已执行并写入 verification 结果。`);
         }
@@ -511,9 +537,10 @@ function main() {
     if (FROM === 'PLANNING' && TO === 'EXECUTING') {
       // 动态求值：读 planning.md required_roles + 扫 agent/*.md post:PLANNING 挂载的审查角色
       // T3 走 PARALLEL_EXECUTION 不经此门；T1/T2（planner:true）→ 要求 [planner, plan-reviewer]
-      const planningRoles = getStageRequiredRoles('PLANNING');
-      // 按 config.agents 过滤 when 条件：planner:false 时移除 planner
+      // agentsCfg 传入 getStageRequiredRoles 以支持 mount when 门控（planner 的 when: config.agents.planner）
       const agentsCfgP = (ctx.config && ctx.config.agents && typeof ctx.config.agents === 'object') ? ctx.config.agents : null;
+      const planningRoles = getStageRequiredRoles('PLANNING', agentsCfgP);
+      // 按 config.agents 过滤 when 条件：planner:false 时移除 planner（保留现有逻辑，与 when 门控无冲突）
       for (const role of planningRoles) {
         if (role === 'planner' && agentsCfgP && agentsCfgP.planner === false) continue;
         provenanceRequired.push(role);
@@ -550,22 +577,11 @@ function main() {
       }
     }
     if (FROM === 'QUALITY' && TO === 'DELIVERING') {
-      // 动态求值（不静态要求 4 视角）：
-      //   必配视角（quality.md required_roles，动态读取）→ verifier / reviewer
-      //   可选视角（config.agents 中为 true 才要求）→ reverse_auditor / side_checker
-      // T1 side_checker=false 时仅要求 reverse_auditor（可选视角），缺 side_checker 不阻塞。
-      const MANDATORY = getStageRequiredRoles('QUALITY');
-      const OPTIONAL = ['reverse_auditor', 'side_checker'];
+      // 动态求值：getStageRequiredRoles 已内置 mount when 门控
+      //   agentsCfg 传入 → 按 config.agents 过滤 when-gated 角色（side_checker/reverse_auditor 按需）
+      //   agentsCfg 为 null → fail-closed，所有 when-gated 角色均计入（兼容旧 context）
       const agentsCfg = (ctx.config && ctx.config.agents && typeof ctx.config.agents === 'object') ? ctx.config.agents : null;
-      if (agentsCfg) {
-        provenanceRequired.push(...MANDATORY);
-        for (const p of OPTIONAL) {
-          if (agentsCfg[p] === true) provenanceRequired.push(p);
-        }
-      } else {
-        // config.agents 缺失（异常态/旧上下文）：保守回退静态 4 视角（fail-closed）
-        provenanceRequired.push(...MANDATORY, ...OPTIONAL);
-      }
+      provenanceRequired.push(...getStageRequiredRoles('QUALITY', agentsCfg));
     }
 
     if (provenanceRequired.length > 0) {

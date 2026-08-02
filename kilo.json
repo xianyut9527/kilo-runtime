@@ -60,6 +60,11 @@
       "model": "hx/deepseek-v4-pro",
       "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约见 output-schema.md。"
     },
+    "config-auditor": {
+      "mode": "subagent",
+      "model": "hx/kimi-k2.6",
+      "prompt": "配置审计智能体。在全局配置仓库（kilo_config）修改后运行 lifecycle-doctor、config-validate、meta-audit，报告装配/schema/健康度问题。只审计不修复。挂载点：on:done 手动触发或 post:DELIVERING 自动触发。输出契约见 output-schema.md。"
+    },
     "meta-auditor": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",

@@ -31,38 +31,38 @@ tier_defaults:
   # 无可选视角；恒定挂载智能体（coder）由图拓扑限定自动加载
   T0:
     agents:
-      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
+      config_auditor: false
+      meta_auditor: false
     review_mode: none
 
   # T1 标准闭环
-  # 恒定挂载：planner/coder/verifier/reviewer/fixer（拓扑可达即加载）
-  # 可选视角默认全关（适合中等复杂度任务）
   T1:
     agents:
-      planner: true                # T1 起开（单路 planner 设计方案）
-      reverse_auditor: true        # T1 起开（隐性需求遗漏是"一次性完成"失败最高频原因）
-      side_checker: false         # T2+ 才开（运行时实测成本高，T1 不需要）
-      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
+      config_auditor: false
+      planner: true
+      reverse_auditor: true
+      side_checker: false
+      meta_auditor: false
     review_mode: full
 
-  # T2 全视角交叉验证：正向+反向+侧向+审查全开
-  # 适合复杂任务：架构变更、跨多文件重构、安全敏感改动
+  # T2 全视角交叉验证
   T2:
     agents:
-      planner: true                # T2 单路 planner 设计方案
-      reverse_auditor: true       # 需求追溯审计（从产物反推是否满足原始需求）
-      side_checker: true          # 运行时行为视角验证（边界/安全/性能/兼容性实测）
-      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
+      config_auditor: false
+      planner: true
+      reverse_auditor: true
+      side_checker: true
+      meta_auditor: false
     review_mode: full
 
-  # T3 端到端副本竞赛：3 worktree 并行，各执行完整 T2 流程（PLAN→EXEC→QUALITY），
-  # conductor 直接调度 worktree session，SYNTHESIZING 选优合并后交付
+  # T3 端到端副本竞赛
   T3:
     agents:
-      planner: false               # T3 关闭单路 planner，各 worktree 副本自有 planner
-      reverse_auditor: true      # QUALITY_FINAL 可选视角（默认启用）
-      side_checker: true         # QUALITY_FINAL 可选视角（默认启用）
-      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
+      config_auditor: false
+      planner: false
+      reverse_auditor: true
+      side_checker: true
+      meta_auditor: false
     review_mode: full
 
 # ============================================================
@@ -75,27 +75,28 @@ inquiry_tier_defaults:
   # SIZING 后直接 DELIVERING，无分析门，无审查
   T0:
     agents:
-      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
+      config_auditor: false
+      meta_auditor: false
     review_mode: none
 
-  # T1 项目分析：需要阅读当前项目文件 / 单一视角分析
-  # 短分析门 → 分析角色 → 验证结论准确性 → 审查角色(full)
+  # T1 项目分析
   T1:
     agents:
-      planner: true                # T1 起开（单路 planner 设计方案）
-      reverse_auditor: true        # T1 起开（隐性遗漏是分析失败最高频原因）
-      side_checker: false         # T2+ 才开（深度调研成本高）
-      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
+      config_auditor: false
+      planner: true
+      reverse_auditor: true
+      side_checker: false
+      meta_auditor: false
     review_mode: full
 
-  # T2 多维度调研：跨文件/跨模块调研 / 对比/评估/建议
-  # 完整分析门 → 研究 DAG → 分析角色 → 验证结论准确性 → 审查角色(full)
+  # T2 多维度调研
   T2:
     agents:
-      planner: true                # T2 单路 planner 设计方案
-      reverse_auditor: true       # 需求追溯审计（分析是否回答了原始问题）
-      side_checker: true          # 侧向验证（极端值/反事实/来源可信度实测）
-      meta_auditor: false  # 手动触发（on:done 可选审计视角），默认恒关
+      config_auditor: false
+      planner: true
+      reverse_auditor: true
+      side_checker: true
+      meta_auditor: false
     review_mode: full
 
   # 注：INQUIRY 类无 T3。T3 仅用于 EXECUTION 端到端副本竞赛。
@@ -115,18 +116,9 @@ overrides:
   # 例: { verifier: "hx/kimi-k2.7-code" } → 本次任务 verifier 用 kimi-k2.7-code 而非 kilo.json 默认绑定
   model_overrides: {}
 
-  # condition_overrides：强制覆盖 config.agents 开关
+  # condition_overrides：强制覆盖 config.agents 开关（谨慎使用）
   # 键 = "config.agents.<key>"，值 = true/false
-  # 例: { "config.agents.reverse_auditor": true } → 强制加载 reverse-auditor（即使 tier_defaults 关闭）
-  #
-  # 防非法跳过硬门（2026-08-01）：强制全开可选验证视角，覆盖 tier_defaults 中所有 false 值。
-  # 语义：无论定级 T0-T3，reverse_auditor / side_checker 均强制加载，杜绝任何 tier 静默跳过验证能力。
-  # 注意：T0 执行类走 INTENT→SIZING→EXECUTING→DELIVERING 极速通道，本不经过 QUALITY，
-  #       故此覆盖对 T0 EXECUTION 实际无加载点（拓扑不可达）；对 T0 INQUIRY 同理不经过 QUALITY。
-  #       本覆盖生效范围：T1/T2/T3（均经 QUALITY 阶段，挂载点拓扑可达 → 强制加载）。
-  condition_overrides:
-    "config.agents.reverse_auditor": true      # 强制开：需求追溯审计，杜绝 T1 close=false 静默跳过
-    "config.agents.side_checker": true         # 强制开：运行时侧向实测，杜绝 T1 close=false 静默跳过
+  condition_overrides: {}
 
 # ============================================================
 # convergence：收敛熔断阈值（唯一真相来源）

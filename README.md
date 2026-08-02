@@ -6,13 +6,12 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 
 ## 当前设计
 
-- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow-core.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 conductor 在需要时主动读取。`security-checklist.md` 作为 verifier 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按智能体按需加载，不作为通用上下文全量注入。
-- **长文档转为参考资料**：`AGENTS.md` 保留为设计标准和人工维护参考，不再承担高频运行时注入职责。
-- **默认路由**：模型选择只在 `kilo.json` 中维护；运行规则按角色和任务复杂度路由，不硬编码具体模型名。
-- **扩展入口内置**：默认仅启用 `context7` 远程文档检索；`gitnexus`（调用链/影响面分析）与 `playwright`（浏览器端验证）按需手动开启。
-- **职责分层**：通用规则集中在 `.kilo/instructions/`；`agent/*.md` 作为人工维护参考与职责差异记录；`kilo.json` 中的 `agent.*.prompt` 提供运行时行为锚点（极简、稳定、不堆积通用规则）。三层各司其职，避免重复维护。
-- **项目知识隔离**：项目特化知识不放在本仓库，而是下沉到真实项目根目录的 `AGENTS.md` 和 `.kilo/skills/`。
-- **质量改进依赖项目反馈**：质量提升依赖具体项目的测试、review 审查与反馈，不依赖自动改写规则文件。
+- **运行时指令轻量化**：真正注入模型上下文的是 `core.md`、`workflow-core.md`、`reflection.md`；其他 instructions 按需加载。
+- **默认路由**：模型选择只在 `kilo.json` 中维护；运行规则按角色和任务复杂度路由。
+- **扩展入口内置**：默认仅启用 `context7` 远程文档检索；`gitnexus`、`playwright` 按需手动开启。
+- **职责分层**：通用规则集中在 `.kilo/instructions/`；`agent/*.md` 定义智能体行为与挂载点；`kilo.json` 提供运行时模型与 prompt 锚点。
+- **项目知识隔离**：项目特化知识下沉到项目根目录的 `AGENTS.md` 和 `.kilo/skills/`，不混入全局配置。
+- **配置验证前置**：修改后必须跑 `node scripts/lifecycle-doctor.mjs` 和 `node scripts/config-validate.mjs`（若存在），确保装配与 schema 校验通过。`node scripts/orchestration-guard.mjs --strict` 检测非编排直接篡改 governance 文件（`.md`/`.yaml`/`.json`、`agent/*`、`lifecycle/*`），已通过 `--install-hook` 集成到 git pre-commit 钩子中（`install.ps1`/`install.sh` 自动安装）；`--strict` 模式下绕过提交会被阻断（exit 1），默认模式仅警告（exit 0，避免 CI 误伤）。
 
 ## 模型路由原则
 
@@ -29,6 +28,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 ```text
 .
 ├── kilo.json                     # 全局配置入口（Kilo 侧）
+├── kilo.schema.json              # kilo.json JSON Schema（config-validate 校验）
 ├── AGENTS.md                     # 全局骨架设计与长期参考文档
 ├── CONFIG_CHANGE_CHECKLIST.md    # 配置变更一致性检查清单
 ├── .kilo/                        # Kilo 配置（保留为编排规则 + 项目知识层）
@@ -39,7 +39,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   │   ├── security-checklist.md  # 安全/性能检查清单（由 verifier 在 L3 调用）
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
 │   │   ├── skill-usage-tracking.md # skill 使用记录规范（v2.5 起写入 SQLite skill_usage_events 表）
-│   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
+│   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用）
 │   ├── skills/                   # 长期知识库（运行时由 Kilo 从全局目录注入，非仓库内容；30+ 个 skill，完整列表见系统 available_skills）
 │   └── memory/                   # 程序化记忆模块（v2.6.2；主通道 SQLite，md 仅静态兜底）
 │       ├── README.md             # 公共 API 文档（唯一外部入口）
@@ -49,12 +49,14 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 ├── agent/                        # Kilo 智能体定义（v6 单源：一智能体一文件，frontmatter 自注册生命周期路由）
 │   ├── conductor.md           # 工作流编排者（type: primary，内建执行 INTENT/SIZING/DELIVERING）
 │   ├── planner.md                # 规划智能体（mount: PLANNING；设计门、DAG、验收点）
+│   ├── plan-reviewer.md          # 方案审查（mount: post:PLANNING；PASS/FAIL verdict）
 │   ├── coder.md                  # 编码智能体（mount: EXECUTING；实现、自测、三件套）
 │   ├── verifier.md               # 正向验证（mount: QUALITY hook:verify；L1/L2/L3、5 元组证据）
 │   ├── reverse-auditor.md        # 反向审计（mount: QUALITY hook:verify, when: T2+；需求追溯、假设审计）
 │   ├── side-checker.md           # 侧向验证（mount: QUALITY hook:review, when: T2+；边界/安全/性能/兼容性实测）
 │   ├── reviewer.md               # 静态审查（mount: QUALITY hook:review；安全编码模式/架构/简化/SCOPE_CREEP 四视角）
 │   ├── fixer.md                  # 修复智能体（mount: QUALITY hook:fix, auto-trigger；定向修复阻塞问题）
+│   ├── config-auditor.md         # 配置审计（mount: post:DELIVERING；装配/schema/健康度回归）
 │   ├── meta-auditor.md           # 元审计智能体（on:done 手动触发，审计规则仓库自身一致性）
 │   └── (models/ 目录已删除，能力矩阵迁至 docs/model-registry.md)
 ├── lifecycle/                    # 生命周期 v2（响应式 Hooks 架构：6 stage，QUALITY 合并原 CHECKING+REVIEWING+FIXING）
@@ -76,6 +78,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   # 历史文档已归档至 archive/docs/
 ├── install.ps1                   # Kilo 配置安装脚本（Windows）
 ├── install.sh                    # Kilo 配置安装脚本（macOS/Linux）
+├── scripts/                      # 工程化脚本（lifecycle-doctor / config-validate / task-context / transition-check / memory.py / meta-audit / sync-agent-prompt / scan-encoding / prompt-gate / trust-transfer-check）
 └── README.md
 ```
 
@@ -175,20 +178,7 @@ diff -rq . ~/.config/kilo \
 
 ## Skills 跨项目复用
 
-`kilo.json` 已配置 `skills.paths` 指向 `${KILO_CONFIG_DIR}/.kilo/skills`（全局配置目录技能位）与 `~/.agents/skills`（社区技能目录），可扫描社区技能源。社区技能源见 `.kilo/instructions/skills-lifecycle.md`「社区技能发现」章节（含 anthropics/skills、openai/skills、vercel-labs/agent-skills、skills.sh 等已知源）。
-
-```json
-{
-  "skills": {
-    "paths": [
-      "${KILO_CONFIG_DIR}/.kilo/skills",
-      "${HOME}/.agents/skills"
-    ]
-  }
-}
-```
-
-外部 skill 目录为**只读**引用，项目级 `.kilo/skills/` 始终优先；命名冲突时按 `name` 字段去重。frontmatter 兼容 [agentskills.io](https://agentskills.io/specification) 开放标准，可与 Hermes / Claude Code 等工具的技能目录互通。
+`kilo.json` 已配置 `skills.paths` 指向 `${KILO_CONFIG_DIR}/.kilo/skills`（全局技能位）与 `~/.agents/skills`（社区技能目录）。外部 skill 目录为只读引用，项目级 `.kilo/skills/` 始终优先。
 
 ## 项目级覆盖
 
