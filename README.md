@@ -44,8 +44,6 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   └── memory/                   # 程序化记忆模块（v2.6.2；主通道 SQLite，md 仅静态兜底）
 │       ├── README.md             # 公共 API 文档（唯一外部入口）
 │       ├── AGENTS.md             # 模块对 agent 的运行时注入指令
-│       ├── init.sql              # 旧版根级 DDL 别名（与 schema/init.sql 保持同步，install 兼容入口）
-│       ├── memory-strategy.md    # 兼容策略文件指针（保留以命中 strategy: "memory-strategy.md"）
 │       ├── schema/               # DDL 唯一源（init.sql = 7 表 + 26 索引 + 4 视图 + 2 FTS5 trigram 虚表）
 │       └── contracts/            # 跨层契约（health_check.sql 健康度查询契约源；执行者 = python scripts/memory.py check）
 ├── agent/                        # Kilo 智能体定义（v6 单源：一智能体一文件，frontmatter 自注册生命周期路由）

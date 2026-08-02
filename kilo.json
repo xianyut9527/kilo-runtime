@@ -27,7 +27,7 @@
     },
     "plan-reviewer": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
+      "model": "hx/deepseek-v4-flash",
       "prompt": "独立审查 planner 方案，输出 PASS/FAIL verdict。只审查不修复。输出契约见 output-schema.md。"
     },
     "coder": {
@@ -52,7 +52,7 @@
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "hx/MiniMax-M3",
+      "model": "hx/glm-5.2",
       "prompt": "静态代码审查智能体。从安全、架构、简化、SCOPE_CREEP 四视角审查代码质量。只审查不修复。输出契约见 output-schema.md。"
     },
     "fixer": {

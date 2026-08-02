@@ -25,17 +25,14 @@ QUALITY 不是"一个阶段做三件事"，而是**一个响应式容器，内�
 - `code/analysis` 修复后 → `code/analysis` 变化 → 自动重新触发 **verify hooks**
 - conductor **不需要手动回流**，框架自动管理循环
 
-### 为什么用 hook 类型而非 `order` 绝对编号
-
-旧设计用 `order: 10/20/30/40` 绝对编号排序智能体，与 React/Vue hooks 设计哲学矛盾。新设计：hook 类型（`verify` / `fix` / `review`）本身就定义执行顺序——`verify → fix → review → fix` 循环是框架内置的，不需要数字重复表达。同 hook 类型默认串行启动组（详见 `conductor.md` §全局默认串行策略）；需要顺序时声明 `after: [agent-name]`（相对依赖，类似 React hooks 声明顺序，只引用前驱）。框架对 `after` 做拓扑排序，检测环依赖报错。
+### 自动循环
 
 ```
-QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
-  code/analysis 就绪 → verify hooks 串行启动（hook: verify，无 after = 默认串行；详见 conductor.md §全局默认串行策略）
-    → 任一 FAIL → fix hooks（hook: fix, trigger: onFail）→ code/analysis 变化 → 重新 verify
-    → 全 PASS → review hooks 串行启动（hook: review, trigger: afterPass，无 after = 默认串行；详见 conductor.md §全局默认串行策略）
-      → 任一 FAIL → fix hooks（同一修复角色，trigger: onFail）→ code/analysis 变化 → 重新 verify
-      → 全 PASS → quality_verdict=PASS → 离开 QUALITY → DELIVERING
+code/analysis 就绪 → verify hooks 串行启动
+  → 任一 FAIL → fix hooks（trigger: onFail）→ 重新 verify
+  → 全 PASS → review hooks 串行启动（trigger: afterPass）
+    → 任一 FAIL → fix hooks → 重新 verify
+    → 全 PASS → quality_verdict=PASS → DELIVERING
 ```
 
 ## 输入
@@ -69,22 +66,9 @@ execution:
     confidence: "HIGH" | "MEDIUM" | "LOW"  # 置信度
 ```
 
-## Hooks 挂载（内部自动编排）
+## Hooks 挂载
 
-> **编排规则**：hook 类型（`verify` / `fix` / `review`）定义执行顺序，不需要绝对编号。同 hook 类型默认串行启动组（详见 `conductor.md` §全局默认串行策略）。需要顺序时声明 `after: [agent-name]`（相对依赖，类似 React hooks 声明顺序）。框架对 `after` 做拓扑排序，检测环依赖报错。
-
-### hook: verify — 验证 hooks（串行启动组，无 after 时默认串行）
-
-```yaml
-# agent/verifier.md
-mount:
-  - at: QUALITY
-    hook: verify
-    deps: ["execution.code", "execution.analysis", "plan"]
-    # 无 after = 默认串行（详见 conductor.md §全局默认串行策略）
-```
-
-**触发时机**：当 `execution.code` / `execution.analysis` 或 `plan` 变化时自动执行。
+> 各 hook 智能体的 frontmatter 声明见 `agent/verifier.md`、`agent/reverse-auditor.md`、`agent/reviewer.md`、`agent/side-checker.md`、`agent/fixer.md`。编排规则见 `graph.yaml` 头注释 + `stages/README.md`。
 
 #### EXECUTION 模式验证职责
 - L1 语法/编译/格式/编码验证
@@ -112,147 +96,53 @@ mount:
 
 **触发时机**：在 verifier 完成后串行启动（after: [verifier]）。
 
-#### EXECUTION 模式反向审计职责
-- 从产物反推需求满足度
-- 假设审计
-- 隐性遗漏检测
-- 过度实现检测
+#### EXECUTION 模式反向审计职责（`agent/reverse-auditor.md` 挂载 verify hook, after: [verifier]）
+- 从产物反推需求满足度 / 假设审计 / 隐性遗漏检测 / 过度实现检测
 - 输出 `reverse_result: PASS | FAIL | N/A`
 
 #### INQUIRY 模式反向审计职责
 - **需求追溯**：分析结论是否回答了用户原始问题？是否存在"答非所问"或"过度延伸"？
-- **假设审计**：分析中是否隐含了未验证的假设（如"假设当前版本是稳定的"）？
-- **隐性遗漏**：是否有用户没说但应该考虑的角度？对照 failure_db 同类失败模式。
-- **过度分析**：是否存在"为了分析而分析"，引入了与问题无关的维度？
+- **假设审计**：分析中是否隐含了未验证的假设？
+- **隐性遗漏**：是否有用户没说但应该考虑的角度？对照 failure_db 同类失败模式
+- **过度分析**：是否引入了与问题无关的维度？
 - 输出 `reverse_result: PASS | FAIL | N/A`
 
-> **新增 verify hook 智能体**：声明 `hook: verify` 即自动加入串行启动组。如需在某个 agent 之后执行，加 `after: [agent-name]`——只引用前驱，无需知道编号。
+### hook: fix — 修复 hooks（条件触发，`agent/fixer.md`）
 
-### hook: fix — 修复 hooks（条件触发）
-
-```yaml
-# agent/fixer.md
-mount:
-  - at: QUALITY
-    hook: fix
-    trigger: onFail        # 当任一 verify/review hook 返回 FAIL 时触发
-    deps: ["execution.quality.issues"]
-    # 单一挂载条目覆盖 verify FAIL 和 review FAIL（trigger: onFail 响应所有 FAIL 信号）
-```
-
-**触发时机**：`execution.quality.issues` 字段非空时自动触发（任一 verify 或 review hook FAIL）。
+**触发时机**：`execution.quality.issues` 非空时自动触发（任一 verify/review FAIL）。
 
 #### EXECUTION 模式修复职责
-- 读取 `issues` 列表（含来源 hook、严重度、证据）
-- 定向修复，输出修复后的 `execution.code`
+- 读取 `issues` 列表，定向修复，输出修复后的 `execution.code`
 - **修复后自动触发**：`code` 变化 → verify hooks 重新执行
 
 #### INQUIRY 模式修复职责
-- 读取 `issues` 列表
-- 定向补充/修正分析，输出修复后的 `execution.analysis`（补充遗漏证据、修正错误事实、调整偏见结论）
-- **修复后自动触发**：`analysis` 变化 → verify hooks 重新执行
-- **INQUIRY 约束**：修复角色只修改分析文本/结论，**禁止调用修改性工具**（edit/write/create/delete）。
+- 定向补充/修正分析，输出修复后的 `execution.analysis`
+- **INQUIRY 约束**：修复角色只修改分析文本/结论，**禁止调用修改性工具**
 
-**自动循环语义**（框架自动处理）：
+### hook: review — 审查 hooks（条件触发，`agent/reviewer.md`）
 
-```js
-// 伪代码：框架内部循环逻辑（hook 类型定义顺序，无绝对编号）
-while (round < config.hooks.quality.max_total_cycles) {
-  // Step 1: verify hooks 串行启动（hook: verify 组，默认串行策略，详见 agent/conductor.md §全局默认串行策略）
-  const verifyResults = await runSerially(
-    agentsWithHook('verify').map(a => () => a.run(executionCodeOrAnalysis, plan))
-  );
-  // verifier → reverseAuditor?（条件加载，after: [verifier] 串行）
+**触发时机**：`forward_result == 'PASS' && reverse_result in ['PASS','N/A']` 后自动执行。
 
-  if (verifyResults.some(r => r.verdict === 'FAIL')) {
-    // Step 2: fix hooks（hook: fix, trigger: onFail）
-    const issues = collectIssues(verifyResults);
-    executionCodeOrAnalysis = await runFixHooks(issues);
-    // code/analysis 变化 → 循环继续
-    continue;
-  }
-
-  // Step 3: review hooks 串行启动（hook: review 组，trigger: afterPass，无 after = 默认串行；详见 conductor.md §全局默认串行策略）
-  const reviewResults = await runSerially(
-    agentsWithHook('review').map(a => () => a.run(executionCodeOrAnalysis, plan))
-  );
-  // reviewer → sideChecker?（条件加载，after: [reviewer] 串行）
-
-  if (reviewResults.some(r => r.verdict === 'FAIL')) {
-    // Step 4: fix hooks（同一修复角色，trigger: onFail 响应所有 FAIL）
-    const issues = collectIssues(reviewResults);
-    executionCodeOrAnalysis = await runFixHooks(issues);
-    // code/analysis 变化 → 循环回到 Step 1
-    continue;
-  }
-
-  // 全部 PASS
-  quality_verdict = 'PASS';
-  break;
-}
-
-if (round >= config.hooks.quality.max_total_cycles) {
-  quality_verdict = 'CIRCUIT_BREAKER';
-}
-```
-
-### hook: review — 审查 hooks（条件触发，verify 全 PASS 后，串行启动组）
-
-```yaml
-# agent/reviewer.md
-mount:
-  - at: QUALITY
-    hook: review
-    trigger: afterPass       # 当 verify hooks 全 PASS 后触发
-    deps: ["execution.code", "execution.analysis", "plan"]
-    # 无 after = 默认串行（详见 conductor.md §全局默认串行策略）
-```
-
-**触发时机**：`forward_result == 'PASS' && (reverse_result in ['PASS','N/A'])` 后自动执行。
-
-#### EXECUTION 模式审查职责
-- 安全视角审查
-- 架构视角审查
-- 简化视角审查
-- SCOPE_CREEP 视角审查
+#### EXECUTION 模式审查职责（`agent/reviewer.md`）
+- 安全视角审查 / 架构视角审查 / 简化视角审查 / SCOPE_CREEP 视角审查
 - 输出 `review_result: PASS | CONDITIONAL_PASS | FAIL`
 
 #### INQUIRY 模式审查职责
-- **清晰度审查**：结论是否按预设维度组织？每个结论是否有明确的前因后果？
-- **结构化审查**：是否遵循了分析门输出的 conclusion_framework？有无离题？
-- **可验证性审查**：结论是否足够具体，可以被后续验证/证伪？还是过于模糊？
-- **偏见再审查**：从 reviewer 独立视角检查是否存在 verifier 遗漏的偏见。
-- **安全/敏感信息审查**：分析中是否意外暴露了密钥、Token、密码或敏感配置？
+- **清晰度审查**：结论是否按预设维度组织？
+- **结构化审查**：是否遵循了 conclusion_framework？有无离题？
+- **可验证性审查**：结论是否足够具体，可以被后续验证/证伪？
+- **偏见再审查**：从 reviewer 独立视角检查是否存在 verifier 遗漏的偏见
 - 输出 `review_result: PASS | CONDITIONAL_PASS | FAIL`
 
-```yaml
-# 履行侧向验证角色的智能体（默认 T2+ 加载）
-mount:
-  - at: QUALITY
-    hook: review
-    trigger: afterPass
-    deps: ["execution.code", "execution.analysis", "project_context"]
-    when: "config.agents.side_checker"
-    # after: [reviewer] 使侧向验证角色在 reviewer 完成后串行启动（详见 conductor.md §全局默认串行策略）
-```
-
-**触发时机**：在 reviewer 完成后串行启动（after: [reviewer]）。
-
-#### EXECUTION 模式侧向验证职责
-- 边界条件实测
-- 安全漏洞可利用性验证
-- 性能影响实测
-- 兼容性验证
+#### EXECUTION 模式侧向验证职责（`agent/side-checker.md` 挂载 review hook, after: [reviewer]）
+- 边界条件实测 / 安全漏洞可利用性验证 / 性能影响实测 / 兼容性验证
 - 输出 `side_result: PASS | FAIL | N/A`
 
 #### INQUIRY 模式侧向验证职责
-- **极端值测试**：如果用户的问题换一个极端情况（如"项目规模扩大10倍""完全没有文档"），分析结论是否仍然成立？
-- **反事实测试**：如果某个关键假设不成立，结论会如何变化？
-- **来源可信度验证**：引用的外部资料/文档是否是最新的？是否来自权威来源？
-- **遗漏证据检测**：是否有重要的反方证据被忽略？
+- **极端值测试**：问题换极端情况，结论是否仍成立？
+- **反事实测试**：关键假设不成立时结论如何变化？
+- **来源可信度验证**：引用资料是否最新、权威？
 - 输出 `side_result: PASS | FAIL | N/A`
-
-> **新增 review hook 智能体**：声明 `hook: review` 即自动加入串行启动组。如需在某个 agent 之后执行，加 `after: [agent-name]`。
 
 ## 响应式数据流
 
@@ -303,57 +193,18 @@ quality:
   verdict: "PASS" | "FAIL" | "CIRCUIT_BREAKER"
 ```
 
-## 收敛熔断（内置到 QUALITY）
+## 收敛熔断
 
-```yaml
-# lifecycle/config.yaml hooks 段
-hooks:
-  quality:
-    max_total_cycles: 4        # QUALITY 总轮次上限（唯一熔断阈值；4 轮修不好=方案/需求有问题，escalate 到人）
-    auto_fix: true             # 自动触发 fix hooks（false = 人工确认后修复）
-```
-
-**熔断规则**：
-- QUALITY 总轮次 ≥ `max_total_cycles` → CIRCUIT_BREAKER（唯一机械熔断阈值，由 `transition-check.mjs` 按 `quality.round` 判定）
-- CIRCUIT_BREAKER 时 `quality_verdict = 'CIRCUIT_BREAKER'` → 流转到 DELIVERING（带降级标记 `[QUALITY_CB]`，由用户决策是否继续）
-
-## 输出信号
-
-```yaml
-status_signal: "PASS" | "FAIL" | "CIRCUIT_BREAKER"
-transition_context:
-  unit_id: "string"
-  quality_round: int
-  verify_pass: true | false
-  review_pass: true | false
-quality_gate:
-  verdict: "PASS" | "FAIL" | "CIRCUIT_BREAKER"
-  forward_result: "PASS" | "FAIL"
-  reverse_result: "PASS" | "FAIL" | "N/A"
-  review_result: "PASS" | "CONDITIONAL_PASS" | "FAIL"
-  side_result: "PASS" | "FAIL" | "N/A"
-  issues:
-    verify: [{ source, severity, tag, message, evidence }]
-    review: [{ severity, tag, message, evidence }]
-  circuit_breaker_reason: "string"  # 熔断原因
-```
-
-## 路由规则（边定义见 graph.yaml）
-
-- `quality_verdict == 'PASS'` → DELIVERING（EXECUTION + INQUIRY 统一出口）
-- `quality_verdict == 'CIRCUIT_BREAKER'` → DELIVERING（带降级标记 `[QUALITY_CB]`）
-- T1 路径（两种模式）：反向审计角色加载（`config.agents.reverse_auditor` 默认 true）；侧向验证角色默认 false，但 `config.yaml overrides.condition_overrides` 强制 true（防非法跳过硬门）
-- T2/T3 路径（两种模式）：全 hooks 加载（反向审计 + 侧向验证 + 合成融合）
-
-> **迁移说明**：旧 `at: CHECKING/REVIEWING/FIXING` 已全部迁移到 `at: QUALITY` + `hook` + `trigger` 字段。旧 `order: 10/20/30/40` 绝对编号已废弃，框架忽略不报错。
+- QUALITY 总轮次 ≥ `max_total_cycles` → CIRCUIT_BREAKER（由 `transition-check.mjs` 按 `quality.round` 判定）
+- CIRCUIT_BREAKER → 流转到 DELIVERING（带降级标记 `[QUALITY_CB]`）
 
 ## 硬规则
 
-1. **自动循环，不手动回流**：conductor **不得**手动设置 `quality.issues` 来触发 fix hooks；只有 hooks 返回 FAIL 才自动触发
-2. **deps 变化才触发**：verify hooks 只在 deps 中任一引用字段变化时重新执行（deps 语义为"任一字段变化即触发"，非"全部存在"；EXECUTION 模式只写 execution.code，INQUIRY 模式只写 execution.analysis，互不干扰）；无变化时不重复浪费 token
-3. **视角隔离不变**：verify hooks 不见 review hooks 结论，review hooks 不见 verify hooks 结论，fix hooks 只读 issues 不读结论
-4. **fix 后必须重 verify**：fix hooks 产出新 code/analysis 后，必须重新经过 verify hooks，不可直接跳到 review
-5. **不跳过 review**：即使 verify 连续 FAIL 后最终 PASS，也必须经过 review hooks 才能离开 QUALITY
-6. **CIRCUIT_BREAKER 不阻塞交付**：熔断后流转到 DELIVERING，但标记 `[QUALITY_CB]`，由用户决策是否继续
-7. **INQUIRY 模式编码禁令**：INQUIRY 模式下 QUALITY 全生命周期中，修复角色 **禁止调用修改性工具**。修复角色只输出修正后的分析文本，不输出代码。
-8. **离开 QUALITY 硬门**：进入下阶段前必须写入 `quality.verdict` ∈ {PASS, CIRCUIT_BREAKER}。缺 verdict 时 transition-check.mjs 报 `[MISSING_QUALITY_VERDICT]` 拒绝流转，确保 T1/T2/T3 不能绕过 QUALITY。
+1. **自动循环，不手动回流**：conductor 不得手动设置 `quality.issues` 来触发 fix hooks
+2. **deps 变化才触发**：verify hooks 只在 deps 字段变化时重新执行；无变化不重复浪费 token
+3. **视角隔离不变**：verify 不见 review 结论，review 不见 verify 结论，fix 只读 issues
+4. **fix 后必须重 verify**：fix 产出新 code/analysis 后必须重新 verify，不可直接跳到 review
+5. **不跳过 review**：即使 verify 连续 FAIL 后最终 PASS，也必须经过 review 才能离开 QUALITY
+6. **CIRCUIT_BREAKER 不阻塞交付**：熔断后流转到 DELIVERING，但标记 `[QUALITY_CB]`
+7. **INQUIRY 模式编码禁令**：修复角色禁止调用修改性工具，只输出修正后的分析文本
+8. **离开 QUALITY 硬门**：必须写入 `quality.verdict` ∈ {PASS, CIRCUIT_BREAKER}，缺则 `[MISSING_QUALITY_VERDICT]` 拒绝流转
