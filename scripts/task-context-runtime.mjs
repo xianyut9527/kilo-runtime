@@ -24,14 +24,13 @@ const CONVERGENCE_SOURCE = path.resolve(__dirname, '..', 'lifecycle', 'config.ya
 
 // 硬门 1：execution.verification 与 verification.forward 仅 verifier 可写
 // 其他 agent 写入 → [TRUST_TRANSFER] + exit 1
-// verification.reverse/side/review 由 WRITE_MATRIX 按 agent 单独放行，
-// 不在此处硬门触发。
+// verification.review 由 WRITE_MATRIX 按 reviewer 放行，不在此处硬门触发。
 // execution.verification 与 verification.forward 是 verifier 独占产出，
 // 合并为 "verification 硬门"。
 const VERIFICATION_FIELDS = Object.freeze([
   // 硬门 1：仅 verifier 可写。execution.verification 与 verification.forward
   // 属于 verifier 独占产物，其他 agent 写入触发 [TRUST_TRANSFER]。
-  // verification.reverse/side/review 由 WRITE_MATRIX 按 agent 放行，
+  // verification.review 由 WRITE_MATRIX 按 reviewer 放行，
   // 不再纳入此处硬门。
   'execution.verification',
   'verification.forward',

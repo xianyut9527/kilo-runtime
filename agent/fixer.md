@@ -26,7 +26,7 @@ mount:
     hook: fix
     trigger: onFail
     deps: ["execution.quality.issues"]
-  # 无 when = 恒定挂载：T0 不经 QUALITY（T0 无验证/修复），图拓扑天然限定仅 T1/T2/T3 触发
+  # 无 when = 恒定挂载：T0 不经 QUALITY（T0 无验证/修复），图拓扑天然限定仅 T1/T2 触发
 
 # task_context：读写边界声明
 #   read      可读的 task_context 切片（blockers + 代码产物 + 验收标准 + 修复历史）

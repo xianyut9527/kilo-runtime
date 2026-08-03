@@ -549,11 +549,11 @@ function rtCheckTier(ctx, env, rtCheck) {
   }
   // tier→必填开关一致性校验（防 apply-tier 漏写 / 手工写错）
   // 规则来源：lifecycle/config.yaml tier_defaults；此处硬编码期望（与 config.yaml 单一真相保持一致）
+  // v3 简化后无可选视角开关，各 tier 均为空对象（恒定挂载由图拓扑限定）
   const TIER_EXPECTED = {
     T0: {},
-    T1: { reverse_auditor: true, side_checker: false, synthesizer_fusion: false },
-    T2: { reverse_auditor: true, side_checker: true, synthesizer_fusion: false },
-    T3: { synthesizer_fusion: true, reverse_auditor: true, side_checker: true, mm_worktree: true },
+    T1: {},
+    T2: {},
   };
   const expected = TIER_EXPECTED[tier];
   if (expected) {

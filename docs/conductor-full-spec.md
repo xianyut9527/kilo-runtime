@@ -112,7 +112,6 @@ INIT（conductor 内建）→ INIT（conductor 内建）
   },
   "plan": {...},
   "execution": {
-    "fused_output": {...},
     "diffs": [...],
     "changes": [...],
     "acceptance_map": [...]

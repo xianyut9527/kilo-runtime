@@ -217,10 +217,5 @@ agent 返回后、进入下游流程前，conductor 必须按以下规则自检�
 | `[BLOCKED]` | coder/coder 遇阻塞需升级 | coder/coder |
 | `[NEEDS_CONTEXT]` | coder/coder 缺少上下文 | coder/coder |
 | `[DONE_WITH_CONCERNS]` | 完成功能但有遗留风险 | coder/coder |
-| `[MISSING_FIXER_WRITE]` | fixer 完成后未写 dispatch_log.error_code | conductor（evolution.md §1.5）|
-| `[MISSING_MEMORY_WRITE]` | T1+ 任务收尾未按 SQL 模板写入 dispatch_log / fact_store / failure_db / model_calibration 任一项 | conductor（workflow-core.md §收尾自检）|
-| `[MEMORY_LAYER_HOLLOW]` | 已弃用（工作流简化后删除记忆模块） | — |
-| `[MULTIMODEL_DEGRADED]` | multiModel 触发限流降级为单 coder | conductor（workflow-core.md multiModel 并发配额）|
-| `[MULTIMODEL_ABANDONED]` | multiModel 累计 3 次失败，放弃融合 | conductor（workflow-core.md multiModel 并发配额）|
 
 **写法规则**：全大写，下划线分隔；就近引用；路径格式 `文件:行号`；空值显式写 `无`。

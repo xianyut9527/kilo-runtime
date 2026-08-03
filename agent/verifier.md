@@ -92,7 +92,7 @@ verification_commands: [{ cmd, expected_exit_code }]
 - 流程合规：强制流程日志完整性
 - 状态信号合规：coder 输出是否含 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`
 
-### L3（覆盖/安全/架构，仅 T2/T3）
+### L3（覆盖/安全/架构，仅 T2）
 - API 兼容性（`gitnexus_api_impact`）
 - 安全/性能检测（`security-checklist.md`）
 - 跨文件/模块重复模式反向 grep（UI 与非 UI 同等适用）

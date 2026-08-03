@@ -17,7 +17,7 @@ subagent_type: planner
 
 # mount：挂载点声明
 #   at    挂载点（PLANNING 阶段主槽，派生自 graph.yaml PLANNING 节点）
-#   无 when = 恒定挂载：T0 不经 PLANNING、T3 走子图，图拓扑天然限定仅 T1/T2 触发，无需 config.agents 开关
+#   无 when = 恒定挂载：T0 不经 PLANNING，图拓扑天然限定仅 T1/T2 触发，无需 config.agents 开关
 mount:
   - at: PLANNING
 

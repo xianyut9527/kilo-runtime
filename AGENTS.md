@@ -4,7 +4,7 @@
 >
 > 通用规则由 Kilo 运行时自动注入 `core.md` + `workflow-core.md` + `reflection.md`。本文件作为**唯一全局指令入口**，只列锚点名称与规则来源；细则按需读取 `.kilo/instructions/*.md`、各 `agent/*.md`、`lifecycle/graph.yaml` + `lifecycle/stages/*.md`，不在此重复展开。
 > - `.kilo/instructions/core.md` — 通用基线、意图分类（咨询类/执行类）、安全约束、资源与生命周期管理
-> - `.kilo/instructions/workflow-core.md` — 执行类任务定级（T0–T3）、单元闭环、门禁、交付、强制流程日志、需求扩散、Trace-First、MCP/委派包、知识沉淀
+> - `.kilo/instructions/workflow-core.md` — 执行类任务定级（T0–T2）、单元闭环、门禁、交付、强制流程日志、需求扩散、Trace-First、MCP/委派包、知识沉淀
 > - `.kilo/instructions/skills-lifecycle.md` — skills 生命周期管理 + 社区技能发现 + Hermes 迁移
 > - `.kilo/instructions/reflection.md` — 反思与错误恢复规则
 > - `agent/*.md` — 各智能体的详细工作说明书 + frontmatter 生命周期声明（v6 单源：mount/task_context/isolation/gate 等字段合入 frontmatter，manifest 与行为文件合二为一，bootstrap 扫 frontmatter 自动注册）。**不在此枚举智能体清单**——新增智能体 = 丢一个 `agent/<name>.md` + `kilo.json` 绑模型，零改框架。当前注册清单见 `node scripts/lifecycle-doctor.mjs` 输出
@@ -19,7 +19,7 @@
 本文件只列锚点名称与规则来源，细则不重复写入。所有智能体必须遵守：
 
 1. **意图判定优先**：任何任务先按 `core.md` 判定「咨询类 / 执行类」。咨询类任务只分析、不改文件、不调用修改性工具；执行类任务才进入后续流程。
-2. **执行类两阶段定级**：阶段 A 预估（决策树估 T0-T3）→ planner 设计门 → 阶段 B 校准（实际 unit DAG 复核）→ 强制流程日志（T0 = 2 节点(INIT→EXECUTING)；T1+ = 5 阶段(INIT→PLANNING→EXECUTING→QUALITY→DELIVERING)；T1+ review_mode 统一 full 四视角，无 lightweight 档）→ 修改性工具（来源：`workflow-core.md`）。
+2. **执行类两阶段定级**：阶段 A 预估（决策树估 T0-T2）→ planner 设计门 → 阶段 B 校准（实际 unit DAG 复核）→ 强制流程日志（T0 = 2 节点(INIT→EXECUTING)；T1+ = 5 阶段(INIT→PLANNING→EXECUTING→QUALITY→DELIVERING)；T1+ review_mode 统一 full）→ 修改性工具（来源：`workflow-core.md`）。
 3. ~~定级两阶段化~~：已并入锚点 2。
 4. **单元闭环**：T1+ 任务拆为可验证小单元，每单元独立引入 implementation 能力 → verification 能力 → repair 能力闭环（来源：`workflow-core.md`）。
 5. **验收必附映射表 + 已读取文件清单**：缺则 `[MISSING_ACCEPTANCE_MAP]` / `[FAKE_CONTEXT]` FAIL。

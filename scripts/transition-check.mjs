@@ -291,7 +291,6 @@ function resolveVars(ctx) {
     quality_verdict: pick(ctx.quality && ctx.quality.verdict),
     forward_result: pick(fwd.forward_result, fwd.verdict),
     review_result: pick(review.review_result, review.verdict),
-    subgraph_status: pick(ctx.subgraph_status),
   };
 }
 
