@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+- **2026-08-04**: 工程化防 abort 门禁升级——dispatch-prompt-check 事前审计门禁引入（三连→四连）。
+  - **新增 step 0b dispatch-prompt-check**：conductor dispatch 前写入 `dispatch_pending.prompt_chars`（留痕）→ `task-context.mjs dispatch-prompt-check <task_id>` 校验——未写入/非法 exit 1（审计失败）；超限 exit 2（阻断）；通过 exit 0。替代“大任务 prompt 事后补救”模式，事前拦截大任务 abort 复发（根因：单次委派 8 文件 prompt 过大）。
+  - **阈值字段**：`lifecycle/config.yaml` 新增 `dispatch_prompt_threshold: 3000`（小任务上限 ×1.5 安全系数，可调）+ `max_files_per_task: 3`；`lifecycle-doctor.mjs` D5 校验两字段存在性（缺失 FAIL，与 size_check_threshold 同硬门模式）。
+  - **四连结构**：step 0b dispatch-prompt-check（事前）→ step 0a size-check（事前）→ step 1 log-dispatch（事后 provenance）→ step 2 overload_count（事后累计）。
+  - **同步范围**：`agent/conductor.md`（铁律 #9 三连→四连 + frontmatter task_context.write 加 dispatch_pending + description）、`AGENTS.md`（锚点 13 三连→四连）、`docs/conductor-full-spec.md`（L158/221-226/258 三处）、`lifecycle/config.yaml`（阈值字段）、`scripts/task-context.mjs`（dispatch-prompt-check 子命令）、`scripts/task-context-runtime.mjs`（readDispatchPromptThreshold/readMaxFilesPerTask）、`scripts/lifecycle-doctor.mjs`（D5 校验）。
+  - **验证**：lifecycle-doctor 51 PASS；`set dispatch_pending.prompt_chars 2000` → dispatch-prompt-check exit 0；`set 4000` → exit 2；未设置 → exit 1；grep “工程化三连” 清零（CHANGELOG 历史条目除外）。
+
 - **2026-08-03**: frontmatter `mount[].tiers` 定级挂载字段引入 — 替代 `when: "config.agents.<key>"` 开关挂载。
   - **`tiers` 字段**：`mount[].tiers: [T1, T2]` 数组，dispatch 前按 `sizing.tier ∈ mount[].tiers` 机械过滤，命中才加载该挂载点智能体（例：plan-reviewer `tiers: [T2]`——T1 关闭、T2 开启方案审查）。
   - **`when` 语义收窄**：保留用于**非 tier 条件**（feature flag、环境变量等），仍对照 `config.agents.<key>` 求值。
