@@ -39,7 +39,7 @@ matrix-table: none
 5. **compaction 恢复**：auto-compaction 后，下一步前先 `get <task_id> status` + `get convergence` + `get verification` 恢复状态，再重读当前阶段 `lifecycle/stages/<节点小写>.md`。
 6. **委派不亲为**：进入阶段主槽立即用 task 工具委派对应智能体，禁止自己写代码：
    - PLANNING → `planner`；EXECUTING → `coder`；QUALITY → hooks 自动挂载
-   - **零输出硬门**：从任何工具调用发起瞬间到 result 到达前，不得输出文字或调用其他工具。
+   - **零输出硬门**：从任何工具调用发起瞬间到 result 到达前，不得输出文字或调用其他工具；并行组（铁律 #11）共享一个零输出硬门——组内全部 result 返回前同样禁止输出/调用。
    - **委派包 = 核心摘要**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令。**禁止传文件内容复述、长摘要、步骤详解**——subagent 有独立 context window，自己读文件。委派智能体原则上都是核心摘要，传文件具体内容进去既冗余又撑大 context。
    - **返回契约**：subagent 只返回 ≤2000 字符核心摘要（verdict + 证据 file:line + 关键结论），禁止完整报告/长表/复述文件内容。task 返回 >2000 字符 → 标 `[RETURN_OVER_LIMIT]`，`set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先提取核心摘要压缩（见铁律 #9），仍超限才切 agent_manager worktree。
 7. **自验无效**：不得写 `execution.verification`（仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
@@ -51,11 +51,12 @@ matrix-table: none
        1. 提取核心摘要：保留 `intent / sizing / config / current_stage / quality.verdict / dispatch_log / status`，清空 `execution / verification / plan / plan_review / fixing_history` 细节字段（置为 `{}` 或 `[]`）。
        2. 重测 size-check。exit 0 → 压缩成功，继续 task dispatch。
        3. 仍 exit 2 → `[CONTEXT_UNSAFE]` → 强制切 agent_manager worktree（独立 context，不占主会话）。
-   - **log-dispatch provenance**：每次 task dispatch 成功后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" log-dispatch <task_id> --agent <name> --mode task --stage <STAGE>`，记录 agent/mode/stage 到 dispatch_log。transition-check provenance gate 在 PLANNING→EXECUTING / EXECUTING→QUALITY / QUALITY→DELIVERING 边校验必经智能体是否派发过——缺则 `[PROCESS_VIOLATION]`。
+   - **log-dispatch provenance**：每次 task dispatch 成功后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" log-dispatch <task_id> --agent <name> --mode task --stage <STAGE>`，记录 agent/mode/stage 到 dispatch_log（并行 dispatch 时，按各 task 结果返回顺序逐个执行）。transition-check provenance gate 在 PLANNING→EXECUTING / EXECUTING→QUALITY / QUALITY→DELIVERING 边校验必经智能体是否派发过——缺则 `[PROCESS_VIOLATION]`。
    - **overload_count 闭环**：task 返回 >2000 字符 → `[RETURN_OVER_LIMIT]` + `set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先按上述摘要压缩步骤处理，仍超限才切 agent_manager worktree。size-check 过关 + `set overload_count 0` 清零后回退 task。
+   - **并行 dispatch 安全边界**（配合铁律 #11 全局默认并行策略）：对每个待 dispatch 的 task——1. size-check 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >2000 字符 → `overload_count +1`；`>=3` → 摘要压缩→仍超限切 worktree。
    - **abort 不可恢复**：`Tool execution aborted` 出现即视为会话断开，不尝试重试。标 `[AGENT_UNAVAILABLE]` 按节点 on_fail 派发，或降级为 conductor 内建处理。
 10. **即停违规**：发现跳步/越界/信任传递立即标 `[PROCESS_VIOLATION]` 并暂停。
-11. **全局默认串行策略**：挂载点激活智能体 ≥2 且均无 `after` 时，按 resolved 视图顺序逐个串行启动 task（等待上一个返回再启动下一个）。有 `after` 的按拓扑排序；无 `after` 的按文件名字典序。
+11. **全局默认并行策略**：挂载点激活智能体 ≥2 且无 `after` 依赖时，conductor 必须在单条响应消息中并行发起多个 `task` 工具调用（官方支持的并发模式：`Launch multiple agents concurrently whenever possible`）。有 `after` 的按拓扑排序串行执行；无 `after` 的按 agent 文件名字典序组织为同一并行组，共享一个零输出硬门。视角隔离仍物理独立（每个 task 独立 context）。
 12. **task_context 强制初始化**：会话首个任务进入 INIT 前必须先 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" init <task_id>`。未初始化直接流转 → `[PROCESS_VIOLATION]`。
 
 ## 核心编排流程

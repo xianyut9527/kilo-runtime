@@ -47,11 +47,11 @@ EXECUTING（coder 产出 execution.code）
 QUALITY 容器内自动循环：
   │
   │   │   deps: [execution.code, plan]
-  │   │   无 after → 串行组（按 agent 文件名字典序逐个启动，避免并发 task 调度 abort）
+  │   │   无 after → 并行组（按 agent 文件名字典序组织并行组，单条消息并行发起）
   │   ▼
   │   任一 FAIL → hook: fix（fixer + 自定义 fixer，trigger: onFail）
   │
-  ├─ hook: review（串行组）
+  ├─ hook: review（trigger: afterPass，保留串行场景）
   │   │   deps: [execution.code]
   │   ▼
   │   任一 FAIL → hook: fix（同一 fixer，trigger: onFail）
@@ -157,8 +157,8 @@ subagent_type: my-agent
 mount:
   - at: QUALITY
     hook: verify               # 或 review / fix
-    # 无 after = 与同 hook 类型其他 agent 串行（按 agent 文件名字典序逐个启动，避免并发 task 调度 abort）
-    # after: [verifier]        # 如需串行，声明前驱
+    # 无 after = 与同 hook 类型其他 agent 并行（按 agent 文件名字典序组织并行组，单条消息并行发起）
+    # after: [verifier]        # 如需顺序，声明前驱（有 after 按拓扑串行）
     # when: "config.agents.my_agent"  # 如需按 tier 开关
     on_fail: degrade           # 可选视角用 degrade，必配用默认
 
@@ -187,7 +187,7 @@ isolation:
 ### 4.2 调整执行顺序（相对依赖）
 
 ```yaml
-# 同 hook 类型默认串行（省略 after，按 agent 文件名字典序逐个启动）
+# 同 hook 类型默认并行（省略 after，按 agent 文件名字典序组织并行组，单条消息并行发起）
 mount:
   - at: QUALITY
     hook: verify

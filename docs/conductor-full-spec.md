@@ -40,7 +40,7 @@
    - 每个非内建 stage 节点的 `required_roles: [role...]`（stages frontmatter），每角色必须有 ≥1 个智能体（frontmatter `role` ?? 文件名 = 角色名）在该节点主挂载点注册（`when` 求值后 active 覆盖在运行时再校验）
    - `config.yaml overrides.disabled_agents` 不得使某 `required_roles` 角色无履行者 → 报错（禁用了必配角色）
    - > **能力匹配**：无机械校验；模型绑定在 `kilo.json` `agent.<name>.model`，能力倾向参考 `docs/model-registry.md` 人工维护。
-6. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, hook, after, when, on_fail } ]（同 hook 类型默认串行组（详见铁律 #12 / §智能体加载规则）；有 after 的按拓扑排序执行，检测环依赖报错）}` + `{ nodeId → on_fail_resolved }` + edges 表 + `{ agent → timeout_s }` 预算表（per_agent_s × tier_multiplier，缺 per_agent_s 回退 stage_default_s）。运行时查表，零重复解析。
+6. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, hook, after, when, on_fail } ]（同 hook 类型默认并行组（详见铁律 #11 / §智能体加载规则）；有 after 的按拓扑排序执行，检测环依赖报错）}` + `{ nodeId → on_fail_resolved }` + edges 表 + `{ agent → timeout_s }` 预算表（per_agent_s × tier_multiplier，缺 per_agent_s 回退 stage_default_s）。运行时查表，零重复解析。
 
 > **运行时零解析**：装配完成后，conductor 每进入一阶段只查 resolved 视图：挂载点 → 有序智能体列表 → `when` 条件对照 `task_context.config.agents` 求值过滤 → `task` 工具启动。
 
@@ -147,14 +147,15 @@ INIT（conductor 内建）→ INIT（conductor 内建）
 
 挂载点是唯一挂载机制。conductor 运行时的执行模型：
 
- - **装配完成后**立即执行 `on:bootstrap` 挂载点（有 `after` 的按拓扑排序执行；无 `after` 的激活智能体按全局默认串行策略逐个启动，遵守铁律 #6 零输出硬门）
+ - **装配完成后**立即执行 `on:bootstrap` 挂载点（有 `after` 的按拓扑排序串行执行；无 `after` 的激活智能体按全局默认并行策略组织为并行组、单条消息并行发起，遵守铁律 #6 零输出硬门）
  - **进入节点 N**：
-   1. 执行 `pre:N` 挂载点（有 `after` 的按拓扑排序执行；无 `after` 的激活智能体按全局默认串行策略逐个启动；`on_fail: abort` → `[SLOT_ABORT]` 中止进入主槽）
+   1. 执行 `pre:N` 挂载点（有 `after` 的按拓扑排序串行执行；无 `after` 的激活智能体按全局默认并行策略组织为并行组、单条消息并行发起；`on_fail: abort` → `[SLOT_ABORT]` 中止进入主槽）
 
-> **全局默认串行策略**（铁律 #12 见上）：任一挂载点（`on:bootstrap`、`pre:N`、`N`、`post:N`、子图节点等）若激活的智能体数量 ≥2，且这些智能体在该挂载点均未声明 `after`（或 `after` 为空），conductor 默认按 **resolved 视图顺序逐个串行启动** task 工具（等待上一个返回后再启动下一个），避免并发 task 调度触发底层执行器 `Tool execution aborted`；但**必须遵守铁律 #6 的零输出、零工具调用硬门**：每个 task 返回前不得输出文本或调用其他工具。resolved 视图顺序的确定规则：
->   1. 先对声明了 `after` 的智能体做拓扑排序（按依赖链先后执行）；
->   2. 未声明 `after` 的智能体按 **agent 文件名字典序** 排列，作为串行序列逐个启动；
->   3. 两种顺序在 resolved 视图中合并为该挂载点的最终启动序列。
+> **全局默认并行策略**（铁律 #11 见上）：任一挂载点（`on:bootstrap`、`pre:N`、`N`、`post:N`、子图节点等）若激活的智能体数量 ≥2，且这些智能体在该挂载点均未声明 `after`（或 `after` 为空），conductor 按 **agent 文件名字典序组织为同一并行组，在单条响应消息中并行发起多个 `task` 工具调用**（官方支持的并发模式：`Launch multiple agents concurrently whenever possible`）。该并行组**共享一个零输出硬门**（遵守铁律 #6：组内全部 result 返回前不得输出文本或调用其他工具）；视角隔离仍物理独立（每个 task 独立 context）。resolved 视图顺序的确定规则：
+>   1. 先对声明了 `after` 的智能体做拓扑排序（按依赖链先后串行执行）；
+>   2. 未声明 `after` 的智能体按 **agent 文件名字典序** 排列，组织为同一并行组；
+>   3. 两种顺序在 resolved 视图中合并为该挂载点的最终启动序列（并行组 + after 拓扑链）。
+> **并行安全边界**（见铁律 #9 工程化三连）：对每个待 dispatch 的 task——1. size-check 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >2000 字符 → `overload_count` +1；≥3 → 摘要压缩→仍超限切 worktree。
 > 
 
    3. 执行 `post:N` 挂载点（同 pre 语义）
@@ -254,7 +255,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 | 触发源                                 | 信号                                                         | 说明                                                                                                 |
 | -------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | 智能体 wall-clock 超时                 | `[AGENT_TIMEOUT]`                                            | 见 §智能体加载流程 §超时守卫；分启动卡死（agent_startup_s）与执行超时（per_agent_s/stage_default_s） |
-| `task` 工具抛异常/启动失败/并发调度被中断（`Tool execution aborted` / `Tool execution cancelled`） | `[AGENT_UNAVAILABLE]`                                        | abort 后会话断开几乎无法重试：**前置杜绝**（见铁律 #9 工程化三连：pre-dispatch size-check + log-dispatch provenance + overload_count 闭环 + 铁律 #11 串行策略），不尝试重试，直接按节点 on_fail 派发或降级 conductor 内建；区别于超时 |
+| `task` 工具抛异常/启动失败/并发调度被中断（`Tool execution aborted` / `Tool execution cancelled`） | `[AGENT_UNAVAILABLE]`                                        | abort 后会话断开几乎无法重试：**前置杜绝**（见铁律 #9 工程化三连：pre-dispatch size-check + log-dispatch provenance + overload_count 闭环 + 铁律 #11 并行策略的并行安全边界），不尝试重试，直接按节点 on_fail 派发或降级 conductor 内建；区别于超时 |
 | 智能体返回 `BLOCKED` / `NEEDS_CONTEXT` | 状态信号                                                     | 需补上下文或升级                                                                                     |
 | 跳步/越界/自验污染                     | `[PROCESS_VIOLATION]` / `[SCOPE_CREEP]` / `[TRUST_TRANSFER]` | 即停，不走 on_fail（见 §流程级即停规则）                                                             |
 

@@ -105,7 +105,7 @@ subagent_type: verifier     # task 工具的 subagent_type 参数值
 #     hook     v2 响应式 Hooks 专用：verify | fix | review（QUALITY 阶段内部挂载）
 #     trigger  v2 hook 触发条件：onFail（FAIL 时）| afterPass（全 PASS 后）| onChange（deps 变化，默认）
 #     deps     v2 hook 依赖声明：deps 变化时自动触发该 hook（类似 useEffect deps）
-#     after    可选相对依赖（声明在哪些 agent 之后执行）；省略 = 与同 hook 类型其他 agent 串行（按 agent 文件名字典序逐个启动，避免并发 task 调度 abort）
+#     after    可选相对依赖（声明在哪些 agent 之后执行）；省略 = 与同 hook 类型其他 agent 并行（按 agent 文件名字典序组织并行组，单条消息并行发起）
 #              v2 废弃 order 数字编号，改用 hook 类型内置顺序 + after 相对依赖
 mount:
   - at: QUALITY                # v2 响应式 Hooks 阶段（合并原 CHECKING+REVIEWING+FIXING）
@@ -143,7 +143,7 @@ isolation:
 
 ### 顺序与并行
 
-- 同挂载点 / 同 hook 类型多个智能体 **默认串行**（省略 `after`，按 agent 文件名字典序逐个启动）
+- 同挂载点 / 同 hook 类型多个智能体 **默认并行**（省略 `after`，按 agent 文件名字典序组织为并行组，单条消息并行发起；有 `after` 的按拓扑排序串行）
 - v2 不再使用 `order: <数字>` 绝对编号；QUALITY 内部顺序由 `hook` 类型内置定义：`verify → fix → review → fix`
 - 需要控制同 hook 内相对顺序时，声明 `after: [agent-name]`（只引用前驱，零改其他文件）
 

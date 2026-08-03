@@ -22,9 +22,9 @@ QUALITY 不是"一个阶段做三件事"，而是**一个响应式容器，内�
 
 ```
 QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
-  code 就绪 → verify hooks 串行启动（hook: verify）
+  code 就绪 → verify hooks 并行启动（hook: verify，无 after 依赖；保留串行场景除外）
     → 任一 FAIL → fix hooks（hook: fix, trigger: onFail）→ code 变化 → 重新 verify
-    → 全 PASS → review hooks 串行启动（hook: review, trigger: afterPass）
+    → 全 PASS → review hooks 启动（hook: review, trigger: afterPass，保留串行场景：须等 verify 全 PASS）
       → 任一 FAIL → fix hooks（同一修复角色，trigger: onFail）→ code 变化 → 重新 verify
       → 全 PASS → quality_verdict=PASS → 离开 QUALITY → DELIVERING
 ```
@@ -41,7 +41,13 @@ QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
 
 ## Hooks 挂载（内部自动编排）
 
-> **编排规则**：hook 类型（`verify` / `fix` / `review`）定义执行顺序，不需要绝对编号。同 hook 类型默认串行启动。需要顺序时声明 `after: [agent-name]`（相对依赖）。框架对 `after` 做拓扑排序，检测环依赖报错。
+> **编排规则**：hook 类型（`verify` / `fix` / `review`）定义执行顺序，不需要绝对编号。同 hook 类型默认并行启动（无 `after` 依赖时单条消息并行发起，按 agent 文件名字典序组织并行组）；需要顺序时声明 `after: [agent-name]`（相对依赖），有 `after` 的按拓扑排序串行执行。框架对 `after` 做拓扑排序，检测环依赖报错。
+>
+> **保留串行场景**（以下情况不并行，按序执行）：
+> 1. 有 `after` 相对依赖的智能体链（拓扑排序串行）
+> 2. fix hook → 重新 verify hook（hook 类型间内置顺序 verify→fix→review）
+> 3. review hooks（`trigger: afterPass`，须等 verify 全 PASS）
+> 4. 同一 `after` 链上的后继节点
 
 ### hook: verify — 验证 hooks
 
@@ -84,8 +90,8 @@ mount:
 ```js
 // 伪代码：框架内部循环逻辑（hook 类型定义顺序，无绝对编号）
 while (round < config.hooks.quality.max_total_cycles) {
-  // Step 1: verify hooks 串行启动
-  const verifyResults = await runSerially(
+  // Step 1: verify hooks 并行启动（无 after 依赖时单条消息并行发起，按字典序组织并行组）
+  const verifyResults = await runInParallel(
     agentsWithHook('verify').map(a => () => a.run(executionCode, plan))
   );
 
@@ -97,8 +103,8 @@ while (round < config.hooks.quality.max_total_cycles) {
     continue;
   }
 
-  // Step 3: review hooks 串行启动（hook: review, trigger: afterPass）
-  const reviewResults = await runSerially(
+  // Step 3: review hooks 启动（trigger: afterPass，保留串行场景：须等 verify 全 PASS 才执行本组）
+  const reviewResults = await runInParallel(
     agentsWithHook('review').map(a => () => a.run(executionCode, plan))
   );
 

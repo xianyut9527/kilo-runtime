@@ -20,7 +20,7 @@ subagent_type: reviewer
 #   when  省略 = 必加载（QUALITY 仅 T1+ 可达，可达性即开关）
 mount:
   # v2 响应式 Hooks：QUALITY 阶段 review hook，trigger: afterPass 确保 review hooks
-  # 在 verify hooks 全 PASS 后自动触发（遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）。
+  # 在 verify hooks 全 PASS 后自动触发（保留串行场景：review hooks trigger: afterPass 须等 verify 全 PASS，按 hook 类型内置顺序执行；共享零输出硬门；详见 agent/conductor.md §全局默认并行策略）。
   - at: QUALITY
     hook: review
     trigger: afterPass

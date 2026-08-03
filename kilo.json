@@ -40,6 +40,11 @@
       "model": "hx/glm-5.2",
       "prompt": "静态代码审查智能体。从安全、架构、简化、SCOPE_CREEP 四视角审查代码质量。只审查不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
     },
+    "reverse-auditor": {
+      "mode": "subagent",
+      "model": "hx/glm-5.2",
+      "prompt": "反向验证审查智能体。从反向视角独立审查 diff：反向核对验收标准/设计门 DAG 一致性、SCOPE_CREEP、调试残留、重复实现 LOCAL_PATCH/COPY_PASTE_FIX、FAKE_CONTEXT、越界改动。只审查不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+    },
     "fixer": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",

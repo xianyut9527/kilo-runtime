@@ -94,7 +94,7 @@ mode: subagent
 mount:
   - at: QUALITY                  # 主挂载点（v2 响应式 Hooks 阶段）
     hook: verify
-# mount 可选字段：order（同挂载点执行顺序，升序数字；省略=串行组）
+# mount 可选字段：order（同挂载点执行顺序，升序数字；省略=并行组）
 #                 when（条件挂载）/ on_fail（abort|warn|skip|degrade）
 ```
 
@@ -126,9 +126,9 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 ### 可插拔机制（启动期装配 / bootstrap）
 
 #### 装配与运行时
-2. 同挂载点按 `hook` 类型分组 + `after` 相对依赖拓扑排序（同 hook 类型默认串行，避免并发 task 调度 abort；需要顺序时声明 after）；校验各阶段 `required_roles` 被主挂载点注册覆盖
+2. 同挂载点按 `hook` 类型分组 + `after` 相对依赖拓扑排序（同 hook 类型默认并行，无 after 依赖时单条消息并行发起；需要顺序时声明 after，有 after 按拓扑串行）；校验各阶段 `required_roles` 被主挂载点注册覆盖
 3. 装配 resolved 视图：`{ mountPoint → [{ agent, model, hook, after, trigger, deps, when, on_fail }]（已排序/分组）}` + edges 表；运行时查表，零重复解析
-4. 进入节点 N：`pre:N` → 主挂载点（串行组 + after 拓扑序，或 executor 内建）→ `post:N` → 按 edges + when/gate 流转；装配后立即执行 `on:bootstrap`，入 DONE 前执行 `on:done`
+4. 进入节点 N：`pre:N` → 主挂载点（并行组 + after 拓扑序，或 executor 内建）→ `post:N` → 按 edges + when/gate 流转；装配后立即执行 `on:bootstrap`，入 DONE 前执行 `on:done`
 5. 每个智能体启动时按 frontmatter `task_context.read` 注入上下文切片（见第 3 章）；完成后按 `task_context.write` 收回结果
 
 #### 可扩展规则（文件制自动注册）
@@ -317,7 +317,7 @@ EXECUTING（coder）
   ▼
 QUALITY（响应式 Hooks 容器）
   │
-  ├─ verify hooks（默认串行）
+  ├─ verify hooks（默认并行，无 after 依赖）
   │   ├─ verifier（正向）──┐
   │   └─ （各自独立 context）──┘
   │   │
@@ -325,7 +325,7 @@ QUALITY（响应式 Hooks 容器）
   │   ├─ 是 → review hooks
   │   └─ 否 → fix hooks → code 变化 → 自动 re-verify（循环）
   │
-  ├─ review hooks（默认串行）
+  ├─ review hooks（trigger: afterPass，保留串行场景）
   │   ├─ reviewer（审查）──┐
   │   └─ （各自独立 context）──┘
   │   │
@@ -447,7 +447,7 @@ QUALITY（响应式 Hooks 容器）
 | 开销类型 | 评估 | 缓解 |
 |----------|------|------|
 | Token 成本 | 每个智能体独立 context window，总 token 是单 agent 的 3-5 倍 | T0/T1 不启动全部智能体；task_context 只注入相关章节 |
-| 延迟 | 串行启动多个智能体增加 wall-clock 延迟，但避免并发调度 abort | T0/T1 按需加载，减少不必要串行 |
+| 延迟 | 并行启动多个智能体降低 wall-clock 延迟（官方 task 工具并发模式；有 after 依赖链仍串行） | T0/T1 按需加载，减少不必要启动 |
 | 上下文传递损耗 | task_context 摘要可能丢失细节 | task_context 结构化字段 + 关键原文保留 |
 
 ### 共享上下文的同步风险

@@ -105,7 +105,7 @@ mount:
   - at: QUALITY                  # 挂载点名称（必填）
     hook: verify                 # v2 响应式 hook：verify | fix | review
     deps: [execution.code, plan] # hook 依赖（deps 变化时自动触发）
-    after: [other-agent]          # 可选相对依赖（省略 = 与同 hook 类型其他 agent 串行，按 agent 文件名字典序逐个启动）
+    after: [other-agent]          # 可选相对依赖（省略 = 与同 hook 类型其他 agent 并行，按 agent 文件名字典序组织并行组，单条消息并行发起）
     trigger: onChange             # 触发时机：onChange（默认）| afterPass | onFail
     when: "config.agents.xxx"    # 条件挂载（可选）
     on_fail: degrade              # 失败策略（可选）
@@ -130,7 +130,7 @@ at: post:QUALITY
 
 ### `after`（可选）
 
-同 hook 类型 / 同挂载点多个智能体时的**相对依赖声明**。声明 `after: [agent-name]` 表示在本智能体之前必须执行指定 agent；省略 = **串行组成员**（按 agent 文件名字典序逐个启动，避免并发 task 调度 abort）。
+同 hook 类型 / 同挂载点多个智能体时的**相对依赖声明**。声明 `after: [agent-name]` 表示在本智能体之前必须执行指定 agent；省略 = **并行组成员**（无 after 依赖时按 agent 文件名字典序组织并行组，单条消息并行发起）。
 
 ```yaml
 # 相对依赖执行（after 引用前驱 agent 名）
@@ -138,7 +138,7 @@ mount:
   - at: QUALITY
     hook: verify
 
-# 串行执行（都省略 after，按 agent 文件名字典序逐个启动）
+# 并行执行（都省略 after，按 agent 文件名字典序组织并行组，单条消息并行发起）
 mount:
   - at: QUALITY       # reviewer
     hook: review
@@ -146,7 +146,7 @@ mount:
 ```
 
 
-> v2 废弃 `order: <数字>` 绝对编号系统。QUALITY 内部顺序由 `hook` 类型内置定义（`verify → fix → review → fix`），同 hook 类型内默认串行（避免并发 task 调度 abort），需要相对顺序时用 `after` 声明前驱。仅 `graph.yaml` 声明 `parallel: true` 的节点保留并行语义。
+> v2 废弃 `order: <数字>` 绝对编号系统。QUALITY 内部顺序由 `hook` 类型内置定义（`verify → fix → review → fix`），同 hook 类型内默认并行（无 after 依赖时单条消息并行发起），需要相对顺序时用 `after` 声明前驱（有 after 按拓扑串行）。仅 `graph.yaml` 声明 `parallel: true` 的节点保留并行语义。
 
 ### `when`（可选）
 
@@ -282,7 +282,7 @@ mount:
     hook: verify
 ```
 
-同一智能体挂载 QUALITY verify hook，无 `when`（恒定挂载），无 `after`（同 hook 类型按字典序串行）。
+同一智能体挂载 QUALITY verify hook，无 `when`（恒定挂载），无 `after`（同 hook 类型按字典序组织并行组，单条消息并行发起）。
 
 ### 示例 D：条件挂载 + 降级
 
