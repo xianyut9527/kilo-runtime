@@ -358,7 +358,7 @@ QUALITY（响应式 Hooks 容器）
 ### 保留（不变）
 - `.kilo/instructions/core.md` — 通用基线
 - `.kilo/instructions/workflow-core.md` — T0-T2 定级 + 门禁（术语映射注释需更新）
-- `kilo.json` `skills.paths` — skill 能力扩展运行时发现入口（仓库不预置 skill 源文件，运行时从项目级 `.kilo/skills/` 与社区源 `${HOME}/.agents/skills` 发现）
+- `kilo.json` `skills.paths` — skill 能力扩展运行时发现入口（仓库不预置 skill 源文件，运行时从项目级 `.kilo/skills/` 与社区源 `~/.agents/skills` 发现）
 - `lifecycle-doctor.mjs` — 主体保留，新增检查项
 - `install.sh` / `install.ps1` — 不变
 

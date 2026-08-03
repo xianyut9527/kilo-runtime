@@ -57,7 +57,7 @@
     }
   },
   "skills": {
-    "paths": ["${KILO_CONFIG_DIR}/.kilo/skills", "${HOME}/.agents/skills"]
+    "paths": ["~/.config/kilo/.kilo/skills", "~/.agents/skills"]
   },
   "permission": {
     "bash": "allow"

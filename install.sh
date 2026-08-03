@@ -193,22 +193,6 @@ echo "[SYNC] OK | files=${COPIED_FILES} dirs=${COPIED_DIRS} | critical=${#CRITIC
 echo ""
 
 # ============================================================
-# kilo.json 路径占位符替换（保证 skills.external_dirs 跨平台可移植）
-# ============================================================
-echo "Substituting kilo.json path placeholders..."
-KILO_JSON_PATH="${TARGET_DIR}/kilo.json"
-if [ -f "${KILO_JSON_PATH}" ]; then
-    sed -i.bak \
-        -e "s|\${KILO_CONFIG_DIR}|${TARGET_DIR}|g" \
-        -e "s|\${HOME}|${HOME}|g" \
-        "${KILO_JSON_PATH}" \
-        && rm -f "${KILO_JSON_PATH}.bak"
-    echo "[WRITE] kilo.json path placeholders substituted (KILO_CONFIG_DIR=${TARGET_DIR})"
-else
-    echo "[WARN] kilo.json not found at ${KILO_JSON_PATH}, skip substitution"
-fi
-
-# ============================================================
 # .md 文件路径占位符替换
 # agent/*.md 和 .kilo/instructions/*.md 中包含 ${KILO_CONFIG_DIR} 占位符
 # 在命令示例中（如 node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs"）。
@@ -240,6 +224,24 @@ else
     echo "[WRITE] ${MD_REPLACED} .md file(s) had KILO_CONFIG_DIR placeholders substituted"
 fi
 
+
+# ============================================================
+# Ensure skill directories exist
+# ============================================================
+echo ""
+echo "Ensuring skill directories exist..."
+SKILL_DIRS=(
+    "${TARGET_DIR}/.kilo/skills"
+    "${HOME}/.agents/skills"
+)
+for dir in "${SKILL_DIRS[@]}"; do
+    if [ ! -d "${dir}" ]; then
+        mkdir -p "${dir}"
+        echo "[CREATE] ${dir}"
+    else
+        echo "[OK]     ${dir} already exists"
+    fi
+done
 # ============================================================
 # Agent prompt auto-sync (single source: agent/*.md description -> kilo.json prompt)
 # Eliminates manual prompt maintenance: description is the single source of truth,

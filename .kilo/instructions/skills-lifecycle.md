@@ -12,9 +12,9 @@ keywords: skills, lifecycle
 
 skill 由运行时 `skill` 工具按 `kilo.json` `skills.paths` 声明的路径发现，仓库不预置 skill 源文件：
 
-1. **全局部署目录**：`${KILO_CONFIG_DIR}/.kilo/skills`（本仓库经 install 部署到全局目录后，该目录为 install 复制目标；本仓库源码不预置 skill 源文件，故部署目录通常为空，除非用户手动放入）。
+1. **全局部署目录**：`~/.config/kilo/.kilo/skills`（本仓库经 install 部署到全局目录后，该目录为 install 复制目标；本仓库源码不预置 skill 源文件，故部署目录通常为空，除非用户手动放入）。
 2. **项目级**：项目根目录 `.kilo/skills/`（项目特化，最高优先级，由各项目自维护）。
-3. **社区/用户级**：`${HOME}/.agents/skills`（社区技能源，只读引用）。
+3. **社区/用户级**：`~/.agents/skills`（社区技能源，只读引用）。
 
 命名冲突时按 frontmatter `name` 字段去重，项目级优先。frontmatter 兼容 [agentskills.io](https://agentskills.io/specification) 开放标准。
 

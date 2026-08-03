@@ -173,24 +173,6 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     Write-Host "[SYNC] OK | files=$CopiedFiles dirs=$CopiedDirs | critical=$($CriticalFiles.Count)/$($CriticalFiles.Count) | target=$Target" -ForegroundColor Green
 
     # ============================================================
-    # kilo.json path placeholder substitution (keeps skills.external_dirs portable)
-    # ============================================================
-    Write-Host ""
-    Write-Host "Substituting kilo.json path placeholders..." -ForegroundColor Cyan
-    $KiloJsonPath = Join-Path $Target "kilo.json"
-    if (Test-Path $KiloJsonPath) {
-        $JsonContent = Get-Content -Path $KiloJsonPath -Raw -Encoding UTF8
-        $JsonContent = $JsonContent -replace '\$\{KILO_CONFIG_DIR\}', ($Target -replace '\\', '\\')
-        $JsonContent = $JsonContent -replace '\$\{HOME\}', ($env:USERPROFILE -replace '\\', '\\')
-        # Write-back must be BOM-free: PS 5.1 Set-Content -Encoding UTF8 writes a BOM,
-        # which breaks strict JSON.parse (AP-001)
-        [System.IO.File]::WriteAllText($KiloJsonPath, $JsonContent, (New-Object System.Text.UTF8Encoding($false)))
-        Write-Host "[WRITE]  kilo.json path placeholders substituted (KILO_CONFIG_DIR=$Target)" -ForegroundColor Green
-    } else {
-        Write-Host "[WARN]   kilo.json not found at $KiloJsonPath, skip substitution" -ForegroundColor Yellow
-    }
-
-    # ============================================================
     # .md file path placeholder substitution
     # agent/*.md and .kilo/instructions/*.md contain ${KILO_CONFIG_DIR} placeholders
     # in command examples (e.g. node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs").
@@ -224,6 +206,24 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
         Write-Host "[WRITE]  $MdReplaced .md file(s) had KILO_CONFIG_DIR placeholders substituted" -ForegroundColor Green
     }
 
+
+    # ============================================================
+    # Ensure skill directories exist
+    # ============================================================
+    Write-Host ""
+    Write-Host "Ensuring skill directories exist..." -ForegroundColor Cyan
+    $SkillDirs = @(
+        (Join-Path $Target ".kilo\skills"),
+        (Join-Path $env:USERPROFILE ".agents\skills")
+    )
+    foreach ($dir in $SkillDirs) {
+        if (-not (Test-Path $dir)) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+            Write-Host "[CREATE] $dir" -ForegroundColor Green
+        } else {
+            Write-Host "[OK]     $dir already exists" -ForegroundColor Gray
+        }
+    }
     # ============================================================
     # Agent prompt auto-sync (single source: agent/*.md description -> kilo.json prompt)
     # Eliminates manual prompt maintenance: description is the single source of truth,

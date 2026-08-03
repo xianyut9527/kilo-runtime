@@ -158,14 +158,14 @@ diff -rq . ~/.config/kilo \
 
 ## Skills 跨项目复用
 
-`kilo.json` 已配置 `skills.paths` 指向 `${KILO_CONFIG_DIR}/.kilo/skills`（全局配置目录技能位）与 `~/.agents/skills`（社区技能目录），可扫描社区技能源。社区技能源见 `.kilo/instructions/skills-lifecycle.md`「社区技能发现」章节（含 anthropics/skills、openai/skills、vercel-labs/agent-skills、skills.sh 等已知源）。
+`kilo.json` 已配置 `skills.paths` 指向 `~/.config/kilo/.kilo/skills`（全局配置目录技能位）与 `~/.agents/skills`（社区技能目录），可扫描社区技能源。社区技能源见 `.kilo/instructions/skills-lifecycle.md`「社区技能发现」章节（含 anthropics/skills、openai/skills、vercel-labs/agent-skills、skills.sh 等已知源）。
 
 ```json
 {
   "skills": {
     "paths": [
-      "${KILO_CONFIG_DIR}/.kilo/skills",
-      "${HOME}/.agents/skills"
+      "~/.config/kilo/.kilo/skills",
+      "~/.agents/skills"
     ]
   }
 }
