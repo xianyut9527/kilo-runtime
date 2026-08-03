@@ -1775,5 +1775,41 @@ if (kj) {
   }
 }
 
+// ============================================================
+// H. 脚本完整性门禁（防 ReferenceError/SyntaxError 类类型问题复发）
+// ============================================================
+
+// H1. scripts/*.mjs + scripts/lib/*.mjs 全部通过 `node --check` 语法校验
+{
+  const scriptFiles = [];
+  for (const dir of ['scripts', 'scripts/lib']) {
+    const abs = path.join(ROOT, dir);
+    let names = [];
+    try { names = fs.readdirSync(abs); } catch { continue; }
+    for (const n of names) {
+      if (n.endsWith('.mjs')) scriptFiles.push(path.join(abs, n));
+    }
+  }
+  let bad = 0;
+  for (const f of scriptFiles) {
+    const r = spawnSync(process.execPath, ['--check', f], { cwd: ROOT, encoding: 'utf8', timeout: 15000 });
+    if (r.status !== 0) { bad++; fail('scripts.syntax', `${path.relative(ROOT, f)}: ${(r.stderr || r.stdout || 'check failed').trim().split('\n')[0]}`); }
+  }
+  if (bad === 0) pass('scripts.syntax', `${scriptFiles.length} 个脚本全部通过 node --check`);
+}
+
+// H2. 每个脚本的顶层 import 名称可解析（模块图加载完整性）——对纯库脚本做动态 import 冒烟
+{
+  const libFiles = [];
+  try { for (const n of fs.readdirSync(path.join(ROOT, 'scripts/lib'))) { if (n.endsWith('.mjs')) libFiles.push(path.join(ROOT, 'scripts/lib', n)); } } catch {}
+  let bad = 0;
+  for (const f of libFiles) {
+    // 动态 import 只验证模块图可加载（顶层无副作用）；脚本自身 .mjs 不 import（会执行 main）
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `await import('file:///${f.replace(/\\/g, '/')}')`], { cwd: ROOT, encoding: 'utf8', timeout: 15000 });
+    if (r.status !== 0) { bad++; fail('scripts.modules', `${path.relative(ROOT, f)}: ${(r.stderr || r.stdout || 'load failed').trim().split('\n')[0]}`); }
+  }
+  if (bad === 0) pass('scripts.modules', `${libFiles.length} 个 lib 模块动态加载冒烟 PASS`);
+}
+
 // 静态检查代码块结束后调用 report()
 report();
