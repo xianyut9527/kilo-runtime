@@ -1389,6 +1389,230 @@ function parseAgentPermission(fm) {
 }
 
 // ============================================================
+// D6/D7/D8/D9/D10/D11. 语义一致性校验（P1+P2 补全）
+//   S2  task_context 写入切片独占一致性（静态）
+//   S4  per_agent_s 键必有对应 agent 文件（静态，语义层）
+//   S5  graph.yaml when 标识符须在 task_context schema 定义（静态）
+//   S6  subagent 返回契约覆盖（静态，WARN 级）
+//   S8  conductor 13 条铁律机械脚本覆盖率（静态，WARN 级）
+// ============================================================
+
+// S2. semantic.task_context_write_exclusivity
+//   收集全 agent frontmatter task_context.write 切片，建 切片→[agents] 反向索引。
+//   对正文（含 frontmatter 行）含 "独占/双独占" 且提及该切片的声明，校验实际写入者集合
+//   ⊆ 声明独占者（即 writers == declared owners）。冲突→FAIL。
+//   例：verifier 声明 execution.verification 双独占，若其他 agent 也写 → FAIL。
+{
+  // 切片 → Set(agentName)
+  const sliceWriters = new Map();
+  for (const [name, a] of agents) {
+    for (const s of a.writes) {
+      if (!sliceWriters.has(s)) sliceWriters.set(s, new Set());
+      sliceWriters.get(s).add(name);
+    }
+  }
+  // 对每个 agent，扫描其文件全文中含 "独占" 且同时提及该 agent 某 write 切片的行，
+  // 判定该 agent 声明对该切片独占。
+  const declaredOwner = new Map(); // slice -> Set(agentName)
+  for (const [name, a] of agents) {
+    const filePath = path.join(AGENT_DIR, `${name}.md`);
+    const text = readText(filePath);
+    if (!text) continue;
+    const lines = text.split(/\r?\n/);
+    for (const s of a.writes) {
+      let declared = false;
+      for (const line of lines) {
+        if (line.includes('独占') && line.includes(s)) {
+          declared = true;
+          break;
+        }
+      }
+      if (declared) {
+        if (!declaredOwner.has(s)) declaredOwner.set(s, new Set());
+        declaredOwner.get(s).add(name);
+      }
+    }
+  }
+  let conflicts = 0;
+  let checkedExclusive = 0;
+  for (const [slice, owners] of declaredOwner) {
+    const actual = sliceWriters.get(slice) || new Set();
+    // writers ⊆ declared owners
+    const extra = [...actual].filter((a) => !owners.has(a));
+    const missing = [...owners].filter((o) => !actual.has(o));
+    checkedExclusive++;
+    if (extra.length === 0 && missing.length === 0) {
+      pass('semantic.task_context_write_exclusivity',
+        `${slice} 独占一致（声明=[${[...owners].join(',')}] 实际写入=[${[...actual].join(',')}]）`);
+    } else {
+      conflicts++;
+      const parts = [];
+      if (extra.length) parts.push(`非声明者写入=[${extra.join(',')}]`);
+      if (missing.length) parts.push(`声明者未写入=[${missing.join(',')}]`);
+      fail('semantic.task_context_write_exclusivity',
+        `切片 "${slice}" 独占冲突：声明独占者=[${[...owners].join(',')}] 实际写入者=[${[...actual].join(',')}]（${parts.join('；')}）`);
+    }
+  }
+  if (checkedExclusive === 0) {
+    pass('semantic.task_context_write_exclusivity', '无 task_context.write 切片声明独占（无校验对象）');
+  }
+  if (conflicts === 0 && checkedExclusive > 0) {
+    pass('semantic.task_context_write_exclusivity', `${checkedExclusive} 个独占切片写入者集合与声明一致`);
+  }
+}
+
+// S4. semantic.per_agent_s_keys_exist
+//   解析 lifecycle/config.yaml timeouts.per_agent_s 所有键；每键须存在 agent/<key>.md。
+//   幽灵键→FAIL。（语义层语义校验名；与 D1 config.timeouts.per_agent_s 同源，
+//   D1 是结构层名称，S4 是语义层一致性名称，二者结论一致但分别登记。）
+{
+  if (!cfg) {
+    fail('semantic.per_agent_s_keys_exist', 'lifecycle/config.yaml 未解析');
+  } else {
+    const agentKeys = new Set([...agents.keys()].map((n) => agentKeyOf(n)));
+    const ghost = cfg.perAgentKeys.filter((k) => !agentKeys.has(k));
+    if (ghost.length === 0) {
+      pass('semantic.per_agent_s_keys_exist',
+        `per_agent_s ${cfg.perAgentKeys.length} 键全部有对应 agent/*.md（语义层确认）`);
+    } else {
+      for (const g of ghost) {
+        fail('semantic.per_agent_s_keys_exist',
+          `per_agent_s 幽灵键 "${g}"（无对应 agent/${g}.md）`);
+      }
+    }
+  }
+}
+
+// S5. semantic.edge_when_vars_defined
+//   解析 lifecycle/graph.yaml edges when 表达式，提取标识符（tier/intent_type/quality_verdict 等）；
+//   每标识符须在 task_context schema 中定义。
+//   task_context schema 来源：conductor.md task_context.write 字段 + 已知 task_context 顶层字段 +
+//   transition-check.mjs 已知 when 变量映射（intent_type→intent.intent_type / tier→sizing.tier /
+//   quality_verdict→quality.verdict）。
+//   未定义→FAIL。
+{
+  // 已知 when 变量（来自 transition-check.mjs L317-337）
+  const KNOWN_WHEN_VARS = new Set([
+    'intent_type', 'tier', 'quality_verdict',
+    'forward_result', 'review_result',
+  ]);
+  // 已知 task_context 顶层字段（schema 显式定义）
+  const TC_TOP_FIELDS = new Set([
+    'task_id', 'intent', 'sizing', 'config', 'plan', 'plan_review',
+    'execution', 'verification', 'quality', 'fixing_history',
+    'dispatch_log', 'overload_count', 'status', 'current_stage',
+    'transition_log', 'convergence',
+  ]);
+  const LITERALS = new Set([
+    'in', 'and', 'or', 'not', 'true', 'false', 'null',
+    'T0', 'T1', 'T2', 'T3',
+    'EXECUTION', 'INQUIRY', 'PASS', 'CIRCUIT_BREAKER',
+  ]);
+  const usedVars = new Set();
+  for (const e of graph.edges) {
+    if (!e.when) continue;
+    const tokens = e.when.match(/[a-zA-Z_][a-zA-Z_0-9]*/g) || [];
+    for (const tk of tokens) {
+      if (!LITERALS.has(tk)) usedVars.add(tk);
+    }
+  }
+  let bad = 0;
+  for (const v of usedVars) {
+    if (!KNOWN_WHEN_VARS.has(v) && !TC_TOP_FIELDS.has(v)) {
+      bad++;
+      fail('semantic.edge_when_vars_defined',
+        `when 变量 "${v}" 未在 task_context schema 中定义（已知=${[...KNOWN_WHEN_VARS].join(',')}，顶层字段=${[...TC_TOP_FIELDS].join(',')}）`);
+    }
+  }
+  if (bad === 0) {
+    pass('semantic.edge_when_vars_defined',
+      `${usedVars.size} 个 when 变量全部在 task_context schema 中定义（${[...usedVars].sort().join(',')}）`);
+  }
+}
+
+// S6. semantic.return_contract_coverage（WARN 级）
+//   对所有 mode:subagent 的 agent，校验正文含 "≤4000" 或 "返回契约" 章节。缺→WARN（非 FAIL）。
+//   注：kilo.json 在 G 区才正式解析（const kj 存在 TDZ），这里本地解析子集。
+{
+  const kjLocalText = readText(KILO_JSON_PATH);
+  let subagentNames = [];
+  if (kjLocalText) {
+    try {
+      const data = JSON.parse(kjLocalText);
+      if (data.agent && typeof data.agent === 'object') {
+        for (const [name, cfg] of Object.entries(data.agent)) {
+          if (cfg && cfg.mode === 'subagent') subagentNames.push(name);
+        }
+      }
+    } catch { /* 解析失败由 G 区 G.* 校验报错，此处静默 */ }
+  }
+  if (subagentNames.length === 0) {
+    warn('semantic.return_contract_coverage', 'kilo.json 无 mode:subagent 的 agent 或解析失败');
+  } else {
+    let missing = 0;
+    for (const name of subagentNames) {
+      const text = readText(path.join(AGENT_DIR, `${name}.md`));
+      if (!text) {
+        missing++;
+        warn('semantic.return_contract_coverage', `agent/${name}.md 缺失，无法校验返回契约`);
+        continue;
+      }
+      const has4 = text.includes('≤4000');
+      const hasSection = /返回契约/.test(text);
+      if (!has4 && !hasSection) {
+        missing++;
+        warn('semantic.return_contract_coverage',
+          `agent/${name}.md 正文未含 "≤4000" 或 "返回契约" 章节（subagent 须声明返回契约）`);
+      }
+    }
+    if (missing === 0) {
+      pass('semantic.return_contract_coverage',
+        `${subagentNames.length} 个 subagent 全部声明返回契约（≤4000 / 返回契约）`);
+    }
+  }
+}
+
+// S8. semantic.ironclad_mechanical_coverage（WARN 级）
+//   对 conductor.md 13 条铁律，grep 每条对应的脚本名
+//   (transition-check/size-check/flow-audit/lifecycle-doctor/task-context)。
+//   无脚本对应的铁律编号 → WARN。产出覆盖率报告。
+{
+  const condText = readText(path.join(AGENT_DIR, 'conductor.md')) ?? '';
+  const SCRIPTS = ['transition-check', 'size-check', 'flow-audit', 'lifecycle-doctor', 'task-context'];
+  // 抽取 1..13 铁律正文块：行首匹配 "<i>. **..."
+  const blocks = {}; // i -> text
+  let cur = null; let curText = [];
+  for (const line of condText.split(/\r?\n/)) {
+    const m = line.match(/^(\d{1,2})\.\s+\*\*/);
+    if (m) {
+      if (cur !== null) blocks[cur] = curText.join('\n');
+      cur = parseInt(m[1], 10);
+      curText = [line];
+      continue;
+    }
+    if (cur !== null) {
+      if (/^##\s/.test(line)) { blocks[cur] = curText.join('\n'); cur = null; curText = []; continue; }
+      curText.push(line);
+    }
+  }
+  if (cur !== null) blocks[cur] = curText.join('\n');
+  let covered = 0; let uncovered = 0; const uncoveredIds = [];
+  for (let i = 1; i <= 13; i++) {
+    const b = blocks[i] || '';
+    const hit = SCRIPTS.some((s) => b.includes(s));
+    if (hit) covered++;
+    else { uncovered++; uncoveredIds.push(i); }
+  }
+  if (uncoveredIds.length === 0) {
+    pass('semantic.ironclad_mechanical_coverage',
+      `13 条铁律全部有机械脚本对应（覆盖率 13/13）`);
+  } else {
+    warn('semantic.ironclad_mechanical_coverage',
+      `覆盖率 ${covered}/13；无脚本对应：#${uncoveredIds.join(',#')}（纯文字铁律，无运行时机械门禁）`);
+  }
+}
+
+// ============================================================
 // E. 权限矩阵校验
 // ============================================================
 
