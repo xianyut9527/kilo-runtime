@@ -2,7 +2,7 @@
 
 Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由和运行时规则；项目级知识应下沉到各项目自己的 `AGENTS.md` 和 `.kilo/skills/`。
 
-> **仓库定位**：本仓库是 Kilo 的**全局通用配置唯一源**，通过 `install.ps1`/`install.sh` 全量部署到 `~/.config/kilo/`。仓库内的 `.kilo/` 目录是全局通用内容（instructions/skills）的工作区，**不是项目级特化配置**——所有项目共享同一份全局配置，项目级特化应放在各项目根目录的 `AGENTS.md` 和 `.kilo/` 中。修改仓库内任何配置后必须重跑 install 同步到全局，否则全局版会落后。
+> **仓库定位**：本仓库是 Kilo 的**全局通用配置唯一源**，通过 `install.ps1`/`install.sh` 全量部署到 `~/.config/kilo/`。仓库内的 `.kilo/instructions/` 是全局通用规则的工作区，`.kilo/skills/` 不随仓库分发（运行时从项目级与社区源 `${HOME}/.agents/skills` 发现，见 `kilo.json` `skills.paths`），**不是项目级特化配置**——所有项目共享同一份全局配置，项目级特化应放在各项目根目录的 `AGENTS.md` 和 `.kilo/` 中。修改仓库内任何配置后必须重跑 install 同步到全局，否则全局版会落后。
 
 ## 当前设计
 
@@ -43,7 +43,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   │   ├── skill-upgrade.md       # Skill 升级提案生成（由维护者根据实际运行反馈人工评估后触发）
 │   │   ├── skill-usage-tracking.md # skill 使用记录协议（已简化，不再独立追踪）
 │   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
-│   ├── skills/                   # 长期知识库（运行时由 Kilo 从全局目录注入，非仓库内容；30+ 个 skill，完整列表见系统 available_skills）
+│   ├── skills/                   # skill 能力扩展位（运行时由 Kilo 从项目级与社区源发现，仓库不预置源文件；见 kilo.json skills.paths）
 ├── agent/                        # Kilo 智能体定义（v6 单源：一智能体一文件，frontmatter 自注册生命周期路由）
 │   ├── conductor.md           # 工作流编排者（type: primary，内建执行 INIT/DELIVERING）
 │   ├── planner.md                # 规划智能体（mount: PLANNING；设计门、DAG、验收点）

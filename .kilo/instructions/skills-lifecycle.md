@@ -1,51 +1,27 @@
 ---
 name: skills-lifecycle
-description: Skills 生命周期管理
+description: Skills 生命周期治理 — 编写规范、回写触发、发现位置
 keywords: skills, lifecycle
 ---
 
 # Skills Lifecycle Management
 
-## Skills 分类表（与 `.kilo/skills/` 目录一一对应，新增/删除 skill 必须同步本表）
+> **架构定位**：本文件是 skill 能力扩展层的**治理规则**参考文档（按需引用，不自动注入），不承载具体 skill 内容。skill 是运行时按需加载的能力扩展，与全局配置层（本仓库）解耦——全局骨架不预置、不枚举、不硬引用任何具体 skill。
 
-| 分类 | 目录 | 说明 |
-|------|------|------|
-| 工程方法论 | `brainstorming/` | 设计门硬门，编码前想法转规格 |
-| 工程方法论 | `plan-execution/` | 计划执行追踪与 critical review |
-| 工程方法论 | `subagent-driven-development/` | 顺序子代理开发流 |
-| 工程方法论 | `dispatching-parallel-agents/` | 独立问题域并行派发 |
-| 工程方法论 | `tdd-execution/` | 测试驱动执行 |
-| 工程方法论 | `systematic-debugging/` | 系统化调试方法 |
-| 工程方法论 | `verification-before-completion/` | 完成前验证底线 |
-| 工程方法论 | `receiving-code-review/` | 接收审查反馈 |
-| 工程方法论 | `requesting-code-review/` | 请求代码审查 |
-| 工程方法论 | `finishing-a-development-branch/` | 分支收尾协议 |
-| 工程方法论 | `using-git-worktrees/` | worktree 隔离 |
-| 工程方法论 | `workflow/` | 通用工作流模式 |
-| 工程方法论 | `component-driven-fixes/` | 重复实现模式组件化修复（UI 与非 UI 通用） |
-| 知识库 | `patterns/` | 正向模式库 |
-| 知识库 | `anti-patterns/` | 反模式总览与回写指引 |
-| 知识库 | `anti-patterns-encoding/` | 反模式：编码类 |
-| 知识库 | `anti-patterns-process/` | 反模式：流程类 |
-| 知识库 | `anti-patterns-coordination/` | 反模式：协同类 |
-| 知识库 | `anti-patterns-contract/` | 反模式：契约类 |
-| 知识库 | `writing-skills/` | Skill 编写规范 |
-| UI 设计 | `design-system/` | 设计系统 |
-| UI 设计 | `ui-accessibility/` | 无障碍 |
-| UI 设计 | `ui-animation/` | 动效 |
-| UI 设计 | `ui-color/` | 色彩 |
-| UI 设计 | `ui-design-lab/` | 设计实验 |
-| UI 设计 | `ui-frontend/` | 前端实现 |
-| UI 设计 | `ui-polish/` | 打磨 |
-| UI 设计 | `ui-seo/` | SEO |
-| UI 设计 | `ui-shadcn/` | shadcn 组件 |
-| UI 设计 | `ui-vocabulary/` | 设计词汇 |
-| 工程方法论 | `project-intelligence-report/` | 项目情报周报（GitNexus 信号聚合 + 风险仪表盘） |
-| 工程方法论 | `report-analyzer/` | 团队日报分析（AdsPower 浏览器 + 项目工时分布） |
+## skill 发现位置
+
+skill 由运行时 `skill` 工具按 `kilo.json` `skills.paths` 声明的路径发现，仓库不预置 skill 源文件：
+
+1. **项目级**：项目根目录 `.kilo/skills/`（项目特化，最高优先级，由各项目自维护）。
+2. **社区/用户级**：`${HOME}/.agents/skills`（社区技能源，只读引用）。
+
+命名冲突时按 frontmatter `name` 字段去重，项目级优先。frontmatter 兼容 [agentskills.io](https://agentskills.io/specification) 开放标准。
+
+> 全局配置层不维护具体 skill 清单——skill 的存在、数量、分类由项目级与社区源决定。agent 不应在配置文本中硬引用具体 skill 名，避免配置层与能力扩展层耦合。
 
 ## 回写触发条件
 
-以下场景触发 skills 回写：
+以下场景触发 skill 回写（写入项目级 `.kilo/skills/`，不回写全局仓库）：
 
 1. 同类错误出现 2 次及以上
 2. 用户明确纠正
@@ -62,7 +38,6 @@ keywords: skills, lifecycle
 
 **检查清单/实现要点**：
 1. ...
-2. ...
 
 **验证方式**：{如何验证}
 
@@ -90,8 +65,9 @@ metadata:
 - `description` 必填，≤1024 字符
 - 标准 YAML 格式
 
-## 约束
+## 治理约束
 
 - 禁止编造未验证的经验
 - 禁止在 skills 中记录临时状态/任务进度
 - 单 SKILL.md 字符数建议 ≤3000，过长拆分
+- skill 回写只写入项目级 `.kilo/skills/`，禁止回写全局配置仓库

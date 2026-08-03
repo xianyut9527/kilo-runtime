@@ -307,12 +307,4 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 2. **变更回顾**：改了什么 / 为什么改 / 影响范围 / 清理调试代码
 4. **分支收尾协议**：git status 清理 / 单提交对应单定级单元 / 告知用户分支去向 / worktree 隔离清理
 
-## skill 使用记录
-
-
-## 加载的 skills
-
-<!-- 加载 skill: dispatching-parallel-agents -->
-<!-- 加载 skill: subagent-driven-development -->
-<!-- 加载 skill: using-git-worktrees -->
-<!-- 加载 skill: requesting-code-review -->
+> skill 能力扩展由运行时 `skill` 工具按需加载，不在 conductor 规范中预声明。

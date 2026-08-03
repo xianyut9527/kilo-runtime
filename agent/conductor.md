@@ -91,10 +91,5 @@ INIT(内建) → INQUIRY: DELIVERING
 2. 变更回顾：改了什么 / 为什么 / 影响范围
 3. 分支收尾：git status 清理 / 单提交对应单定级单元 / 告知分支去向
 
-## 加载的 skills
-
-<!-- 加载 skill: dispatching-parallel-agents -->
-<!-- 加载 skill: subagent-driven-development -->
-<!-- 加载 skill: using-git-worktrees -->
-<!-- 加载 skill: requesting-code-review -->
+> skill 能力扩展由运行时 `skill` 工具按需加载，不在 agent 定义中预声明——避免配置层与能力扩展层耦合。
 

@@ -37,7 +37,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 ## 项目探测
 
 - 陌生项目先看构建配置、入口目录、关键导出、测试/Lint 命令。
-- 优先使用项目级 `AGENTS.md` 和 `.kilo/skills/`。
+- 优先使用项目级 `AGENTS.md`（项目特化规则）与项目级 skill（运行时由 `skill` 工具按需加载）。
 
 `gitnexus_*`：代码图谱（调用链/影响面）—— 由 `kilo.json` `mcp.gitnexus.enabled` 独立控制。
 

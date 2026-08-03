@@ -48,10 +48,10 @@
 - 局部补丁拦截、重复模式修复 / 组件化 SOP：`.kilo/instructions/workflow-core.md`
 - 修复方法论（全链路审计、完整阅读、验证剩余路径、推测与验证区分）：`.kilo/instructions/workflow-core.md` + `core.md` + `reflection.md`
 - planner 设计门预审、verifier 分层、fixer 权限约束：`.kilo/instructions/workflow-core.md`（生命周期驱动后由 `lifecycle/stages/` 阶段文件 + `agent/*.md` frontmatter 生命周期声明 + 行为文件承载，v6 单源）
-- Skills 生命周期管理（触发条件、回写流程、分类规范）：`.kilo/instructions/skills-lifecycle.md`
-- **安全/性能检测模式**（检测项总览、检测项 ID、INJ/PERF/AUTH 分类、检测流程）→ 集中维护在 `.kilo/instructions/security-checklist.md`；其他文件（`kilo.json` prompt、agent 文件、SKILL.md）只做引用。
+- Skills 生命周期治理（编写规范、回写触发、发现位置）：`.kilo/instructions/skills-lifecycle.md`
+- **安全/性能检测模式**（检测项总览、检测项 ID、INJ/PERF/AUTH 分类、检测流程）→ 集中维护在 `.kilo/instructions/security-checklist.md`；其他文件（`kilo.json` prompt、agent 文件）只做引用。
 - **输出格式规范**（交付输出的最小公共字段、`[MARKER]` 标记语言规范、状态枚举）→ 集中维护在 `.kilo/instructions/output-schema.md`；其他文件只做引用。
-- **SKILL.md frontmatter 规范**（含 keywords 数量 3–20、name 与目录名一致、兼容 agentskills.io 标准）→ 集中维护在 `.kilo/instructions/skills-lifecycle.md`「SKILL.md frontmatter 规范」章节；name 必须与目录名一致。
+- **SKILL.md frontmatter 规范**（含 keywords 数量 3–20、name 与目录名一致、兼容 agentskills.io 标准）→ 由项目级 `.kilo/skills/` 各 skill 自治；全局骨架只在 `skills-lifecycle.md` 给出编写参考，不强制校验仓库外的 skill 文件。
 - **自进化闭环**（执行→反思→提炼→固化的写入规则与优先级）→ 集中维护在 `.kilo/instructions/evolution.md`；其他文件只做引用。
 - **Skill 升级提案**（由维护者根据实际运行反馈人工评估后触发）→ 集中维护在 `.kilo/instructions/skill-upgrade.md`；其他文件只做引用。
 - **工作流参考**（small_model 触发规则、需求扩散与同类点扫描）→ 集中维护在 `.kilo/instructions/workflow-reference.md`；README 与其他文件只做引用。

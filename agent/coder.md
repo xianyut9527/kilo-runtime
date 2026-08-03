@@ -113,7 +113,7 @@ encoding_scan: "PASS" | "FAIL" | "N/A"
 3. **影响面分析**（T1+）：用 GitNexus query/context 看改动符号的上下游调用方，确认接口契约不破坏；高扇入符号（被 ≥3 处调用）改动必须显式列影响清单写入 `risks`
 4. **复用优先**：编码前 grep/glob 扫描是否已有同类抽象（util/hook/component/service/repository/mixin），已有则消费而非新建；无则新建但写入 `risks` 标注"新抽象待 review"
 5. **扩展点评估**：若改动属于高频变更领域（表单/列表/权限/数据获取/第三方集成/错误处理/日志/配置），评估是否应留扩展点（slot/策略接口/配置驱动/插件化），写入 `acceptance_map.edge_cases`；写死分支链且领域高频 → 回 planner
-6. **组件化前摄扫描**：编码前 grep/glob 扫描本次改动模式是否在代码库已存在 ≥1 处同类实现；命中 ≥2 处 → 强制按 `component-driven-fixes` skill 执行（UI 与非 UI 同等适用，见 skill 更新后的触发域）；命中 1 处但属高频变更领域 → 评估是否 preemptively 抽象
+6. **组件化前摄扫描**：编码前 grep/glob 扫描本次改动模式是否在代码库已存在 ≥1 处同类实现；命中 ≥2 处 → 强制按 `workflow-core.md`「重复模式修复 / 组件化 SOP」执行（UI 与非 UI 同等适用）；命中 1 处但属高频变更领域 → 评估是否 preemptively 抽象
 
 ## 返回契约（防主会话 context 撑爆）
 
@@ -127,5 +127,5 @@ encoding_scan: "PASS" | "FAIL" | "N/A"
 - **禁止信任传递**：不得以其他 agent 的"成功"替代独立验证
 - **禁止模糊措辞**："应该""大概""似乎""差不多" → 视为未验证
 - **编码健康度扫描**：对修改过的文件跑 `node scripts/scan-encoding.mjs`
-- **组件化拦截**：同类实现模式 ≥2 处时（UI 与非 UI 同等适用），必须按 `component-driven-fixes` skill 执行
+- **组件化拦截**：同类实现模式 ≥2 处时（UI 与非 UI 同等适用），必须按 `workflow-core.md`「重复模式修复 / 组件化 SOP」执行
 - **不自验放行**：自测通过不等于 verifier 放行，必须经 verifier 独立验证

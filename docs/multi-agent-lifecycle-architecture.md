@@ -358,7 +358,7 @@ QUALITY（响应式 Hooks 容器）
 ### 保留（不变）
 - `.kilo/instructions/core.md` — 通用基线
 - `.kilo/instructions/workflow-core.md` — T0-T2 定级 + 门禁（术语映射注释需更新）
-- `.kilo/skills/` 全部 — skills 系统
+- `kilo.json` `skills.paths` — skill 能力扩展运行时发现入口（仓库不预置 skill 源文件，运行时从项目级 `.kilo/skills/` 与社区源 `${HOME}/.agents/skills` 发现）
 - `lifecycle-doctor.mjs` — 主体保留，新增检查项
 - `install.sh` / `install.ps1` — 不变
 
@@ -424,7 +424,7 @@ QUALITY（响应式 Hooks 容器）
 | 安全敏感模块识别 | ✅ 完全保留 |
 | 单元 DAG | ✅ 完全保留，planner 智能体产出 |
 | Circuit Breaker | ✅ 完全保留 |
-| skills 系统 | ✅ 完全保留 |
+| skill 能力扩展发现 | ✅ 保留，由 `kilo.json` `skills.paths` 声明运行时发现路径（项目级 + 社区源），仓库不预置 skill 源 |
 
 ### 修改
 

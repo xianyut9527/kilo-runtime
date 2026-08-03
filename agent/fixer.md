@@ -94,7 +94,7 @@ quality:
    - 预测：改 P 点后症状应消失；改 Q 点后症状应保留
    - 验证：改 P 点跑验证；再改无关点确认
    - 证伪/确认
-5. **组件化回退**：`[PARTIAL_IMPLEMENTATION]` / `[LOCAL_PATCH]` 等必须回到 `component-driven-fixes` 决策树。
+5. **组件化回退**：`[PARTIAL_IMPLEMENTATION]` / `[LOCAL_PATCH]` 等必须回到 `workflow-core.md`「重复模式修复 / 组件化 SOP」决策树。
 6. **修复后回溯**：确认相关验收标准和调用方无回归。
 7. **运行全部可用验证**：变差时回滚 `[ROLLBACK]`。
 

@@ -16,7 +16,7 @@ keywords: workflow, orchestration, 任务定级, 单元编排, 闭环, 流程日
 - 显式 review 或安全/资金/权限/核心逻辑 → `reviewer`
 - 多次失败、高风险、用户反馈"还是不对/有遗漏" → 升级 reviewer
 
-## 模型选择策略（来源：`.kilo/skills/plan-execution/SKILL.md` 追踪规范 + superpowers/subagent-driven-development）
+## 模型选择策略
 
 conductor 加载智能体时，按任务复杂度选择模型：
 
@@ -277,7 +277,7 @@ conductor 解析 agent 返回或工具调用结果时，按以下分级路由处
 - **降级交付**："任务部分完成，以下是已完成内容、未完成项和阻塞原因。"
 - **失败交付**："任务未完成，阻塞原因是 X，建议方案是 Y。"
 
-### 计划执行门禁（来源：`.kilo/skills/plan-execution/SKILL.md`#执行前-Critical-Review + superpowers/executing-plans）
+### 计划执行门禁
 
 T2+ 任务执行 planner 计划前，conductor 必须：
 
