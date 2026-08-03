@@ -14,7 +14,7 @@
 #   - INTENT + SIZING 合并为 INIT（conductor 内建，意图判定+定级一步完成）
 #   - T3/multiModel/MM_SUBGRAPH 移除
 #   - 记忆板块（M4-M8/memory.db）移除，DELIVERING 不再写入记忆
-#   - QUALITY=verify→fix(onFail)→verify 循环，熔断 max_total_cycles=4 → CIRCUIT_BREAKER
+#   - QUALITY=verify→fix(onFail)→verify 循环，熔断 max_total_cycles=3 → CIRCUIT_BREAKER
 #   - gate MEMORY_WRITE_COMPLETE 删除
 # ============================================================
 # 节点字段说明：

@@ -127,8 +127,8 @@ DELIVERING
 
 **熔断**：
 - `quality.round`（每次进入 QUALITY 时 +1）
-- `quality.max_rounds = hooks.quality.max_total_cycles`（当前值 4）
-- `quality.round ≥ 4` → `[CIRCUIT_BREAKER]` → PAUSED 等用户决策
+- `quality.max_rounds = hooks.quality.max_total_cycles`（当前值 3）
+- `quality.round ≥ 3` → `[CIRCUIT_BREAKER]` → PAUSED 等用户决策
 
 ---
 
@@ -218,7 +218,7 @@ tier_defaults:
 # lifecycle/config.yaml（唯一真相）
 hooks:
   quality:
-    max_total_cycles: 4       # QUALITY 总轮次上限（唯一熔断阈值，4 轮修不好=方案/需求有问题）
+    max_total_cycles: 3       # QUALITY 总轮次上限（唯一熔断阈值，3 轮修不好=方案/需求有问题）
     auto_fix: true
 ```
 

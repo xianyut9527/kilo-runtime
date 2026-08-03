@@ -333,14 +333,14 @@ overrides:
 
 ### 场景 F：改熔断阈值
 
-**需求**：把单点修复熔断统一为 4 轮（与 config.yaml max_total_cycles 一致）。
+**需求**：把单点修复熔断统一为 3 轮（与 config.yaml max_total_cycles 一致）。
 
 **步骤**：改 `lifecycle/config.yaml`（**唯一真相**）：
 
 ```yaml
 hooks:
   quality:
-    max_total_cycles: 4          # ← 从 7 改为 4（唯一熔断阈值，替代原 max_verify_retries/max_review_retries 死配置）
+    max_total_cycles: 3          # ← 从 7 改为 3（唯一熔断阈值，替代原 max_verify_retries/max_review_retries 死配置）
 ```
 
 `graph.yaml` 不再重复声明 convergence（v6.1 删除展示副本）。
@@ -420,7 +420,7 @@ overrides:
 # hooks.quality：响应式 Hooks 熔断阈值（v2 唯一真相）
 hooks:
   quality:
-    max_total_cycles: 4        # QUALITY 总轮次上限（唯一熔断阈值，4 轮修不好=方案/需求有问题）
+    max_total_cycles: 3        # QUALITY 总轮次上限（唯一熔断阈值，3 轮修不好=方案/需求有问题）
 ```
 
 ### tier_defaults.agents 的 key 命名规则（自动派生）
@@ -509,7 +509,7 @@ node scripts/lifecycle-doctor.mjs
 | `[PROCESS_VIOLATION]` | 流程违规（跳步/越权写） | 检查是否跳过必经阶段 / 是否越权写 execution.verification |
 | `[TRUST_TRANSFER]` | 信任传递 | 检查验证智能体是否引用了其他视角结论而非独立验证 |
 | `[SCOPE_CREEP]` | 越界修改 | 检查 coder/fixer 是否改了 forbidden_files 之外的文件 |
-| `[CIRCUIT_BREAKER]` | 熔断 | 单点 4 轮 / 全局 4 轮，需人工决策 |
+| `[CIRCUIT_BREAKER]` | 熔断 | 单点 3 轮 / 全局 3 轮，需人工决策 |
 
 ---
 

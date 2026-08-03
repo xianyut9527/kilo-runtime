@@ -152,7 +152,7 @@ mount:
 # task_context.quality（新增字段，框架自动管理）
 quality:
   round: 0                    # 当前 QUALITY 轮次
-  max_rounds: 4               # 来源：config.yaml hooks.quality.max_total_cycles
+  max_rounds: 3               # 来源：config.yaml hooks.quality.max_total_cycles
   status: "running"           # running | passed | failed | circuit_breaker
   
   # verify 结果（hook: verify 钩子产出）
@@ -188,7 +188,7 @@ quality:
 # lifecycle/config.yaml hooks 段
 hooks:
   quality:
-    max_total_cycles: 4        # QUALITY 总轮次上限（唯一熔断阈值；4 轮修不好=方案/需求有问题，escalate 到人）
+    max_total_cycles: 3        # QUALITY 总轮次上限（唯一熔断阈值；3 轮修不好=方案/需求有问题，escalate 到人）
     auto_fix: true             # 自动触发 fix hooks（false = 人工确认后修复）
 ```
 

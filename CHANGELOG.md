@@ -11,7 +11,7 @@
   - **验证**：lifecycle-doctor 全 PASS；sync-agent-prompt drift=0；grep `agent/`、`AGENTS.md`、`lifecycle/stages/` 无"串行组/串行启动/全局默认串行策略/委派串行硬门"残留（保留串行场景清单除外）；docs "默认串行"清零。
 
 - **2026-08-03**: 工作流框架简化 — 删除记忆板块，生命周期收敛为 5 阶段（INIT→PLANNING→EXECUTING→QUALITY→DELIVERING）。
-  - **生命周期简化**：INTENT+SIZING 合并为 INIT（conductor 内建：意图判定+定级）；删除 T3 多模型子图（MM_SUBGRAPH/multimodel-graph.yaml/multiModel/coder-a/b/c/synthesizer-fusion）与可选审查视角（plan-reviewer/reverse-auditor/side-checker）；INQUIRY 直通 INIT→DELIVERING；T0 快通道保留；QUALITY 为检查(verifier+reviewer)→修复(fixer)→再检查自动循环，直到 PASS 才进 DELIVERING（熔断 max_total_cycles=4）。
+  - **生命周期简化**：INTENT+SIZING 合并为 INIT（conductor 内建：意图判定+定级）；删除 T3 多模型子图（MM_SUBGRAPH/multimodel-graph.yaml/multiModel/coder-a/b/c/synthesizer-fusion）与可选审查视角（plan-reviewer/reverse-auditor/side-checker）；INQUIRY 直通 INIT→DELIVERING；T0 快通道保留；QUALITY 为检查(verifier+reviewer)→修复(fixer)→再检查自动循环，直到 PASS 才进 DELIVERING（熔断 max_total_cycles=3）。
   - **记忆板块移除**：删除 `.kilo/memory/` 整目录、`scripts/memory.py`、`docs/memory-ops-reference.md`、install 脚本 memory.db 初始化段、MEMORY_WRITE_COMPLETE gate 全链路（graph/transition-check/task-context/lifecycle-doctor）、AGENTS.md 锚点 8 与各 instructions/docs 的 M1-M8 引用。
   - **扩展机制保留**：pre:/post:/at:/hook 挂载点、on_fail、required_roles、tier_defaults（T0/T1/T2）——用户自建智能体丢 `agent/<name>.md` + kilo.json 绑模型即挂载，零改框架。
   - **验证**：lifecycle-doctor 全 PASS；全仓 grep 无 memory.py/MM_SUBGRAPH/multiModel/M4-M8 残留（CHANGELOG 历史条目除外）。

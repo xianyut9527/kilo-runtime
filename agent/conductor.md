@@ -81,7 +81,7 @@ INIT(内建) → INQUIRY: DELIVERING
 ## 关键规则速查
 
 - **交叉验证**：各视角 verdict 做机械汇总 AND 运算（反自验），任一 FAIL 触发 fix hooks。不投票，不补判。
-- **熔断**：`quality.round >= quality.max_rounds`（默认 4）→ `[CIRCUIT_BREAKER]` → 流转到 DELIVERING（带降级标记 `[QUALITY_CB]`，由用户决策是否继续）。与 `graph.yaml`/`quality.md` 一致。
+- **熔断**：`quality.round >= quality.max_rounds`（默认 3）→ `[CIRCUIT_BREAKER]` → 流转到 DELIVERING（带降级标记 `[QUALITY_CB]`，由用户决策是否继续）。与 `graph.yaml`/`quality.md` 一致。
 - **on_fail 派发**：abort(硬停) / retry_once(重跑1次) / degrade(跳过可选视角) / escalate(升级) / pause(挂起等人)。
 - **流程级即停**：跳步/SCOPE_CREEP/TRUST_TRANSFER → 标记回退重走，不走 on_fail。
 - **降级**：agent 不可用→按 on_fail；bootstrap 失败→`[ASSEMBLY_FAIL]` 停止。

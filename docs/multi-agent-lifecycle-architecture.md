@@ -210,7 +210,7 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
   "status": "EXECUTING",
   "convergence": {
     "round": 2,
-    "max_rounds": 4,
+    "max_rounds": 3,
     "circuit_breaker": false
   }
 }
@@ -344,12 +344,12 @@ QUALITY（响应式 Hooks 容器）
 |------|------|
 | 全视角 PASS | 收敛，进入下一阶段 |
 | fixer 连续 2 轮同症状 | 升级：标记 `[NEEDS_REVIEW_ESCALATION]`，reviewer 介入做根因分析 |
-| 累计循环 ≥ 4 轮 | `[CIRCUIT_BREAKER]`，停止，输出选项等用户决策 |
+| 累计循环 ≥ 3 轮 | `[CIRCUIT_BREAKER]`，停止，输出选项等用户决策 |
 | fixer 修复后验证仍 FAIL 3 次 | `[CIRCUIT_BREAKER]`，停止 |
 
 ### 循环计数
 - `task_context.quality.round` 每次进入 QUALITY 时 +1
-- `task_context.quality.max_rounds` 默认 4（来源：`lifecycle/config.yaml` `hooks.quality.max_total_cycles`）
+- `task_context.quality.max_rounds` 默认 3（来源：`lifecycle/config.yaml` `hooks.quality.max_total_cycles`）
 
 ---
 

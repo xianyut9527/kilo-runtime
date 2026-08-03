@@ -122,7 +122,7 @@ INIT（conductor 内建）→ INIT（conductor 内建）
   },
   "quality": {
     "round": 0,
-    "max_rounds": 4,
+    "max_rounds": 3,
     "status": "running",
     "verify": { "forward": {} },
     "review": { "result": {} },
@@ -139,7 +139,7 @@ INIT（conductor 内建）→ INIT（conductor 内建）
 > **字段语义**：
 >
 > - `quality.round`：当前 QUALITY hooks 循环轮次（verify→fix→review→fix 自动循环计数），每次 verify/review hooks 触发 fix hooks 后 +1
-> - `quality.max_rounds`：QUALITY 总轮次上限（见 `lifecycle/config.yaml` `hooks.quality.max_total_cycles`，当前值为 4），达到即 `[CIRCUIT_BREAKER]`
+> - `quality.max_rounds`：QUALITY 总轮次上限（见 `lifecycle/config.yaml` `hooks.quality.max_total_cycles`，当前值为 3），达到即 `[CIRCUIT_BREAKER]`
 >
 
 

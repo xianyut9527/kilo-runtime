@@ -35,13 +35,15 @@ tier_defaults:
   # T1 标准闭环
   # 恒定挂载：planner/coder/verifier/reviewer/fixer（拓扑可达即加载）
   T1:
-    agents: {}
+    agents:
+      plan_reviewer: false
     review_mode: full
 
   # T2 全视角验证：正向+审查全开
   # 适合复杂任务：架构变更、跨多文件重构、安全敏感改动
   T2:
-    agents: {}
+    agents:
+      plan_reviewer: true
     review_mode: full
 
 # ============================================================
@@ -66,7 +68,7 @@ overrides:
 # ============================================================
 hooks:
   quality:
-    max_total_cycles: 4          # QUALITY 总轮次上限（唯一熔断阈值，4轮修不好=方案/需求有问题，escalate到人）
+    max_total_cycles: 3          # QUALITY 总轮次上限（唯一熔断阈值，3轮修不好=方案/需求有问题，escalate到人）
     auto_fix: true              # 自动触发 fix hooks（false = 人工确认后修复）
 
 # ============================================================

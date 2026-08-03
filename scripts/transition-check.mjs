@@ -420,11 +420,12 @@ function main() {
       // onFail trigger，不受影响，保持全量强制。
       provenanceRequired.push(...getStageRequiredRoles('QUALITY').filter((r) => !isConditionalRole(r)));
     }
-    // S9 扩展：post:/pre: 恒定挂载 agent 并入 provenance 校验
-    //   PLANNING→EXECUTING：post:PLANNING 恒定挂载 agent（如 plan-reviewer）必须已派发
-    //   EXECUTING→QUALITY：post:EXECUTING 恒定挂载 agent 必须已派发
-    //   QUALITY→DELIVERING：post:QUALITY 恒定挂载 agent 必须已派发
-    //   pre:<TO> 同理：pre:EXECUTING / pre:QUALITY / pre:DELIVERING 恒定挂载 agent
+    // S9 扩展：post:/pre: 挂载 agent 并入 provenance 校验（条件挂载按 when 求值）
+    //   PLANNING→EXECUTING：post:PLANNING 条件挂载 agent（如 plan-reviewer）按 when 求值，
+    //     T1 关闭时不强制派发；T2 开启时由 dispatch_log provenance 校验兜底
+    //   EXECUTING→QUALITY：post:EXECUTING 条件挂载 agent 按 when 求值，命中则必须已派发
+    //   QUALITY→DELIVERING：post:QUALITY 条件挂载 agent 按 when 求值，命中则必须已派发
+    //   pre:<TO> 同理：pre:EXECUTING / pre:QUALITY / pre:DELIVERING 条件挂载 agent 按 when 求值
     //   防跳过 post:PLANNING 的 plan-reviewer（本次 plan-reviewer 被跳过的根因）
     const postPreMounts = discoverPostPreConstantMounts();
     for (const m of postPreMounts) {
