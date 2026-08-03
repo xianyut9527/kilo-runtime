@@ -88,6 +88,8 @@ description: 模型能力倾向矩阵（人类可读版）+ 按智能体能力�
 
 ## 校准机制
 
-- `model_calibration` 表记录每个模型在每个能力维度上的表现
-- 每次任务完成后更新：accuracy、latency、token_usage、helpful_rate
-- 当某模型在某维度连续 3 次低于阈值 → 自动降级推荐（更新 `kilo.json` 建议由用户审批，不自动改写）
+> 已废弃：model_calibration 表已移除，校准逻辑改为 kilo.json 手动配置。
+
+- ~~`model_calibration` 表记录每个模型在每个能力维度上的表现~~
+- ~~每次任务完成后更新：accuracy、latency、token_usage、helpful_rate~~
+- ~~当某模型在某维度连续 3 次低于阈值 → 自动降级推荐（更新 `kilo.json` 建议由用户审批，不自动改写）~~

@@ -66,7 +66,7 @@ plan:
 acceptance_criteria: ["string"]
 project_context:
   tech_stack: ["string"]
-  security_keywords: ["string"]    # 来自 fact_store
+  security_keywords: ["string"]    # 项目级安全关键词列表
 # 禁止注入：verifier_report / verification.forward / fixing_history
 ```
 

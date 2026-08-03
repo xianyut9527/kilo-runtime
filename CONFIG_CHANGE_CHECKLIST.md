@@ -53,7 +53,7 @@
 - **输出格式规范**（交付输出的最小公共字段、`[MARKER]` 标记语言规范、状态枚举）→ 集中维护在 `.kilo/instructions/output-schema.md`；其他文件只做引用。
 - **SKILL.md frontmatter 规范**（含 keywords 数量 3–20、name 与目录名一致、兼容 agentskills.io 标准）→ 集中维护在 `.kilo/instructions/skills-lifecycle.md`「SKILL.md frontmatter 规范」章节；name 必须与目录名一致。
 - **自进化闭环**（执行→反思→提炼→固化的写入规则与优先级）→ 集中维护在 `.kilo/instructions/evolution.md`；其他文件只做引用。
-- **Skill 升级提案**（fact_store 置信度/命中数达标后的固化流程）→ 集中维护在 `.kilo/instructions/skill-upgrade.md`；其他文件只做引用。
+- **Skill 升级提案**（由维护者根据实际运行反馈人工评估后触发）→ 集中维护在 `.kilo/instructions/skill-upgrade.md`；其他文件只做引用。
 - **工作流参考**（small_model 触发规则、需求扩散与同类点扫描）→ 集中维护在 `.kilo/instructions/workflow-reference.md`；README 与其他文件只做引用。
 
 修改这些规则时，优先改主文档；agent 文件只保留必要引用和角色化执行要求。

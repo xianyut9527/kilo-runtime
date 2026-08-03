@@ -1,7 +1,6 @@
 # kilo_config 仓库忽略规则
 # 运行时生成文件（个人数据，不应在团队间共享）
 **/.kilo/agent-manager.json
-**/.kilo/memory/skill-usage.log
 
 # 依赖目录
 node_modules/

@@ -232,10 +232,12 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 - **不重复从 0 开始**：每个智能体都能看到前序阶段的完整上下文（方案、已完成单元、验证结果、失败历史）
 
 
-- `fact_store`：跨任务经验模式（PATTERN/ANTIPATTERN/RECIPE/WARNING）
+> 以下五表清单中 fact_store 与 model_calibration 已废弃，现以 graph.yaml 为单一真相源。
+
+- ~~`fact_store`：跨任务经验模式（PATTERN/ANTIPATTERN/RECIPE/WARNING）~~
 - `failure_db`：失败案例
 - `dispatch_log`：任务调度记录
-- `model_calibration`：模型能力校准
+- ~~`model_calibration`：模型能力校准~~
 - `project_context`：项目级用户偏好/安全约束
 
 
