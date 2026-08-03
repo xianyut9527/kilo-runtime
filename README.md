@@ -41,7 +41,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
 │   │   ├── evolution.md           # 自进化闭环（执行→反思→提炼→固化写入规则）
 │   │   ├── skill-upgrade.md       # Skill 升级提案生成（由维护者根据实际运行反馈人工评估后触发）
-│   │   ├── skill-usage-tracking.md # skill 使用记录规范（v2.5 起写入 SQLite skill_usage_events 表）
+│   │   ├── skill-usage-tracking.md # skill 使用记录协议（已简化，不再独立追踪）
 │   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
 │   ├── skills/                   # 长期知识库（运行时由 Kilo 从全局目录注入，非仓库内容；30+ 个 skill，完整列表见系统 available_skills）
 ├── agent/                        # Kilo 智能体定义（v6 单源：一智能体一文件，frontmatter 自注册生命周期路由）
