@@ -4,7 +4,7 @@ model_capability: strict-verification
 token_budget: 10000        # × 智能体数
 # required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
 # 必配：verifier（verify hook）；reviewer（review hook）；fixer（fix hook, auto-trigger）
-required_roles: [verifier, reviewer, fixer]
+required_roles: [verifier, reverse-auditor, reviewer, fixer]
 ---
 
 # lifecycle/stages/quality

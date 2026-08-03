@@ -1069,6 +1069,33 @@ if (cfg && cfg.disabledAgents.length > 0) {
   pass('config.disabled_agents', `已声明: ${cfg.disabledAgents.join(', ')}`);
 }
 
+// C4. 反向一致性：恒定挂载到非内建 stage 的 agent role 必须 ∈ 该 stage required_roles
+// 正方向（C1/C2）保证 required_roles 每角色有履行者；反方向（C4）保证恒定挂载的 agent
+// 不在 required_roles 契约内 → log-dispatch 机械拒绝（[PROCESS_VIOLATION] exit 2），
+// 装配期必须先行拦截。PASS 为明细级（--verbose 展示，与 B1 mount.at 同约定）；FAIL 恒显。
+{
+  for (const [name, a] of agents) {
+    for (const m of a.mount) {
+      if (m.when) continue;                          // 豁免：条件挂载（when 开关，非恒定）
+      const node = graph.nodes.get(m.at);
+      if (!node || node.type !== 'stage') continue;  // 豁免：非主图 stage 挂载点（pre:/post:/on:）
+      if (node.executor) continue;                   // 豁免：executor 内建阶段（INIT/DELIVERING）
+      const stageText = readText(path.join(STAGES_DIR, `${m.at.toLowerCase()}.md`));
+      if (!stageText) continue;                      // A5 已报
+      const fm = extractFrontmatter(stageText);
+      const roles = fm ? parseStageFrontmatter(fm) : [];
+      if (roles.length === 0) continue;              // 豁免：required_roles 为空（C1 已报）
+      const agentRole = (roleOf(name) || name).replace(/-/g, '_');
+      const rolesNorm = new Set(roles.map((r) => r.replace(/-/g, '_')));
+      if (rolesNorm.has(agentRole)) {
+        if (VERBOSE) pass(`stage.${m.at}.required_roles.reverse_mount`, `${name} 恒定挂载 ${m.at}（role=${agentRole}）∈ required_roles`);
+      } else {
+        fail(`stage.${m.at}.required_roles.reverse_mount`, `${name} 恒定挂载 ${m.at} 但 role=${agentRole} ∉ required_roles=[${roles.join(', ')}]（log-dispatch 将机械拒绝）`);
+      }
+    }
+  }
+}
+
 // ============================================================
 // D. 配置校验
 // ============================================================

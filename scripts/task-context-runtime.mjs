@@ -260,7 +260,7 @@ function buildInitialContext(taskId) {
     },
     fixing_history: [],
     dispatch_log: [],        // 每次 dispatch 记录 {agent, mode, stage, timestamp}（provenance gate 依据）
-    overload_count: 0,       // task 返回 >2000 字符累计次数；>=3 → [CONTEXT_UNSAFE] 强制切 agent_manager
+    overload_count: 0,       // task 返回 >4000 字符累计次数；>=3 → [CONTEXT_UNSAFE] 强制切 agent_manager
     status: 'initialized',
     current_stage: 'START',
     transition_log: [],

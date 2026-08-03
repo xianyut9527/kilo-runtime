@@ -155,7 +155,7 @@ INIT（conductor 内建）→ INIT（conductor 内建）
 >   1. 先对声明了 `after` 的智能体做拓扑排序（按依赖链先后串行执行）；
 >   2. 未声明 `after` 的智能体按 **agent 文件名字典序** 排列，组织为同一并行组；
 >   3. 两种顺序在 resolved 视图中合并为该挂载点的最终启动序列（并行组 + after 拓扑链）。
-> **并行安全边界**（见铁律 #9 工程化三连）：对每个待 dispatch 的 task——1. size-check 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >2000 字符 → `overload_count` +1；≥3 → 摘要压缩→仍超限切 worktree。
+> **并行安全边界**（见铁律 #9 工程化三连）：对每个待 dispatch 的 task——1. size-check 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >4000 字符 → `overload_count` +1；≥3 → 摘要压缩→仍超限切 worktree。
 > 
 
    3. 执行 `post:N` 挂载点（同 pre 语义）
@@ -222,7 +222,7 @@ T1+ 任务加载 coder 智能体时，委派包仍必须包含（**核心摘要*
 1. **pre-dispatch size-check**：`task-context.mjs size-check <task_id>`，task_context 字符数 > `config.size_check_threshold`（缺省 120000）→ exit 2 → 先提取核心摘要压缩（保留 intent/sizing/config/current_stage/quality.verdict/dispatch_log/status，清空 execution/verification/plan 细节）→ 重测 → 仍超限才 `[CONTEXT_UNSAFE]` 切 agent_manager worktree
 2. **log-dispatch provenance**：`task-context.mjs log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>`，agent 白名单（注册智能体）+ stage 白名单（graph.yaml 节点）+ agent-stage 匹配（agent ∈ stage.required_roles）
 3. **transition-check provenance gate**：PLANNING→EXECUTING / EXECUTING→QUALITY / QUALITY→DELIVERING 边校验 dispatch_log 含必经智能体，缺则 `[PROCESS_VIOLATION]`
-4. **overload_count 闭环**：task 返回 >2000 字符 → `[RETURN_OVER_LIMIT]` + 计数 +1；≥3 → 先摘要压缩，仍超限才切 agent_manager
+4. **overload_count 闭环**：task 返回 >4000 字符 → `[RETURN_OVER_LIMIT]` + 计数 +1；≥3 → 先摘要压缩，仍超限才切 agent_manager
 
 ## 强制流程日志（T1+，6 节点）
 

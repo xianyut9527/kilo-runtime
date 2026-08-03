@@ -7,7 +7,7 @@
 - **2026-08-03**: v3.2 编排策略由全局默认串行改为并行优先 — 官方 `task` 工具并发模式。
   - **策略变更**：`agent/conductor.md` 铁律 #11「全局默认串行策略」→「**全局默认并行策略**」——挂载点激活智能体 ≥2 且无 `after` 依赖时，conductor 在单条响应消息中并行发起多个 `task` 工具调用（官方并发模式：`Launch multiple agents concurrently whenever possible`）；有 `after` 的按拓扑排序串行执行；无 `after` 的按 agent 文件名字典序组织为同一并行组，共享一个零输出硬门；视角隔离仍物理独立（每个 task 独立 context）。
   - **同步范围**：AGENTS.md 锚点 12/13、`agent/verifier.md`、`agent/reverse-auditor.md`、`agent/reviewer.md`、`lifecycle/stages/quality.md`、`lifecycle/stages/README.md`、docs 5 文件（ARCHITECTURE / configuration-guide / agent-mount-guide / conductor-full-spec / multi-agent-lifecycle-architecture）的"串行"表述同步为并行优先；`quality.md` 编排规则附保留串行场景 4 项（有 after 相对依赖链 / fix→重新 verify / review hooks afterPass / 同一 after 链后继节点）。
-  - **工程化门禁不变**：三连门禁（pre-dispatch size-check + log-dispatch provenance + overload_count 闭环）保持；并行 dispatch 前对每个待派发 task 逐个 size-check、结果返回后逐个 log-dispatch、任一 task 返回 >2000 字符 → `overload_count` +1。
+  - **工程化门禁不变**：三连门禁（pre-dispatch size-check + log-dispatch provenance + overload_count 闭环）保持；并行 dispatch 前对每个待派发 task 逐个 size-check、结果返回后逐个 log-dispatch、任一 task 返回 >4000 字符 → `overload_count` +1。
   - **验证**：lifecycle-doctor 全 PASS；sync-agent-prompt drift=0；grep `agent/`、`AGENTS.md`、`lifecycle/stages/` 无"串行组/串行启动/全局默认串行策略/委派串行硬门"残留（保留串行场景清单除外）；docs "默认串行"清零。
 
 - **2026-08-03**: 工作流框架简化 — 删除记忆板块，生命周期收敛为 5 阶段（INIT→PLANNING→EXECUTING→QUALITY→DELIVERING）。

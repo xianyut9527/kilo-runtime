@@ -77,6 +77,20 @@ function getStageRequiredRoles(stageName) {
   return roles;
 }
 
+// onFail 条件角色判定：agent/<roleName>.md 的 mount 条目含 `trigger: onFail`
+// （如 fixer——仅 QUALITY 任一视角 FAIL 时才派发）。文件不存在 → false。
+// 仅扫描 mount: 声明段（剔除注释行），避免误匹配 description 等文本。
+function isConditionalRole(roleName) {
+  const agentPath = path.resolve(__dirname, '..', 'agent', `${roleName}.md`);
+  if (!fs.existsSync(agentPath)) return false;
+  const agentText = fs.readFileSync(agentPath, 'utf8');
+  const mountBlock = agentText.match(/^mount:[\s\S]*?^[a-z_]+:/m);
+  const scopeLines = (mountBlock ? mountBlock[0] : '')
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*#/.test(line));
+  return /trigger\s*:\s*onFail/.test(scopeLines.join('\n'));
+}
+
 function usage() {
     const txt = [
       'Usage:',
@@ -428,7 +442,14 @@ function main() {
       provenanceRequired.push(...getStageRequiredRoles('EXECUTING'));
     }
     if (FROM === 'QUALITY' && TO === 'DELIVERING') {
-      provenanceRequired.push(...getStageRequiredRoles('QUALITY'));
+      // fixer 是 onFail 条件角色（agent/fixer.md mount trigger: onFail）：仅 QUALITY
+      // 任一视角 FAIL 时才派发。能走到 QUALITY→DELIVERING 边意味着 quality.verdict ∈
+      // {PASS, CIRCUIT_BREAKER}（上文 QUALITY verdict 门禁已保证）；PASS 路径本就无 FAIL
+      // → fixer 不派发属正确行为，不得误判 missing provenance 死锁；CIRCUIT_BREAKER 出口
+      // 已由 isCircuitBreakerExit 整体豁免。故该边 provenance 校验须过滤条件角色。
+      // 其余边（PLANNING→EXECUTING / EXECUTING→QUALITY）的必配角色（planner/coder）无
+      // onFail trigger，不受影响，保持全量强制。
+      provenanceRequired.push(...getStageRequiredRoles('QUALITY').filter((r) => !isConditionalRole(r)));
     }
     if (provenanceRequired.length > 0) {
       // 双方统一归一化（连字符→下划线）：dispatch_log 写入时已归一化，required_roles 角色名可能带连字符
