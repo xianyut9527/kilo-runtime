@@ -43,54 +43,12 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { readContext, writeContext, appendTransitionLog, readHooksFromConfig as tcReadHooks } from './task-context-runtime.mjs';
 import { discoverPostPreConstantMounts } from './lib/post-pre-mounts.mjs';
+import { getStageRequiredRoles, isConditionalRole } from './lib/stage-roles.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
 const CONVERGENCE_SOURCE = path.resolve(__dirname, '..', 'lifecycle', 'config.yaml');
 
-// ============================================================
-// 工具
-// ============================================================
-
-function die(code, msg) {
-  process.stderr.write(msg + '\n');
-  process.exit(code);
-}
-
-// ============================================================
-// 动态求值阶段必配角色（读 stages/<id>.md frontmatter required_roles）
-// provenance gate 依据：流转时校验 dispatch_log 是否包含必经智能体
-// ============================================================
-
-function getStageRequiredRoles(stageName) {
-  const stageLower = stageName.toLowerCase();
-  const stagesDir = path.resolve(__dirname, '..', 'lifecycle', 'stages');
-  const stagePath = path.resolve(stagesDir, `${stageLower}.md`);
-  const roles = [];
-  if (!fs.existsSync(stagePath)) return roles;
-  const stageText = fs.readFileSync(stagePath, 'utf8');
-  const fm = stageText.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!fm) return roles;
-  const rm = fm[1].match(/^required_roles\s*:\s*\[(.*)\]\s*(?:#.*)?$/m);
-  if (rm) {
-    roles.push(...rm[1].split(',').map((s) => s.trim()).filter(Boolean));
-  }
-  return roles;
-}
-
-// onFail 条件角色判定：agent/<roleName>.md 的 mount 条目含 `trigger: onFail`
-// （如 fixer——仅 QUALITY 任一视角 FAIL 时才派发）。文件不存在 → false。
-// 仅扫描 mount: 声明段（剔除注释行），避免误匹配 description 等文本。
-function isConditionalRole(roleName) {
-  const agentPath = path.resolve(__dirname, '..', 'agent', `${roleName}.md`);
-  if (!fs.existsSync(agentPath)) return false;
-  const agentText = fs.readFileSync(agentPath, 'utf8');
-  const mountBlock = agentText.match(/^mount:[\s\S]*?^[a-z_]+:/m);
-  const scopeLines = (mountBlock ? mountBlock[0] : '')
-    .split(/\r?\n/)
-    .filter((line) => !/^\s*#/.test(line));
-  return /trigger\s*:\s*onFail/.test(scopeLines.join('\n'));
-}
 
 // ============================================================
 // post:/pre: 恒定挂载 agent 发现（S9 扩展 provenance gate）

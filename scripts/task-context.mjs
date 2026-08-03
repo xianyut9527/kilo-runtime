@@ -55,6 +55,7 @@ import { readContext, writeContext, appendTransitionLog, contextPath, buildIniti
          assertValidTaskId, getByPath, setByPath, pathAllowedBy, pathPrefix, parseValue,
          extractFrontmatter, die } from './task-context-runtime.mjs';
 import { discoverPostPreConstantMountsByAgent } from './lib/post-pre-mounts.mjs';
+import { getStageRequiredRoles } from './lib/stage-roles.mjs';
 
 // 脚本所在目录（ESM 无 __dirname）
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -746,19 +747,6 @@ function readGraphNodeIds() {
   return ids;
 }
 
-// 读 stage frontmatter required_roles（agent-stage 匹配校验依据）
-function readStageRequiredRoles(stageName) {
-  const stageLower = stageName.toLowerCase();
-  const stagePath = path.resolve(__dirname, '..', 'lifecycle', 'stages', `${stageLower}.md`);
-  if (!fs.existsSync(stagePath)) return null;
-  const stageText = fs.readFileSync(stagePath, 'utf8');
-  const fm = stageText.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!fm) return null;
-  const rm = fm[1].match(/^required_roles\s*:\s*\[(.*)\]\s*(?:#.*)?$/m);
-  if (!rm) return null;
-  return rm[1].split(',').map((s) => s.trim()).filter(Boolean);
-}
-
 // 读 graph.yaml 节点的 executor 字段（判断是否 conductor 内建阶段）
 function readNodeExecutor(stageName) {
   let text;
@@ -814,7 +802,7 @@ function cmdLogDispatch(taskId, agent, mode, stage) {
   //   --agent 必须在该 stage 的 required_roles 中，或该 stage 是 conductor 内建阶段（executor: conductor），
   //   或 --agent 在 --stage 上有 post:/pre: 恒定挂载（S9 扩展：生命周期钩子 agent 放行）
   const executor = readNodeExecutor(stage);
-  const requiredRoles = readStageRequiredRoles(stage);
+  const requiredRoles = getStageRequiredRoles(stage);
   const agentNorm = agent.replace(/-/g, '_');
   let allowed = false;
   if (executor === 'conductor' && agent === 'conductor') {

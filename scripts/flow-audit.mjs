@@ -44,10 +44,9 @@ import os from 'node:os';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { readContext, writeContext } from './task-context-runtime.mjs';
+import { getStageRequiredRoles, isConditionalRole } from './lib/stage-roles.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..');
-const STAGES_DIR = path.join(ROOT, 'lifecycle', 'stages');
 const CONTEXT_DIR = path.join(os.tmpdir(), 'kilo');
 
 // ============================================================
@@ -78,29 +77,6 @@ function usage() {
     '  2 = usage error',
   ].join('\n') + '\n');
   process.exit(0);
-}
-
-// 从 stages/<id>.md frontmatter 读 required_roles（与 transition-check.mjs 同逻辑）
-function getStageRequiredRoles(stageName) {
-  const stageLower = stageName.toLowerCase();
-  const stagePath = path.join(STAGES_DIR, `${stageLower}.md`);
-  if (!fs.existsSync(stagePath)) return [];
-  const text = fs.readFileSync(stagePath, 'utf8');
-  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!fm) return [];
-  const rm = fm[1].match(/^required_roles\s*:\s*\[(.*)\]\s*(?:#.*)?$/m);
-  if (rm) return rm[1].split(',').map((s) => s.trim()).filter(Boolean);
-  return [];
-}
-
-// onFail 条件角色判定（与 transition-check.mjs 同逻辑）：agent/<role>.md mount 含 trigger: onFail
-function isConditionalRole(roleName) {
-  const agentPath = path.join(ROOT, 'agent', `${roleName}.md`);
-  if (!fs.existsSync(agentPath)) return false;
-  const text = fs.readFileSync(agentPath, 'utf8');
-  const mountBlock = text.match(/^mount:[\s\S]*?^[a-z_]+:/m);
-  const scopeLines = (mountBlock ? mountBlock[0] : '').split(/\r?\n/).filter((l) => !/^\s*#/.test(l));
-  return /trigger\s*:\s*onFail/.test(scopeLines.join('\n'));
 }
 
 // 列活跃 task_context 文件（mtime 在 activeThresholdMs 内）

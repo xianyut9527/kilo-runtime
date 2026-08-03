@@ -29,6 +29,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { VALID_STATUSES } from './task-context-runtime.mjs';
+import { isConditionalRole } from './lib/stage-roles.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -612,16 +613,6 @@ function rtCheckDispatchProvenance(ctx, env, rtCheck) {
   const requiredStages = ['PLANNING', 'EXECUTING', 'QUALITY'];
   const dispatchLog = Array.isArray(ctx.dispatch_log) ? ctx.dispatch_log : [];
   const dispatchedAgents = new Set(dispatchLog.map((e) => (e.agent || '').replace(/-/g, '_')));
-
-  // isConditionalRole（onFail 条件角色，PASS 路径不派发属正确）
-  function isConditionalRole(roleName) {
-    const agentPath = path.join(AGENT_DIR, `${roleName}.md`);
-    if (!fs.existsSync(agentPath)) return false;
-    const text = fs.readFileSync(agentPath, 'utf8');
-    const mountBlock = text.match(/^mount:[\s\S]*?^[a-z_]+:/m);
-    const scopeLines = (mountBlock ? mountBlock[0] : '').split(/\r?\n/).filter((l) => !/^\s*#/.test(l));
-    return /trigger\s*:\s*onFail/.test(scopeLines.join('\n'));
-  }
 
   const errors = [];
   for (const st of requiredStages) {
