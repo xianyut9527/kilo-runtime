@@ -591,6 +591,63 @@ function rtCheckVerification(ctx, env, rtCheck) {
   }
 }
 
+// R8b: dispatch_log provenance（T1/T2 EXECUTION 必经阶段委派校验）
+// 核心防自指违规检测——conductor 亲为绕过委派时，dispatch_log 缺必配角色派发
+function rtCheckDispatchProvenance(ctx, env, rtCheck) {
+  const intentType = ctx.intent && ctx.intent.intent_type;
+  const tier = ctx.sizing && ctx.sizing.tier;
+  const stage = ctx.current_stage;
+
+  // 豁免：非 EXECUTION / T0（极速通道无 PLANNING/QUALITY）
+  if (intentType !== 'EXECUTION') {
+    rtCheck('PASS', 'runtime.dispatch_provenance', `intent_type=${intentType}（非 EXECUTION，豁免）`);
+    return;
+  }
+  if (tier !== 'T1' && tier !== 'T2') {
+    rtCheck('PASS', 'runtime.dispatch_provenance', `tier=${tier}（非 T1/T2，豁免）`);
+    return;
+  }
+
+  // 必经阶段（跳过 conductor 内建阶段 INIT/DELIVERING）
+  const requiredStages = ['PLANNING', 'EXECUTING', 'QUALITY'];
+  const dispatchLog = Array.isArray(ctx.dispatch_log) ? ctx.dispatch_log : [];
+  const dispatchedAgents = new Set(dispatchLog.map((e) => (e.agent || '').replace(/-/g, '_')));
+
+  // isConditionalRole（onFail 条件角色，PASS 路径不派发属正确）
+  function isConditionalRole(roleName) {
+    const agentPath = path.join(AGENT_DIR, `${roleName}.md`);
+    if (!fs.existsSync(agentPath)) return false;
+    const text = fs.readFileSync(agentPath, 'utf8');
+    const mountBlock = text.match(/^mount:[\s\S]*?^[a-z_]+:/m);
+    const scopeLines = (mountBlock ? mountBlock[0] : '').split(/\r?\n/).filter((l) => !/^\s*#/.test(l));
+    return /trigger\s*:\s*onFail/.test(scopeLines.join('\n'));
+  }
+
+  const errors = [];
+  for (const st of requiredStages) {
+    const stagePath = path.join(STAGES_DIR, `${st.toLowerCase()}.md`);
+    if (!fs.existsSync(stagePath)) continue;
+    const text = fs.readFileSync(stagePath, 'utf8');
+    const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!fm) continue;
+    const roles = parseStageFrontmatter(fm[1]);
+    // QUALITY 的 onFail 条件角色（fixer）PASS 路径不派发属正确
+    const rolesToCheck = st === 'QUALITY' ? roles.filter((r) => !isConditionalRole(r)) : roles;
+    for (const role of rolesToCheck) {
+      const roleNorm = role.replace(/-/g, '_');
+      if (!dispatchedAgents.has(roleNorm)) {
+        errors.push(`${st} 缺 ${role}`);
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    rtCheck('FAIL', 'runtime.dispatch_provenance', `dispatch_log 缺必配角色: ${errors.join(', ')}（已派发: ${[...dispatchedAgents].join(',') || '(空)'}）——疑似 conductor 亲为绕过委派（铁律 #6 违规）`);
+  } else {
+    rtCheck('PASS', 'runtime.dispatch_provenance', `T1/T2 必经阶段角色已派发: ${[...dispatchedAgents].join(',') || '(空)'} ${stage ? `@${stage}` : ''}`);
+  }
+}
+
 // R9: GC 残留检测（initialized 且 mtime>24h → FAIL，与 task-context.mjs GC 规则对齐）
 function rtCheckGcResidue(ctx, env, rtCheck) {
   if (ctx.status !== 'initialized') {
@@ -619,6 +676,7 @@ const runtimeChecks = [
   rtCheckTransitionLog,
   rtCheckTier,
   rtCheckVerification,
+  rtCheckDispatchProvenance,
   rtCheckGcResidue,
 ];
 

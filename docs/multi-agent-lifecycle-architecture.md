@@ -463,7 +463,7 @@ QUALITY（响应式 Hooks 容器）
 
 | 定级 | 智能体数量 | 理由 |
 |------|-----------|------|
-| T0 | 1（conductor 直接执行） | ≤2 行改动，启动多智能体成本 > 收益 |
+| T0 | 2（conductor + coder） | ≤2 行改动，conductor 委派 coder 执行，跳 PLANNING/QUALITY 极速通道 |
 | T1 | 3-4（conductor + planner + coder + verifier + reviewer） | 单模块，正向验证+审查足够 |
 
 ### 降级策略
