@@ -57,10 +57,7 @@
     }
   },
   "skills": {
-    "paths": [
-      "${KILO_CONFIG_DIR}/.kilo/skills",
-      "${HOME}/.agents/skills"
-    ]
+    "paths": ["${KILO_CONFIG_DIR}/.kilo/skills", "${HOME}/.agents/skills"]
   },
   "permission": {
     "bash": "allow"
@@ -74,20 +71,13 @@
     },
     "gitnexus": {
       "type": "local",
-      "command": [
-        "npx",
-        "gitnexus",
-        "mcp"
-      ],
+      "command": ["npx", "gitnexus", "mcp"],
       "enabled": false,
       "timeout": 30000
     },
     "playwright": {
       "type": "local",
-      "command": [
-        "npx",
-        "@playwright/mcp"
-      ],
+      "command": ["npx", "@playwright/mcp"],
       "enabled": false,
       "timeout": 120000
     }
@@ -98,13 +88,21 @@
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "baseURL": "https://huixin.nat100.top/v1",
-        "timeout": 600000,
-        "chunkTimeout": 600000,
+        "timeout": 3600000,
+        "chunkTimeout": 3600000,
         "maxRetries": 2
       },
       "models": {
         "deepseek-v4-flash": {
           "name": "deepseek-v4-flash",
+          "reasoning": true,
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
+        },
+        "deepseek-v4-pro": {
+          "name": "deepseek-v4-pro",
           "reasoning": true,
           "limit": {
             "context": 200000,
@@ -123,13 +121,8 @@
           "name": "kimi-k2.6",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -140,13 +133,8 @@
           "name": "kimi-k2.7-code",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -157,13 +145,8 @@
           "name": "MiniMax-M3",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -174,13 +157,8 @@
           "name": "MiniMax-M2.7-highspeed",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -191,13 +169,8 @@
           "name": "kimi-k3",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
