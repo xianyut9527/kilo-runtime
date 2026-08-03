@@ -389,7 +389,7 @@ edges:
 ```yaml
 # tier_defaults：按定级 T0/T1/T2 声明加载哪些智能体
 # conductor 在 INIT 阶段把对应 tier 的 agents 表写入 task_context.config.agents
-# agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值
+# agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值；定级挂载可用 mount[].tiers（如 plan-reviewer tiers:[T2]）替代 when 开关，按 sizing.tier 过滤
 tier_defaults:
   T0:
     agents:
@@ -525,3 +525,4 @@ node scripts/lifecycle-doctor.mjs
 9. **写入边界硬门**：`execution.verification` 唯一写入者，反自验
 10. **机械汇总判定**：conductor 组合判定只读各视角 verdict 做 AND 运算，不主观判定
 11. **可插拔**：新增智能体只需 ① agent .md ② kilo.json 绑定 ③ config.yaml 开关（可选）
+

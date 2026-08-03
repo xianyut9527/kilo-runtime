@@ -42,7 +42,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { readContext, writeContext, appendTransitionLog, readHooksFromConfig as tcReadHooks, die } from './task-context-runtime.mjs';
-import { discoverPostPreConstantMounts } from './lib/post-pre-mounts.mjs';
+import { discoverPostPreConstantMounts, discoverPostPreTieredMounts } from './lib/post-pre-mounts.mjs';
 import { getStageRequiredRoles, isConditionalRole } from './lib/stage-roles.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -420,12 +420,13 @@ function main() {
       // onFail trigger，不受影响，保持全量强制。
       provenanceRequired.push(...getStageRequiredRoles('QUALITY').filter((r) => !isConditionalRole(r)));
     }
-    // S9 扩展：post:/pre: 挂载 agent 并入 provenance 校验（条件挂载按 when 求值）
-    //   PLANNING→EXECUTING：post:PLANNING 条件挂载 agent（如 plan-reviewer）按 when 求值，
-    //     T1 关闭时不强制派发；T2 开启时由 dispatch_log provenance 校验兜底
-    //   EXECUTING→QUALITY：post:EXECUTING 条件挂载 agent 按 when 求值，命中则必须已派发
-    //   QUALITY→DELIVERING：post:QUALITY 条件挂载 agent 按 when 求值，命中则必须已派发
-    //   pre:<TO> 同理：pre:EXECUTING / pre:QUALITY / pre:DELIVERING 条件挂载 agent 按 when 求值
+    // S9 扩展：post:/pre: 挂载 agent 并入 provenance 校验（tiers 按当前 tier 求值）
+    //   PLANNING→EXECUTING：post:PLANNING 定级挂载 agent（如 plan-reviewer）tiers 含当前
+    //     sizing.tier 才强制派发——T1 不强制（tiers:[T2] 不含 T1）；T2 命中由 dispatch_log
+    //     provenance 校验兜底
+    //   EXECUTING→QUALITY：post:EXECUTING 定级挂载 agent tiers 含当前 tier 则必须已派发
+    //   QUALITY→DELIVERING：post:QUALITY 定级挂载 agent tiers 含当前 tier 则必须已派发
+    //   pre:<TO> 同理：pre:EXECUTING / pre:QUALITY / pre:DELIVERING 定级挂载 agent 按 tiers 求值
     //   防跳过 post:PLANNING 的 plan-reviewer（本次 plan-reviewer 被跳过的根因）
     const postPreMounts = discoverPostPreConstantMounts();
     for (const m of postPreMounts) {
@@ -434,6 +435,17 @@ function main() {
         provenanceRequired.push(m.name);
       }
       // pre:<TO> 恒定挂载：TO 阶段主槽执行前的钩子
+      if (m.kind === 'pre' && m.stage === TO) {
+        provenanceRequired.push(m.name);
+      }
+    }
+    // 定级挂载（tiers: [T1,T2]）：仅当 sizing.tier ∈ entry.tiers 才纳入 provenance 校验
+    const postPreTieredMounts = discoverPostPreTieredMounts();
+    for (const m of postPreTieredMounts) {
+      if (!Array.isArray(m.tiers) || !m.tiers.includes(tier)) continue;
+      if (m.kind === 'post' && m.stage === FROM) {
+        provenanceRequired.push(m.name);
+      }
       if (m.kind === 'pre' && m.stage === TO) {
         provenanceRequired.push(m.name);
       }
@@ -499,3 +511,4 @@ const isMainModule = (() => {
 if (isMainModule) {
   main();
 }
+

@@ -72,6 +72,7 @@ mount:
     after: [other-agent]           # 可选：在指定 agent 之后执行（相对依赖，类似 React hooks 声明顺序）；省略 = 并行启动组成员（按 agent 文件名字典序组织并行组，单条消息并行发起；共享零输出硬门）
     trigger: onChange              # 触发时机：onChange（默认）| afterPass | onFail
     when: "config.agents.my_auditor"  # 可选：条件挂载（用户自建示例）
+    # tiers: [T2]                    # 替代 when 的定级挂载（互斥：when 与 tiers 不得同时存在）
     on_fail: degrade               # 可选：abort|warn|skip|degrade
 
 # v1 传统阶段挂载（仍兼容，框架自动映射到 QUALITY hooks）
@@ -85,6 +86,7 @@ mount:
 - **`after` 语义**：声明在哪些 agent 之后执行（类似 React hooks 声明顺序）；省略 = 并行组成员（无 after 依赖时单条消息并行发起；按 agent 文件名字典序组织；共享零输出硬门，详见 `agent/conductor.md` §智能体加载规则）
 - **`trigger` 语义**：`onChange`（deps 变化时触发，默认）、`afterPass`（前置 hooks 全 PASS 后触发）、`onFail`（前置 hooks 任一 FAIL 时触发）
 - **`when` 条件语法**：`config.agents.<key>` 由 conductor 在 INIT 按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户显式覆盖写入；无 `when` = 恒定挂载（图拓扑可达即加载——推荐默认，新增智能体零配置）。
+- **`tiers` 定级挂载语法**：`tiers: [T1, T2]` 替代 when 开关，dispatch 前按 `sizing.tier ∈ tiers` 求值（如 plan-reviewer `tiers: [T2]`——T1 关闭、T2 开启）；when 与 tiers 互斥（lifecycle-doctor B4 校验）。
 - **必配角色校验**：阶段必配角色契约在本阶段 `stages/<id>.md` frontmatter `required_roles`（阶段语义内聚，单一真相）；角色名 = 智能体文件名（去 .md）或其 frontmatter 显式 `role` 字段。bootstrap/doctor 静态预演——无智能体在该主槽履行该角色 → `[ASSEMBLY_FAIL]`。**graph.yaml 永不出现角色名/智能体名**。
 
 ## 扩展指南（插拔式，文件制自动注册）
@@ -92,7 +94,7 @@ mount:
 | 场景 | 操作 |
 |------|------|
 | **新增智能体** | ① 丢 `agent/<name>.md`（行为 + frontmatter `mount` 声明挂载点 + hook/deps/after/trigger/when/on_fail + task_context 读写）② `kilo.json` 加 `agent.<name>.model` 模型绑定——**两步搞定，graph.yaml / config.yaml / stages / 脚本全都不动**（WRITE_MATRIX 自动派生；超时回退 stage_default_s；无 when = 恒定挂载拓扑可达即加载） |
-| 新增"同阶段按 tier 差异化"的可选视角 | 丢 agent 文件（mount 带 `when: "config.agents.<key>"`）+ `config.yaml tier_defaults` 各 tier 加开关一行 |
+| 新增"同阶段按 tier 差异化"的可选视角 | 丢 agent 文件（mount 带 `tiers: [T1, T2]` 定级挂载，替代 when 开关）+ 无需改 `config.yaml` |
 | 引入新角色并设为某阶段必配 | 丢 agent 文件 + 该阶段 `stages/<id>.md` frontmatter `required_roles` 加一行（阶段语义变化，内聚；**graph.yaml 仍不动**） |
 | 多智能体履行同一角色 | 新 agent frontmatter 显式 `role: <角色名>`（缺省 role = 文件名）；required_roles 校验按 role 匹配 |
 | 挂载到任意阶段 | frontmatter `mount` 加一条 `{at: <STAGE>}`（主槽）或 `pre:<STAGE>` / `post:<STAGE>`；启动/收尾：`on:bootstrap` / `on:done`；可选视角加 `on_fail: degrade` |
@@ -116,3 +118,5 @@ mount:
 6. **顺序自包含**：`after: [agent-name]` 在 agent .md frontmatter 自己的文件里，只引用前驱 agent 名——改顺序只动一个文件（类似 React hooks 声明顺序，非绝对编号）。
 7. **权限派生化**：task_context 写权限矩阵（WRITE_MATRIX）由 `scripts/task-context.mjs` 从 frontmatter 自动派生；安全硬门（verification 双字段仅 verifier、quality 双字段仅 hooks 写入、quality.round 仅 conductor）保留脚本硬编码——插拔自由与框架安全不变量分离。
 8. **装配可机检**：`scripts/lifecycle-doctor.mjs` 是 `[ASSEMBLY_FAIL]` 校验的可执行实现——配置健康有机械化守卫，不靠人工核对。
+
+

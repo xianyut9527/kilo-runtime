@@ -7,17 +7,20 @@
 # v3 简化重构：仅 T0/T1/T2，移除 T3/multiModel/memory 板块
 # ============================================================
 # 挂载两种模式（新增智能体默认零配置）：
-#   1) 恒定挂载（默认，推荐）：frontmatter mount 无 when —— 图拓扑可达即加载。
+#   1) 恒定挂载（默认，推荐）：frontmatter mount 无 when 且无 tiers —— 图拓扑可达即加载。
 #      T0 不经 PLANNING/QUALITY——拓扑即开关。
 #      新增智能体丢文件即用，**无需改本文件**。
-#   2) 开关挂载（仅"同阶段按 tier 差异化"的智能体）：frontmatter mount 有
-#      when: "config.agents.<key>" —— 需在下方 tier_defaults 声明开关。
+#   2) 定级挂载（仅"同阶段按 tier 差异化"的智能体）：frontmatter mount 声明
+#      tiers: [T1, T2] —— 按当前 sizing.tier 求值，命中才加载。替代旧 when: "config.agents.<key>"
+#      开关挂载；二者互斥（不得同时声明，lifecycle-doctor B4 校验 FAIL）。
+#      例：plan-reviewer `tiers: [T2]` —— T1 关闭、T2 开启方案审查。
 #
 # tier_defaults：按定级 T0/T1/T2 声明差异化开关（布尔值）
 #   - conductor 在 INIT 阶段把对应 tier 的 agents 表写入 task_context.config.agents
 #   - agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值
 #       true  → 该 agent 在声明挂载点会被加载
 #       false/未定义 → 跳过该 agent
+#   - 定级挂载（tiers: [T1,T2]）不依赖 config.agents 开关——直接按 sizing.tier 求值
 #   - review_mode：none（无审查）/ full（正向+审查）
 #
 # agents 键命名规则（自动派生，无需手写映射表）：
@@ -35,15 +38,13 @@ tier_defaults:
   # T1 标准闭环
   # 恒定挂载：planner/coder/verifier/reviewer/fixer（拓扑可达即加载）
   T1:
-    agents:
-      plan_reviewer: false
+    agents: {}
     review_mode: full
 
   # T2 全视角验证：正向+审查全开
   # 适合复杂任务：架构变更、跨多文件重构、安全敏感改动
   T2:
-    agents:
-      plan_reviewer: true
+    agents: {}
     review_mode: full
 
 # ============================================================

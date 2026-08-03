@@ -42,7 +42,7 @@
    - > **能力匹配**：无机械校验；模型绑定在 `kilo.json` `agent.<name>.model`，能力倾向参考 `docs/model-registry.md` 人工维护。
 6. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, hook, after, when, on_fail } ]（同 hook 类型默认并行组（详见铁律 #11 / §智能体加载规则）；有 after 的按拓扑排序执行，检测环依赖报错）}` + `{ nodeId → on_fail_resolved }` + edges 表 + `{ agent → timeout_s }` 预算表（per_agent_s × tier_multiplier，缺 per_agent_s 回退 stage_default_s）。运行时查表，零重复解析。
 
-> **运行时零解析**：装配完成后，conductor 每进入一阶段只查 resolved 视图：挂载点 → 有序智能体列表 → `when` 条件对照 `task_context.config.agents` 求值过滤 → `task` 工具启动。
+> **运行时零解析**：装配完成后，conductor 每进入一阶段只查 resolved 视图：挂载点 → 有序智能体列表 → 按 `tiers`（`sizing.tier ∈ mount[].tiers`）与 `when` 条件（对照 `task_context.config.agents`，非 tier 条件如 feature flag/环境变量）双重求值过滤 → `task` 工具启动。
 
 ## 多智能体协作工作流
 
@@ -167,7 +167,7 @@ INIT（conductor 内建）→ INIT（conductor 内建）
 
 单个智能体的加载流程（每个挂载条目）：
 
-1. 求值 `when`（对照 `task_context.config.agents` + `config.yaml overrides.condition_overrides`）；无 `when` = 必加载
+1. 求值挂载条件：先 `tiers`（`sizing.tier ∈ mount[].tiers`，命中才加载），再 `when`（对照 `task_context.config.agents` + `config.yaml overrides.condition_overrides`，非 tier 条件）；无 `when` 且无 `tiers` = 恒定加载
 2. 取 frontmatter 所在的 `agent/<name>.md` 行为文件 + 模型（kilo.json 绑定）
 3. 按 frontmatter `task_context.read` 注入上下文切片，按 `isolation.forbid_read` 执行视角隔离
 4. 查 resolved 视图取 `timeout_s = per_agent_s[<name>] × per_tier_multiplier[<tier>]`（缺 per_agent_s 回退 `stage_default_s`）；`task` 工具启动，记录 start_time

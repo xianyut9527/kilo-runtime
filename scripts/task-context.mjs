@@ -54,7 +54,7 @@ import { readContext, writeContext, appendTransitionLog, contextPath, buildIniti
          readSizeCheckThreshold,
          assertValidTaskId, getByPath, setByPath, pathAllowedBy, pathPrefix, parseValue,
          extractFrontmatter, die } from './task-context-runtime.mjs';
-import { discoverPostPreConstantMountsByAgent } from './lib/post-pre-mounts.mjs';
+import { discoverPostPreConstantMountsByAgent, discoverPostPreTieredMounts } from './lib/post-pre-mounts.mjs';
 import { getStageRequiredRoles } from './lib/stage-roles.mjs';
 
 // 脚本所在目录（ESM 无 __dirname）
@@ -822,8 +822,21 @@ function cmdLogDispatch(taskId, agent, mode, stage) {
       allowed = true;
     }
   }
+  // S9b: post:/pre: 定级挂载（tiers: [T2]）agent 同样允许按对应阶段记录，
+  //      但须按 sizing.tier 过滤：仅当 tier ∈ entry.tiers 才放行（与 transition-check:445 语义一致）
   if (!allowed) {
-    die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 stage "${stage}" 的 required_roles（${requiredRoles ? requiredRoles.join(', ') : '(无)'}），亦无 post:${stage}/pre:${stage} 恒定挂载。防跨阶段乱派发。`);
+    const { ctx: ctxForTier } = readContext(taskId);
+    const tier = ctxForTier.sizing && ctxForTier.sizing.tier;
+    if (tier) {
+      const tieredMounts = discoverPostPreTieredMounts();
+      const hit = tieredMounts.some(
+        (m) => m.name === agent && m.stage === stage && Array.isArray(m.tiers) && m.tiers.includes(tier)
+      );
+      if (hit) allowed = true;
+    }
+  }
+  if (!allowed) {
+    die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 stage "${stage}" 的 required_roles（${requiredRoles ? requiredRoles.join(', ') : '(无)'}），亦无 post:${stage}/pre:${stage} 恒定/定级挂载。防跨阶段乱派发。`);
   }
   const { ctx } = readContext(taskId);
   if (!Array.isArray(ctx.dispatch_log)) {

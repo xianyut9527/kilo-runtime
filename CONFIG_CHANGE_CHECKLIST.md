@@ -24,7 +24,7 @@
 | 修改 `lifecycle/config.yaml` `hooks.quality` 段 | ① 阈值变更同步 `agent/conductor.md` §task_context 结构 `quality.max_rounds` 注释；② 同步 `lifecycle/graph.yaml` edges 注释引用的阈值描述 |
 | 修改 `lifecycle/config.yaml` `tier_defaults` / `overrides` | ① 智能体键名按自动派生规则（连字符转下划线）；② `disabled_agents` 中的角色若被某节点 `required_roles` → `[ASSEMBLY_FAIL]`，checklist 需验证未禁用必配角色 |
 | 新增/修改 `.kilo/instructions/*` | ① 同步 `README.md` 目录树；② 若新文件被 `kilo.json` agent.*.prompt 引用，必须同步更新 `lifecycle-doctor.mjs` 的引用路径存在性校验；**重跑 `./install.ps1` 或 `./install.sh`**；**漏跑 install 会导致全局版落后于仓库版（已发生过 workflow-core.md 漂移），install 后可用 `node scripts/lifecycle-doctor.mjs` 验证装配自检全绿** |
-| 修改 `agent/*.md` | 确认只包含该 agent 的职责差异和关键门禁；frontmatter `mount[].on_fail`（可选视角用 degrade）与节点级 `on_fail`（5 值）按位置区分；**重跑 `./install.ps1` 或 `./install.sh`** |
+| 修改 `agent/*.md` | 确认只包含该 agent 的职责差异和关键门禁；frontmatter `mount[].on_fail`（可选视角用 degrade）与节点级 `on_fail`（5 值）按位置区分；frontmatter `mount[].tiers`（定级挂载，按 `sizing.tier` 过滤）与 `mount[].when`（非 tier 条件，如 feature flag/环境变量）**互斥二选一**（同时声明 → lifecycle-doctor B4 `[FAIL]`），新增"同阶段按 tier 差异化"视角用 `tiers` 替代 `when: "config.agents.<key>"` 开关；**重跑 `./install.ps1` 或 `./install.sh`** |
 | 修改 `kilo.json` | 同步 `README.md` 中模型、MCP 说明；**重跑 `./install.ps1` 或 `./install.sh`** |
 | 修改 `kilo.json` `skills.paths` | `skills.paths` 使用 `~` 原生字面量（如 `~/.config/kilo/.kilo/skills`、`~/.agents/skills`），**install 双脚本不再替换 kilo.json 占位符**（kilo.json 占位符替换段已删除，新增技能目录创建）；修改后必须运行 `node scripts/lifecycle-doctor.mjs` 通过装配自检 |
 | 修改 `kilo.json` 中 `compaction` 字段 | ① 必须同步更新对应 `.kilo/instructions/*.md` 与 `agent/*.md` 的条件化规则描述；② 修改后必须运行 `node scripts/lifecycle-doctor.mjs` 通过校验 |

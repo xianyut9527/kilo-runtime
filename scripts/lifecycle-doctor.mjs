@@ -1040,15 +1040,35 @@ for (const [name, a] of agents) {
   if (groups.size === 0) pass('agent.after.topo', '无 after 声明（全部串行组，按 agent 文件名字典序逐个启动，遵守零输出硬门）');
 }
 
-// B4. when 引用的 config.agents.<key> 至少在任一 tier_defaults / inquiry_tier_defaults 声明（防孤儿开关）
+// B4. when/tiers 挂载校验（tiers 字段替代 config.agents.<key> 开关挂载）：
+//   - when 与 tiers 互斥（同时存在 → FAIL，二选一）
+//   - tiers 值非空且每项 ⊆ {T0,T1,T2}（定级挂载合法性）
+//   - when 引用的 config.agents.<key> 至少在任一 tier_defaults / inquiry_tier_defaults 声明（防孤儿开关）
 {
   const allTierKeys = new Set();
   if (cfg) {
     for (const keys of cfg.tierAgents.values()) for (const k of keys) allTierKeys.add(k);
     for (const keys of cfg.inquiryTierAgents.values()) for (const k of keys) allTierKeys.add(k);
   }
+  let tieredMounts = 0;
   for (const [name, a] of agents) {
     for (const m of a.mount) {
+      // 互斥：when 与 tiers 同时存在 → FAIL
+      if (m.when && Array.isArray(m.tiers) && m.tiers.length > 0) {
+        fail(`agent.${name}.mount.when_tiers`, `when 与 tiers 同时存在（互斥：二选一，tiers 优先）`);
+      }
+      // tiers 合法性：非空数组且每项 ⊆ {T0,T1,T2}
+      if (Array.isArray(m.tiers)) {
+        tieredMounts++;
+        if (m.tiers.length === 0) {
+          fail(`agent.${name}.mount.tiers`, `tiers 为空数组（至少声明一个 tier，如 [T2] / [T1, T2]）`);
+        }
+        for (const t of m.tiers) {
+          if (!TIERS.has(t)) {
+            fail(`agent.${name}.mount.tiers`, `tiers 元素 "${t}" ⊄ {T0,T1,T2}`);
+          }
+        }
+      }
       if (!m.when) continue;
       const wm = m.when.match(/config\.agents\.(\w+)/);
       if (wm && !allTierKeys.has(wm[1])) {
@@ -1056,7 +1076,7 @@ for (const [name, a] of agents) {
       }
     }
   }
-  pass('config.tier.coverage', `tier 开关键: ${[...allTierKeys].join(', ') || '(无)'}`);
+  pass('config.tier.coverage', `tier 开关键: ${[...allTierKeys].join(', ') || '(无)'}${tieredMounts > 0 ? `; tiers 定级挂载: ${tieredMounts} 条` : ''}`);
 }
 
 // ============================================================
@@ -1128,7 +1148,7 @@ if (cfg && cfg.disabledAgents.length > 0) {
 {
   for (const [name, a] of agents) {
     for (const m of a.mount) {
-      if (m.when) continue;                          // 豁免：条件挂载（when 开关，非恒定）
+      if (m.when || (Array.isArray(m.tiers) && m.tiers.length > 0)) continue;   // 豁免：条件挂载（when 开关 / tiers 定级挂载，非恒定）
       const node = graph.nodes.get(m.at);
       const isStageMount = node && node.type === 'stage';
       // post:<STAGE> / pre:<STAGE> 挂载点解析

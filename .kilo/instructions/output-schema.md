@@ -213,9 +213,10 @@ agent 返回后、进入下游流程前，conductor 必须按以下规则自检�
 | `[MISSING_STATUS_SIGNAL]` | coder/coder 未输出状态信号 | verifier |
 | `[NEEDS_REVIEW]` | fixer 连续 2 轮同症状，需升级 reviewer | fixer |
 | `[PLAN_DEVIATION]` | 执行中计划偏差 | planner/conductor |
-| `[PLAN_REVIEW_MISS]` | T2（config.agents.plan_reviewer=true）编码前未经方案审查（task_context.plan_review.verdict ≠ PASS）；T1（plan_reviewer=false）不触发 | verifier |
+| `[PLAN_REVIEW_MISS]` | T2（plan-reviewer tiers 含 T2）编码前未经方案审查（task_context.plan_review.verdict ≠ PASS）；T1（tiers 不含 T1）不触发 | verifier |
 | `[BLOCKED]` | coder/coder 遇阻塞需升级 | coder/coder |
 | `[NEEDS_CONTEXT]` | coder/coder 缺少上下文 | coder/coder |
 | `[DONE_WITH_CONCERNS]` | 完成功能但有遗留风险 | coder/coder |
 
 **写法规则**：全大写，下划线分隔；就近引用；路径格式 `文件:行号`；空值显式写 `无`。
+

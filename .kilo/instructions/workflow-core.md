@@ -172,7 +172,7 @@ T1 / T2 → full（四视角：安全/架构/简化/SCOPE_CREEP）
 
 | 门禁 | 说明 | 失败标记 |
 |------|------|----------|
-| 设计门（T1+）| T1 短设计门、T2 完整规划未过不得进 coder；方案放行由 post:PLANNING 挂载点独立审查（失败即 abort 中止流转）；绕过审查进 coder 由 verifier 拦截（仅 T2/config.agents.plan_reviewer=true 时；T1 关闭 plan-reviewer 不触发 `[PLAN_REVIEW_MISS]`） | [PLAN_REVIEW_MISS] |
+| 设计门（T1+）| T1 短设计门、T2 完整规划未过不得进 coder；方案放行由 post:PLANNING 挂载点独立审查（失败即 abort 中止流转）；绕过审查进 coder 由 verifier 拦截（仅 T2（plan-reviewer tiers 含 T2）时；T1（tiers 不含 T1）关闭 plan-reviewer 不触发 `[PLAN_REVIEW_MISS]`） | [PLAN_REVIEW_MISS] |
 | 不自验 | coder 不得自行验证 | `[PROCESS_VIOLATION]` |
 | 状态信号 | coder 必须输出 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED` | `[MISSING_STATUS_SIGNAL]` |
 | 双重 verifier | 正向（需求/语法/逻辑/边界）+ 反向（SCOPE_CREEP/调试残留/重复实现/局部补丁） | `[SCOPE_CREEP]` / `[MISSING_ACCEPTANCE_MAP]` / `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` |
@@ -292,3 +292,4 @@ T2+ 任务执行 planner 计划前，conductor 必须：
 3. **回归先行**：修复后首先确认未引入回归。
 4. **根因闭合**：排查类任务必须证明根因闭合，而非表层补丁。
 5. **三层修复**：执行层 → 方法层 → 需求层，逐层上升。
+

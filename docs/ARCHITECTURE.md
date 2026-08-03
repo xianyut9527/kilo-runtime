@@ -159,7 +159,7 @@ mount:
     hook: verify               # 或 review / fix
     # 无 after = 与同 hook 类型其他 agent 并行（按 agent 文件名字典序组织并行组，单条消息并行发起）
     # after: [verifier]        # 如需顺序，声明前驱（有 after 按拓扑串行）
-    # when: "config.agents.my_agent"  # 如需按 tier 开关
+    # 定级挂载用 tiers: [T2]（按 sizing.tier 过滤）；非 tier 条件才用 when: "config.agents.my_agent"（二者互斥，lifecycle-doctor B4 校验）
     on_fail: degrade           # 可选视角用 degrade，必配用默认
 
 task_context:

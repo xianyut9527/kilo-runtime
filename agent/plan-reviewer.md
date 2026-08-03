@@ -17,11 +17,11 @@ subagent_type: plan-reviewer
 
 # mount：挂载点声明
 #   at    post:PLANNING（PLANNING 阶段主槽执行后、edges 流转前）
-#   开关挂载：when: config.agents.plan_reviewer —— 由 lifecycle/config.yaml tier_defaults 按 T1/T2 差异化控制
+#   定级挂载：tiers: [T2] —— T2 开启方案审查，T1 不加载
 #   on_fail: abort = 审查者自身异常/超时中止流转；verdict=FAIL 属正常返回，走回流（见正文熔断约定）
 mount:
   - at: post:PLANNING
-    when: "config.agents.plan_reviewer"
+    tiers: [T2]
     on_fail: abort
 
 # task_context：读写边界声明
@@ -131,5 +131,5 @@ feedback: "string"      # FAIL 时回流给 planner 的重做要点（按 findin
 
 - 每个问题必须给证据（file:line）+ 可操作建议，禁止模糊表述
 - Critical/Important 未解决前不得判 PASS
-- 方案未审查（T2 开启 plan-reviewer 时 task_context.plan_review.verdict ≠ PASS）就进入 EXECUTING → 由 verifier `[PLAN_REVIEW_MISS]` 兜底拦截，plan-reviewer 不自验放行；T1（config.agents.plan_reviewer=false）不触发此兜底
+- 方案未审查（T2（plan-reviewer tiers 包含 T2）时 task_context.plan_review.verdict ≠ PASS）就进入 EXECUTING → 由 verifier `[PLAN_REVIEW_MISS]` 兜底拦截，plan-reviewer 不自验放行；T1（plan-reviewer tiers 不含 T1）不触发此兜底
 - 连续 3 轮同方案 FAIL → ESCALATE 升级人工，不无限回流

@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+- **2026-08-03**: frontmatter `mount[].tiers` 定级挂载字段引入 — 替代 `when: "config.agents.<key>"` 开关挂载。
+  - **`tiers` 字段**：`mount[].tiers: [T1, T2]` 数组，dispatch 前按 `sizing.tier ∈ mount[].tiers` 机械过滤，命中才加载该挂载点智能体（例：plan-reviewer `tiers: [T2]`——T1 关闭、T2 开启方案审查）。
+  - **`when` 语义收窄**：保留用于**非 tier 条件**（feature flag、环境变量等），仍对照 `config.agents.<key>` 求值。
+  - **互斥规则**：`tiers` 与 `when` 在单条 mount 内互斥（同时声明由 lifecycle-doctor B4 拦截 FAIL）；无 `when` 且无 `tiers` = 恒定挂载（推荐默认）。
+  - **同步范围**：`agent/conductor.md` L88、`docs/agent-mount-guide.md`（tiers 语法+互斥）、`docs/multi-agent-lifecycle-architecture.md` L152、`lifecycle/stages/README.md`（示例 tiers 替代写法）、`.kilo/instructions/output-schema.md` L216 `[PLAN_REVIEW_MISS]` 改 T2 触发、`.kilo/instructions/workflow-core.md` L175 设计门行、`docs/conductor-full-spec.md` L45/170 求值说明、`docs/ARCHITECTURE.md`、`docs/configuration-guide.md`（tier_defaults 示例删 plan_reviewer 相关）、`CONFIG_CHANGE_CHECKLIST.md`。
+  - **验证**：lifecycle-doctor 全 PASS；全仓已无 plan-reviewer 的 `config.agents` 开关残留（改走 tiers 定级挂载）；`agent/` 无未迁移 `when: "config.agents"` 实例。
+
 - **2026-08-03**: v3.2 编排策略由全局默认串行改为并行优先 — 官方 `task` 工具并发模式。
   - **策略变更**：`agent/conductor.md` 铁律 #11「全局默认串行策略」→「**全局默认并行策略**」——挂载点激活智能体 ≥2 且无 `after` 依赖时，conductor 在单条响应消息中并行发起多个 `task` 工具调用（官方并发模式：`Launch multiple agents concurrently whenever possible`）；有 `after` 的按拓扑排序串行执行；无 `after` 的按 agent 文件名字典序组织为同一并行组，共享一个零输出硬门；视角隔离仍物理独立（每个 task 独立 context）。
   - **同步范围**：AGENTS.md 锚点 12/13、`agent/verifier.md`、`agent/reverse-auditor.md`、`agent/reviewer.md`、`lifecycle/stages/quality.md`、`lifecycle/stages/README.md`、docs 5 文件（ARCHITECTURE / configuration-guide / agent-mount-guide / conductor-full-spec / multi-agent-lifecycle-architecture）的"串行"表述同步为并行优先；`quality.md` 编排规则附保留串行场景 4 项（有 after 相对依赖链 / fix→重新 verify / review hooks afterPass / 同一 after 链后继节点）。

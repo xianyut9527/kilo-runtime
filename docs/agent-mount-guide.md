@@ -162,6 +162,23 @@ mount:
 - `"config.agents.<key>"` —— 查 `task_context.config.agents.<key>` 布尔值
 - 无 `when` = **恒定挂载**（推荐默认方式）
 
+### `tiers`（可选，替代 when 的定级挂载）
+
+**定级挂载字段**。按当前任务的 `sizing.tier` 求值，仅当 `tier ∈ tiers` 才在声明挂载点加载该智能体。替代 `when: "config.agents.<key>"` 开关挂载：
+
+```yaml
+mount:
+  - at: post:PLANNING
+    tiers: [T2]        # 仅 T2 加载（T1 关闭、T2 开启方案审查）
+    on_fail: abort
+```
+
+`tiers` 语法：
+- `[T2]` —— 单 tier；`[T1, T2]` —— 多 tier（逗号分隔，去空格）
+- 每项必须 ⊆ {T0, T1, T2}（lifecycle-doctor B4 校验）
+- **互斥**：`when` 与 `tiers` 不得同时声明（同时出现 → lifecycle-doctor B4 `[FAIL]`）。tiers 优先作为定级挂载的唯一声明方式。
+- 无 `when` 且无 `tiers` = **恒定挂载**（推荐默认方式，图拓扑可达即加载）
+
 
 ### `on_fail`（可选）
 
@@ -424,3 +441,4 @@ isolation:
 ```
 
 > **模型绑定不在 frontmatter 中声明**，统一在 `kilo.json` `agent.<name>.model` 配置。能力倾向参考 `docs/model-registry.md` 人工维护。
+

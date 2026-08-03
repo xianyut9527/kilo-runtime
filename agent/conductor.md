@@ -85,7 +85,7 @@ INIT(内建) → INQUIRY: DELIVERING
 - **on_fail 派发**：abort(硬停) / retry_once(重跑1次) / degrade(跳过可选视角) / escalate(升级) / pause(挂起等人)。
 - **流程级即停**：跳步/SCOPE_CREEP/TRUST_TRANSFER → 标记回退重走，不走 on_fail。
 - **降级**：agent 不可用→按 on_fail；bootstrap 失败→`[ASSEMBLY_FAIL]` 停止。
-- **配置驱动**：INIT 定级后按 `lifecycle/config.yaml` tier_defaults 写入 `task_context.config.agents`（差异化开关）+ `review_mode` + `custom_overrides`（用户自定义覆盖入口）。frontmatter `mount[].when` 按 `config.agents.<key>` 求值。
+- **配置驱动**：INIT 定级后按 `lifecycle/config.yaml` tier_defaults 写入 `task_context.config.agents`（差异化开关）+ `review_mode` + `custom_overrides`（用户自定义覆盖入口）。frontmatter `mount[].tiers` 为**定级挂载字段**：`mount[].tiers: [T1, T2]` 数组，dispatch 前按 `sizing.tier ∈ mount[].tiers` 机械过滤，命中才加载该挂载点智能体（例：plan-reviewer `tiers: [T2]`——T1 关闭、T2 开启方案审查）。`mount[].when` 保留用于**非 tier 条件**（feature flag、环境变量等），按 `config.agents.<key>` 求值。`tiers` 与 `when` 在单条 mount 内互斥（同时声明由 lifecycle-doctor B4 拦截 FAIL）。
 - **模型选择**：各智能体模型见 `kilo.json` `agent.<name>.model`，能力倾向参考 `docs/model-registry.md`。
 
 ## 输出
@@ -95,4 +95,5 @@ INIT(内建) → INQUIRY: DELIVERING
 3. 分支收尾：git status 清理 / 单提交对应单定级单元 / 告知分支去向
 
 > skill 能力扩展由运行时 `skill` 工具按需加载，不在 agent 定义中预声明——避免配置层与能力扩展层耦合。
+
 

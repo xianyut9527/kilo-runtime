@@ -149,7 +149,7 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 
 > **T0 直达**：conductor 直接加载 coder 执行，无 planner/verifier/reviewer，与现有 workflow-core.md §T0 直达一致。
 >
-> **post:PLANNING 钩子（非定级配置）**：`post:PLANNING` 挂载点可挂载方案审查等后处理智能体——`on_fail: abort` 可中止进入 EXECUTING。它属文件路由挂载机制而非 tier_defaults 定级组合，故不在上表按定级列出；T0 不经 PLANNING，图拓扑天然限定仅 T1/T2 触发。
+> **post:PLANNING 钩子（定级挂载 tiers）**：post:PLANNING 挂载点可挂载方案审查等后处理智能体（plan-reviewer `tiers: [T2]`——T2 挂载）——on_fail: abort 可中止进入 EXECUTING。它属文件路由挂载机制（mount 声明定级挂载字段而非 tier_defaults 定级组合），故不在上表按定级列出；T0 不经 PLANNING，图拓扑天然限定仅 T1/T2 触发，tiers 再按 sizing.tier 过滤命中（T1 关闭、T2 开启）。
 
 ---
 
