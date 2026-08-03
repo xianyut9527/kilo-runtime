@@ -209,13 +209,19 @@ warning（非 blocker）→ 标记但放行
 
 ## 委派方法学（不变）
 
-T1+ 任务加载 coder 智能体时，委派包仍必须包含（**≤1500 字符**，见铁律 #9 prompt 长度硬门；超出必须精简——subagent 有独立 context window 自己读文件）：
+T1+ 任务加载 coder 智能体时，委派包仍必须包含（**核心摘要**，见铁律 #6；禁止传文件内容复述——subagent 有独立 context window 自己读文件）：
 
 - **goal 单一**：一个委派包只解决一个可验证单元
 - **context_anchor 精确**：具体文件:行号或符号 UID
 - **acceptance_criteria 可验**：每条能用一条命令证实/证伪
 - **known_failures 透明**：已尝试方案及失败原因
 - **forbidden_files 边界声明**：越界 → `[SCOPE_CREEP]`
+
+委派前工程化安全门（替代旧 prompt 长度文字约束，运行时机械强制，见铁律 #9）：
+1. **pre-dispatch size-check**：`task-context.mjs size-check <task_id>`，task_context 字符数 > `config.size_check_threshold`（缺省 120000）→ exit 2 → 先提取核心摘要压缩（保留 intent/sizing/config/current_stage/quality.verdict/dispatch_log/status，清空 execution/verification/plan 细节）→ 重测 → 仍超限才 `[CONTEXT_UNSAFE]` 切 agent_manager worktree
+2. **log-dispatch provenance**：`task-context.mjs log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>`，agent 白名单（注册智能体）+ stage 白名单（graph.yaml 节点）+ agent-stage 匹配（agent ∈ stage.required_roles）
+3. **transition-check provenance gate**：PLANNING→EXECUTING / EXECUTING→QUALITY / QUALITY→DELIVERING 边校验 dispatch_log 含必经智能体，缺则 `[PROCESS_VIOLATION]`
+4. **overload_count 闭环**：task 返回 >2000 字符 → `[RETURN_OVER_LIMIT]` + 计数 +1；≥3 → 先摘要压缩，仍超限才切 agent_manager
 
 ## 强制流程日志（T1+，6 节点）
 
@@ -248,7 +254,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 | 触发源                                 | 信号                                                         | 说明                                                                                                 |
 | -------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | 智能体 wall-clock 超时                 | `[AGENT_TIMEOUT]`                                            | 见 §智能体加载流程 §超时守卫；分启动卡死（agent_startup_s）与执行超时（per_agent_s/stage_default_s） |
-| `task` 工具抛异常/启动失败/并发调度被中断（`Tool execution aborted` / `Tool execution cancelled`） | `[AGENT_UNAVAILABLE]`                                        | abort 后会话断开几乎无法重试：**前置杜绝**（见铁律 #9 prompt ≤1500 字符硬门 + 铁律 #12 串行策略），不尝试重试，直接按节点 on_fail 派发或降级 conductor 内建；区别于超时 |
+| `task` 工具抛异常/启动失败/并发调度被中断（`Tool execution aborted` / `Tool execution cancelled`） | `[AGENT_UNAVAILABLE]`                                        | abort 后会话断开几乎无法重试：**前置杜绝**（见铁律 #9 工程化三连：pre-dispatch size-check + log-dispatch provenance + overload_count 闭环 + 铁律 #11 串行策略），不尝试重试，直接按节点 on_fail 派发或降级 conductor 内建；区别于超时 |
 | 智能体返回 `BLOCKED` / `NEEDS_CONTEXT` | 状态信号                                                     | 需补上下文或升级                                                                                     |
 | 跳步/越界/自验污染                     | `[PROCESS_VIOLATION]` / `[SCOPE_CREEP]` / `[TRUST_TRANSFER]` | 即停，不走 on_fail（见 §流程级即停规则）                                                             |
 

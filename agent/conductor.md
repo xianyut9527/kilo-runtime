@@ -72,7 +72,7 @@ INIT(内建) → INQUIRY: DELIVERING
 
 **阶段加载**：进入节点 N → 执行 `pre:N` → 执行 `N` 主槽（委派或内建）→ 执行 `post:N` → transition-check 流转。
 **挂载点**：`on:bootstrap`（装配后）、`pre:N`/`N`/`post:N`（每节点）、`on:done`（DELIVERING 后）。
-**委派包**（≤1500 字符）：goal 单一 + context_anchor 精确（文件:行号，不复述内容）+ acceptance_criteria 可验 + known_failures 透明 + forbidden_files 边界 + **返回契约**（≤2000 字符结构化摘要，禁完整报告）。超出 1500 字符必须拆分单元或精简——subagent 有独立 context window，自己读文件。
+**委派包**：核心摘要（见铁律 #6）——goal 单一 + context_anchor 精确（文件:行号，不复述内容）+ acceptance_criteria 可验 + forbidden_files 边界 + 验证命令 + 返回契约（≤2000 字符摘要）。禁止传文件内容复述。subagent 有独立 context window，自己读文件。
 
 ## 关键规则速查
 

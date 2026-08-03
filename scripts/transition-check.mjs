@@ -431,8 +431,10 @@ function main() {
       provenanceRequired.push(...getStageRequiredRoles('QUALITY'));
     }
     if (provenanceRequired.length > 0) {
-      const dispatchedAgents = new Set(dispatchLog.map((e) => e.agent));
-      const missing = provenanceRequired.filter((a) => !dispatchedAgents.has(a));
+      // 双方统一归一化（连字符→下划线）：dispatch_log 写入时已归一化，required_roles 角色名可能带连字符
+      const dispatchedAgents = new Set(dispatchLog.map((e) => e.agent.replace(/-/g, '_')));
+      const requiredNorm = provenanceRequired.map((a) => a.replace(/-/g, '_'));
+      const missing = requiredNorm.filter((a) => !dispatchedAgents.has(a));
       if (missing.length > 0) {
         die(1, `[PROCESS_VIOLATION] missing dispatch provenance for ${FROM} -> ${TO}: required agents ${JSON.stringify(provenanceRequired)}, missing ${JSON.stringify(missing)}. dispatch_log agents: ${JSON.stringify([...dispatchedAgents])}`);
       }

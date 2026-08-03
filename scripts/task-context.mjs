@@ -811,7 +811,9 @@ function cmdLogDispatch(taskId, agent, mode, stage) {
   if (executor === 'conductor' && agent === 'conductor') {
     // conductor 内建阶段（INIT/DELIVERING）允许 conductor dispatch，豁免 required_roles
   } else if (requiredRoles && requiredRoles.length > 0) {
-    if (!requiredRoles.includes(agentNorm)) {
+    // required_roles 角色名统一归一化（连字符→下划线），与 dispatch_log 写入格式一致
+    const rolesNorm = requiredRoles.map((r) => r.replace(/-/g, '_'));
+    if (!rolesNorm.includes(agentNorm)) {
       die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 stage "${stage}" 的 required_roles（${requiredRoles.join(', ')}）。防跨阶段乱派发：每个阶段只能 dispatch 其必配角色。`);
     }
   }
