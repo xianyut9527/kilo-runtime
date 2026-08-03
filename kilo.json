@@ -25,6 +25,11 @@
       "model": "hx/kimi-k2.6",
       "prompt": "规划智能体。分析需求、调研代码、输出设计方案、定义验收点。只设计不写代码。输出契约：只返回≤4000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
     },
+    "plan-reviewer": {
+      "mode": "subagent",
+      "model": "hx/glm-5.2",
+      "prompt": "方案审查智能体（plan-reviewer）。审查 planner 输出方案的需求完整性/一致性/可行性/可测性/范围与需求扩散覆盖，只审查不修复。verdict=FAIL → 方案回流 planner 重做（round 自增，max_rounds=3，超限 ESCALATE 升级人工）；审查者自身异常/超时 → 挂载点 on_fail: abort 中止流转。输出契约：只返回≤4000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+    },
     "coder": {
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
