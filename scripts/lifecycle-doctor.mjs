@@ -1227,13 +1227,16 @@ if (cfg) {
       }
     }
     }
-  // D5. size_check_threshold 存在且为正整数（pre-dispatch 安全门依据）
+  // D5. pre-dispatch 安全门阈值：size_check_threshold / dispatch_prompt_threshold 存在且为正整数
+  //      max_files_per_task 存在且为正整数（缺失同样 FAIL，同硬门模式）
   {
-    const m = cfgText.match(/size_check_threshold:\s*(\d+)/);
-    if (m && parseInt(m[1], 10) > 0) {
-      pass('config.size_check_threshold', `size_check_threshold=${m[1]}`);
-    } else {
-      fail('config.size_check_threshold', 'size_check_threshold 缺失或非正整数（conductor pre-dispatch 安全门将回退缺省 120000）');
+    for (const key of ['size_check_threshold', 'dispatch_prompt_threshold', 'max_files_per_task']) {
+      const m = cfgText.match(new RegExp(key + ':\\s*(\\d+)'));
+      if (m && parseInt(m[1], 10) > 0) {
+        pass('config.' + key, key + '=' + m[1]);
+      } else {
+        fail('config.' + key, key + ' 缺失或非正整数（pre-dispatch 安全门将无法求值）');
+      }
     }
   }
 }

@@ -15,7 +15,7 @@ permission:
 type: primary
 
 task_context:
-  write: [intent, sizing, status, convergence, quality.verdict, quality.max_rounds, config, current_stage, dispatch_log, overload_count]
+  write: [intent, sizing, status, convergence, quality.verdict, quality.max_rounds, config, current_stage, dispatch_log, overload_count, dispatch_pending]
   forbid_write: [execution.verification]
 matrix-table: none
 
@@ -81,17 +81,22 @@ can_handoff_to:
    - **零输出硬门**：从任何工具调用发起瞬间到 result 到达前，不得输出文字或调用其他工具；并行组（铁律 #11）共享一个零输出硬门——组内全部 result 返回前同样禁止输出/调用。
    - **委派包 = 核心摘要**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令。**禁止传文件内容复述、长摘要、步骤详解**——subagent 有独立 context window，自己读文件。委派智能体原则上都是核心摘要，传文件具体内容进去既冗余又撑大 context。
    - **返回契约**：subagent 只返回 ≤4000 字符核心摘要（verdict + 证据 file:line + 关键结论），禁止完整报告/长表/复述文件内容。task 返回 >4000 字符 → 标 `[RETURN_OVER_LIMIT]`，`set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先提取核心摘要压缩（见铁律 #9），仍超限才切 agent_manager worktree。
+   - 单次 task 委派规模限制（文件数/prompt 字符数）见铁律 #9 step 0b。
 7. **自验无效**：不得写 `execution.verification`（仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
 8. **装配自检**：会话首个任务前执行 `node "${KILO_CONFIG_DIR}/scripts/lifecycle-doctor.mjs"`，FAIL 则不进入运行。脚本不存在标 `[DEGRADED]` 继续手工编排——DEGRADED 不豁免 permission，conductor 仍 edit:deny/write:deny，EXECUTING 阶段无 coder 可用只能 escalate/pause。
-9. **[工程化防 abort 三连]**（替代纯文字 prompt 约束，运行时机械强制）：
-   - **pre-dispatch size-check**：每次 task dispatch 前必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" size-check <task_id>`。
+9. **[工程化防 abort 四连]**（替代纯文字 prompt 约束，运行时机械强制）：
+   - **step 0b: dispatch-prompt-check（新增）**：conductor 每次 task dispatch 前，先 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> dispatch_pending.prompt_chars <N> --agent conductor` 写入待派 prompt 字符数（及 `dispatch_pending.file_count`），再执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" dispatch-prompt-check <task_id>` 校验单次委派规模：
+     - exit 0 → 通过，进入 step 0a。
+     - exit 1（`dispatch_pending` 未写入/非法——审计失败）→ 阻断 dispatch，先补写 pending 信息。
+     - exit 2（prompt 字符数 > `config.dispatch_prompt_threshold`，缺省 3000；或 file_count > max_files_per_task）→ 阻断 dispatch，压缩 prompt/文件后重试。
+   - **step 0a: pre-dispatch size-check**：每次 task dispatch 前必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" size-check <task_id>`。
      - exit 0 → 正常 task dispatch。
      - exit 2（task_context 字符数 > `config.size_check_threshold`，缺省 120000）→ **先摘要压缩，不硬切**：
        1. 提取核心摘要：保留 `intent / sizing / config / current_stage / quality.verdict / dispatch_log / status`，清空 `execution / verification / plan / plan_review / fixing_history` 细节字段（置为 `{}` 或 `[]`）。
        2. 重测 size-check。exit 0 → 压缩成功，继续 task dispatch。
        3. 仍 exit 2 → `[CONTEXT_UNSAFE]` → 强制切 agent_manager worktree（独立 context，不占主会话）。
-   - **log-dispatch provenance**：每次 task dispatch 成功后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" log-dispatch <task_id> --agent <name> --mode task --stage <STAGE>`，记录 agent/mode/stage 到 dispatch_log（并行 dispatch 时，按各 task 结果返回顺序逐个执行）。transition-check provenance gate 在 PLANNING→EXECUTING / EXECUTING→QUALITY / QUALITY→DELIVERING 边校验必经智能体是否派发过——缺则 `[PROCESS_VIOLATION]`。
-   - **overload_count 闭环**：task 返回 >4000 字符 → `[RETURN_OVER_LIMIT]` + `set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先按上述摘要压缩步骤处理，仍超限才切 agent_manager worktree。size-check 过关 + `set overload_count 0` 清零后回退 task。
+   - **step 1: log-dispatch provenance**：每次 task dispatch 成功后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" log-dispatch <task_id> --agent <name> --mode task --stage <STAGE>`，记录 agent/mode/stage 到 dispatch_log（并行 dispatch 时，按各 task 结果返回顺序逐个执行）。transition-check provenance gate 在 PLANNING→EXECUTING / EXECUTING→QUALITY / QUALITY→DELIVERING 边校验必经智能体是否派发过——缺则 `[PROCESS_VIOLATION]`。
+   - **step 2: overload_count 闭环**：task 返回 >4000 字符 → `[RETURN_OVER_LIMIT]` + `set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先按上述摘要压缩步骤处理，仍超限才切 agent_manager worktree。size-check 过关 + `set overload_count 0` 清零后回退 task。
    - **并行 dispatch 安全边界**（配合铁律 #11 全局默认并行策略）：对每个待 dispatch 的 task——1. size-check 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >4000 字符 → `overload_count +1`；`>=3` → 摘要压缩→仍超限切 worktree。
    - **abort 不可恢复**：`Tool execution aborted` 出现即视为会话断开，不尝试重试。标 `[AGENT_UNAVAILABLE]` 按节点 on_fail 派发，或降级为 conductor 内建处理（仅限 INIT/DELIVERING 内建阶段——conductor 不接管 coder/reviewer 等角色的写代码/审查工作；EXECUTING/QUALITY 阶段 subagent 不可用只能 escalate/pause，因 conductor `edit: deny` 无法代为编码）。
 10. **即停违规**：发现跳步/越界/信任传递立即标 `[PROCESS_VIOLATION]` 并暂停。

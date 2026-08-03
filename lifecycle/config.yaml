@@ -15,13 +15,17 @@
 #      开关挂载；二者互斥（不得同时声明，lifecycle-doctor B4 校验 FAIL）。
 #      例：plan-reviewer `tiers: [T2]` —— T1 关闭、T2 开启方案审查。
 #
-# tier_defaults：按定级 T0/T1/T2 声明差异化开关（布尔值）
-#   - conductor 在 INIT 阶段把对应 tier 的 agents 表写入 task_context.config.agents
-#   - agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值
-#       true  → 该 agent 在声明挂载点会被加载
-#       false/未定义 → 跳过该 agent
-#   - 定级挂载（tiers: [T1,T2]）不依赖 config.agents 开关——直接按 sizing.tier 求值
-#   - review_mode：none（无审查）/ full（正向+审查）
+# 挂载求值两条独立路径（勿混为一谈）：
+#   路径A「when 开关」（feature flag/环境变量语义，非 tier 条件）：
+#       - conductor 在 INIT 阶段把当前 tier 的 agents 表写入 task_context.config.agents
+#       - agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值
+#           true  → 该 agent 在声明挂载点会被加载
+#           false/未定义 → 跳过该 agent
+#       不依赖 tier——用于按功能开关/环境裁剪挂载
+#   路径B「tiers 定级挂载」（同阶段按 tier 差异化）：
+#       - 智能体 frontmatter 声明 tiers: [T1,T2] —— 按当前 sizing.tier 求值，
+#         命中才加载；不依赖 config.agents 开关（与路径A互斥，不得同时声明）
+#   review_mode：none（无审查）/ full（正向+审查）
 #
 # agents 键命名规则（自动派生，无需手写映射表）：
 #   键 = agent 文件名去 .md 后连字符转下划线
@@ -74,10 +78,11 @@ hooks:
 
 # ============================================================
 # pre-dispatch 安全门阈值（conductor 委派前 size-check 依据）
-# task_context 文件字符数 > 阈值 → [CONTEXT_UNSAFE] → 强制切 agent_manager worktree
-# 缺省 120000 字符（约 30K token，主会话 context 安全水位）
+# 阈值语义：task_context 文件字符数 > 阈值 → [CONTEXT_UNSAFE] → 强制切 agent_manager worktree
 # ============================================================
 size_check_threshold: 120000
+dispatch_prompt_threshold: 3000   # dispatch-prompt-check 阈值：单次 task prompt 字符数上限（小任务上限 ×1.5 安全系数，可调）
+max_files_per_task: 3             # 单次 task 委派涉及文件数上限
 
 # ============================================================
 # timeouts：阶段/智能体级时间预算（唯一真相来源）

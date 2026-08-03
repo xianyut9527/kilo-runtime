@@ -51,7 +51,7 @@ import { fileURLToPath } from 'node:url';
 import { readContext, writeContext, appendTransitionLog, contextPath, buildInitialContext,
          VALID_STATUSES, VERIFICATION_FIELDS, QUALITY_ROUND_FIELD, CURRENT_STAGE_FIELD,
          TOTAL_ROUNDS_FIELD, readHooksFromConfig, readConvergenceFromConfig, readTierDefaults,
-         readSizeCheckThreshold,
+         readSizeCheckThreshold, readDispatchPromptThreshold, readMaxFilesPerTask,
          assertValidTaskId, getByPath, setByPath, pathAllowedBy, pathPrefix, parseValue,
          extractFrontmatter, die } from './task-context-runtime.mjs';
 import { discoverPostPreConstantMountsByAgent, discoverPostPreTieredMounts } from './lib/post-pre-mounts.mjs';
@@ -174,6 +174,7 @@ function usage() {
     '  node scripts/task-context.mjs validate <task_id>',
     '  node scripts/task-context.mjs assert <task_id> <type> [args...]',
     '  node scripts/task-context.mjs size-check <task_id>',
+    '  node scripts/task-context.mjs dispatch-prompt-check <task_id>',
     "  node scripts/task-context.mjs log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>",
     '',
     'Assert types:',
@@ -192,6 +193,7 @@ function usage() {
     '  apply-tier  Apply config.yaml tier_defaults to config.agents + review_mode (INIT helper).',
     '  validate    Check required top-level fields, quality integers, and convergence mm_fusion integers.',
     '  size-check  Print task_context file character count (pre-dispatch safety gate vs config.size_check_threshold; exit=2 if exceeded).',
+    "  dispatch-prompt-check Read dispatch_pending.prompt_chars/file_count written by conductor pre-dispatch; exit=1 if pending info missing, exit=2 if prompt_chars>dispatch_prompt_threshold or file_count>max_files_per_task. PASS otherwise.",
     "  log-dispatch Append {agent, mode, stage, timestamp} to dispatch_log[] (provenance gate). --agent must be in write-matrix agent set; --stage must be a graph.yaml node. Whitelist-enforced.",
     '',
     'Agents in write matrix: ' + Object.keys(WRITE_MATRIX).join(', '),
@@ -714,6 +716,52 @@ function cmdSizeCheck(taskId) {
 }
 
 // ============================================================
+// dispatch-prompt-check 子命令：conductor pre-dispatch 的 prompt 审计门
+// conductor dispatch 前用 `set <task_id> dispatch_pending.prompt_chars <N> --agent conductor` 写入 pending 信息
+// （file_count 可选），随后调用本子命令校验：
+//   - dispatch_pending.prompt_chars 未设置/非法 → exit 1（审计失败：conductor 未写入 pending 信息）
+//   - prompt_chars > dispatch_prompt_threshold（config.yaml，缺省 3000）→ exit 2（超限，阻断 dispatch）
+//   - file_count > max_files_per_task（若设置）→ exit 2（超限）
+//   - 全部通过 → exit 0（输出 PASS）
+// 输出格式参照 size-check：PASS dispatch-prompt-check (prompt_chars=N threshold=M file_count=F max_files=G)
+// ============================================================
+function cmdDispatchPromptCheck(taskId) {
+  assertValidTaskId(taskId);
+  const { ctx } = readContext(taskId);
+  const dp = (ctx && ctx.dispatch_pending) || {};
+  const promptChars = dp.prompt_chars;
+  const fileCount = dp.file_count;
+  const promptThreshold = readDispatchPromptThreshold();
+  const maxFiles = readMaxFilesPerTask();
+
+  // 审计失败：conductor 未写入 pending 信息（未设置 / 非法 → 阻断 dispatch，fail-closed）
+  if (typeof promptChars !== 'number' || !Number.isInteger(promptChars) || promptChars < 0) {
+    process.stdout.write('FAIL dispatch-prompt-check — dispatch_pending.prompt_chars 未设置或非法（conductor 未写入 dispatch 前 pending 信息），阻断 dispatch\n');
+    process.exit(1);
+  }
+  // prompt 超限 → 阻断 dispatch
+  if (promptChars > promptThreshold) {
+    process.stdout.write(`FAIL dispatch-prompt-check (prompt_chars=${promptChars} threshold=${promptThreshold}) — prompt 超限，阻断 dispatch\n`);
+    process.exit(2);
+  }
+  // 文件数超限（若设置了 file_count；设置了但非法 → 审计失败）
+  if (fileCount !== undefined && fileCount !== null) {
+    if (typeof fileCount !== 'number' || !Number.isInteger(fileCount) || fileCount < 0) {
+      process.stdout.write('FAIL dispatch-prompt-check — dispatch_pending.file_count 非法（' + JSON.stringify(fileCount) + '），阻断 dispatch\n');
+      process.exit(1);
+    }
+    if (maxFiles !== null && fileCount > maxFiles) {
+      process.stdout.write(`FAIL dispatch-prompt-check (file_count=${fileCount} max_files=${maxFiles}) — 文件数超限，阻断 dispatch\n`);
+      process.exit(2);
+    }
+  }
+  // 通过
+  const fc = typeof fileCount === 'number' ? fileCount : 'null';
+  process.stdout.write(`PASS dispatch-prompt-check (prompt_chars=${promptChars} threshold=${promptThreshold} file_count=${fc} max_files=${maxFiles === null ? 'unset' : maxFiles})\n`);
+  process.exit(0);
+}
+
+// ============================================================
 // log-dispatch 子命令：追加 dispatch_log[] 条目
 // conductor 每次 dispatch 前调用，记录 agent/mode/stage（provenance gate 依据）
 // 白名单（防任意伪造）：
@@ -924,6 +972,10 @@ function main() {
   if (sub === 'size-check') {
     if (args.length !== 2) die(2, 'Error: size-check requires exactly <task_id>');
     cmdSizeCheck(args[1]);
+  }
+  if (sub === 'dispatch-prompt-check') {
+    if (args.length !== 2) die(2, 'Error: dispatch-prompt-check requires exactly <task_id>');
+    cmdDispatchPromptCheck(args[1]);
   }
   if (sub === 'log-dispatch') {
     // log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>

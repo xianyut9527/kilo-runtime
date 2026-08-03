@@ -229,6 +229,30 @@ function readSizeCheckThreshold() {
   }
 }
 
+// 从 lifecycle/config.yaml 读取 dispatch-prompt-check 阈值（conductor pre-dispatch 硬门依据）
+// 缺省 3000 字符：单次 task prompt 字符数上限（小任务上限 ×1.5 安全系数）
+function readDispatchPromptThreshold() {
+  try {
+    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
+    const m = text.match(/dispatch_prompt_threshold:\s*(\d+)/);
+    return m ? parseInt(m[1], 10) : 3000;
+  } catch {
+    return 3000;
+  }
+}
+
+// 从 lifecycle/config.yaml 读取单次 task 委派涉及文件数上限（dispatch-prompt-check 依据）
+// 缺省 3；配置缺失时返回 null（表示不限制）
+function readMaxFilesPerTask() {
+  try {
+    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
+    const m = text.match(/max_files_per_task:\s*(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
+  } catch {
+    return null;
+  }
+}
+
 // 初始 task_context 结构（按 conductor.md §task_context 结构摘要）
 function buildInitialContext(taskId) {
   const hooks = readHooksFromConfig();
@@ -483,6 +507,8 @@ export {
   readConvergenceFromConfig,
   readTierDefaults,
   readSizeCheckThreshold,
+  readDispatchPromptThreshold,
+  readMaxFilesPerTask,
   buildInitialContext,
   die,
   readContext,
