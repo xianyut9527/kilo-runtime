@@ -84,29 +84,15 @@ task_context:
 
 | 类型 | 格式 | 触发时机 |
 |------|------|----------|
-| 生命周期钩子 | `on:bootstrap` | 装配完成后、进入 INTENT 前（一次性） |
-| 阶段前钩子 | `pre:INTENT`, `pre:SIZING`, `pre:PLANNING`, `pre:EXECUTING`, `pre:QUALITY`, `pre:DELIVERING` | 阶段主槽执行**前** |
-| 阶段主槽 | `INTENT`, `SIZING`, `PLANNING`, `EXECUTING`, `QUALITY`, `DELIVERING` | 阶段本体执行时 |
-| 阶段后钩子 | `post:INTENT`, `post:SIZING`, `post:PLANNING`, `post:EXECUTING`, `post:QUALITY`, `post:DELIVERING` | 阶段主槽执行**后**、edges 流转**前** |
-| QUALITY 内部 hooks | `QUALITY hook:verify`, `QUALITY hook:fix`, `QUALITY hook:review` | v2 响应式 Hooks：hook 类型定义顺序，`after` 声明相对依赖；数据驱动自动触发（deps 变化/FAIL/PASS） |
+| 生命周期钩子 | `on:bootstrap` | 装配完成后、进入 INIT 前（一次性） |
+| 阶段前钩子 | `pre:INIT`, `pre:PLANNING`, `pre:EXECUTING`, `pre:QUALITY`, `pre:DELIVERING` | 阶段主槽执行**前** |
+| 阶段主槽 | `INIT`, `PLANNING`, `EXECUTING`, `QUALITY`, `DELIVERING` | 阶段本体执行时 |
+| 阶段后钩子 | `post:INIT`, `post:PLANNING`, `post:EXECUTING`, `post:QUALITY`, `post:DELIVERING` | 阶段主槽执行**后**、edges 流转**前** |
+| QUALITY 内部 hooks | `QUALITY hook:verify`, `QUALITY hook:fix`, `QUALITY hook:review` | 响应式 Hooks：hook 类型定义顺序，`after` 声明相对依赖；数据驱动自动触发（deps 变化/FAIL/PASS） |
 | 生命周期钩子 | `on:done` | DELIVERING 完成后、DONE 前（一次性） |
 
-> **注意**：`INTENT`、`SIZING`、`DELIVERING` 的 executor 为 `conductor`（内建），主槽本身由 conductor 占据，但 `pre:`/`post:` 钩子仍可挂载自定义智能体。
-> **v2 QUALITY hooks**：QUALITY 阶段内部不使用 `pre:`/`post:` 挂载，而是通过 `hook` + `after` + `deps` + `trigger` 声明响应式挂载——`verify → fix → review → fix` 自动循环。
-
-### 子图挂载点（multiModel）
-
-T3 子图节点同样派生 `pre:`/主/`post:` 三挂载点：
-
-| 子图节点 | 主槽挂载点 | 说明 |
-|----------|-----------|------|
-| MM_INIT | `MM_INIT` | 子图初始化 |
-| MM_EXECUTING | `MM_EXECUTING` | 3 coder 并行执行（`coder-a`/`coder-b`/`coder-c` 挂载此点） |
-| MM_CHECKING | `MM_CHECKING` | 子图验证（`verifier` 挂载此点） |
-| MM_FUSING | `MM_FUSING` | 融合阶段（`synthesizer-fusion` 挂载此点） |
-| MM_ARCHIVED | `MM_ARCHIVED` | 归档/交接回主图 |
-
-完整列表见 `lifecycle/multimodel-graph.yaml`。
+> **注意**：`INIT`、`DELIVERING` 的 executor 为 `conductor`（内建），主槽本身由 conductor 占据，但 `pre:`/`post:` 钩子仍可挂载自定义智能体。
+> **QUALITY hooks 循环**：QUALITY 阶段内部通过 `hook` + `after` + `deps` + `trigger` 声明响应式挂载——`verify → fix → verify` 自动循环：检查（verify/review）FAIL 自动触发 fix，修复后代码变化再触发 verify，直到全部 PASS 才流转 DELIVERING。
 
 ---
 
@@ -140,7 +126,6 @@ at: pre:PLANNING
 at: post:QUALITY
 
 # 子图节点
-at: MM_CHECKING
 ```
 
 ### `after`（可选）
@@ -152,27 +137,22 @@ at: MM_CHECKING
 mount:
   - at: QUALITY
     hook: verify
-    after: [verifier]            # 在 verifier 之后执行（reverse-auditor 场景）
 
 # 串行执行（都省略 after，按 agent 文件名字典序逐个启动）
 mount:
   - at: QUALITY       # reviewer
     hook: review
-  - at: QUALITY       # side-checker（与 reviewer 串行，after: [reviewer]）
     hook: review
 ```
 
-> **T3 子图并行场景**（如 3 coder 在 `MM_EXECUTING` 节点，`graph.yaml` 声明 `parallel: true`）省略 `after`，由 multiModel 按最大并行度执行。主图同 hook 类型默认串行，声明 `after` 控制相对顺序。
 
 > v2 废弃 `order: <数字>` 绝对编号系统。QUALITY 内部顺序由 `hook` 类型内置定义（`verify → fix → review → fix`），同 hook 类型内默认串行（避免并发 task 调度 abort），需要相对顺序时用 `after` 声明前驱。仅 `graph.yaml` 声明 `parallel: true` 的节点保留并行语义。
 
 ### `when`（可选）
 
-**条件挂载表达式**。SIZING 阶段按 `lifecycle/config.yaml` 的 `tier_defaults` 写入 `task_context.config.agents`，运行时求值：
+**条件挂载表达式**。INIT 阶段按 `lifecycle/config.yaml` 的 `tier_defaults` 写入 `task_context.config.agents`，运行时求值：
 
 ```yaml
-# 条件挂载：仅当 SIZING 写入 config.agents.reverse_auditor = true 时加载
-when: "config.agents.reverse_auditor"
 
 # 恒定挂载（省略 when）：图拓扑可达即加载，无需开关
 # 适用于：planner/coder/verifier/reviewer/fixer 等必配角色
@@ -182,7 +162,6 @@ when: "config.agents.reverse_auditor"
 - `"config.agents.<key>"` —— 查 `task_context.config.agents.<key>` 布尔值
 - 无 `when` = **恒定挂载**（推荐默认方式）
 
-> **config.agents 键名规则**：agent 文件名去 `.md` 后连字符转下划线。`reverse-auditor.md` → `reverse_auditor`。
 
 ### `on_fail`（可选）
 
@@ -193,7 +172,6 @@ when: "config.agents.reverse_auditor"
 | `abort` | 标记 `[SLOT_ABORT]`，**中止进入该阶段主槽** | `post:PLANNING` 方案硬门审查 |
 | `warn` | 输出警告，**继续执行** | `pre:`/`post:`/`on:` 钩子的默认行为 |
 | `skip` | 静默跳过该智能体 | 非关键辅助智能体 |
-| `degrade` | 标记 `DEGRADED`，跳过该视角，**主流程继续** | 可选视角（reverse-auditor / side-checker） |
 
 > **默认值**：`pre:`/`post:`/`on:` 挂载点默认 `warn`；主槽挂载点由阶段 `required_roles` 决定（必配角色失败 → escalate，可选视角失败 → degrade）。
 
@@ -203,13 +181,11 @@ when: "config.agents.reverse_auditor"
 
 ## 4. 条件挂载（`when`）
 
-仅当需要**同阶段按 tier 差异化加载**时才使用 `when`。当前仓库只有 3 个可选视角使用条件挂载：
+仅当需要**同阶段按 tier 差异化加载**时才使用 `when`。框架当前未内置可选视角（用户自建示例）：
 
-| 智能体 | `when` 声明 | T0 | T1 | T2 | T3 |
-|--------|------------|----|----|----|----|
-| `reverse-auditor` | `config.agents.reverse_auditor` | ❌ | ❌ | ✅ | ✅ |
-| `side-checker` | `config.agents.side_checker` | ❌ | ❌ | ✅ | ✅ |
-| `synthesizer-fusion` | `config.agents.synthesizer_fusion` | ❌ | ❌ | ❌ | ✅ |
+| 智能体 | `when` 声明 | T0 | T1 | T2 |
+|--------|------------|----|----|----|
+| `my-auditor`（用户自建示例） | `config.agents.my_auditor` | ❌ | ❌ | ✅ |
 
 开关声明在 `lifecycle/config.yaml`：
 
@@ -223,16 +199,8 @@ tier_defaults:
     review_mode: full
   T2:
     agents:
-      reverse_auditor: true        # T2 加载反向审计
-      side_checker: true         # T2 加载侧向验证
+      my_auditor: true            # 用户自建可选视角示例
     review_mode: full
-  T3:
-    agents:
-      reverse_auditor: true
-      side_checker: true
-      synthesizer_fusion: true    # T3 加载融合者
-    review_mode: full
-    provider: multiModel          # T3 走子图
 ```
 
 > **新增智能体默认零配置**：恒定挂载（无 `when`）的智能体无需在 `config.yaml` 声明，图拓扑可达即加载。
@@ -251,11 +219,9 @@ mount:
   - at: post:PLANNING
     on_fail: abort
 
-# side-checker：可选视角，失败降级跳过
 mount:
   - at: QUALITY
     hook: review
-    when: "config.agents.side_checker"
     on_fail: degrade
 ```
 
@@ -304,80 +270,55 @@ mount:
     on_fail: abort
 ```
 
-在 PLANNING 结束后、edges 流转到 EXECUTING **前**执行。它是 `post:PLANNING` 目前唯一挂载的智能体，无需 `after` 声明；`on_fail: abort` 表示审查 FAIL 则中止进入 EXECUTING。
+在 PLANNING 结束后、edges 流转到 EXECUTING **前**执行。用户自建方案审查智能体可挂载此点；`on_fail: abort` 表示审查 FAIL 则中止进入 EXECUTING。
 
-### 示例 C：跨主图+子图多阶段挂载
+### 示例 C：QUALITY hook 挂载
 
 `agent/verifier.md`：
 
 ```yaml
 mount:
-  - at: QUALITY                  # 主图验证
+  - at: QUALITY                  # 主图检查
     hook: verify
-  - at: MM_CHECKING            # 子图验证（multiModel 内部）
-  - at: MM_FCHECK              # 子图融合后验证
 ```
 
-同一智能体挂载 3 个点，无 `when`（恒定挂载），无 `after`（每个点独立，不与其他 verifier 竞争）。
+同一智能体挂载 QUALITY verify hook，无 `when`（恒定挂载），无 `after`（同 hook 类型按字典序串行）。
 
 ### 示例 D：条件挂载 + 降级
 
-`agent/side-checker.md`：
 
 ```yaml
 mount:
   - at: QUALITY
     hook: review
-    when: "config.agents.side_checker"
     on_fail: degrade
 ```
 
-仅当 `config.agents.side_checker = true` 时挂载（T2+ 默认 true）。失败时跳过该视角，标记 `DEGRADED`，不阻塞 QUALITY hooks 主流程。
 
-### 示例 E：并行组（T3 子图 `parallel: true` 节点）
+### 示例 E：用户自建独立阶段/挂载
 
-`agent/coder-a.md`、`coder-b.md`、`coder-c.md`：
+框架只内置 5 个阶段；需要额外阶段（如安全审计、多模型并行）时，用户自行编写智能体挂载到现有挂载点（`pre:`/`post:`/`hook`），或在 `lifecycle/graph.yaml` 新增节点 + `stages/<id>.md`：
 
 ```yaml
-# coder-a.md
 mount:
-  - at: MM_EXECUTING           # 与 coder-b、c 同号并行（graph.yaml 声明 parallel: true）
-
-# coder-b.md
-mount:
-  - at: MM_EXECUTING           # 同槽，无 after = 并行组成员（仅 parallel: true 节点保留并行）
-
-# coder-c.md
-mount:
-  - at: MM_EXECUTING           # 3 个视角隔离，parallel: true 节点并行启动
+  - at: post:EXECUTING           # 编码完成后插入自定义检查
+    on_fail: warn
 ```
-
-三者都挂 `MM_EXECUTING`（`graph.yaml` 显式声明 `parallel: true`），都省略 `after`，bootstrap 将其归入同一并行组，运行时 multiModel 同时启动 3 个 task。**主图非 `parallel: true` 节点的同 hook 类型默认串行**，避免并发 task 调度触发 `Tool execution aborted`。
 
 ---
 
 ## 7. 实际仓库案例
 
-当前仓库 14 个智能体的挂载分布：
+当前仓库 6 个智能体的挂载分布：
 
 | 智能体 | 挂载点 | 类型 | `when` | `on_fail` | 说明 |
 |--------|--------|------|--------|-----------|------|
 | `planner` | `PLANNING` | 主槽 | 无 | 默认 | 设计方案 |
 | `coder` | `EXECUTING` | 主槽 | 无 | 默认 | 标准编码 |
-| `verifier` | `QUALITY hook:verify`, `MM_CHECKING`, `MM_FCHECK` | 主图hook+子图×2 | 无 | 默认 | 正向验证（3 点） |
 | `reviewer` | `QUALITY hook:review` | 主图hook | 无 | 默认 | 代码审查 |
 | `fixer` | `QUALITY hook:fix` | 主图hook | 无 | 默认 | 定向修复（auto-trigger） |
-| `plan-reviewer` | `post:PLANNING` | 后钩子 | 无 | `abort` | 方案硬门审查 |
-| `reverse-auditor` | `QUALITY hook:verify` | 主图hook | `config.agents.reverse_auditor` | `degrade` | 反向审计（可选） |
-| `side-checker` | `QUALITY hook:review` | 主图hook | `config.agents.side_checker` | `degrade` | 侧向验证（可选） |
-| `coder-a` | `MM_EXECUTING` | 子图主槽 | 无 | 默认 | 逻辑推理派 |
-| `coder-b` | `MM_EXECUTING` | 子图主槽 | 无 | 默认 | 安全边界派 |
-| `coder-c` | `MM_EXECUTING` | 子图主槽 | 无 | 默认 | 代码生成派 |
-| `synthesizer-fusion` | `MM_FUSING` | 子图主槽 | `config.agents.synthesizer_fusion` | 默认 | 融合输出 |
-| `multiModel` | — | lifecycle_provider | — | — | 子图编排者（不经 mount） |
 | `conductor` | — | primary | — | — | 主图编排者（不经 mount） |
 
-> **multiModel** 与 **conductor** 是特殊 `type`（`lifecycle_provider` / `primary`），由 `graph.yaml` 的 `provider`/`executor` 直接绑定，**不经 `mount` 挂载**。
 
 ---
 
@@ -406,10 +347,7 @@ node scripts/lifecycle-doctor.mjs --verbose
 bootstrap: scanning agent/*.md frontmatter...
 mountPoint PLANNING: [planner]
 mountPoint EXECUTING: [coder]
-mountPoint QUALITY hook:verify: [verifier, reverse-auditor(when:config.agents.reverse_auditor)]
-mountPoint QUALITY hook:review: [reviewer, side-checker(when:config.agents.side_checker)]
 mountPoint QUALITY hook:fix: [fixer(trigger:onFail)]
-mountPoint post:PLANNING: [plan-reviewer(on_fail:abort)]
 ```
 
 ### 部署后 blob 级验证
@@ -434,8 +372,6 @@ foreach ($f in $files) {
 | `[ASSEMBLY_FAIL]` 角色无人履行 | 某 `required_roles` 角色无智能体在主槽注册 | 创建 `agent/<role>.md` 并挂载到对应主槽 |
 | `[SLOT_ABORT]` | `post:PLANNING` 的 `on_fail: abort` 触发 | 检查方案审查输出，修复方案后重试 |
 | `[AGENT_TIMEOUT]` | wall-clock 超过 `timeout_s` | 检查 `config.yaml timeouts.per_agent_s` 是否过小 |
-| `[DIVERSITY_VIOLATION]` | T3 coder-a/b/c 模型 (vendor, architecture) 不两两不同 | 在 `kilo.json` 绑定不同 vendor 的模型 |
-| `DEGRADED` | 可选视角（reverse-auditor/side-checker）挂载失败 | 检查模型可用性或降级为单机模式 |
 | `${HOME}` 占位符残留 | `install.ps1`/`install.sh` 替换不完整 | 确保脚本替换 `${KILO_CONFIG_DIR}` 和 `${HOME}` |
 | 全局未同步 | 提交后漏跑 install | 提交后执行 `./install.ps1` 或 `./install.sh`，重启 Kilo |
 
@@ -479,7 +415,6 @@ isolation:
   forbid_read: [verification.forward, verification.reverse]
 
 # type: lifecycle_provider 专用（普通 subagent 不需要）
-# subgraph: multimodel-graph.yaml
 # handoff:
 #   enter: "..."
 #   exit: "..."

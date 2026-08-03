@@ -140,7 +140,6 @@ const WRITE_MATRIX = deriveWriteMatrix();
 
 // 编译期校验：派生矩阵中 conductor 必须包含关键字段；如 frontmatter 被破坏则启动即报错，fail-closed
 const REQUIRED_CONDUCTOR_FIELDS = [
-  'memory_injection',
   'current_stage',
   'intent',
   'sizing',
@@ -166,16 +165,16 @@ function usage() {
     '  node scripts/task-context.mjs get <task_id> <dot.path>',
     "  node scripts/task-context.mjs set <task_id> <dot.path> <json-value> --agent <name>",
     "  node scripts/task-context.mjs set <task_id> --batch '<json-object>' --agent <name>",
-    '  node scripts/task-context.mjs apply-tier <task_id> <T0|T1|T2|T3> [--intent INQUIRY] --agent conductor',
+    '  node scripts/task-context.mjs apply-tier <task_id> <T0|T1|T2> --agent conductor',
     '  node scripts/task-context.mjs validate <task_id>',
     '  node scripts/task-context.mjs assert <task_id> <type> [args...]',
     '',
     'Assert types:',
     '  current-stage <NODE>   Assert current_stage == NODE',
-    "  tier <T0|T1|T2|T3>     Assert sizing.tier == TIER",
+    "  tier <T0|T1|T2>     Assert sizing.tier == TIER",
     '  quality                Assert quality counters valid & not tripped',
     '  convergence            Assert mm_fusion counters valid & not tripped (alias/backward compat)',
-    '  gate <GATE_NAME>       Assert gate condition met (e.g. MEMORY_WRITE_COMPLETE)',
+    '  gate <GATE_NAME>       Assert gate condition met',
     '  not-written <dot.path> Assert field is unset (anti-self-verify aid)',
     '  node scripts/task-context.mjs --help',
     '',
@@ -183,7 +182,7 @@ function usage() {
     '  init        Create task_context_<task_id>.json under os.tmpdir()/kilo/.',
     '  get         Print value at dot.path (JSON).',
     '  set         Write JSON value to dot.path. Enforces write matrix.',
-    '  apply-tier  Apply config.yaml tier_defaults to config.agents + review_mode (SIZING helper).',
+    '  apply-tier  Apply config.yaml tier_defaults to config.agents + review_mode (INIT helper).',
     '  validate    Check required top-level fields, quality integers, and convergence mm_fusion integers.',
     '',
     'Agents in write matrix: ' + Object.keys(WRITE_MATRIX).join(', '),
@@ -307,7 +306,7 @@ function validateSingleWrite(agent, dotPath, value) {
 
   // 枚举硬门：sizing.tier 必须合法，intent.intent_type 必须合法，current_stage 必须非空字符串
   if (dotPath === 'sizing.tier') {
-    const validTiers = ['T0', 'T1', 'T2', 'T3'];
+    const validTiers = ['T0', 'T1', 'T2'];
     if (!validTiers.includes(value)) {
       return {
         allowed: false,
@@ -456,7 +455,7 @@ function cmdSetBatch(taskId, batchInput, agent) {
 }
 
 // ============================================================
-// apply-tier: SIZING 阶段机械应用 config.yaml tier_defaults
+// apply-tier: INIT 阶段机械应用 config.yaml tier_defaults
 // 消除"conductor 手工 set config.agents 容易漏写/写错"的根因。
 // 读 config.yaml tier_defaults[tier]（或 inquiry_tier_defaults[tier]），
 // 原子写入 config.agents + config.review_mode。
@@ -464,18 +463,20 @@ function cmdSetBatch(taskId, batchInput, agent) {
 // ============================================================
 function cmdApplyTier(taskId, tier, agent, opts) {
   assertValidTaskId(taskId);
-  if (!['T0', 'T1', 'T2', 'T3'].includes(tier)) {
-    die(2, `Error: apply-tier requires <T0|T1|T2|T3>, got "${tier}"`);
+  if (tier === 'T3') {
+    die(1, `[PROCESS_VIOLATION] T3 已移除，仅支持 T0/T1/T2。apply-tier 接收到了 tier="${tier}"`);
+  }
+  if (!['T0', 'T1', 'T2'].includes(tier)) {
+    die(2, `Error: apply-tier requires <T0|T1|T2>, got "${tier}"`);
   }
   if (agent !== 'conductor') {
     die(1, `[PROCESS_VIOLATION] apply-tier is conductor-only (got --agent "${agent}")`);
   }
 
-  const intentKind = opts.inquiry ? 'inquiry' : 'execution';
   const allTiers = readTierDefaults();
-  const tierMap = allTiers[intentKind];
+  const tierMap = allTiers.execution;
   if (!tierMap || !tierMap[tier]) {
-    die(1, `Error: config.yaml ${intentKind}_tier_defaults missing tier "${tier}"`);
+    die(1, `Error: config.yaml tier_defaults missing tier "${tier}"`);
   }
 
   const entry = tierMap[tier];
@@ -501,7 +502,7 @@ function cmdApplyTier(taskId, tier, agent, opts) {
   writeContext(taskId, ctx);
 
   process.stdout.write(
-    `ok: apply-tier ${tier} (${intentKind}) → config.agents=${JSON.stringify(agentsValue)} review_mode=${reviewMode}\n`
+    `ok: apply-tier ${tier} → config.agents=${JSON.stringify(agentsValue)} review_mode=${reviewMode}\n`
   );
   process.exit(0);
 }
@@ -521,7 +522,6 @@ function cmdValidate(taskId) {
     'verification',
     'quality',
     'fixing_history',
-    'memory_injection',
     'status',
     'convergence',
   ];
@@ -556,7 +556,7 @@ function cmdValidate(taskId) {
   });
   checks.push({
     name: 'critical.tier',
-    pass: ['T0', 'T1', 'T2', 'T3'].includes(tier),
+    pass: ['T0', 'T1', 'T2'].includes(tier),
     detail: `sizing.tier=${JSON.stringify(tier)}`,
   });
   checks.push({
@@ -642,13 +642,6 @@ const ASSERTIONS = {
   'gate': (ctx, args) => {
     const gate = args[0];
     if (!gate) return { pass: false, detail: 'usage: assert <task_id> gate <GATE_NAME>' };
-    if (gate === 'MEMORY_WRITE_COMPLETE') {
-      const mws = ctx.memory_write_status;
-      if (mws === 'OK' || mws === 'DEGRADED' || ctx.memory_write_complete === true) {
-        return { pass: true, detail: `memory_write_status=${mws}` };
-      }
-      return { pass: false, detail: `[MISSING_MEMORY_WRITE] memory_write_status=${mws || '(未设置)'}` };
-    }
     return { pass: false, detail: `unknown gate "${gate}"` };
   },
 
@@ -735,25 +728,17 @@ function main() {
     cmdValidate(args[1]);
   }
   if (sub === 'apply-tier') {
-    // apply-tier <task_id> <TIER> [--intent INQUIRY] --agent conductor
+    // apply-tier <task_id> <TIER> --agent conductor
     const agentIdx = args.indexOf('--agent');
     if (agentIdx === -1 || agentIdx + 1 >= args.length) {
       die(2, 'Error: apply-tier requires --agent <name>');
     }
     const agent = args[agentIdx + 1];
-    const intentIdx = args.indexOf('--intent');
-    const inquiry = intentIdx !== -1 && args[intentIdx + 1] === 'INQUIRY';
     const positional = args.slice(1, agentIdx).concat(args.slice(agentIdx + 2));
-    // remove --intent INQUIRY from positional if present
-    const filtered = [];
-    for (let i = 0; i < positional.length; i++) {
-      if (positional[i] === '--intent') { i++; continue; }
-      filtered.push(positional[i]);
+    if (positional.length !== 2) {
+      die(2, 'Error: apply-tier requires <task_id> <T0|T1|T2> --agent conductor');
     }
-    if (filtered.length !== 2) {
-      die(2, 'Error: apply-tier requires <task_id> <T0|T1|T2|T3> [--intent INQUIRY] --agent conductor');
-    }
-    cmdApplyTier(filtered[0], filtered[1], agent, { inquiry });
+    cmdApplyTier(positional[0], positional[1], agent, {});
   }
   if (sub === 'assert') {
     // assert <task_id> <assertion-type> [args...]

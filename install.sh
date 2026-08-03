@@ -4,10 +4,9 @@
 # IMPORTANT: EXCLUDE lists must be kept in sync with install.ps1
 #
 # v6.1 架构同步说明：
-#   lifecycle/              - graph.yaml（DAG）、config.yaml（定级组合）、multimodel-graph.yaml、stages/*.md
+#   lifecycle/              - graph.yaml（DAG）、config.yaml（定级组合）、stages/*.md
 #   agent/                  - 一智能体一文件；frontmatter mount 自注册到生命周期
 #   .kilo/instructions/     - 跨智能体通用基线规则
-#   .kilo/memory/           - sqlite 记忆模块
 #   .kilo/skills/           - 能力扩展 skill
 # 本脚本递归复制以上目录（除去 EXCLUDE 列表）到全局配置目录。
 
@@ -16,7 +15,7 @@ set -euo pipefail
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_DIR="${HOME}/.config/kilo"
 
-# 仅在仓库根层级排除的项（防止误伤子目录中同名合法文件，如 .kilo/memory/README.md）
+# 仅在仓库根层级排除的项（防止误伤子目录中同名合法文件）
 ROOT_ONLY_EXCLUDE=(
     "install.ps1"
     "install.sh"
@@ -174,7 +173,6 @@ CRITICAL_FILES=(
     "agent/verifier.md"
     "lifecycle/graph.yaml"
     "lifecycle/config.yaml"
-    "lifecycle/multimodel-graph.yaml"
     "lifecycle/stages/README.md"
 )
 
@@ -198,8 +196,6 @@ echo ""
 # kilo.json 路径占位符替换（保证 skills.external_dirs 跨平台可移植）
 # ============================================================
 echo "Substituting kilo.json path placeholders..."
-# 注意：memory.db 路径使用 ${HOME}/.config/kilo-data/memory.db，主通道 = python scripts/memory.py（v2.6 主通道，Python stdlib sqlite3 封装，跨平台免安装）；sqlite3 CLI 为可选替代。install 阶段不替换
-# 注意：memory-mcp（v3.0 备用通道）已在 v2.6.2 精简中随 api/ 目录删除，kilo.json 不再引用 memory-mcp.js，此处无需替换 mcp 路径
 KILO_JSON_PATH="${TARGET_DIR}/kilo.json"
 if [ -f "${KILO_JSON_PATH}" ]; then
     sed -i.bak \
@@ -257,142 +253,6 @@ if [ -f "${SYNC_SCRIPT}" ]; then
 else
     echo "[WARN] sync-agent-prompt.mjs not found at ${SYNC_SCRIPT}, skip"
 fi
-
-# ============================================================
-# Memory 层初始化（sqlite3 CLI / python memory.py + memory.db）
-# 检测到 sqlite3 CLI 缺失时提示用户，同意则自动安装；
-# Step 2 在 CLI 不可用时回退 python scripts/memory.py（v2.6 主通道）初始化。
-# 两者均缺失时记忆层静默降级（不报错但不写入，自我进化闭环不生效）
-# ============================================================
-echo ""
-echo "========================================"
-echo "  Memory Layer Setup (sqlite3 + memory.db)"
-echo "========================================"
-
-DB_DIR="${HOME}/.config/kilo-data"
-DB_PATH="${DB_DIR}/memory.db"
-# init.sql 从 TARGET_DIR（已同步的全局配置目录）取；schema/init.sql 内含 7 表 + 索引 + 视图 + project_context 种子
-INIT_SQL="${TARGET_DIR}/.kilo/memory/schema/init.sql"
-# v2.6.2 精简：原 api/migrate_skill_to_fact_store.sql + api/seed_project_context.sql 已随 api/ 目录删除；
-#   AP/PAT bootstrap 经验由既有 DB 保留，全新安装从空 DB 开始（schema/init.sql 内含 project_context 种子）
-
-# --- Step 1: 检测 sqlite3 CLI ---
-if ! command -v sqlite3 &> /dev/null; then
-    echo "[CHECK]  sqlite3 CLI 未检测到"
-    echo "记忆层（经验沉淀/错误总结/模型校准/skill 升级）使用 sqlite3。"
-    echo "注意：Step 2 会尝试 python scripts/memory.py（v2.6 主通道）回退初始化。"
-    echo "两者均缺失时记忆层静默降级：不报错但不写入，自我进化闭环不生效。"
-    echo ""
-    # 检测可用的包管理器并推荐安装命令
-    INSTALL_CMD=""
-    PKG_MGR=""
-    if command -v apt-get &> /dev/null; then
-        INSTALL_CMD="sudo apt-get update && sudo apt-get install -y sqlite3"
-        PKG_MGR="apt"
-    elif command -v brew &> /dev/null; then
-        INSTALL_CMD="brew install sqlite"
-        PKG_MGR="brew"
-    elif command -v dnf &> /dev/null; then
-        INSTALL_CMD="sudo dnf install -y sqlite"
-        PKG_MGR="dnf"
-    elif command -v yum &> /dev/null; then
-        INSTALL_CMD="sudo yum install -y sqlite"
-        PKG_MGR="yum"
-    elif command -v pacman &> /dev/null; then
-        INSTALL_CMD="sudo pacman -S --noconfirm sqlite"
-        PKG_MGR="pacman"
-    elif command -v apk &> /dev/null; then
-        INSTALL_CMD="apk add --no-cache sqlite"
-        PKG_MGR="apk"
-    else
-        echo "[WARN]   未检测到已知包管理器（apt/brew/dnf/yum/pacman/apk）"
-        echo "         请手动安装 sqlite3：https://www.sqlite.org/download.html"
-    fi
-
-    if [ -n "$INSTALL_CMD" ]; then
-        read -p "是否现在自动安装 sqlite3？（${INSTALL_CMD}）[Y/n] " CHOICE
-        if [ "$CHOICE" = "" ] || [ "$CHOICE" = "Y" ] || [ "$CHOICE" = "y" ]; then
-            echo "[INSTALL] ${INSTALL_CMD}"
-            if $INSTALL_CMD; then
-                # 刷新 bash 命令缓存（安装后立即可用，无需重启终端）
-                hash -r
-                if command -v sqlite3 &> /dev/null; then
-                    echo "[OK]     sqlite3 安装成功: $(command -v sqlite3)"
-                else
-                    echo "[WARN]   sqlite3 安装完成但 PATH 未刷新，请重启终端后重新运行 install.sh"
-                fi
-            else
-                echo "[WARN]   sqlite3 安装失败（exit code $?）"
-                echo "         可手动安装: ${INSTALL_CMD}"
-            fi
-        else
-            echo "[SKIP]   用户跳过 sqlite3 安装"
-            echo "[WARN]   记忆层将静默降级（经验/错误/校准零写入，自我进化闭环不生效）"
-        fi
-    fi
-else
-    echo "[CHECK]  sqlite3 CLI 已安装: $(command -v sqlite3)"
-fi
-
-# --- Step 2: 初始化 memory.db（sqlite3 优先；python memory.py 回退，v2.6.4）---
-if command -v sqlite3 &> /dev/null; then
-    # 建数据目录
-    mkdir -p "${DB_DIR}"
-
-    if [ -f "${DB_PATH}" ]; then
-        echo "[SKIP]   memory.db 已存在，跳过初始化: ${DB_PATH}"
-    else
-        # 执行 init.sql 建表
-        if [ -f "${INIT_SQL}" ]; then
-            echo "[INIT]   执行 schema/init.sql 建表..."
-            sqlite3 "${DB_PATH}" < "${INIT_SQL}"
-            echo "[OK]     memory.db 表结构初始化完成: ${DB_PATH}"
-        else
-            echo "[WARN]   schema/init.sql 未找到（${INIT_SQL}），跳过建表"
-        fi
-
-        # schema/init.sql 内含 project_context 种子（v2.6.2 起），无需单独 seed 脚本
-
-        # 健康度验证
-        TABLES=$(sqlite3 "${DB_PATH}" "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%_fts%';")
-        echo "[VERIFY] 表清单: ${TABLES}"
-    fi
-else
-    # v2.6.4 回退：python scripts/memory.py（v2.6 主通道，Python stdlib sqlite3，跨平台免安装）
-    # 无 sqlite3 CLI 也能初始化 memory.db
-    PYTHON_BIN=""
-    if command -v python3 &> /dev/null; then
-        PYTHON_BIN="python3"
-    elif command -v python &> /dev/null; then
-        PYTHON_BIN="python"
-    fi
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    MEM_PY="${SCRIPT_DIR}/scripts/memory.py"
-    if [ -n "${PYTHON_BIN}" ] && [ -f "${MEM_PY}" ] && [ ! -f "${DB_PATH}" ]; then
-        mkdir -p "${DB_DIR}"
-        if [ -f "${INIT_SQL}" ]; then
-            echo "[INIT]   sqlite3 CLI 不可用，使用 python memory.py 回退建表..."
-            # memory.py 要求 db 文件已存在；空文件对 sqlite 即合法空库
-            touch "${DB_PATH}"
-            if "${PYTHON_BIN}" "${MEM_PY}" --db "${DB_PATH}" exec-file "${INIT_SQL}"; then
-                echo "[OK]     memory.db 表结构初始化完成（python memory.py）: ${DB_PATH}"
-                "${PYTHON_BIN}" "${MEM_PY}" --db "${DB_PATH}" check | sed 's/^/[VERIFY] /'
-            else
-                echo "[WARN]   python memory.py 初始化失败（exit code $?）"
-            fi
-        else
-            echo "[WARN]   schema/init.sql 未找到（${INIT_SQL}），跳过建表"
-        fi
-    elif [ -f "${DB_PATH}" ]; then
-        echo "[SKIP]   memory.db 已存在，跳过初始化: ${DB_PATH}"
-    else
-        echo "[WARN]   sqlite3 CLI 与 python 均不可用，memory.db 未初始化"
-        echo "         记忆层静默降级。安装 sqlite3 或 python 后重新运行 install.sh 即可补初始化。"
-    fi
-fi
-
-echo ""
-echo "Memory layer setup done."
 
 echo ""
 echo "Please restart Kilo in your projects for changes to take effect."

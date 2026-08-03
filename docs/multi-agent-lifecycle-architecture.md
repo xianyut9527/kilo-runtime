@@ -4,14 +4,14 @@
 > **作者**：coderAgent architect 设计门
 > **日期**：2026-07-27
 > **替代**：当前"单 coderAgent 走 8 阶段状态机 + capabilities 能力插件"实现
-> **更新（v6）**：阶段 ID 已语义化（`INTENT`→`INTENT` 等），过渡态编号（S02/S06/S10/S12/S14）已消灭并转为 graph 边；阶段文件迁至 `lifecycle/stages/`，智能体契约合入 `agent/*.md` frontmatter（v6 单源：manifest 与行为文件合二为一，不再有 `lifecycle/agents/*.yaml`）。
+> **更新（v6）**：阶段 ID 已语义化（`INIT`→`INIT` 等），过渡态编号（S02/S06/S10/S12/S14）已消灭并转为 graph 边；阶段文件迁至 `lifecycle/stages/`，智能体契约合入 `agent/*.md` frontmatter（v6 单源：manifest 与行为文件合二为一，不再有 `lifecycle/agents/*.yaml`）。
 > **更新（v6.1）**：`lifecycle/capabilities.yaml` 已删除（纯声明性配置无机械校验），能力倾向人类可读版见 `docs/model-registry.md`；`graph.yaml` 不再重复声明 convergence（`config.yaml` 为唯一真相）；阶段文件 `stage_id` 字段废弃（从文件名派生节点 ID）；`agent/*.md` frontmatter `capabilities_required` 字段已删除。本文引用已同步更新；§6 文件迁移表为历史档案，保留原始路径与角色名。
 
 ---
 
 ## 0. 核心转变一句话
 
-> 从"单 agent 切换能力插件走状态机"转变为"编排者按生命周期阶段加载独立职能智能体，智能体间共享任务上下文+长期记忆，多视角交叉验证循环确认直到收敛"。
+> 从"单 agent 切换能力插件走状态机"转变为"编排者按生命周期阶段加载独立职能智能体，智能体间共享任务上下文，多视角交叉验证循环确认直到收敛"。
 
 ---
 
@@ -20,29 +20,23 @@
 ### 设计原则
 - **按职能划分独立智能体**，每个智能体有独立 prompt、独立模型、独立 context window
 - **编排者不亲自执行**，只负责生命周期流转、智能体加载、上下文传递、门禁管理
-- **按定级动态加载**：T0 仅加载 1-2 个智能体，T2/T3 加载全部
+- **按定级动态加载**：T0 仅加载 1-2 个智能体，T2 加载全部
 - **可插拔**：新增智能体只需在 kilo.json 注册 + agent/ 新增文件 + lifecycle 阶段声明
 
 ### 智能体清单（9 个职能智能体 + 1 个编排者）
 
 | ID | 智能体名 | 职责 | 对应生命周期阶段 | 模型绑定 | mode | prompt 锚点 |
 |----|----------|------|------------------|----------|------|-------------|
-| 0 | **conductor** | 工作流编排者：意图判定、定级、阶段流转、智能体加载调度、上下文传递、门禁管理、记忆写入 | 全阶段（不亲自执行） | `kilo.json` `agent.conductor.model` | primary | `agent/conductor.md` |
+| 0 | **conductor** | 工作流编排者：意图判定、定级、阶段流转、智能体加载调度、上下文传递、门禁管理 | 全阶段（不亲自执行） | `kilo.json` `agent.conductor.model` | primary | `agent/conductor.md` |
 | 1 | **planner** | 规划智能体：设计门、方案设计、单元 DAG 拆分、验收点定义、全量扫描清单 | PLANNING | `kilo.json` `agent.planner.model` | subagent | `agent/planner.md` |
 
 | 3 | **coder** | 编码智能体：按方案实现代码、输出验收映射表+三件套、状态信号 | EXECUTING | `kilo.json` `agent.coder.model` | subagent | `agent/coder.md` |
 | 4 | **verifier** | 正向验证智能体：按验收标准逐条验证、L1/L2/L3 分层、5元组证据、独立重跑 | QUALITY（verify hook） | `kilo.json` `agent.verifier.model` | subagent | `agent/verifier.md` |
-| 5 | **reverse-auditor** | 反向审计智能体：从产物反推是否满足原始需求、追溯假设、发现隐性遗漏 | QUALITY（verify hook, T2+） | `kilo.json` `agent.reverse-auditor.model` | subagent | `agent/reverse-auditor.md` |
-| 6 | **side-checker** | 运行时行为视角验证智能体：实际执行/构造输入/实测对比验证边界/安全/性能/兼容性 | QUALITY（review hook, T2+） | `kilo.json` `agent.side-checker.model` | subagent | `agent/side-checker.md` |
 | 7 | **reviewer** | 静态代码审查智能体：阅读代码审查安全编码模式/架构/简化/SCOPE_CREEP 四视角 | QUALITY（review hook） | `kilo.json` `agent.reviewer.model` | subagent | `agent/reviewer.md` |
-| 8 | **fixer** | 修复智能体：定向修复 verifier/reverse-auditor/side-checker/reviewer 指出的阻塞问题 | QUALITY（fix hook, auto-trigger） | `kilo.json` `agent.fixer.model` | subagent | `agent/fixer.md` |
-| 9 | **synthesizer-fusion**（v3.1 恢复） | 多模型融合编辑智能体：读取 3 个 coder 输出 + verifier 验证结果，取长补短生成综合最优方案 | MM_FUSING（multiModel 专属） | `kilo.json` `agent.synthesizer-fusion.model` | subagent | `agent/synthesizer-fusion.md` |
 
-> **memory-ops 不作为独立智能体**：记忆写入是 conductor 在 DELIVERING 阶段的内建职责（调用 `python scripts/memory.py`），不需要独立 context window。`docs/memory-ops-reference.md` 保留作为记忆操作的 SQL 模板参考。
 
 ### 模型选择策略（v3.1 方案1：模型统一在 kilo.json）
 
-> **单一真相来源**：模型 ID 绑定由 `kilo.json` `agent.<name>.model` 字段统一管理，agent .md / lifecycle / conductor / multiModel / 本设计文档均不硬编码模型 ID。变更某智能体模型只需改 `kilo.json` 一处。能力倾向矩阵见 `docs/model-registry.md`（v6.1 唯一人类可读参考，无机器可读副本）。
 
 | 智能体 | 能力需求（registry 别名） | 理由 |
 |--------|--------------------------|------|
@@ -51,13 +45,9 @@
 
 | coder | `code-generation` | Code-tuned，编码专精 |
 | verifier | `strict-verification` | 安全敏感、边界敏感、逻辑审查强 |
-| reverse-auditor | `strict-verification` | 同 verifier，反向推理需要严谨逻辑 |
-| side-checker | `deep-reasoning` | 边界/安全/性能多角度需要强推理 |
 | reviewer | `deep-reasoning` | 架构视角审查需要强 reasoning |
 | fixer | `code-generation` | 代码修复需要编码能力 |
-| synthesizer-fusion | `long-context-synthesis` | 长上下文整合、代码风格统一 |
 
-> **verifier 和 reverse-auditor 同能力需求**：两者都是验证职能，模型能力需求一致。虽然可同模型，但 prompt 不同（正向 vs 反向视角），且独立 context window 保证视角隔离。
 > **v3.1 视角物理隔离原则**：仅靠独立 context window 不足以防止确认偏误——各验证智能体的**输入接口字段**必须物理隔离（详见 §视角物理隔离）。
 
 ### kilo.json agent 配置（示例结构）
@@ -70,19 +60,15 @@
       "mode": "primary",
       "model": "<见 kilo.json 实际绑定>"
     },
-    "multiModel": {
       "mode": "primary",
       "model": "<见 kilo.json 实际绑定>"
     },
-    "synthesizer-fusion": {
       "mode": "subagent",
       "model": "<见 kilo.json 实际绑定>"
     },
     "planner":     { "mode": "subagent", "model": "<见 kilo.json>" },
     "coder":       { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
     "verifier":    { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
-    "reverse-auditor": { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
-    "side-checker":    { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
     "reviewer":        { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." },
     "fixer":           { "mode": "subagent", "model": "<见 kilo.json>", "prompt": "..." }
   }
@@ -108,8 +94,6 @@ mode: subagent
 mount:
   - at: QUALITY                  # 主挂载点（v2 响应式 Hooks 阶段）
     hook: verify
-  - at: MM_CHECKING              # 一智能体可挂载多点
-  - at: MM_FCHECK
 # mount 可选字段：order（同挂载点执行顺序，升序数字；省略=串行组）
 #                 when（条件挂载）/ on_fail（abort|warn|skip|degrade）
 ```
@@ -118,8 +102,7 @@ mount:
 
 | 挂载点 | 触发时机 |
 |------|----------|
-| `on:bootstrap` | 装配完成后、INTENT 前 |
-| `pre:<STAGE>` / `<STAGE>` / `post:<STAGE>` | 每个图节点（含 MM_*）派生三挂载点：主槽前 / 阶段本体 / 主槽后 |
+| `on:bootstrap` | 装配完成后、INIT 前 |
 | `on:done` | DELIVERING 完成后、DONE 前 |
 
 必配角色契约在 **stages/<id>.md frontmatter `required_roles`**（阶段语义内聚，单源声明）——graph.yaml 纯拓扑，零智能体名/角色名：
@@ -138,12 +121,11 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 
 > 角色名 = 智能体文件名（去 .md）或其 frontmatter 显式 `role` 字段（多智能体同角色）。路由目标不需要知道谁挂上来——校验由 bootstrap / `scripts/lifecycle-doctor.mjs` 静态预演。**增删智能体永不改 graph.yaml**；仅引入"新角色作为某阶段必配"时才动该阶段 stages 文件 frontmatter 一行（阶段语义变化，内聚）。
 >
-> conductor 内建阶段（INTENT/SIZING/DELIVERING）声明 `executor: conductor`，主挂载点由内建逻辑占据，不经 `task` 启动。
+> conductor 内建阶段（INIT/DELIVERING）声明 `executor: conductor`，主挂载点由内建逻辑占据，不经 `task` 启动。
 
 ### 可插拔机制（启动期装配 / bootstrap）
 
 #### 装配与运行时
-1. conductor 启动期读 `lifecycle/graph.yaml`（纯拓扑）+ `multimodel-graph.yaml`（派生挂载点全集：`on:bootstrap`/`on:done` + 每节点 `pre:`/主/`post:`）+ 全部 `agent/*.md` frontmatter（按 `mount[].at` 自注册，v6 单源）+ `lifecycle/stages/*.md` frontmatter（`required_roles` 契约）+ `lifecycle/config.yaml`（tier_defaults/overrides/convergence）
 2. 同挂载点按 `hook` 类型分组 + `after` 相对依赖拓扑排序（同 hook 类型默认串行，避免并发 task 调度 abort；需要顺序时声明 after）；校验各阶段 `required_roles` 被主挂载点注册覆盖
 3. 装配 resolved 视图：`{ mountPoint → [{ agent, model, hook, after, trigger, deps, when, on_fail }]（已排序/分组）}` + edges 表；运行时查表，零重复解析
 4. 进入节点 N：`pre:N` → 主挂载点（串行组 + after 拓扑序，或 executor 内建）→ `post:N` → 按 edges + when/gate 流转；装配后立即执行 `on:bootstrap`，入 DONE 前执行 `on:done`
@@ -158,32 +140,24 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 
 ### 按定级的智能体加载矩阵（唯一声明处：`lifecycle/config.yaml` tier_defaults）
 
-| 阶段 | T0 | T1 | T2 | T3 |
-|------|----|----|----|----|
-| INTENT | conductor | conductor | conductor | conductor |
-| SIZING | conductor | conductor | conductor | conductor |
-| PLANNING | — | planner（短设计门） | planner（完整规划） | —（T3 不走主图 PLANNING；MM_INIT 子图拆分写 plan） |
-| EXECUTING | coder | coder | coder（按 DAG） | coder（按 MM_SUBGRAPH 回流的融合方案实现代码；方案由子图 3×coder + synthesizer-fusion 产出） |
-| QUALITY（verify hook） | — | verifier | verifier | verifier |
-| QUALITY（verify hook, 反向审计） | — | — | reverse-auditor | reverse-auditor |
-| QUALITY（fix hook） | — | fixer（auto-trigger） | fixer（auto-trigger） | fixer（auto-trigger） |
-| QUALITY（review hook, 侧向） | — | — | side-checker | side-checker |
-| QUALITY（review hook, 审查） | — | reviewer | reviewer | reviewer |
-| DELIVERING | conductor | conductor | conductor | conductor（+synthesizer-fusion 在 MM_FUSING 阶段融合） |
+| 阶段 | T0 | T1 | T2 |
+|------|----|----|----|
+| INIT | conductor | conductor | conductor |
+| QUALITY（verify hook） | — | verifier | verifier |
+| QUALITY（fix hook） | — | fixer（auto-trigger） | fixer（auto-trigger） |
+| QUALITY（review hook, 审查） | — | reviewer | reviewer |
 
 > **T0 直达**：conductor 直接加载 coder 执行，无 planner/verifier/reviewer，与现有 workflow-core.md §T0 直达一致。
 >
-> **post:PLANNING 钩子（非定级配置）**：`post:PLANNING` 挂载点可挂载方案审查等后处理智能体——`on_fail: abort` 可中止进入 EXECUTING。它属文件路由挂载机制而非 tier_defaults 定级组合，故不在上表按定级列出；T0 不经 PLANNING、T3 走子图，图拓扑天然限定仅 T1/T2 触发。
+> **post:PLANNING 钩子（非定级配置）**：`post:PLANNING` 挂载点可挂载方案审查等后处理智能体——`on_fail: abort` 可中止进入 EXECUTING。它属文件路由挂载机制而非 tier_defaults 定级组合，故不在上表按定级列出；T0 不经 PLANNING，图拓扑天然限定仅 T1/T2 触发。
 
 ---
 
 ## 3. 共享上下文机制设计
 
-### 设计：`task_context` 文件 + memory.db 双层共享
 
 #### 第一层：任务级共享上下文 `task_context.json`
 
-**位置**：`$env:TEMP/kilo/task_context_<task_id>.json`（临时文件，任务结束后归档到 memory.db dispatch_log 或删除）
 
 **结构**：
 
@@ -225,14 +199,11 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
   },
   "verification": {
     "forward": {"verdict": "PASS", "evidence": [...]},
-    "reverse": {"verdict": "PASS", "gaps_found": []},
-    "side": {"verdict": "PASS", "boundary_issues": []},
     "review": {"verdict": "PASS", "perspectives": {...}}
   },
   "fixing_history": [
     {"round": 1, "issue": "...", "fix": "...", "verifier_result": "PASS"}
   ],
-  "memory_injection": {
     "facts_used": ["AP-006", "PAT-001"],
     "context_used": ["PC-001"]
   },
@@ -249,13 +220,9 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 
 | 智能体 | 读取 | 写入 |
 |--------|------|------|
-| conductor | 全部 | intent/sizing/status/convergence/memory_injection |
 | planner | intent/sizing/plan_review | plan |
 
-| coder | plan/execution/forbidden_files/memory_injection | execution.diffs[current_unit] |
 | verifier | plan/execution.diffs[current_unit] | verification.forward |
-| reverse-auditor | intent/plan/execution | verification.reverse |
-| side-checker | plan/execution | verification.side |
 | reviewer | plan/execution/verification | verification.review |
 | fixer | verification(issues)/plan/forbidden_files | fixing_history/execution.diffs |
 
@@ -264,7 +231,6 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 - 智能体完成后，返回结构化结果，conductor 更新 `task_context.json`
 - **不重复从 0 开始**：每个智能体都能看到前序阶段的完整上下文（方案、已完成单元、验证结果、失败历史）
 
-#### 第二层：长期记忆 `memory.db`（保留现有）
 
 - `fact_store`：跨任务经验模式（PATTERN/ANTIPATTERN/RECIPE/WARNING）
 - `failure_db`：失败案例
@@ -272,7 +238,6 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 - `model_calibration`：模型能力校准
 - `project_context`：项目级用户偏好/安全约束
 
-> **task_context 是短生命周期（单任务），memory.db 是长生命周期（跨任务）**。任务完成后 conductor 在 DELIVERING 将关键信息抽取写入 memory.db（dispatch_log + fact_store + failure_db）。
 
 ---
 
@@ -283,24 +248,20 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 | 视角 | 智能体 | 验证方向 | 核心问题 |
 |------|--------|----------|----------|
 | **正向验证** | verifier | 验收标准 → 产物 | 产物是否满足每条验收标准？L1/L2/L3 分层验证 |
-| **反向验证** | reverse-auditor | 产物 → 原始需求 | 从产物反推，是否能满足用户原始意图？有无隐性遗漏？假设是否成立？ |
-| **侧向验证** | side-checker | 边界/安全/性能/兼容 | 非主路径角度：边界条件、安全漏洞、性能退化、向后兼容 |
 | **审查** | reviewer | 架构/简化/SCOPE_CREEP | 架构合理性、可简化、安全、范围蔓延 |
 
 ### 正向验证（verifier）— 复用现有 verification.md 逻辑
 - L1（语法/编译/格式/编码）
 - L2（逻辑/边界/范围/SCOPE_CREEP）
-- L3（覆盖/安全/架构，T2/T3）
+- L3（覆盖/安全/架构，T2）
 - 5 元组证据（命令/参数/exit code/stdout/stderr）
 - 独立重跑，禁止信任传递
 
-### 反向验证（reverse-auditor）— 新增
 1. **需求追溯**：从产物反推，列出原始需求的每一点，确认是否被覆盖
 2. **假设审计**：列出实现中隐含的假设，验证每个假设是否成立
 3. **隐性遗漏检测**：检查是否有"用户没说但应该做"的部分被遗漏
 4. **过度实现检测**：检查是否有"用户没要求但做了"的部分（与 SCOPE_CREEP 互补，SCOPE_CREEP 看 diff 范围，反审看语义范围）
 
-### 侧向验证（side-checker）— 新增
 1. **边界条件**：空输入、极大输入、并发、错误路径
 2. **安全扫描**：注入、越权、敏感信息泄漏
 3. **性能影响**：时间复杂度、内存、I/O
@@ -318,8 +279,6 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 全视角 verdict 字段 AND 运算 → quality_verdict=PASS → 离开 QUALITY → DELIVERING
 任一视角 verdict=FAIL → 自动触发 fix hooks（QUALITY 内部循环）
   ├─ verifier FAIL → fixer 按验收标准修复 → code 变化 → 自动 re-verify
-  ├─ reverse-auditor FAIL → fixer 补做遗漏部分 → code 变化 → 自动 re-verify
-  ├─ side-checker FAIL → fixer 按边界/安全/性能修复 → code 变化 → 自动 re-verify
   └─ reviewer FAIL → fixer 按审查建议修复 → code 变化 → 自动 re-verify
 warning（非 blocker）→ 标记但放行，写入 task_context 供后续参考
 ```
@@ -327,7 +286,7 @@ warning（非 blocker）→ 标记但放行，写入 task_context 供后续参�
 > **不采用投票制**：每个视角都是硬门，任一 FAIL 都必须修复。不存在"多数通过则放行"——质量不打折。
 > **v3.1 机械汇总原则（反自验）**：conductor 同时承担编排（写入 task_context）与组合判定。为防止"自写自判"的确认偏误，组合判定必须是**机械汇总**——只读取各视角独立输出的 `verdict` 字段做 AND 运算，不做主观判定、不重新解读证据、不补判。任一视角的 FAIL 由该视角智能体独立给出，conductor 不得推翻或降级。
 > **v3.1 convergence-auditor 反向校验**（T2+ 可选硬门）：QUALITY 阶段收齐各视角 verdict 后，conductor 内建轻量校验步骤，反推三项：
-> 1. 每个视角智能体是否真的独立执行（检查 task_context.verification.{forward,reverse,side,review} 是否各有独立 evidence）
+> 1. 每个视角智能体是否真的独立执行（检查 task_context.verification.{forward,review} 是否各有独立 evidence）
 > 2. 是否存在信任传递（grep 智能体输出是否含"coder 说的对""verifier 已 PASS"等措辞）
 > 3. evidence 是否为本轮 fresh（不得复用前序阶段声明）
 > 任一项不满足 → `[TRUST_TRANSFER]`，整阶段降级为 FAIL，重跑该视角。
@@ -339,13 +298,9 @@ warning（非 blocker）→ 标记但放行，写入 task_context 供后续参�
 | 智能体 | 应输入 | 应隔离（禁止注入） | 隔离理由 |
 |--------|--------|--------------------|----------|
 | verifier | plan + execution.diffs/changes/forbidden_files + acceptance_criteria | execution.verification / fixing_history | 任何 coder/fixer 自验声明产生信任传递 |
-| reverse-auditor | **只 intent + execution.diffs** | plan / verification.forward / verification.side | 读了 plan 就被规划框定，发现不了 plan 自身的遗漏 |
-| side-checker | plan + execution + project_context | verification.forward / verification.reverse | 看到正向 PASS 会锚定"正向已通过"而不再质疑 |
-| reviewer | diff + plan + acceptance_criteria + project_context | verifier_report / reverse_auditor_report / verification.* | 审查与 verifier L2 重叠，看到 verifier PASS 会快速确认而非独立审查 |
 | fixer | blockers + original_diff + forbidden_files + fixing_history | verification.* / execution.verification | 修复不得被前序结论锚定；自验声明不入 context 污染下一轮 verifier |
 | coder（输出） | — | 禁止写入 execution.verification | 自验声明由 verifier 独立重跑，不入 context |
 | fixer（输出） | — | 禁止写入 execution.verification | 修复后自验声明由 verifier 独立重跑，不入 context |
-| synthesizer-fusion | 3 份 coder 输出 + verifier 报告 + acceptance_criteria | 拆分意图 / 模型身份 / task_context.intent | 知道拆分意图会偏向"符合意图的方案"而非客观最优（v3.1 恢复独立智能体根因）|
 
 > **写入边界硬门**：`execution.verification` 字段只能由 verifier 智能体写入。coder/fixer 自验结果只保留在智能体本地输出，不得写入 task_context。违反 → `[TRUST_TRANSFER]`。
 > **校验机制**：`lifecycle-doctor.mjs` 自动校验视角物理隔离规则，check27 校验模型硬编码反查。
@@ -364,7 +319,6 @@ QUALITY（响应式 Hooks 容器）
   │
   ├─ verify hooks（默认串行）
   │   ├─ verifier（正向）──┐
-  │   └─ reverse-auditor（反向，T2+，after: [verifier]）──┤
   │   └─ （各自独立 context）──┘
   │   │
   │   ▼ 全 PASS？
@@ -373,7 +327,6 @@ QUALITY（响应式 Hooks 容器）
   │
   ├─ review hooks（默认串行）
   │   ├─ reviewer（审查）──┐
-  │   ├─ side-checker（侧向，T2+）──┤
   │   └─ （各自独立 context）──┘
   │   │
   │   ▼ 全 PASS？
@@ -402,8 +355,7 @@ QUALITY（响应式 Hooks 容器）
 
 ### 保留（不变）
 - `.kilo/instructions/core.md` — 通用基线
-- `.kilo/instructions/workflow-core.md` — T0-T3 定级 + 门禁（术语映射注释需更新）
-- `.kilo/memory/` 全部 — memory.db + schema + contracts
+- `.kilo/instructions/workflow-core.md` — T0-T2 定级 + 门禁（术语映射注释需更新）
 - `.kilo/skills/` 全部 — skills 系统
 - `lifecycle-doctor.mjs` — 主体保留，新增检查项
 - `install.sh` / `install.ps1` — 不变
@@ -416,14 +368,11 @@ QUALITY（响应式 Hooks 容器）
 |------|----------|
 | `kilo.json` | `coderAgent` → `orchestrator`；prompt 锚点更新 |
 | `agent/coderAgent.md` | 重命名为 `agent/orchestrator.md`；更新为多智能体编排逻辑 |
-| `agent/multiModel.md` | 更新引用：`coderAgent` → `orchestrator`；executor 引用更新 |
 | `agent/lifecycle/README.md` | 状态机图更新：每阶段标注加载的智能体；组合规则更新 |
 | `agent/lifecycle/01-intent.md` | frontmatter 加 `agents: [orchestrator]` |
 | `agent/lifecycle/02-sizing.md` | frontmatter 加 `agents: [orchestrator]` |
 | `agent/lifecycle/03-design.md` | frontmatter 加 `agents: [planner]`；引用改为 planner 智能体 |
 | `agent/lifecycle/04-implementation.md` | frontmatter 加 `agents: [coder]` |
-| `agent/lifecycle/05-verification.md` | frontmatter 加 `agents: [verifier, reverse-auditor]`；反向验证逻辑 |
-| `agent/lifecycle/06-review.md` | frontmatter 加 `agents: [side-checker, reviewer]` |
 | `agent/lifecycle/07-repair.md` | frontmatter 加 `agents: [fixer]` |
 | `agent/lifecycle/08-delivering.md` | frontmatter 加 `agents: [orchestrator]`；task_context 归档逻辑 |
 | `agent/models/registry.md` | 按阶段选择策略表更新为按智能体选择 |
@@ -440,8 +389,6 @@ QUALITY（响应式 Hooks 容器）
 | `agent/planner.md` | 规划智能体（从 capabilities/architecture-design.md 演化） |
 | `agent/coder.md` | 编码智能体（从 capabilities/implementation.md 演化） |
 | `agent/verifier.md` | 正向验证智能体（从 capabilities/verification.md 演化） |
-| `agent/reverse-auditor.md` | 反向审计智能体（全新） |
-| `agent/side-checker.md` | 运行时行为视角验证智能体（全新） |
 | `agent/reviewer.md` | 静态代码审查智能体（从 capabilities/review.md 演化） |
 | `agent/fixer.md` | 修复智能体（从 capabilities/repair.md 演化） |
 | `docs/multi-agent-lifecycle-architecture.md` | 本设计文档 |
@@ -451,10 +398,8 @@ QUALITY（响应式 Hooks 容器）
 | 文件 | 理由 |
 |------|------|
 | `agent/coderAgent.md` | 重命名为 orchestrator.md |
-| `agent/capabilities/*.md`（8 文件） | 能力插件合并到对应智能体文件；memory-ops.md 保留作为 SQL 模板参考移至 `docs/memory-ops-reference.md` |
 | `agent/capabilities/` 目录 | 不再需要 |
 
-> **capabilities/memory-ops.md 保留**：记忆操作的 SQL 模板仍有价值，移至 `docs/memory-ops-reference.md` 作为参考文档，conductor 在 DELIVERING 阶段查阅。
 
 ### lifecycle-doctor.mjs 新增检查
 
@@ -472,30 +417,25 @@ QUALITY（响应式 Hooks 容器）
 
 | 现有机制 | 保留状态 |
 |----------|----------|
-| T0-T3 定级 | ✅ 完全保留，两阶段定级不变 |
+| T0-T2 定级 | ✅ 完全保留，两阶段定级不变 |
 | 8 节点强制流程日志 | ✅ 保留，节点名从"能力插件"改为"智能体" |
-| 质量门禁标记 | ✅ `[SCOPE_CREEP]`/`[MISSING_MEMORY_WRITE]` 等全部保留 |
 | 安全敏感模块识别 | ✅ 完全保留 |
 | 单元 DAG | ✅ 完全保留，planner 智能体产出 |
 | Circuit Breaker | ✅ 完全保留 |
-| memory.db 记忆系统 | ✅ 完全保留，conductor 在 DELIVERING 写入 |
 | skills 系统 | ✅ 完全保留 |
 
 ### 修改
 
 | 现有机制 | 修改内容 |
 |----------|----------|
-| workflow-core.md 术语映射注释 | `engineer → coder 智能体`、`checker → verifier + reverse-auditor`、`fixer → fixer`、`reviewer → reviewer + side-checker`、`architect → planner` |
 | 强制流程日志"能力插件"列 | 改为"智能体"列 |
-| review_mode 决策表 | T0→none，T1→正向+审查，T2/T3→正向+反向+侧向+审查 |
+| review_mode 决策表 | T0→none，T1→正向+审查，T2→正向+反向+侧向+审查 |
 
 ### 新增
 
 | 新机制 | 说明 |
 |--------|------|
 | task_context 共享上下文 | 新增，见第 3 章 |
-| 反向验证 | 新增 reverse-auditor 智能体 |
-| 侧向验证 | 新增 side-checker 智能体 |
 | 交叉验证组合判定 | 新增四视角组合规则 |
 
 ---
@@ -507,7 +447,7 @@ QUALITY（响应式 Hooks 容器）
 | 开销类型 | 评估 | 缓解 |
 |----------|------|------|
 | Token 成本 | 每个智能体独立 context window，总 token 是单 agent 的 3-5 倍 | T0/T1 不启动全部智能体；task_context 只注入相关章节 |
-| 延迟 | 串行启动多个智能体增加 wall-clock 延迟，但避免并发调度 abort | T0/T1 按需加载，减少不必要串行；T3 子图 parallel: true 保留并行 |
+| 延迟 | 串行启动多个智能体增加 wall-clock 延迟，但避免并发调度 abort | T0/T1 按需加载，减少不必要串行 |
 | 上下文传递损耗 | task_context 摘要可能丢失细节 | task_context 结构化字段 + 关键原文保留 |
 
 ### 共享上下文的同步风险
@@ -516,7 +456,6 @@ QUALITY（响应式 Hooks 容器）
 |------|------|
 | 并发读写冲突 | conductor 是唯一写入者，智能体只读 + 返回结构化结果由 conductor 写入 |
 | 上下文过大 | task_context 只保留结构化摘要 + 关键证据，不保留完整对话 |
-| 临时文件残留 | 任务结束（DONE）后归档到 memory.db dispatch_log 并删除临时文件 |
 
 ### 何时用多智能体 vs 单 agent
 
@@ -524,16 +463,12 @@ QUALITY（响应式 Hooks 容器）
 |------|-----------|------|
 | T0 | 1（conductor 直接执行） | ≤2 行改动，启动多智能体成本 > 收益 |
 | T1 | 3-4（conductor + planner + coder + verifier + reviewer） | 单模块，正向验证+审查足够 |
-| T2 | 6-7（+ reverse-auditor + side-checker） | 跨模块，需要全视角交叉验证 |
-| T3 | 8+（+ multiModel 3×coder） | 高风险，全视角 + 多模型并行 |
 
 ### 降级策略
 
 | 触发条件 | 降级策略 |
 |----------|----------|
 | 某智能体启动失败 | conductor 标记 `[AGENT_UNAVAILABLE]`，跳过该视角，记录降级 |
-| reverse-auditor 不可用 | 正向验证 + 审查覆盖（降低反向验证能力） |
-| side-checker 不可用 | 审查的 SCOPE_CREEP 视角部分覆盖侧向 |
 | 多个智能体不可用 | 降级为单 conductor 模式 + 标记 `[DEGRADED_SINGLE_AGENT]` |
 | task_context 读写失败 | 降级为信号传递模式（当前实现） + 标记 `[CONTEXT_SHARING_DEGRADED]` |
 
@@ -553,7 +488,6 @@ QUALITY（响应式 Hooks 容器）
 | U8 | AGENTS.md + README.md + CONFIG_CHANGE_CHECKLIST.md 更新 | U3,U5 | 索引一致 |
 | U9 | workflow-core.md 术语映射注释更新 | U3,U5 | 角色名 → 智能体名 |
 | U10 | `lifecycle-doctor.mjs` 新增 check23/24/25 | U2,U5 | 25/25 PASS |
-| U11 | docs/memory-ops-reference.md 从 capabilities/memory-ops.md 迁移 | U4 | 文件存在 + 引用更新 |
 | U12 | task_context 机制文档化（conductor.md 中定义读写规则） | U3 | conductor.md 含 task_context 章节 |
 
 ---
@@ -564,7 +498,7 @@ QUALITY（响应式 Hooks 容器）
 - [ ] 交叉验证四视角是否覆盖"正向/反向/侧向/审查"
 - [ ] task_context 共享机制是否满足"不重复从0开始"
 - [ ] 可插拔机制是否满足"自定义决定加载哪些智能体"
-- [ ] T0-T3 定级保留是否影响兼容性
+- [ ] T0-T2 定级保留是否影响兼容性
 - [ ] 文件迁移方案是否可接受（8 个 capabilities 删除 + 8 个 agent 新建）
 - [ ] 降级策略是否足够
 

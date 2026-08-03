@@ -111,16 +111,16 @@ function readConvergenceFromConfig() {
 }
 
 // ============================================================
-// 从 lifecycle/config.yaml 解析 tier_defaults / inquiry_tier_defaults
-// 返回 { execution: { T0: {agents, review_mode, provider?}, ... }, inquiry: {...} }
-// conductor 在 SIZING 阶段调用 readTierDefaults()[intentKind][tier] 取默认组合，
+// 从 lifecycle/config.yaml 解析 tier_defaults
+// 返回 { execution: { T0: {agents, review_mode, provider?}, ... } }
+// conductor 在 INIT 阶段调用 readTierDefaults().execution[tier] 取默认组合，
 // 消除"手工 set config.agents 容易漏写/写错"的根因（mm-eval-20260731 全 false bug）。
 // 复用 lifecycle-doctor.mjs 的 yaml 子集解析器（脚本自包含）。
 // ============================================================
 function parseTierDefaults(text) {
-  const result = { execution: {}, inquiry: {} };
+  const result = { execution: {} };
   const lines = text.split(/\r?\n/);
-  let section = null;      // 'execution' | 'inquiry' | null
+  let section = null;      // 'execution' | null
   let curTier = null;
   let inAgents = false;
   let curAgents = null;
@@ -147,8 +147,7 @@ function parseTierDefaults(text) {
 
     // top-level keys we care about
     if (/^tier_defaults\s*:/.test(line)) { flush(); section = 'execution'; curTier = null; inAgents = false; continue; }
-    if (/^inquiry_tier_defaults\s*:/.test(line)) { flush(); section = 'inquiry'; curTier = null; inAgents = false; continue; }
-    if (/^(overrides|convergence|hooks|timeouts)\s*:/.test(line)) { flush(); section = null; curTier = null; inAgents = false; continue; }
+    if (/^(overrides|convergence|hooks|timeouts|inquiry_tier_defaults)\s*:/.test(line)) { flush(); section = null; curTier = null; inAgents = false; continue; }
 
     if (!section) continue;
 
@@ -215,13 +214,12 @@ function readTierDefaults() {
     const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
     return parseTierDefaults(text);
   } catch {
-    return { execution: {}, inquiry: {} };
+    return { execution: {} };
   }
 }
 
 // 初始 task_context 结构（按 conductor.md §task_context 结构摘要）
 function buildInitialContext(taskId) {
-  const conv = readConvergenceFromConfig();
   const hooks = readHooksFromConfig();
   return {
     task_id: taskId,
@@ -229,12 +227,8 @@ function buildInitialContext(taskId) {
     sizing: {},
     config: {
       // 仅差异化开关（恒定挂载智能体无 when，不依赖 config.agents，由图拓扑限定）
-      // SIZING 按 lifecycle/config.yaml tier_defaults 覆盖写入
-      agents: {
-        reverse_auditor: false,
-        side_checker: false,
-        synthesizer_fusion: false,
-      },
+      // INIT 按 lifecycle/config.yaml tier_defaults 覆盖写入
+      agents: {},
       review_mode: 'none',
       custom_overrides: {},
     },
@@ -243,28 +237,20 @@ function buildInitialContext(taskId) {
     execution: {},
     verification: {
       forward: null,
-      reverse: null,
-      side: null,
-      review: null,
     },
     quality: {
       round: 0,
       max_rounds: hooks.max_total_cycles,
       status: 'running',
-      verify: { forward: {}, reverse: {} },
-      review: { result: {}, side: {} },
+      verify: { forward: {} },
+      review: { result: {} },
       fix: { round: 0, issues_fixed: [], issues_remaining: [] },
       verdict: 'PENDING',
     },
     fixing_history: [],
-    memory_injection: {},
     status: 'initialized',
-    current_stage: 'START',      // v2.1 新增：初始阶段为 START，流转由 transition-check.mjs 机械递增
+    current_stage: 'START',
     transition_log: [],
-    convergence: {
-      mm_fusion_rounds: 0,
-      mm_fusion_max_rounds: conv.mm_fusion_max_rounds,
-    },
   };
 }
 

@@ -7,7 +7,6 @@ keywords: workflow, reference, small_model, 程序化记忆, 需求扩散
 # Workflow Reference
 
 > 本文件是 workflow-core.md 的配套参考，按需读取，不自动注入。
-> 与 memory 相关的路径统一以 `~/.config/kilo-data/memory.db` 为准（数据目录独立于配置目录，install 同步不会清除）。
 
 ## small_model 触发规则
 
@@ -19,19 +18,6 @@ keywords: workflow, reference, small_model, 程序化记忆, 需求扩散
 4. 不属于安全敏感模块
 
 任一不满足 → 使用 `agent.model` 或更强模型。禁止把 verifier/fixer/reviewer 等质量门禁角色路由到 small_model。
-
-## 程序化记忆
-
-记忆系统采用 **全局 sqlite 优先 + 项目 md 兜底** 架构，由 `.kilo/memory/` 模块统一管理。
-
-> **总入口**：`.kilo/memory/README.md`（公共 API 文档）
-> **对 agent 入口**：`.kilo/memory/AGENTS.md`（运行时注入）
-
-- **schema**：`${HOME}/.config/kilo-data/memory.db`（`.kilo/memory/schema/init.sql` 7 表：fact_store / failure_db / dispatch_log / project_context / model_calibration / skill_upgrade_log / skill_usage_events（v2.5）；+ FTS5 trigram 虚表 fact_fts / failure_fts（v2.4 建、v2.6 trigram 重建）+ 4 查询视图；字段级说明见 `.kilo/memory/README.md`）
-- **初始化**：memory.db 不存在时，优先重新运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）— 脚本自动检测 `sqlite3` CLI + 提示安装 + 初始化 `memory.db`（建表 + 迁移 bootstrap 经验 + 补种 project_context）；手动 fallback：`sqlite3 ~/.config/kilo-data/memory.db < .kilo/memory/schema/init.sql`
-- **查询/写入规则**：见 `docs/memory-ops-reference.md`（M1 任务开始注入 ≤2000 tokens / M3 失败回溯必查 / M4 去重写入 / M5 经验写入 / M6 反馈 / M7 失败案例 / M8 dispatch_log + model_calibration）
-- **Skill 固化**：fact_store.confidence ≥ 0.8 且 hit_count ≥ 3 → 按 `.kilo/instructions/skill-upgrade.md` 生成升级提案
-- **健康度校验**：`node scripts/lifecycle-doctor.mjs` 记忆层健康度检查读 `.kilo/memory/contracts/health_check.sql` 标准化查询
 
 ## 需求扩散与同类点扫描
 

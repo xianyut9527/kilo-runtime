@@ -12,7 +12,6 @@
 | 模型、权限、MCP | `kilo.json` | `README.md` 只说明 |
 | 安装脚本 | `install.sh` / `install.ps1` | 双平台同步 |
 | 目录结构 | `README.md` | 必须与文件系统一致 |
-| 程序化记忆 | `.kilo/memory/*.md` | 仅在本文档做引用 |
 
 ## 修改检查
 
@@ -21,7 +20,7 @@
 | 首次 clone / 初始化本仓库 | ① 运行 `./install.ps1` 或 `./install.sh` 完成全局部署；② 复制 `tools/hooks/post-commit` → `.git/hooks/post-commit`（防部署漂移提醒）；③ 运行 `node scripts/lifecycle-doctor.mjs` 确认校验全绿 |
 | 新增/删除/改名 agent | 同步 `AGENTS.md` 清单、`README.md` 目录树、`agent/` 文件（必须含完整 YAML frontmatter：`description` / `mode` / `hidden` / `color` / `permission` / `steps` / `mount` / `task_context` / `isolation`），参考现有 `agent/conductor.md` 的写法；**重跑 `./install.ps1` 或 `./install.sh`** |
 | 修改 `lifecycle/graph.yaml` 节点 `on_fail` / `required_roles` / 新增节点 | ① 节点 `on_fail` 取值 ∈ {abort, retry_once, degrade, escalate, pause}；② `stages/README.md` 阶段索引表同步 `on_fail` 列；③ `agent/conductor.md` §异常处理派发表覆盖新取值（如新增取值需扩表）；④ 新增节点须丢 `lifecycle/stages/<id-lower>.md` |
-| 修改 `lifecycle/config.yaml` `timeouts` 段 | ① `per_agent_s` 键名与 `agent/*.md` 智能体名（去 .md + 连字符转下划线）一致；② `per_tier_multiplier` 键 ⊆ {T0,T1,T2,T3}；③ 新增智能体时同步加 `per_agent_s` 键；④ 数值为正整数 |
+| 修改 `lifecycle/config.yaml` `timeouts` 段 | ① `per_agent_s` 键名与 `agent/*.md` 智能体名（去 .md + 连字符转下划线）一致；② `per_tier_multiplier` 键 ⊆ {T0,T1,T2}；③ 新增智能体时同步加 `per_agent_s` 键；④ 数值为正整数 |
 | 修改 `lifecycle/config.yaml` `hooks.quality` 段 | ① 阈值变更同步 `agent/conductor.md` §task_context 结构 `quality.max_rounds` 注释；② 同步 `lifecycle/graph.yaml` edges 注释引用的阈值描述 |
 | 修改 `lifecycle/config.yaml` `tier_defaults` / `overrides` | ① 智能体键名按自动派生规则（连字符转下划线）；② `disabled_agents` 中的角色若被某节点 `required_roles` → `[ASSEMBLY_FAIL]`，checklist 需验证未禁用必配角色 |
 | 新增/修改 `.kilo/instructions/*` | ① 同步 `README.md` 目录树；② 若新文件被 `kilo.json` agent.*.prompt 引用，必须同步更新 `lifecycle-doctor.mjs` 的引用路径存在性校验；**重跑 `./install.ps1` 或 `./install.sh`**；**漏跑 install 会导致全局版落后于仓库版（已发生过 workflow-core.md 漂移），install 后可用 `node scripts/lifecycle-doctor.mjs` 验证装配自检全绿** |
@@ -33,12 +32,6 @@
 | 新增/修改 `lifecycle-doctor.mjs` | ① 同步 `README.md` 中对该脚本的说明（如存在）；② 同步 `CHANGELOG.md` 记录新增/变更的校验维度；③ 若新增校验维度涉及 frontmatter 字段或 prompt 引用规则，同步更新本文档对应修改检查项 |
 | 修改安装脚本 | `install.sh` 与 `install.ps1` 保持路径、EXCLUDE 列表、复制逻辑、关键文件校验、退出码语义一致；**修改后必须双平台都验证一次** |
 | 修改 EXCLUDE 列表 | 必须同步 `install.sh` 与 `install.ps1` 的双平台 EXCLUDE 数组；**同步 `README.md` 中 diff 验证命令的排除参数**；修改后必须双平台都验证一次 |
-
-### 程序化记忆相关
-
-- [ ] 修改 `.kilo/memory/` 模板时是否同步 README.md 目录树？
-- [ ] 修改 memory 触发条件时是否同步 `.kilo/instructions/workflow-reference.md` 的「程序化记忆」章节？
-- [ ] 是否同步更新 `agent/conductor.md` / `agent/multiModel.md` 的相关职责描述？（生命周期驱动后，记忆操作 SQL 模板在 `docs/memory-ops-reference.md`）
 
 ### instructions 与 prompt 联动检查
 
@@ -58,12 +51,10 @@
 - Skills 生命周期管理（触发条件、回写流程、分类规范）：`.kilo/instructions/skills-lifecycle.md`
 - **安全/性能检测模式**（检测项总览、检测项 ID、INJ/PERF/AUTH 分类、检测流程）→ 集中维护在 `.kilo/instructions/security-checklist.md`；其他文件（`kilo.json` prompt、agent 文件、SKILL.md）只做引用。
 - **输出格式规范**（交付输出的最小公共字段、`[MARKER]` 标记语言规范、状态枚举）→ 集中维护在 `.kilo/instructions/output-schema.md`；其他文件只做引用。
-- **memory 触发条件与总控开关** → 不再由 `kilo.json` 控制，改为以 `.kilo/memory/` 目录存在性为准。相关规则条件化描述分散在 `core.md` / `workflow-core.md` / `reflection.md` / `skill-usage-tracking.md` / `agent/*.md`。启用记忆时确保目录存在且含有效文件；禁用时清空或删除该目录即可，无需修改 `kilo.json`。
 - **SKILL.md frontmatter 规范**（含 keywords 数量 3–20、name 与目录名一致、兼容 agentskills.io 标准）→ 集中维护在 `.kilo/instructions/skills-lifecycle.md`「SKILL.md frontmatter 规范」章节；name 必须与目录名一致。
 - **自进化闭环**（执行→反思→提炼→固化的写入规则与优先级）→ 集中维护在 `.kilo/instructions/evolution.md`；其他文件只做引用。
 - **Skill 升级提案**（fact_store 置信度/命中数达标后的固化流程）→ 集中维护在 `.kilo/instructions/skill-upgrade.md`；其他文件只做引用。
-- **skill 使用记录**（v2.5 起写入 SQLite `skill_usage_events` 表）→ 集中维护在 `.kilo/instructions/skill-usage-tracking.md`；其他文件只做引用。
-- **工作流参考**（small_model 触发规则、程序化记忆、需求扩散与同类点扫描）→ 集中维护在 `.kilo/instructions/workflow-reference.md`；README 与其他文件只做引用。
+- **工作流参考**（small_model 触发规则、需求扩散与同类点扫描）→ 集中维护在 `.kilo/instructions/workflow-reference.md`；README 与其他文件只做引用。
 
 修改这些规则时，优先改主文档；agent 文件只保留必要引用和角色化执行要求。
 

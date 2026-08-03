@@ -6,23 +6,27 @@
 #   - 阶段必配角色契约              → lifecycle/stages/<id-lower>.md frontmatter `required_roles`
 #   - 智能体挂载（文件路由，唯一机制）→ agent/*.md frontmatter `mount` 字段自注册（v6 单源）
 #   - 定级默认组合                    → lifecycle/config.yaml
-#   - 收敛熔断阈值                    → lifecycle/config.yaml convergence
+#   - 收敛熔断阈值                    → lifecycle/config.yaml hooks
 # 修改流转 = 改本文件 edges；新增阶段 = 加 node + edges + 丢一个 stages/<id-lower>.md。
 # 节点 ID 语义命名，禁止数字前缀——插入中间节点不存在"占号"问题。
 # ============================================================
+# v3 简化重构：5 阶段生命周期（INIT/PLANNING/EXECUTING/QUALITY/DELIVERING）
+#   - INTENT + SIZING 合并为 INIT（conductor 内建，意图判定+定级一步完成）
+#   - T3/multiModel/MM_SUBGRAPH 移除
+#   - 记忆板块（M4-M8/memory.db）移除，DELIVERING 不再写入记忆
+#   - QUALITY=verify→fix(onFail)→verify 循环，熔断 max_total_cycles=4 → CIRCUIT_BREAKER
+#   - gate MEMORY_WRITE_COMPLETE 删除
+# ============================================================
 # 节点字段说明：
-#   id        节点 ID（大写蛇形语义名，如 INTENT / MM_EXECUTING；禁数字前缀）
+#   id        节点 ID（大写蛇形语义名，如 INIT / EXECUTING；禁数字前缀）
 #               type: stage 的节点，执行逻辑文件路径自动派生：stages/<id 小写>.md
 #               （如 PLANNING → stages/planning.md），无需 stage 字段
 #   type      node 类型：
 #               virtual   - 占位（如 START），无阶段文件、不挂载智能体
 #               stage     - 阶段节点，有 stages/<id-lower>.md 执行逻辑文件（路径自动派生）
-#               subgraph  - 子图入口，经 provider 路由进子图 DAG（见 multimodel-graph.yaml）
 #               terminal  - 终态（如 DONE），无阶段文件、不挂载智能体
-#   executor  内建执行者（conductor 或 multiModel）；声明后该节点主槽不经 task 启动外部智能体
+#   executor  内建执行者（conductor）；声明后该节点主槽不经 task 启动外部智能体
 #             未声明 executor 的节点 → 主槽由 frontmatter `mount: at: <NODE>` 注册的智能体填充
-#   provider  subgraph 节点的子图提供者（对应 agent/<provider>.md frontmatter type: lifecycle_provider）
-#   graph     subgraph 节点的子图 DAG 文件路径
 #   on_fail   阶段级失败策略（缺省按 lifecycle/config.yaml §on_fail 默认值规则求值）：
 #               abort      - 硬停，标 [STAGE_ABORT]，等用户决策
 #               retry_once - 同智能体重跑 1 次，再失败 escalate（耗尽见 config.yaml retry.*）
@@ -37,50 +41,32 @@
 # 边字段说明：
 #   from / to    起止节点 ID
 #   when         流转条件表达式（对照 task_context 求值）；省略 = 无条件流转
-#                常用变量：intent_type / tier / quality_verdict / subgraph_status
-#   gate         质量门禁（硬门）；未通过不得流转：
-#                  MEMORY_WRITE_COMPLETE  - DELIVERING → DONE 记忆写入完成
-#                  FUSION_SELF_CHECK_10   - 子图融合自检（见 multimodel-graph.yaml）
+#                常用变量：intent_type / tier / quality_verdict
 # ============================================================
 # 挂载点（mount）命名空间（派生，零声明——节点存在即挂载点存在）：
-#   on:bootstrap   装配完成后、INTENT 前（任务启动挂载点）
+#   on:bootstrap   装配完成后、INIT 前（任务启动挂载点）
 #   on:done        DELIVERING 完成后、DONE 前（收尾挂载点）
 #   pre:<NODE>     节点主槽执行前
-#   <NODE>         节点主槽（阶段本体；executor 内建阶段由 conductor/multiModel 占据）
+#   <NODE>         节点主槽（阶段本体；executor 内建阶段由 conductor 占据）
 #   post:<NODE>    节点主槽执行后、edges 流转前
-# 子图节点（MM_*）同样派生三挂载点。智能体在自身 agent/*.md frontmatter `mount` 声明挂载点 +
-#   hook/after/when/on_fail；同 hook 类型默认串行（需要顺序时声明 after: [agent-name]）。
 # 需要顺序时声明 after: [agent-name]（相对依赖，只引用前驱），框架自动 topo-sort。
 # 阶段必配角色契约在 stages/<id-lower>.md frontmatter `required_roles`（阶段语义内聚）；
 # 本文件不声明任何角色——增删智能体、调整挂载、改顺序都不碰本文件。
 # ============================================================
-# v2 响应式 Hooks 架构（方案 B）
-# 核心变化：
-#   - CHECKING + REVIEWING + FIXING 合并为 QUALITY（数据驱动，hooks 自动循环）
-#   - 8 stage → 6 stage（INTENT/SIZING/PLANNING/EXECUTING/QUALITY/DELIVERING）
-#   - QUALITY 内部 hooks 挂载替代阶段级回流（verify → fix → review → fix 自动循环）
-#   - conductor 角色从"工厂领班"退化为"Reconciler"，只处理异常
-# ============================================================
-version: 2
+version: 3
 
 nodes:
-  # 虚拟入口，立即流转至 INTENT
+  # 虚拟入口，立即流转至 INIT
   - id: START
     type: virtual
 
-  # 意图判定：区分咨询类(INQUIRY)与执行类(EXECUTION)
-  - id: INTENT
+  # 意图判定 + 任务定级（合并原 INTENT + SIZING）：区分 INQUIRY/EXECUTION + 定级 T0/T1/T2
+  - id: INIT
     type: stage
     executor: conductor        # conductor 内建执行，不经 task 启动
     on_fail: pause             # 内建阶段失败挂起等人
 
-  # 任务定级：评估复杂度(T0-T3)，写入 config.agents 决定后续加载哪些智能体
-  - id: SIZING
-    type: stage
-    executor: conductor        # conductor 内建；按 config.yaml tier_defaults 写 config.agents
-    on_fail: pause
-
-  # 设计门：方案设计、拆单元 DAG、定义验收标准。T1/T2 必经，T0 跳过，T3 走子图
+  # 设计门：方案设计、拆单元 DAG、定义验收标准。T1/T2 必经，T0 跳过
   # 必配角色契约：stages/planning.md frontmatter required_roles
   - id: PLANNING
     type: stage
@@ -92,98 +78,60 @@ nodes:
     type: stage
     on_fail: retry_once        # 主槽智能体异常/超时 → 重跑 1 次，再失败 escalate
 
-  # 质量保障：响应式 Hooks 阶段（合并原 CHECKING + REVIEWING + FIXING）
+  # 质量保障：响应式 Hooks 阶段（verify → fix(onFail) → verify 循环，review afterPass）
   # 内部 hooks（hook 类型定义顺序，不需要绝对编号）：
-  #   hook: verify → verify hooks（verifier + reverse_auditor? 串行组，reverse_auditor after: [verifier]）
+  #   hook: verify → verify hooks（verifier 串行组）
   #   hook: fix → fix hooks（fixer, trigger: onFail，任一 verify/review FAIL 时自动触发）
-  #   hook: review → review hooks（reviewer + side_checker? 串行组, trigger: afterPass，side_checker after: [reviewer]）
+  #   hook: review → review hooks（reviewer, trigger: afterPass）
   # 循环逻辑：代码变化 → 自动触发 verify hooks → 结果变化 → 自动触发 review/fix hooks
   # 必配角色契约：stages/quality.md frontmatter required_roles
   - id: QUALITY
     type: stage
     on_fail: escalate          # 连续失败 → 升级根因分析 / 人工
 
-  # 交付收尾：conductor 执行记忆写入(M4-M8)、git 分支收尾协议、输出闭环确认
+  # 交付收尾：conductor 执行分支收尾协议、输出闭环确认
   - id: DELIVERING
     type: stage
-    executor: conductor        # conductor 内建；记忆写入 + 分支收尾协议
+    executor: conductor        # conductor 内建；分支收尾协议
     on_fail: pause             # 内建阶段失败挂起（不自动 commit/push，等人决策）
-
-  # T3 多模型子图入口：multiModel 接管，内部调度 coder-a/b/c + synthesizer-fusion
-  - id: MM_SUBGRAPH
-    type: subgraph
-    provider: multiModel
-    graph: multimodel-graph.yaml
 
   # 终态
   - id: DONE
     type: terminal
 
 edges:
-  # 虚拟入口 → 意图判定
-  - { from: START, to: INTENT }
+  # 虚拟入口 → INIT
+  - { from: START, to: INIT }
 
-  # 执行类 → 进入定级
-  - from: INTENT
-    to: SIZING
-    when: "intent_type == 'EXECUTION'"
-
-  # 咨询类 → 同样进入定级（不再直通 DONE，走完整闭环提升质量）
-  # 闭环：SIZING → PLANNING（分析门）→ QUALITY → DELIVERING → DONE
-  # T0 咨询快答（见 sizing.md 决策树）走 SIZING → DELIVERING
-  - from: INTENT
-    to: SIZING
-    when: "intent_type == 'INQUIRY'"
-
-  # T0 执行类极速通道：无设计门/验证/审查，SIZING 后直接编码
-  - from: SIZING
-    to: EXECUTING
-    when: "intent_type == 'EXECUTION' and tier == 'T0'"
-
-  # T1/T2 执行类 → 进入设计门
-  - from: SIZING
+  # INIT → PLANNING（执行类 T1/T2）
+  - from: INIT
     to: PLANNING
     when: "intent_type == 'EXECUTION' and tier in ['T1','T2']"
 
-  # T3 执行类 → 进入 multiModel 子图做生成+融合
-  - from: SIZING
-    to: MM_SUBGRAPH
-    when: "intent_type == 'EXECUTION' and tier == 'T3'"
-
-  # T0 咨询类快答：无设计门/审查，SIZING 后直接交付（DELIVERING 执行轻量 M4-M8 记忆写入）
-  - from: SIZING
-    to: DELIVERING
-    when: "intent_type == 'INQUIRY' and tier == 'T0'"
-
-  # T1/T2/T3 咨询类 → 进入分析门（复用 PLANNING 阶段，模式切换为 analysis）
-  - from: SIZING
-    to: PLANNING
-    when: "intent_type == 'INQUIRY' and tier in ['T1','T2','T3']"
-
-  # 设计门完成 → 进入编码（EXECUTION 模式）
-  - from: PLANNING
+  # INIT → EXECUTING（执行类 T0，极速通道：无设计门/验证/审查）
+  - from: INIT
     to: EXECUTING
-    when: "intent_type == 'EXECUTION'"
+    when: "intent_type == 'EXECUTION' and tier == 'T0'"
 
-  # 分析门完成 → 进入质量保障（INQUIRY 模式，跳过 EXECUTING）
-  - from: PLANNING
-    to: QUALITY
+  # INIT → DELIVERING（咨询类 INQUIRY，直通交付）
+  - from: INIT
+    to: DELIVERING
     when: "intent_type == 'INQUIRY'"
+
+  # 设计门完成 → 进入编码
+  - { from: PLANNING, to: EXECUTING }
 
   # T0 执行类编码完成 → 直接交付（无验证/审查）
   - from: EXECUTING
     to: DELIVERING
     when: "intent_type == 'EXECUTION' and tier == 'T0'"
 
-  # T1/T2/T3 执行类编码完成 → 进入质量保障
+  # T1/T2 执行类编码完成 → 进入质量保障
   - from: EXECUTING
     to: QUALITY
-    when: "intent_type == 'EXECUTION' and tier in ['T1','T2','T3']"
+    when: "intent_type == 'EXECUTION' and tier in ['T1','T2']"
 
-  # INQUIRY 类分析完成 → 进入质量保障（经 QUALITY 验证分析结论）
-  # PLANNING → QUALITY 已声明（见上）
-
-  # QUALITY 通过 → 进入交付（统一处理 EXECUTION + INQUIRY）
+  # QUALITY 通过 → 进入交付
   - from: QUALITY
     to: DELIVERING
     when: "quality_verdict == 'PASS'"
@@ -193,19 +141,5 @@ edges:
     to: DELIVERING
     when: "quality_verdict == 'CIRCUIT_BREAKER'"
 
-  # 子图完成(聚合产物就绪) → 回流主图 EXECUTING（由主图 coder 执行 git merge mm-<tid>-fusion 分支，
-  # 将聚合代码产物应用到主工作区），然后走标准质量保障闭环 QUALITY → DELIVERING（对称 T1/T2，
-  # 验证 merge 后代码产物）
-  # 子图 MM_ARCHIVED 后 task_context 交还 conductor；聚合产物指针已写入 plan + execution.fused_output
-  # （fusion worktree 路径/分支/commit_sha，非代码本体）；主图 coder 执行 git merge fusion 分支后
-  # 写入 execution.diffs/changes/acceptance_map，供主图 hooks 读取
-  # fusion worktree 由主图 DELIVERING 阶段清理（git worktree remove --force）
-  - from: MM_SUBGRAPH
-    to: EXECUTING
-    when: "subgraph_status == 'ready_for_delivery'"
-
-  # 交付完成 → 终态
-  # memory_write_status=DEGRADED 不阻塞；MISSING → [MISSING_MEMORY_WRITE]
-  - from: DELIVERING
-    to: DONE
-    gate: MEMORY_WRITE_COMPLETE
+  # 交付完成 → 终态（无 gate）
+  - { from: DELIVERING, to: DONE }

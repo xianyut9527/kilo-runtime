@@ -37,7 +37,7 @@ task_context:
 
 # isolation：视角物理隔离（避免被前序验证结论锚定）
 isolation:
-  forbid_read: [verification.forward, verification.reverse, verification.side, verification.review, execution.verification]
+  forbid_read: [verification.forward, verification.review, execution.verification]
 ---
 
 # fixer
@@ -54,17 +54,6 @@ isolation:
 
 **不做什么**：不重新设计架构、不扩大修复范围、不跳过验证。
 
-## 记忆召回接口（M3-sub，subagent 自召回失败回溯）
-
-> **记忆下沉**：fixer 在 QUALITY fix hook 修复前**自行调用 memory.db** 召回同类 symptom 的历史修复策略（M3 失败回溯），不再依赖 conductor 集中注入。这是"避免防空转"的关键——同症状修复失败 2 轮时，必须查历史是否已有成功修复策略。
-> 降级不阻塞：memory.db 不可用时跳过，按当前 blockers 修复。
-
-**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M3 查询）：
-- 同 symptom 历史修复策略（`failure_db` MATCH blockers[0].message 关键词，symptom 相似度匹配，LIMIT 5）— 复用已验证修复策略
-- 同 symptom 历史失败修复（`failure_db` MATCH，fix_strategy 字段非空 AND root_cause_level != 'demand'，LIMIT 3）— 避免重复踩坑
-
-**召回产物**：写入 task_context.fixing_history[current_round].memory_injection = `{ historical_fixes: [...], historical_failures: [...] }`，供本轮修复参考。
-
 ## 输入接口（从 task_context 注入）
 
 > **写入边界**：fixer 读取 `blockers + original_diff + acceptance_criteria + forbidden_files + fixing_history`；写入 `task_context.fixing_history + execution.diffs`。**禁止写入 `task_context.execution.verification`**——fixer 自验声明会污染下一轮 verifier 的独立重跑。
@@ -72,7 +61,7 @@ isolation:
 ```yaml
 unit_id: "string"
 blockers:
-  - source: "verifier" | "reverse-auditor" | "side-checker" | "reviewer"
+  -     source: "verifier" | "reviewer"
     severity: "Critical" | "Important" | "Minor"
     tag: "string"
     file: "string"

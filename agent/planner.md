@@ -22,7 +22,7 @@ mount:
   - at: PLANNING
 
 # task_context：读写边界声明
-#   read   可读的 task_context 切片（intent + sizing 由 conductor 在 INTENT/SIZING 写入；
+#   read   可读的 task_context 切片（intent + sizing 由 conductor 在 INIT 写入；
 #          plan_review 由 post:PLANNING 的审查者写入，planner 回流时读审查反馈）
 #   write  可写的 task_context 切片（plan 由 planner 设计方案后写入）
 task_context:
@@ -47,31 +47,16 @@ task_context:
 
 **不做什么**：不执行代码、不修改文件、不自行进入执行阶段、不做验证。
 
-## 记忆召回接口（M1-sub，subagent 自召回）
-
-> **记忆下沉**：planner 在 PLANNING 规划前**自行调用 memory.db** 召回同类任务历史，不再依赖 conductor 在 INTENT/SIZING 的集中注入。这避免 conductor 上下文压力 + 让规划直接触达历史经验。
-> 降级不阻塞：memory.db 不可用时跳过，按当前 task_context 规划。
-
-**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
-- 同类任务历史失败模式（`failure_db` MATCH task keywords，LIMIT 5）— 避免重蹈覆辙
-- 同类 pattern（`fact_store` MATCH task keywords，category=PATTERN，LIMIT 10）— 复用已验证设计模式
-- 同类 anti-pattern（`fact_store` MATCH task keywords，category=ANTIPATTERN，LIMIT 5）— 规避已知反模式
-
-**召回产物**：写入 task_context.plan.memory_injection = `{ failures: [...], patterns: [...], antipatterns: [...] }`，供后续 coder/verifier 共享。
-
 ## 输入接口（从 task_context 注入）
 
 ```yaml
-task_type: "T1" | "T2" | "T3"
+task_type: "T1" | "T2"
 user_request: "string"
 constraints: ["string"]
 key_files: ["string"]
 project_context:
   tech_stack: ["string"]
-  existing_patterns: ["string"]    # 来自 fact_store（M1 注入）
-memory_injection:
-  facts: [{ fact_id, category, action }]
-  failures: [{ failure_id, symptom, fix }]
+  existing_patterns: ["string"]
 ```
 
 ## 分级输出
@@ -97,8 +82,7 @@ memory_injection:
 3. 方案提议（2-3 个可选方案 + 推荐）
 4. 边界值测试（每个方案至少一个边界场景验证）
 5. 交叉验证（用户声称的架构与实际代码矛盾时指出）
-6. **失败回溯**（M3）：查询 `failure_db` 同类失败模式，纳入风险应对
-7. **架构落点确认**：每个 unit 的目标文件所属层 + 依赖方向是否合规；跨层 unit 必须显式标注理由
+6. **架构落点确认**：每个 unit 的目标文件所属层 + 依赖方向是否合规；跨层 unit 必须显式标注理由
 8. **复用前摄扫描**：grep/glob/gitnexus 扫描本次设计是否已有同类抽象可消费；已有 → 消费而非新建；新建 ≥1 个抽象 → 标注"新抽象待 review"
 9. **组件化前摄评估**：即使当前只有 1 处实现，若目标领域属高频变更（表单/列表/权限/数据获取/第三方集成/错误处理/日志/配置），必须产出"组件/抽象边界设计"——组件化不是事后发现重复才补救，而是前摄为未来同类需求留接口
 

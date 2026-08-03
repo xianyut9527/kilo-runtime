@@ -44,39 +44,23 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   │   ├── skill-usage-tracking.md # skill 使用记录规范（v2.5 起写入 SQLite skill_usage_events 表）
 │   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
 │   ├── skills/                   # 长期知识库（运行时由 Kilo 从全局目录注入，非仓库内容；30+ 个 skill，完整列表见系统 available_skills）
-│   └── memory/                   # 程序化记忆模块（v2.6.2；主通道 SQLite，md 仅静态兜底）
-│       ├── README.md             # 公共 API 文档（唯一外部入口）
-│       ├── AGENTS.md             # 模块对 agent 的运行时注入指令
-│       ├── init.sql              # 旧版根级 DDL 别名（与 schema/init.sql 保持同步，install 兼容入口）
-│       ├── memory-strategy.md    # 兼容策略文件指针（保留以命中 strategy: "memory-strategy.md"）
-│       ├── schema/               # DDL 唯一源（init.sql = 7 表 + 26 索引 + 4 视图 + 2 FTS5 trigram 虚表）
-│       └── contracts/            # 跨层契约（health_check.sql 健康度查询契约源；执行者 = python scripts/memory.py check）
 ├── agent/                        # Kilo 智能体定义（v6 单源：一智能体一文件，frontmatter 自注册生命周期路由）
-│   ├── conductor.md           # 工作流编排者（type: primary，内建执行 INTENT/SIZING/DELIVERING）
-│   ├── multiModel.md             # T3 子图编排者（type: lifecycle_provider，自带子图）
+│   ├── conductor.md           # 工作流编排者（type: primary，内建执行 INIT/DELIVERING）
 │   ├── planner.md                # 规划智能体（mount: PLANNING；设计门、DAG、验收点）
 │   ├── coder.md                  # 编码智能体（mount: EXECUTING；实现、自测、三件套）
-│   ├── coder-a.md                # multiModel 并行 coder-A / 逻辑推理派（mount: MM_EXECUTING）
-│   ├── coder-b.md                # multiModel 并行 coder-B / 安全边界派（mount: MM_EXECUTING）
-│   ├── coder-c.md                # multiModel 并行 coder-C / 代码生成派（mount: MM_EXECUTING）
-│   ├── verifier.md               # 正向验证（mount: QUALITY hook:verify + MM_CHECKING + MM_FCHECK；L1/L2/L3、5 元组证据）
-│   ├── reverse-auditor.md        # 反向审计（mount: QUALITY hook:verify, when: T2+；需求追溯、假设审计）
-│   ├── side-checker.md           # 侧向验证（mount: QUALITY hook:review, when: T2+；边界/安全/性能/兼容性实测）
+│   ├── verifier.md               # 正向验证（mount: QUALITY hook:verify；L1/L2/L3、5 元组证据）
 │   ├── reviewer.md               # 静态审查（mount: QUALITY hook:review；安全编码模式/架构/简化/SCOPE_CREEP 四视角）
 │   ├── fixer.md                  # 修复智能体（mount: QUALITY hook:fix, auto-trigger；定向修复阻塞问题）
-│   ├── synthesizer-fusion.md     # 融合编辑（mount: MM_FUSING, when: T3；取长补短生成综合最优方案）
-│   └── (models/ 目录已删除，能力矩阵迁至 docs/model-registry.md)
-├── lifecycle/                    # 生命周期 v2（响应式 Hooks 架构：6 stage，QUALITY 合并原 CHECKING+REVIEWING+FIXING）
-│   ├── graph.yaml                # 主 DAG 单一真相来源（节点 INTENT/SIZING/.../DONE + 边 + 流转条件）
-│   ├── multimodel-graph.yaml     # T3 multiModel 子图（MM_INIT→...→MM_ARCHIVED + diversity_rule）
+│   └── (新增智能体 = 丢一个 <name>.md + kilo.json 绑模型，零改框架)
+├── lifecycle/                    # 生命周期（5 阶段：INIT→PLANNING→EXECUTING→QUALITY→DELIVERING）
+│   ├── graph.yaml                # 主 DAG 单一真相来源（节点 INIT/PLANNING/.../DONE + 边 + 流转条件）
 │   ├── config.yaml               # 定级默认智能体组合 tier_defaults + 用户覆盖 overrides + hooks 熔断阈值（唯一真相）
 │   ├── stages/                   # 阶段执行逻辑（语义命名，文件名派生节点 ID，插入中间阶段无占号问题）
 │   │   ├── README.md             # 阶段索引 + 扩展指南（插拔式注册）
-│   │   ├── intent.md             # INTENT 意图判定 [conductor 内建]
-│   │   ├── sizing.md             # SIZING 任务定级 [conductor 内建]
+│   │   ├── init.md               # INIT 意图判定+定级 [conductor 内建]
 │   │   ├── planning.md           # PLANNING 设计门 [planner]
 │   │   ├── executing.md          # EXECUTING 实现 [coder]
-│   │   ├── quality.md            # QUALITY 响应式 Hooks [verifier + reverse-auditor? → fix → reviewer + side-checker? → fix]
+│   │   ├── quality.md            # QUALITY 检查修复循环 [verifier → fixer → reviewer，FAIL 自动修复再检查，直到全 PASS]
 │   │   └── delivering.md         # DELIVERING 交付 [conductor 内建]
 ├── docs/                           # 参考文档
 │   ├── ARCHITECTURE.md              # 架构全景导航（v2.1 综合速查手册）
@@ -84,8 +68,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   ├── conductor-full-spec.md      # conductor 完整设计规范（运行时精简版的完整版）
 │   ├── configuration-guide.md      # 配置指南（快速上手：新增智能体/阶段/模型/定级调整）
 │   ├── multi-agent-lifecycle-architecture.md  # 多智能体协作生命周期架构（设计门产物）
-│   ├── model-registry.md          # 模型能力倾向矩阵人类可读版（v6.1 唯一能力参考，无机器可读副本）
-│   └── memory-ops-reference.md    # 记忆操作 SQL 模板参考
+│   └── model-registry.md          # 模型能力倾向矩阵人类可读版（v6.1 唯一能力参考，无机器可读副本）
 ├── install.ps1                   # Kilo 配置安装脚本（Windows）
 ├── install.sh                    # Kilo 配置安装脚本（macOS/Linux）
 └── README.md
@@ -155,18 +138,6 @@ diff -rq . ~/.config/kilo \
   --exclude=pnpm-lock.yaml --exclude=bun.lock --exclude=yarn.lock \
   --exclude=agent-manager.json
 ```
-
-### 使用程序化记忆
-
-记忆系统（v2.6.2）采用 **SQLite 唯一记忆 + md 静态兜底** 架构，由 `.kilo/memory/` 模块统一管理，通过 `${HOME}/.config/kilo-data/memory.db` 的存在性自动启停，无需 `kilo.json` 配置：
-
-1. **结构化记忆全部入全局 sqlite**（7 表 + 2 FTS5 trigram 虚表 + 4 视图）：经验教训 `fact_store`、失败案例 `failure_db`、调度日志 `dispatch_log`、项目上下文 `project_context`、模型校准 `model_calibration`、skill 升级审计 `skill_upgrade_log`、skill 使用时序 `skill_usage_events`
-2. **md 文件仅作静态兜底**：当前模块边界只保留 `README.md`（公共 API）与 `AGENTS.md`（agent 入口）；**禁止** md 累积经验/日志/时序数据
-3. **访问通道**：主通道 = `python scripts/memory.py`（Python stdlib sqlite3 封装，跨平台免安装）；sqlite3 CLI 为可选替代
-4. **首次部署/初始化**：运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）会自动检测 `sqlite3` CLI，缺失时提示用户并自动安装（winget/apt/brew 等）+ 初始化 `memory.db`（执行 `schema/init.sql` + 迁移 bootstrap 经验 + 补种 `project_context`）；跳过安装则记忆层静默降级。
-5. **禁用记忆**：删除或清空 `${HOME}/.config/kilo-data/memory.db` 即可优雅降级，不报错、不删除规则
-
-模块文档：`.kilo/memory/README.md`（公共 API + 故障排查）、`.kilo/memory/AGENTS.md`（agent 注入指令）。SQL 模板与执行流程见 `docs/memory-ops-reference.md`（生命周期驱动后唯一业务规则入口）。
 
 ### 给真实项目接入项目级 context pack
 

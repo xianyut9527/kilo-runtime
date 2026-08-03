@@ -1,5 +1,5 @@
 ---
-description: 生命周期阶段 PLANNING — 设计门/分析门。T1+ 编码或分析前必须经过 planner 输出方案+验收点+DAG。
+description: 生命周期阶段 PLANNING — 设计门。T1+ 编码前必须经过 planner 输出方案+验收点+DAG。
 model_capability: deep-reasoning
 token_budget: 12000
 # required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
@@ -11,19 +11,15 @@ required_roles: [planner]
 # lifecycle/stages/planning
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（纯拓扑）；必配角色契约见本文件 frontmatter `required_roles`；智能体经 frontmatter `mount` 自注册挂载。
-> 
-> **v2.1 模式切换**：PLANNING 阶段根据 `task_context.intent_type` 在「设计门（design）」与「分析门（analysis）」之间自动切换。两种模式共享同一阶段入口和 `post:PLANNING` 审查挂载点，但处理流程和输出结构不同。
 
 ## 输入
 
-- `SIZING` 输出的 intent_type + task_type + review_mode
+- `INIT` 输出的 intent_type + tier + review_mode
 - 用户请求（完整需求 + 约束）
 - 项目技术栈上下文
 - 相关代码文件（由智能体按需读取）
 
-## 处理流程（按 intent_type 分支）
-
-### 模式 A：设计门（`intent_type == 'EXECUTION'`）
+## 处理流程
 
 1. **项目上下文确认**：读取 AGENTS.md / kilo.json / 入口目录，确认技术栈与约束。
 2. **澄清问题**（T2 完整规划必做）：模糊术语（用户/账户/任务/会话）逐一精确定义。
@@ -33,30 +29,14 @@ required_roles: [planner]
 6. **任务 DAG**：按依赖排序，标注可并行/必须串行，每单元含目标+关键文件+验收标准。
 7. **风险与应对**：列出已知风险及缓解策略。
 
-### 模式 B：分析门（`intent_type == 'INQUIRY'`）
-
-1. **问题结构化**：将用户原始问题拆解为子问题/维度/角度。例："评估这个架构"→拆解为「可扩展性」「可维护性」「安全」「性能」四个维度。
-2. **信息来源确认**：列出回答该问题需要阅读的文件、文档、历史记录、外部资料。标注哪些是当前项目内可获取的，哪些需要推理/常识补充。
-3. **澄清与界定**（T2+ 必做）：
-   - 问题边界：用户问的是"现状评估"还是"改进建议"？
-   - 时间范围：基于当前代码版本还是历史演进？
-   - 深度要求：概要结论还是逐文件逐函数分析？
-4. **研究 DAG**：按信息依赖排序，每单元含研究目标+关键文件+信息来源+预期结论。
-5. **偏见预检**：列出可能的确认偏误（如过度依赖最近修改、忽略历史失败模式），给出规避策略。
-6. **结论框架**：预设输出结构——按什么维度组织结论、每个维度需要哪些证据支撑。
-7. **风险与局限**：列出分析局限（如"未读取运行时日志""基于静态代码推断"）。
-
 ## 输出信号
-
-### EXECUTION 模式输出
 
 ```yaml
 status_signal: "DONE" | "DONE_WITH_CONCERNS" | "NEEDS_CONTEXT"
 transition_context:
-  task_type: "T1" | "T2" | "T3"
+  tier: "T1" | "T2"
   design_gate_type: "short" | "full"
   units: [{ unit_id, goal, key_files, dependencies, acceptance_criteria }]
-# 阶段放行由 post:PLANNING 挂载点独立审查判定（通用挂载机制，见 graph.yaml 头注释），主槽智能体不自验
 scan_coverage: "full" | "partial" | "N/A"
 componentization_plan: "yes" | "no" | "N/A"
 extension_points:
@@ -66,33 +46,13 @@ extension_points:
 forbidden_files: ["string"]
 ```
 
-### INQUIRY 模式输出
-
-```yaml
-status_signal: "DONE" | "DONE_WITH_CONCERNS" | "NEEDS_CONTEXT"
-transition_context:
-  task_type: "T1" | "T2" | "T3"
-  analysis_gate_type: "short" | "full"
-  research_units: [{ unit_id, question, key_files, sources, expected_conclusion, dependencies }]
-# 阶段放行由 post:PLANNING 挂载点独立审查判定
-research_coverage: "full" | "partial" | "N/A"
-conclusion_framework:
-  dimensions: [{ name, evidence_required, priority }]
-  bias_mitigation: ["string"]
-analysis_limitations: ["string"]
-```
-
 ## 路由规则（边定义见 graph.yaml）
 
-- **EXECUTION 模式**：主槽输出方案 → 执行 `post:PLANNING` 挂载点 → 审查通过 → `PLANNING → EXECUTING`
-- **INQUIRY 模式**：主槽输出分析框架 → 执行 `post:PLANNING` 挂载点 → 审查通过 → `PLANNING → QUALITY`（跳过 EXECUTING）
-- 挂载点审查失败/超时/异常 → 挂载点 `on_fail: abort` → `[SLOT_ABORT]`，停在 PLANNING 等用户决策（不自动回流）
-- 绕过审查直接进入下一阶段 → 下游验证/审查角色标 `[PLAN_REVIEW_MISS]` FAIL（见 stages/quality.md）
+- `PLANNING → EXECUTING`：方案输出后无条件流转（执行类 T1/T2 必经）
 
-## 硬规则（两种模式通用）
+## 硬规则
 
-- ❌ "太简单不需要设计/分析" — 简单任务正是未审视假设造成返工的高发区。
+- ❌ "太简单不需要设计" — 简单任务正是未审视假设造成返工的高发区。
 - ❌ 未包含重复模式扫描清单就放行（UI 与非 UI 同等要求）。
-- ❌ 主槽智能体自验方案/分析通过并自行进入下一阶段（放行由 post:PLANNING 挂载点独立审查判定）。
-- ❌ 未经 post:PLANNING 挂载点审查放行即进入下一阶段。
-- ❌ INQUIRY 模式下输出代码/调用修改性工具 → `[PROCESS_VIOLATION]`（咨询类禁止编码）。
+- ❌ 主槽智能体自验方案通过并自行进入下一阶段。
+

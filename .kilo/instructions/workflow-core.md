@@ -6,15 +6,15 @@ keywords: workflow, orchestration, 任务定级, 单元编排, 闭环, 流程日
 
 # Workflow Core Rules
 
-> **生命周期驱动**：conductor 按 `lifecycle/graph.yaml` DAG（纯拓扑，零智能体名）+ `lifecycle/stages/*.md` 阶段文件（执行逻辑 + frontmatter `required_roles` 契约）驱动状态流转，按文件路由（`agent/*.md` frontmatter `mount` 声明 at/order/when/on_fail，v6 单源）加载智能体（planner / coder / verifier / reverse-auditor / side-checker / reviewer / fixer / multiModel）。本文件以新术语描述流程规则。模型能力倾向唯一人类可读参考见 `docs/model-registry.md`（无机器可读副本，v6.1 删除 `lifecycle/capabilities.yaml`）。
+> **生命周期驱动**：conductor 按 `lifecycle/graph.yaml` DAG（纯拓扑，零智能体名）+ `lifecycle/stages/*.md` 阶段文件（执行逻辑 + frontmatter `required_roles` 契约）驱动状态流转，按文件路由（`agent/*.md` frontmatter `mount` 声明 at/order/when/on_fail，v6 单源）加载智能体（planner / coder / verifier / reviewer / fixer）。本文件以新术语描述流程规则。模型能力倾向唯一人类可读参考见 `docs/model-registry.md`（无机器可读副本，v6.1 删除 `lifecycle/capabilities.yaml`）。
 
 ## 默认路由
 
 - 入口：`conductor` 负责理解需求、路由、跟踪验证和交付。
 - 简单局部实现 → `coder`
 - 架构变更、范围不清、跨层规则 → `planner`
-- 显式 review 或安全/资金/权限/核心逻辑 → `reviewer` + `side-checker`
-- 多次失败、高风险、用户反馈"还是不对/有遗漏" → `multiModel`
+- 显式 review 或安全/资金/权限/核心逻辑 → `reviewer`
+- 多次失败、高风险、用户反馈"还是不对/有遗漏" → 升级 reviewer
 
 ## 模型选择策略（来源：`.kilo/skills/plan-execution/SKILL.md` 追踪规范 + superpowers/subagent-driven-development）
 
@@ -24,7 +24,7 @@ conductor 加载智能体时，按任务复杂度选择模型：
 |--------|------|------|
 | 机械任务 | `small_model` | 1-2 文件纯表面修改、搜索、读取确认 |
 | 标准任务 | `agent.model` | 多文件集成、常规功能实现、verifier/fixer |
-| 架构/审查 | `model` 或最强推理模型 | 完整规划、安全审查、T3 multiModel、复杂根因分析 |
+| 架构/审查 | `model` 或最强推理模型 | 完整规划、安全审查、复杂根因分析 |
 
 > 默认 agent 配置在 `kilo.json` 中声明；conductor 可在加载时按上表覆盖。
 
@@ -39,9 +39,9 @@ conductor 加载智能体时，按任务复杂度选择模型：
 
 ```
 【任务定级·预估】
-- 任务等级：T0 / T1 / T2 / T3（预估）
+- 任务等级：T0 / T1 / T2（预估）
 - 定级依据：[具体判定条件]
-- 执行路径：[直达coder / 拆单元+planner / planner+DAG / reviewer/multiModel]
+- 执行路径：[直达coder / 拆单元+planner / planner+DAG / reviewer]
 - 触发条件：[Trace-First / 需求扩散 / 无]
 ```
 
@@ -49,7 +49,7 @@ conductor 加载智能体时，按任务复杂度选择模型：
 
 ```
 【任务定级·校准】
-- 实际等级：T0 / T1 / T2 / T3（校准）
+- 实际等级：T0 / T1 / T2（校准）
 - 校准依据：[实际 unit 数 / 跨模块 / 风险面 / 安全敏感词命中]
 - 偏差：维持预估 / 上调 / 下调
 - 偏差原因（如有）：...
@@ -96,13 +96,12 @@ Step 4: 复杂度量化判定（预估）
 
 T0 直达 coder，无需 planner、verifier、reviewer。
 
-### T1-T3 预估定级
+### T1-T2 预估定级
 
 | 级别 | 标准 | 执行路径 |
 |------|------|----------|
 | T1 | 2-5 文件，单模块，有明确验收标准 | planner 短设计门 → 拆单元，每单元 coder → verifier 闭环 |
 | T2 | 跨模块，5+ 文件，规则扩散，命中安全敏感词 | planner 完整规划 → 单元 DAG → reviewer |
-| T3 | 安全/资金/权限/核心逻辑，fixer 3 轮仍失败 | 全量 multiModel → reviewer → 用户决策 |
 
 > **设计门分级**（来源：superpowers/brainstorming）：T1 走"短设计门"（planner 输出 1-3 句方案+验收点即可放行 coder）；T2 走"完整规划"（planner 输出任务 DAG+依赖+风险）。连 1 行配置变更也走短设计门--"太简单不需要设计"是反模式，简单任务正是未审视假设造成返工的高发区。
 
@@ -155,7 +154,7 @@ planner 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验�
 预估等级 → review_mode
 ──────────────────────────
 T0      → none（无 reviewer）
-T1 / T2 / T3 → full（四视角：安全/架构/简化/SCOPE_CREEP）
+T1 / T2 → full（四视角：安全/架构/简化/SCOPE_CREEP）
 ```
 
 > **不采用"轻量档位"**：质量门禁不打折。任何审查档位化设计（如"跳过安全视角以节省 token"）都意味着质量妥协——属于无意义的工程化控制。T1+ 一律走四视角完整审查。
@@ -186,7 +185,6 @@ T1 / T2 / T3 → full（四视角：安全/架构/简化/SCOPE_CREEP）
 | 验收映射表 | 每条标准 → 实现位置 → 验证方式 → 边界覆盖 → 状态 | `[MISSING_ACCEPTANCE_MAP]` |
 | 计划执行门禁 | 计划执行前必须 critical review；遇 blocker 立即停止不猜测 | `[PLAN_DEVIATION]` |
 | 结构化输出验证 | agent 返回必须经过 schema 自检（JSON.parse/XML 标签检查），失败 → 重试 | `[MALFORMED_OUTPUT]` |
-| sqlite 记忆写入 | T1+ 任务完成后必须写入 dispatch_log；T0/INQUIRY 命中"价值信号"时同样必须写入（见 `agent/conductor.md` §记忆编排）；发现有效模式必须写入 fact_store/failure_db | `[MISSING_MEMORY_WRITE]` |
 
 ### 异常路由表
 
@@ -209,21 +207,6 @@ conductor 解析 agent 返回或工具调用结果时，按以下分级路由处
 - 不可恢复错误（AUTH/BAD_INPUT）→ 立即停止，回传 conductor 或人工
 - 语义错误（AMBIGUOUS/MALFORMED_OUTPUT）→ 降级重试，仍失败升级 reviewer
 
-### multiModel 并发配额（T3 任务专用）
-
-多执行器并行融合模式必须遵守并发上限，防止触发 provider 限流或上下文爆炸：
-
-| 触发条件 | 行为 | 失败回退 |
-|----------|------|----------|
-| 单次 multiModel 触发 | ≤3 coder + 1 verifier + 1 synthesizer-fusion = 5 并发硬上限（v3.1 恢复独立融合智能体，multiModel 不参与融合） | 任一组件异常 → 串行化剩余 coder |
-| 任一组件触发 RATE_LIMIT | 自动串行化 coder（保 2 折并发，即 1+1+1 改为 1→1→1） | 3 次限流 → 降级为单 coder 直办 + 标记 `[MULTIMODEL_DEGRADED]` |
-| 累计 3 次 multiModel 失败（含 rate-limit / crash） | 停止 multiModel 模式，降级为 single-coder | 任务降级交付，标注 `[MULTIMODEL_ABANDONED]`，事后回写 failure_db |
-
-**执行要求**：
-- conductor 触发 multiModel 前必须先扫 `dispatch_log` 查过去 24h 内 `tier = 'T3'` 任务的失败率
-- 单次失败率 ≥ 30% → 跳过 multiModel 直接 single-coder（节省 token + 避免雪崩）
-- 任一 coder 返回 `BLOCKED` / `NEEDS_CONTEXT` → 不等待其他 coder，立即停止整个 multiModel 上报 conductor
-
 ### 标记 → 硬动作映射（conductor 必须执行）
 
 以下标记由 conductor 在解析子 agent 输出时自动检测，检测后必须执行对应硬动作，不得跳过：
@@ -232,8 +215,7 @@ conductor 解析 agent 返回或工具调用结果时，按以下分级路由处
 |------|----------|--------|----------|
 | `[MALFORMED_OUTPUT]` | JSON.parse 失败 / XML 标签缺失 / 必需字段缺失 | 1. 要求子 agent 用更严格格式重输出<br>2. 第 2 次仍失败 → 调用 reviewer | 流程中断，不得进入下游 |
 | `[MISSING_STATUS_SIGNAL]` | 无法提取 `DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED` | 1. 要求子 agent 显式输出状态<br>2. 仍失败 → 调用 reviewer | 流程中断，不得进入下游 |
-| `[MISSING_RECALL]` | 回溯阶段未执行 sqlite 查询 | 1. 立即执行 sqlite 查询<br>2. 查询完成前不得进入修复阶段 | 阻塞修复，直到查询完成 |
-| `[MISSING_MEMORY_WRITE]` | T1+ 任务结束未写入 `dispatch_log` | 1. 立即补写 `dispatch_log`<br>2. 写入完成前不得标记任务完成 | 阻塞交付，直到写入完成 |
+| `[MISSING_RECALL]` | 回溯阶段未执行 kilo_local_recall | 1. 立即执行 kilo_local_recall<br>2. 查询完成前不得进入修复阶段 | 阻塞修复，直到查询完成 |
 | `[MISSING_CONTEXT_QUERY]` | 编码前未按规则调用 Context Engine | 1. 立即补调必要工具<br>2. 完成后重新检查点 | 阻塞编码，直到查询完成 |
 | `[PROCESS_VIOLATION]` | 流程跳步 | 1. 标记违规<br>2. 暂停执行<br>3. 修正后从上一个检查点恢复 | 任务暂停 |
 | `[CIRCUIT_BREAKER]` | 连续 3 次无法收敛 | 1. 停止修复<br>2. 生成降级交付报告<br>3. 建议用户决策 | 任务终止 |
@@ -274,30 +256,11 @@ conductor 解析 agent 返回或工具调用结果时，按以下分级路由处
 
 ## 交付
 
-### 收尾自检（硬门：T1+ 必走；T0/INQUIRY 命中"价值信号"时同样必走，缺则 `[MISSING_MEMORY_WRITE]` 阻塞交付）
-
-T1+ 任务「经验沉淀」执行前，conductor 必须按以下 checklist 全部勾选，任何一项未执行都不得标记任务完成。每条都对应一条具体 SQL / 工具调用，可被自动验证。
-
-- [ ] **dispatch_log 必写（M7）**：调用 `python scripts/memory.py` 执行 `INSERT INTO dispatch_log ...`（含 `dispatch_id` / `thread_id` / `agent` / `task_summary` / `initial_tier` / `final_tier` / `tier` / `review_mode` / `tier_deviation` / `model` / `status` / `duration_ms` / `files_changed` / `findings_count` / `created_at`），命令模板与业务规则详见 `docs/memory-ops-reference.md` §M8 SQL 模板
-- [ ] **fact_store 去重与插入（M4）**：发现可复用 pattern / anti-pattern 时，先 `SELECT fact_id FROM fact_store WHERE trigger=? AND action=? AND archived=0`；命中则 `UPDATE hit_count+1, confidence, updated_at`，未命中则 `INSERT`（AntiPattern 初始 confidence=0.5 / Pattern=0.6），详见 `docs/memory-ops-reference.md` §M4 SQL 模板
-- [ ] **fact_store hit_count 自增回路（M6）**：回顾本次任务中**实际引用过的 fact_id 列表**（两个来源：① agent 输出中的 `[memory:fact_id=...]` 标记；② conductor 显式声明「本次实际参考但未注入的 fact_id」，必须使用结构化标记 `[memory:referenced_fact_ids=... not_injected=true]`（v2.2，可机械审计）），对每个 fact_id 执行 `UPDATE fact_store SET hit_count = hit_count + 1, confidence = MIN(0.95, confidence + 0.02), updated_at = datetime('now') WHERE fact_id IN (...)`；若本次失败与历史 failure_db 记录同类，对应 `UPDATE failure_db SET same_symptom_count = same_symptom_count + 1`。详见 `docs/memory-ops-reference.md` §M6 SQL 模板
-- [ ] **M6 Stage 3 helpful/misleading 反馈（v2.6 强制硬门）**：T1+ 收尾**必须**输出反馈标记 `[memory:helpful=A,B]` / `[memory:misleading=X]`；无反馈时显式输出 `[memory:helpful=none]`，**禁止静默省略**（缺失视为 M6 未完成 → `[MISSING_MEMORY_WRITE]`）。对每个 helpful fact：`UPDATE fact_store SET helpful_count=helpful_count+1, helpful_rate=CAST(helpful_count+1 AS REAL)/(helpful_count+1+misleading_count), confidence=MIN(0.95,confidence+0.02) ...`；对每个 misleading fact：`misleading_count+1, confidence=MAX(0.1,confidence-0.05)`；同步写入 dispatch_log `helpful_fact_ids` / `misleading_fact_ids` 列。完整流程见 `docs/memory-ops-reference.md` §M6 Stage 3；健康度兜底 `contracts/health_check.sql` §15 FEEDBACK_LOOP_IDLE
-- [ ] **failure_db 写入（M5，v2.6 降门槛）**：**verifier 首轮 FAIL 即记录**；fixer 连续 2 轮同症状 / Circuit Breaker 触发 / 用户反馈「还是不对」同样必须 `INSERT INTO failure_db ...`，verified 由后续 verifier 验证后置 1，详见 `docs/memory-ops-reference.md` §M7 SQL 模板
-- [ ] **model_calibration 更新（M8）**：`success_rate = (success_rate*sample_count + ?) / (sample_count + 1)`，DONE=1.0 / DONE_WITH_CONCERNS=0.7 / FAILED=0.0，详见 `docs/memory-ops-reference.md` §M8 SQL 模板
-- [ ] **fixer error_code 回写**：fixer 被触发过 → `UPDATE dispatch_log SET error_code='FIXED_BY_FIXER_ROUND_N' WHERE dispatch_id=?`，缺则 `[MISSING_FIXER_WRITE]`
-- [ ] **Skill 升级检测（仅记录，不自动落盘）**：`SELECT trigger, action, confidence, hit_count FROM fact_store WHERE category='ANTIPATTERN' AND confidence >= 0.8 AND hit_count >= 3 AND archived = 0`；命中 → 按 `.kilo/instructions/skill-upgrade.md` 生成「`[AUTO_DRAFT]`」草稿标记，**不得直接 patch SKILL.md**，必须经人工确认（V1 阶段）
-- [ ] **md 兜底**（可选）：用户偏好/安全约束由 sqlite `project_context` 表承载（v2.6.2 起 `MEMORY.md` / `USER.md` 已删除），不作为经验沉淀主路径
-- [ ] **记忆提示输出（轻量即时）**：记忆操作以即时单行提示可视化——召回时一条 `🧠 [memory:recall]`（含注入条数 + ID + A' 证据），写入时一条 `💾 [memory:write]`（含 fact_id / dispatch_id 等 ID，M6/M7/M8 可合并为 1 行）；格式与规则见 `agent/conductor.md` §记忆编排 + `docs/memory-ops-reference.md` §输出接口。禁止输出 M1-M8 大表格；审计行内标记（`[memory:fact_id=]` / `[memory:helpful=]` 等）仍为硬门不省略
-
-> **路径口径**：sqlite 路径统一为 `${HOME}/.config/kilo-data/memory.db`，由 Kilo 运行时解析，install 阶段不替换。初始化与建表脚本见 `.kilo/memory/schema/init.sql`（install 脚本自动执行）。
-
-未执行上述任何一项 → `[MISSING_MEMORY_WRITE]`，conductor 必须立即补写，不得进入「分支收尾协议」。
-
 ### 收尾三步
 
 1. **验证确认**：测试、构建、类型、Lint 通过；声明完成必须有本轮 fresh 证据，不得援引上一轮或他人结论（来源：superpowers/verification-before-completion）。
 2. **范围确认**：`git diff --` 确认改动范围，无 SCOPE_CREEP。
-3. **经验沉淀与自进化**：执行流程详见上方 §收尾自检（硬门）；该清单已覆盖 dispatch_log / fact_store / failure_db / model_calibration 全部写入要求与记忆提示输出。
+3. **经验沉淀**：T1+ 任务完成后，conductor 记录任务执行摘要与关键决策，供后续任务参考。
 
 ### 分支收尾协议（来源：superpowers/finishing-a-development-branch）
 

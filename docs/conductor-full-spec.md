@@ -22,13 +22,12 @@
 | 硬编码 9 个 subagent               | 智能体经 `agent/*.md` frontmatter `mount` 文件路由自注册：任意挂载点、任意数量、`hook` 类型定序 + `after` 声明相对依赖（自包含，无跨文件编号引用） |
 | 阶段间靠 PASS/FAIL 信号传递        | task_context.json 共享上下文 + 信号传递                                                                                  |
 | 单向 verifier→fixer 循环           | 正向/反向/侧向/审查四视角交叉验证循环                                                                                    |
-| 数字编号阶段（S01/S03…，插入占号） | 语义 ID 阶段（INTENT/SIZING/…），图结构集中在 `lifecycle/graph.yaml`                                                     |
+| 数字编号阶段（S01/S03…，插入占号） | 语义 ID 阶段（INIT/…），图结构集中在 `lifecycle/graph.yaml`                                                     |
 
 ## 启动期装配（bootstrap）
 
-会话首个任务进入 INTENT 前，conductor 执行一次性装配（结果缓存于会话内存，不落盘）。**架构三层正交**：graph.yaml 纯拓扑（零智能体名）/ stages/<id>.md 阶段语义（含 required_roles 契约）/ agent/*.md 智能体（mount 挂载 + task_context 权限）。机械化校验工具：`node scripts/lifecycle-doctor.mjs`（以下全部校验项的可执行实现）。
+会话首个任务进入 INIT 前，conductor 执行一次性装配（结果缓存于会话内存，不落盘）。**架构三层正交**：graph.yaml 纯拓扑（零智能体名）/ stages/<id>.md 阶段语义（含 required_roles 契约）/ agent/*.md 智能体（mount 挂载 + task_context 权限）。机械化校验工具：`node scripts/lifecycle-doctor.mjs`（以下全部校验项的可执行实现）。
 
-1. **读图**：`lifecycle/graph.yaml`（主 DAG，纯拓扑：节点 id/type/executor/on_fail + 边）+ `lifecycle/multimodel-graph.yaml`（T3 子图，子图契约保留图内），派生挂载点全集——`{on:bootstrap, on:done}` ∪ 每个节点 N 的 `{pre:N, N, post:N}`。type: stage 的节点执行逻辑文件路径自动派生：`stages/<id 小写>.md`（如 PLANNING → stages/planning.md）。
 2. **读注册**：扫描 `agent/*.md` 全部 frontmatter（YAML 头），按 `mount[].at` 把智能体注册进对应挂载点（携带 `hook`/`after`/`when`/`on_fail`）——**文件制自动注册，丢一个 .md 文件即挂载**（manifest 与行为文件合二为一，单源无冗余）。
 3. **读契约**：扫描 `lifecycle/stages/*.md` frontmatter 的 `required_roles`（阶段必配角色契约，阶段语义内聚）。
 4. **读配置**：`lifecycle/config.yaml`（tier_defaults 差异化开关 + overrides + convergence + timeouts）。
@@ -37,10 +36,9 @@
    - 每个 frontmatter `mount[].at` 必须命中派生挂载点；`on_fail` ∈ {abort,warn,skip,degrade}
    - graph.yaml 节点 `on_fail`（若声明）∈ {abort, retry_once, degrade, escalate, pause}；未声明按 `config.yaml §on_fail 默认值规则` 求值并写入 resolved 视图
    - graph.yaml 纯拓扑守护：主图节点不得出现 `required` 字段（契约在 stages frontmatter）
-   - `config.yaml timeouts` 段：`per_agent_s` 每个键必须有对应 agent 文件（防幽灵键，**单向**——agent 文件可无键，回退 `stage_default_s`）；`per_tier_multiplier` 键 ⊆ {T0,T1,T2,T3}；数值为正数
+   - `config.yaml timeouts` 段：`per_agent_s` 每个键必须有对应 agent 文件（防幽灵键，**单向**——agent 文件可无键，回退 `stage_default_s`）；`per_tier_multiplier` 键 ⊆ {T0,T1,T2}；数值为正数
    - 每个非内建 stage 节点的 `required_roles: [role...]`（stages frontmatter），每角色必须有 ≥1 个智能体（frontmatter `role` ?? 文件名 = 角色名）在该节点主挂载点注册（`when` 求值后 active 覆盖在运行时再校验）
    - `config.yaml overrides.disabled_agents` 不得使某 `required_roles` 角色无履行者 → 报错（禁用了必配角色）
-   - multiModel 子图：coder-a/b/c 绑定模型的 `(vendor, architecture)` 两两不同（`multimodel-graph.yaml` `diversity_rule` 声明，人工校验，违反 → `[DIVERSITY_VIOLATION]`）
    - > **能力匹配**：无机械校验；模型绑定在 `kilo.json` `agent.<name>.model`，能力倾向参考 `docs/model-registry.md` 人工维护。
 6. **解析缓存**：生成 resolved 视图——`{ mountPoint → [ { agent, model, hook, after, when, on_fail } ]（同 hook 类型默认串行组（详见铁律 #12 / §智能体加载规则）；有 after 的按拓扑排序执行，检测环依赖报错）}` + `{ nodeId → on_fail_resolved }` + edges 表 + `{ agent → timeout_s }` 预算表（per_agent_s × tier_multiplier，缺 per_agent_s 回退 stage_default_s）。运行时查表，零重复解析。
 
@@ -51,12 +49,10 @@
 > 状态机图、阶段索引、扩展指南详见 `lifecycle/graph.yaml` + `lifecycle/stages/README.md`（单一真相来源）。本文件只列编排者视角的关键流转点。
 
 ```
-INTENT（conductor 内建）→ SIZING（conductor 内建）
+INIT（conductor 内建）→ INIT（conductor 内建）
   → T0: EXECUTING [履行 required_roles: [coder] 的智能体] → DELIVERING
   → T1+: PLANNING [履行 required_roles: [planner] 的智能体] → EXECUTING [履行 required_roles: [coder] 的智能体]
          → QUALITY [hooks 自动挂载：verify + review + fix 循环] → DELIVERING（conductor 内建）
-  → T3: MM_SUBGRAPH [multiModel 接管: MM_WT_SETUP 创建 worktree → 3 coder 各自 worktree 独立实现 → verifier 方案级验证 → synthesizer-fusion fusion worktree 聚合] → ... → MM_ARCHIVED → EXECUTING [主图 coder git merge fusion 分支应用聚合产物]
-      → QUALITY（hooks 自动循环）→ DELIVERING（清理 fusion worktree）
 ```
 
 > 智能体名**不出现在上述流程图**中。各阶段加载谁由 `agent/*.md` frontmatter `mount` 自注册决定，stage 文件只声明 `required_roles` 契约。
@@ -84,16 +80,12 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 >
 > **单一真相**：各 `agent/*.md` frontmatter 的 `task_context.read/write/forbid_write` 字段是运行时唯一真相；新增智能体只需声明 frontmatter，**无需更新本表**。doctor 校验自动覆盖 drift 检测。
 
-### 注入机制（记忆下沉）
+### 注入机制
 
 1. conductor 进入某阶段时，读取 `task_context.json` 的相关章节
 2. 用 `task` 工具启动智能体时，将相关章节作为 prompt 的一部分注入
 3. 智能体完成后返回结构化结果，conductor 更新 `task_context.json`
 4. **不重复从 0 开始**：每个智能体都能看到前序阶段的完整上下文
-5. **M1 记忆注入分两层**：
-   - **conductor 层（轻量）**：仅在 INTENT/SIZING 注入 `project_context`（项目级安全约束/技术栈），1 次/任务
-   - **subagent 层（自主召回）**：每个 subagent 在执行前**自行调用 memory.db** 召回同类 failures/patterns/antipatterns（详见各 agent .md §记忆召回接口）
-   - **理由**：conductor 集中注入会造成上下文压力 + 视角污染（注入哪些 fact 由 conductor 主观决定，会偏向其定级判断）；subagent 自召回让各视角直接触达与自身相关的历史经验，且各召回产物写入 task_context.<stage>.memory_injection 供交叉共享
 
 ## compaction 恢复协议（上下文压缩后）
 
@@ -102,7 +94,7 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
   1. `node scripts/task-context.mjs get <task_id> status` + `get convergence` + `get verification` 恢复任务状态；
   2. 重读当前阶段 `lifecycle/stages/<当前节点小写>.md`；
   3. 重读 `lifecycle/graph.yaml` 当前节点出边；
-  4. 恢复判断以 `task_context` 为准，会话记忆仅作参考；
+  4. 恢复判断以 `task_context` 为准，会话历史仅作参考；
 - **锚点**：`kilo.json` `compaction` 配置段（`auto` / `prune` / `tail_turns` / `preserve_recent_tokens` / `reserved`）即本协议的运行时参数；压缩发生后 conductor 必须按本节步骤 1-5 恢复状态后再继续流转。
 
 ### task_context 结构（摘要）
@@ -114,19 +106,12 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
   "sizing": {...},
   "config": {
     "agents": {
-      "reverse_auditor": false,
-      "side_checker": false,
-      "synthesizer_fusion": false
     },
     "review_mode": "none" | "full",
     "custom_overrides": {}
   },
   "plan": {...},
   "execution": {
-    "mm_outputs": [...],
-    "mm_artifacts": [...],
-    "mm_worktrees": [...],
-    "mm_mode": "worktree",
     "fused_output": {...},
     "diffs": [...],
     "changes": [...],
@@ -134,41 +119,30 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
   },
   "verification": {
     "forward": {...},
-    "reverse": {...},
-    "side": {...},
     "review": {...}
   },
   "quality": {
     "round": 0,
     "max_rounds": 4,
     "status": "running",
-    "verify": { "forward": {}, "reverse": {} },
-    "review": { "result": {}, "side": {} },
+    "verify": { "forward": {} },
+    "review": { "result": {} },
     "fix": { "round": 0, "issues_fixed": [], "issues_remaining": [] },
     "verdict": "PENDING"
   },
   "fixing_history": [...],
-  "memory_injection": {...},
   "status": "RUNNING" | "PAUSED" | "DEGRADED" | "DONE" | "FAILED",
   "convergence": {
-    "mm_fusion_rounds": 0,
-    "mm_fusion_max_rounds": 3
   }
 }
 ```
 
 > **字段语义**：
 >
-> - `status`：任务全局状态（RUNNING / PAUSED / DEGRADED / DONE / FAILED），由 conductor 内建阶段写入；multiModel 子图运行期间保持 RUNNING，MM_ARCHIVED 交还 conductor 后由 conductor 接管
-> - `subgraph_status`：子图出口信号（如 `ready_for_delivery`），由 multiModel 在 MM_ARCHIVED 写入，供 graph.yaml `MM_SUBGRAPH→EXECUTING` 边条件求值；与 `status` 分离避免枚举污染
 > - `quality.round`：当前 QUALITY hooks 循环轮次（verify→fix→review→fix 自动循环计数），每次 verify/review hooks 触发 fix hooks 后 +1
 > - `quality.max_rounds`：QUALITY 总轮次上限（见 `lifecycle/config.yaml` `hooks.quality.max_total_cycles`，当前值为 4），达到即 `[CIRCUIT_BREAKER]`
-> - `convergence.mm_fusion_rounds`：T3 子图内部 MM_FCHECK 打回 synthesizer-fusion 重新聚合轮次（仅 multiModel 写入，独立计数）
-> - `convergence.mm_fusion_max_rounds`：子图内部熔断阈值（默认 3，见 `lifecycle/config.yaml` convergence）
 >
-> **v2 架构变更**：原 `convergence.round`/`total_rounds`/`max_rounds`/`max_total_rounds` 迁移到 `quality.round`/`quality.max_rounds`（QUALITY hooks 自动循环替代 FIXING 手动回流）。`mm_fusion_rounds` 保留（子图独立计数）。
 
-> **配置驱动加载（仅差异化开关）**：`config.agents` 承载"同阶段按 tier 差异化"的智能体开关（当前：reverse_auditor / side_checker / synthesizer_fusion）及 multiModel 行为开关（mm_worktree），由 conductor 在 SIZING 定级后按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户显式覆盖写入。frontmatter `mount[].when` 按 `config.agents.<key>` 求值。**恒定挂载智能体（无 `when`）不在此列**——图拓扑可达即加载（T0 不经 PLANNING/QUALITY，T3 走子图），新增智能体默认零配置。`custom_overrides` 供用户/高阶场景显式覆盖默认组合。
 
 ## 智能体加载规则（文件路由驱动）
 
@@ -177,20 +151,16 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
  - **装配完成后**立即执行 `on:bootstrap` 挂载点（有 `after` 的按拓扑排序执行；无 `after` 的激活智能体按全局默认串行策略逐个启动，遵守铁律 #6 零输出硬门）
  - **进入节点 N**：
    1. 执行 `pre:N` 挂载点（有 `after` 的按拓扑排序执行；无 `after` 的激活智能体按全局默认串行策略逐个启动；`on_fail: abort` → `[SLOT_ABORT]` 中止进入主槽）
-   2. 执行 `N` 主挂载点：`executor: conductor/multiModel` 内建节点直接内建；否则按全局默认串行策略或 `after` 拓扑排序执行同 hook 类型组，并校验 `required_roles` 激活覆盖（契约源：stages/<id>.md frontmatter；`when` 求值后缺一 → `[SLOT_UNFULFILLED]`）
 
 > **全局默认串行策略**（铁律 #12 见上）：任一挂载点（`on:bootstrap`、`pre:N`、`N`、`post:N`、子图节点等）若激活的智能体数量 ≥2，且这些智能体在该挂载点均未声明 `after`（或 `after` 为空），conductor 默认按 **resolved 视图顺序逐个串行启动** task 工具（等待上一个返回后再启动下一个），避免并发 task 调度触发底层执行器 `Tool execution aborted`；但**必须遵守铁律 #6 的零输出、零工具调用硬门**：每个 task 返回前不得输出文本或调用其他工具。resolved 视图顺序的确定规则：
 >   1. 先对声明了 `after` 的智能体做拓扑排序（按依赖链先后执行）；
 >   2. 未声明 `after` 的智能体按 **agent 文件名字典序** 排列，作为串行序列逐个启动；
 >   3. 两种顺序在 resolved 视图中合并为该挂载点的最终启动序列。
 > 
-> 该策略默认串行；`graph.yaml` / `multimodel-graph.yaml` 节点显式声明 `parallel: true`（当前仅 T3 子图 `MM_EXECUTING`）时，由 multiModel 按最大并行度执行；未声明 `parallel` 时默认串行，受上述零输出硬门约束。
 
-> **并发受限兜底**：对于默认串行序列，若底层执行器仍返回 `Tool execution aborted` / `Tool execution cancelled`，conductor 优先检查是否可通过 `after` 机制进一步拆分依赖链；（abort 不可恢复，见铁律 #9；前置杜绝优先：prompt ≤1500 字符 + 串行策略）无法避免时标记 `[AGENT_UNAVAILABLE]`，按节点 `on_fail` 派发。对于 `graph.yaml` 显式声明 `parallel: true` 的节点（当前仅 T3 子图 `MM_EXECUTING`），multiModel 按 `agent/multiModel.md` §异常处理 中的 `MM_EXECUTING 并发降级` 将剩余未启动 coder 切换为串行逐个启动，并标记 `[MM_DEGRADED_PARALLEL]`。
    3. 执行 `post:N` 挂载点（同 pre 语义）
    4. **机械流转裁判**：流转前必须执行 `node scripts/transition-check.mjs <task_id> --from <当前节点> --to <目标节点>`；
       - exit 0 → 允许流转（`quality.round` 已由框架自动递增，conductor 禁止手工 set convergence/quality 计数字段）；
-      - exit 1 → 流转非法或 gate 未过，标 `[PROCESS_VIOLATION]` / `[MISSING_MEMORY_WRITE]`，禁止强行流转，回退处理；
       - exit 3 → `[CIRCUIT_BREAKER]`，`task_context.status=PAUSED`，输出选项等用户决策；
       - 脚本不可用（文件缺失/异常）→ 降级为人工对照 `graph.yaml` 判断 + 标 `[DEGRADED]`。
 - **DELIVERING 完成、入 DONE 前**执行 `on:done` 挂载点
@@ -212,8 +182,6 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 | ------------------------------- | ---------------------- | ------------------------------ |
 | verify hooks PASS               | `QUALITY`              | FAIL → fix hooks 自动触发修复  |
 | review hooks PASS（条件加载）  | `QUALITY`              | FAIL → fix hooks 自动触发修复  |
-| T3 子图回流实现 | `MM_SUBGRAPH → EXECUTING` | 子图完成（聚合产物就绪）→ 回流主图 EXECUTING（coder 执行 git merge fusion 分支应用聚合代码产物），然后走标准 QUALITY hooks 自动循环验证 |
-| `[MISSING_MEMORY_WRITE]`        | `DELIVERING → DONE`    | 未执行阻塞交付                 |
 | verify 单点重试 ≥ max_retries   | `QUALITY`              | `[CIRCUIT_BREAKER]` → 人工决策 |
 | review 单点重试 ≥ max_retries | `QUALITY`              | `[CIRCUIT_BREAKER]` → 人工决策 |
 | QUALITY 总轮次 ≥ max_total_cycles | `QUALITY`              | `[CIRCUIT_BREAKER]` → 人工决策 |
@@ -226,8 +194,6 @@ INTENT（conductor 内建）→ SIZING（conductor 内建）
 全视角 verdict 字段 AND 运算 → quality_verdict=PASS → 离开 QUALITY → DELIVERING
 任一视角 verdict=FAIL → 自动触发 fix hooks（QUALITY 内部自动循环）
   ├─ 正向验证视角 FAIL → fixer 按验收标准修复
-  ├─ 反向审计视角 FAIL → fixer 补做遗漏部分
-  ├─ 侧向验证视角 FAIL → fixer 按边界/安全/性能修复
   └─ 审查视角 FAIL → fixer 按审查建议修复
 warning（非 blocker）→ 标记但放行
 ```
@@ -235,7 +201,7 @@ warning（非 blocker）→ 标记但放行
 > **不采用投票制**：每个视角都是硬门，任一 FAIL 都必须修复。
 > **convergence-auditor 反向校验**（T2+ 可选硬门）：QUALITY hooks 收齐各视角 verdict 后，conductor 内建一个轻量校验步骤，反推以下三项：
 >
-> 1. 每个视角智能体是否真的独立执行（检查 task_context.verification.{forward,reverse,side,review} 是否各有独立 evidence）
+> 1. 每个视角智能体是否真的独立执行（检查 task_context.verification.{forward,review} 是否各有独立 evidence）
 > 2. 是否存在信任传递（grep 智能体输出是否含"coder 说的对""verifier 已 PASS"等措辞）
 > 3. evidence 是否为本轮 fresh（不得复用前序阶段声明）
 >    任一项不满足 → `[TRUST_TRANSFER]`，整阶段降级为 FAIL，重跑该视角。
@@ -259,34 +225,15 @@ T1+ 任务加载 coder 智能体时，委派包仍必须包含（**≤1500 字�
 
 | 步骤     | 状态 | 阶段       | 智能体（角色）     | 质量门禁               |
 | -------- | ---- | ---------- | ------------------ | ---------------------- |
-| 意图判定 | ✅   | INTENT     | conductor（内建）  | 类型明确               |
-| 任务定级 | ✅   | SIZING     | conductor（内建）  | T0-T3 准确             |
+| 意图判定 | ✅   | INIT     | conductor（内建）  | 类型明确               |
+| 任务定级 | ✅   | INIT     | conductor（内建）  | T0-T2 准确             |
 | 方案规划 | ✅   | PLANNING   | 履行设计门角色     | 方案输出               |
 | 方案审查 | ✅   | post:PLANNING | 履行审查角色    | [PLAN_REVIEW_PASS]    |
 | 实现     | ✅   | EXECUTING  | 履行编码角色       | 验收映射表+三件套      |
-| 质量保障 | ✅   | QUALITY    | verify hooks（验证角色+反向审计）→ fix hooks → review hooks（审查角色+侧向验证）→ fix hooks | hooks 全 PASS |
-| 交付     | ✅   | DELIVERING | conductor（内建） | [MISSING_MEMORY_WRITE] |
+| 质量保障 | ✅   | QUALITY    | verify hooks（验证角色）→ fix hooks → review hooks（审查角色）→ fix hooks | hooks 全 PASS |
 ```
 
-> T0 仅需前 2 节点 + EXECUTING→DELIVERING（无验证/审查）；T1 加 QUALITY（verify+review hooks，无反向/侧向）；T2+ QUALITY 全 hooks。具体智能体名由 `agent/*.md` frontmatter `mount` 自注册决定，本表只列角色语义。
-
-## 记忆编排（DELIVERING 内建）
-
-T1+ 任务在交付阶段 conductor 直接调用 memory.db（SQL 模板见 `docs/memory-ops-reference.md`）：
-
-- **M1 注入**：INTENT 后**必选**（`memory.db` 存在时强制执行），所有任务类型（INQUIRY / T0 / T1 / T2 / T3）统一适用；成本极低（几条 SELECT），收益极高（避免重复犯错、利用项目积累）；token 预算 ≤2000 tokens 控制注入量，注入门槛（confidence ≥ 0.7 + hit_count ≥ 2）控制质量
-- **M4-M8 写入**：DELIVERING 阶段统一执行
-  - M4：去重查询
-  - M5：新经验写入 `fact_store`
-  - M6：`[memory:helpful=...]` / `[memory:misleading=...]` 反馈
-  - M7：`failure_db` 写入（如有失败案例）
-  - M8：`dispatch_log` 写入 + `model_calibration` 更新
-
-> **T0 任务**：记忆写入**不按定级一刀切**，按"价值信号"触发——命中以下任一信号即执行 M4-M8：① 用户明确指正错误 ② 发现流程或规则缺陷 ③ 形成可复用 pattern/antipattern ④ 连续失败后的根因 ⑤ 架构决策依据。纯执行日志（`dispatch_log` 已覆盖）或无信息增量的"任务完成"不写。
-> **INQUIRY 咨询类**：M1 召回必选（同 T0）；记忆写入按同一"价值信号"触发——咨询类完全可能产生高价值经验（如用户指正规则缺陷、发现可复用 pattern），不得因"只分析不改文件"而跳过。命中价值信号时，conductor 在回答完成后、入 DONE 前执行轻量 M4-M8（仅 SQL 写入，无需完整 DELIVERING 交付流程）。
-> **multiModel 任务**：由 multiModel 主控在 `MM_DELIVERING` 阶段统一调用记忆能力。
-
-> **降级处理**见下方 §异常处理 §降级处理（基础设施层）段，统一并入 on_fail 派发表后不再单列。
+> T0 仅需前 2 节点 + EXECUTING→DELIVERING（无验证/审查）；T1/T2 加 QUALITY（verify→fix→review 自动循环，检查 FAIL 即修复，修复后重新检查，直到全部 PASS 才进入 DELIVERING）。具体智能体名由 `agent/*.md` frontmatter `mount` 自注册决定，本表只列角色语义。
 
 ## 模型选择
 
@@ -296,7 +243,6 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 
 > 错误处理是 conductor 内建职责，**不是独立流程支线**——用户全程在场，无需 Teardown/Destroy 销毁流程。每个阶段通过 graph.yaml `on_fail` 字段声明失败策略，conductor 捕获异常后查表派发。
 >
-> **子图例外**：MM\_\* 节点（T3 子图）的异常处理主权在 `agent/multiModel.md` §异常处理（表格形式，独立语义），不适用本节 on_fail 派发；timeouts 仍适用（子图智能体也走 task 工具）。
 
 ### 触发条件
 
@@ -305,7 +251,6 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 | 智能体 wall-clock 超时                 | `[AGENT_TIMEOUT]`                                            | 见 §智能体加载流程 §超时守卫；分启动卡死（agent_startup_s）与执行超时（per_agent_s/stage_default_s） |
 | `task` 工具抛异常/启动失败/并发调度被中断（`Tool execution aborted` / `Tool execution cancelled`） | `[AGENT_UNAVAILABLE]`                                        | abort 后会话断开几乎无法重试：**前置杜绝**（见铁律 #9 prompt ≤1500 字符硬门 + 铁律 #12 串行策略），不尝试重试，直接按节点 on_fail 派发或降级 conductor 内建；区别于超时 |
 | 智能体返回 `BLOCKED` / `NEEDS_CONTEXT` | 状态信号                                                     | 需补上下文或升级                                                                                     |
-| 硬门 gate FAIL                         | `[MISSING_MEMORY_WRITE]` 等                                  | gate 边定义的硬门                                                                                    |
 | 跳步/越界/自验污染                     | `[PROCESS_VIOLATION]` / `[SCOPE_CREEP]` / `[TRUST_TRANSFER]` | 即停，不走 on_fail（见 §流程级即停规则）                                                             |
 
 ### 派发表（查 graph.yaml `node.on_fail` → 执行对应动作）
@@ -315,8 +260,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 | `abort`      | 标 `[STAGE_ABORT]`，停止该阶段，输出当前状态等用户决策                                                                                                                                                                                                                                                                                                | START/DONE/terminal、装配类错误             |
 | `retry_once` | **同智能体重跑 1 次**：task 工具开新会话（清空前次上下文，避免同样卡死），prompt 注入"前次超时/异常"信号；重跑仍超时/异常 → 转 `escalate`；重试配额见 `config.yaml retry.agent_timeout_max_retries`                                                                                                                                                   | EXECUTING（coder 偶发卡死）                 |
 | `degrade`    | 跳过该视角，task_context 标 `DEGRADED`，主流程继续；仅可选挂载视角（frontmatter `mount[].on_fail: degrade` 声明）                                                                                                                                                                                                       | 可选视角节点                                |
-| `escalate`   | 升级路径（按阶段分支，**只做以下三选一**）：① QUALITY fix hooks 连续 2 轮同症状 → 在 QUALITY 节点临时挂载 reviewer 做根因分析（不进 review hooks 流转，分析完回 fix hooks）；② PLANNING/QUALITY 必配失败且 tier < T2 → 写 `config.agents` 升级 tier（T1→T2 开 reverse_auditor/side_checker），重跑当前阶段；③ tier == T2 或升级后仍失败 → 输出选项等用户决策 | PLANNING/QUALITY 必配失败 |
-| `pause`      | 挂起 task_context（status=PAUSED），输出选项等用户决策；不自动 commit/push/merge/reset/rebase                                                                                                                                                                                                                                                         | INTENT/SIZING/DELIVERING 内建阶段           |
+| `pause`      | 挂起 task_context（status=PAUSED），输出选项等用户决策；不自动 commit/push/merge/reset/rebase                                                                                                                                                                                                                                                         | INIT/DELIVERING 内建阶段           |
 
 > **未声明 `on_fail` 的节点**：按 `config.yaml §on_fail 默认值规则` 求值——required 必配 → escalate；可选挂载 → degrade；executor 内建 → pause；terminal → abort。
 > **节点级 vs 挂载点 on_fail**：同名字段两种取值集（节点级 5 值 / 挂载点 3 值），按字段位置区分——节点 `on_fail:` 在节点定义内，`mount[].on_fail:` 在 frontmatter mount 条目内。bootstrap 校验按位置分别校验取值集。
@@ -343,14 +287,11 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 
 ### 降级处理（基础设施层，不走 on_fail）
 
-- `memory.db` 不存在 → `DEGRADED`，首次输出提示，后续静默，不阻塞主流程
 - SQL 失败 → `ERROR`，输出警告行，继续执行
 - 某智能体启动失败 → `[AGENT_UNAVAILABLE]`，按节点 `on_fail` 派发（必配 escalate / 可选 degrade）
 - 多个智能体不可用 → 降级为单 conductor 模式 + `[DEGRADED_SINGLE_AGENT]`
 - task_context 读写失败 → 降级为信号传递模式 + `[CONTEXT_SHARING_DEGRADED]`
 - bootstrap 装配失败 → `[ASSEMBLY_FAIL]`，输出具体缺失项（角色/文件/模型能力/on_fail 校验/timeouts 校验），停止进入运行
-- multiModel worktree 创建失败或子图降级 → multiModel 清理已创建 worktree（`git worktree remove --force`），fusion worktree 由主图 DELIVERING 阶段清理
-- **worktree 注册表失效**：子图退出（MM_ARCHIVED）后，主图 DELIVERING 阶段清理 fusion worktree 时，`execution.mm_worktrees` 注册表不再维护（status 保持 stale 不影响主流程）。主图 DELIVERING 的 cleanup 是物理删除（`git worktree remove --force`），注册表字段仅用于子图运行期追踪，不用于主图持久化状态。
 
 ## 输出
 
@@ -358,12 +299,10 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 
 1. **闭环确认**：验收 → 实现位置 → 验证证据 → 状态
 2. **变更回顾**：改了什么 / 为什么改 / 影响范围 / 清理调试代码
-3. **经验沉淀**：T1+ 必走 M4-M8，未执行 → `[MISSING_MEMORY_WRITE]`
 4. **分支收尾协议**：git status 清理 / 单提交对应单定级单元 / 告知用户分支去向 / worktree 隔离清理
 
 ## skill 使用记录
 
-`.kilo/memory/` 目录存在且包含有效记忆文件时，完成任务或反思触发后，通过 `python scripts/memory.py exec` 向 `skill_usage_events` 表 INSERT 一行。
 
 ## 加载的 skills
 

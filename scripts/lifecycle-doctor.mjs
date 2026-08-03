@@ -34,7 +34,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const SCRIPTS_DIR = path.join(ROOT, 'scripts');
 const GRAPH_PATH = path.join(ROOT, 'lifecycle', 'graph.yaml');
-const SUBGRAPH_PATH = path.join(ROOT, 'lifecycle', 'multimodel-graph.yaml');
 const CONFIG_PATH = path.join(ROOT, 'lifecycle', 'config.yaml');
 const STAGES_DIR = path.join(ROOT, 'lifecycle', 'stages');
 const AGENT_DIR = path.join(ROOT, 'agent');
@@ -128,7 +127,7 @@ const FULL_MODE = process.argv.includes('--full');
 const NODE_ON_FAIL = new Set(['abort', 'retry_once', 'degrade', 'escalate', 'pause']);
 // 挂载点 on_fail：abort 中止流转 / warn 告警放行 / skip 静默跳过 / degrade 跳过+标 DEGRADED（可选视角）
 const MOUNT_ON_FAIL = new Set(['abort', 'warn', 'skip', 'degrade']);
-const TIERS = new Set(['T0', 'T1', 'T2', 'T3']);
+const TIERS = new Set(['T0', 'T1', 'T2']);
 
 const results = []; // { level: 'PASS'|'FAIL'|'WARN', name, detail }
 
@@ -155,7 +154,7 @@ function stripComment(line) {
   return line;
 }
 
-// 解析 graph.yaml / multimodel-graph.yaml 的 nodes + edges + 顶层标量
+// 解析 graph.yaml 的 nodes + edges + 顶层标量
 // 返回 { nodes: Map<id, {type, executor, on_fail, provider, graph, required}>,
 //        edges: [{from,to,when,gate}], top: {provider, entry, exit, diversity_rule} }
 function parseGraphFile(text) {
@@ -534,7 +533,7 @@ function rtCheckTransitionLog(ctx, env, rtCheck) {
 function rtCheckTier(ctx, env, rtCheck) {
   const tier = ctx.sizing && ctx.sizing.tier;
   if (!tier) {
-    rtCheck('WARN', 'runtime.tier', 'sizing.tier 未设置（可能尚未 SIZING）');
+    rtCheck('WARN', 'runtime.tier', 'sizing.tier 未设置（可能尚未 INIT 定级）');
     return;
   }
   const agents = ctx.config && ctx.config.agents;
@@ -592,21 +591,6 @@ function rtCheckVerification(ctx, env, rtCheck) {
   }
 }
 
-// R8: gate 状态（DELIVERING/DONE 要求 memory_write_status）
-function rtCheckGate(ctx, env, rtCheck) {
-  const stage = ctx.current_stage;
-  if (stage !== 'DELIVERING' && stage !== 'DONE') {
-    rtCheck('PASS', 'runtime.gate', `current_stage=${stage || '(未设置)'} 不要求 gate`);
-    return;
-  }
-  const mws = ctx.memory_write_status;
-  if (mws === 'OK' || mws === 'DEGRADED') {
-    rtCheck('PASS', 'runtime.gate', `memory_write_status=${mws} 满足 MEMORY_WRITE_COMPLETE`);
-  } else {
-    rtCheck('FAIL', 'runtime.gate', `current_stage=${stage} 但 memory_write_status=${mws || '(未设置)'}（须先执行 M4-M8 记忆写入）`);
-  }
-}
-
 // R9: GC 残留检测（initialized 且 mtime>24h → FAIL，与 task-context.mjs GC 规则对齐）
 function rtCheckGcResidue(ctx, env, rtCheck) {
   if (ctx.status !== 'initialized') {
@@ -635,7 +619,6 @@ const runtimeChecks = [
   rtCheckTransitionLog,
   rtCheckTier,
   rtCheckVerification,
-  rtCheckGate,
   rtCheckGcResidue,
 ];
 
@@ -860,11 +843,6 @@ if (!graphText) {
 const graph = parseGraphFile(graphText);
 pass('input.graph', `${graph.nodes.size} nodes / ${graph.edges.length} edges`);
 
-const subText = readText(SUBGRAPH_PATH);
-const sub = subText ? parseGraphFile(subText) : null;
-if (sub) pass('input.subgraph', `${sub.nodes.size} nodes / ${sub.edges.length} edges`);
-else warn('input.subgraph', 'multimodel-graph.yaml 缺失（T3 不可用）');
-
 const cfgText = readText(CONFIG_PATH);
 const cfg = cfgText ? parseConfig(cfgText) : null;
 if (cfg) pass('input.config', `tiers: ${[...cfg.tierAgents.keys()].join(',')}`);
@@ -883,27 +861,12 @@ for (const file of fs.readdirSync(AGENT_DIR)) {
 }
 pass('input.agents', `${agents.size} 个 agent frontmatter 已解析`);
 
-// memory 模块完整性（文件存在性；原 validate-config check14 缺口补回）
-{
-  const req = [
-    ['.kilo/memory/README.md', '公共 API 文档'],
-    ['.kilo/memory/AGENTS.md', 'agent 注入入口'],
-    ['.kilo/memory/schema/init.sql', 'DDL 唯一源'],
-    ['.kilo/memory/contracts/health_check.sql', '健康度查询契约源'],
-  ];
-  let bad = 0;
-  for (const [rel, desc] of req) {
-    if (!fs.existsSync(path.join(ROOT, rel))) { fail(`memory.module.files`, `${rel} 缺失（${desc}）`); bad++; }
-  }
-  if (!bad) pass('memory.module.files', `${req.length} 个模块入口文件齐全（README/AGENTS/schema:init.sql/contracts:health_check.sql）`);
-}
-
 // ============================================================
 // A. 图结构校验
 // ============================================================
 
-// A1/A2. edges 引用已声明节点（主图 + 子图）
-for (const [label, g] of [['graph', graph], ['subgraph', sub]]) {
+// A1. edges 引用已声明节点（主图）
+for (const [label, g] of [['graph', graph]]) {
   if (!g) continue;
   let bad = 0;
   for (const e of g.edges) {
@@ -942,55 +905,16 @@ for (const [label, g] of [['graph', graph], ['subgraph', sub]]) {
   if (!bad) pass('graph.stage.file', '全部 stage 节点执行逻辑文件存在');
 }
 
-// A6. subgraph 节点：graph 文件存在 + provider 对应 lifecycle_provider
-for (const [id, n] of graph.nodes) {
-  if (n.type !== 'subgraph') continue;
-  if (n.graph && fs.existsSync(path.join(ROOT, 'lifecycle', n.graph))) {
-    pass(`graph.subgraph.${id}.graph`, `${n.graph} 存在`);
-  } else {
-    fail(`graph.subgraph.${id}.graph`, `${n.graph ?? '(未声明)'} 不存在`);
-  }
-  if (n.provider && agents.has(n.provider) && agents.get(n.provider).type === 'lifecycle_provider') {
-    pass(`graph.subgraph.${id}.provider`, `provider ${n.provider} = lifecycle_provider`);
-  } else {
-    fail(`graph.subgraph.${id}.provider`, `provider ${n.provider ?? '(未声明)'} 无 lifecycle_provider 智能体`);
-  }
-}
-
-// A7. T3 回流守护：MM_SUBGRAPH 出边必须指向 EXECUTING（融合方案由主图 coder 实现），然后走标准验证审查闭环，不得直达 DELIVERING
-{
-  let mmOut = 0, mmToExecuting = false, mmToDelivering = false;
-  for (const e of graph.edges) {
-    if (e.from === 'MM_SUBGRAPH') {
-      mmOut++;
-      if (e.to === 'EXECUTING') mmToExecuting = true;
-      if (e.to === 'DELIVERING') mmToDelivering = true;
-    }
-  }
-  if (mmOut === 0) {
-    fail('graph.t3回流', 'MM_SUBGRAPH 无出边');
-  } else if (mmToDelivering) {
-    fail('graph.t3回流', `MM_SUBGRAPH 出边指向 DELIVERING（应回流 EXECUTING 由主图 coder 按融合方案实现后走标准验证审查闭环）`);
-  } else if (!mmToExecuting) {
-    fail('graph.t3回流', `MM_SUBGRAPH 出边未指向 EXECUTING（当前指向未知节点）`);
-  } else {
-    pass('graph.t3回流', `MM_SUBGRAPH → EXECUTING（融合方案由主图 coder 实现后走标准 QUALITY→DELIVERING 闭环）`);
-  }
-}
-
 // ============================================================
 // B. 挂载点校验
 // ============================================================
 
-// 派生挂载点全集：on:bootstrap / on:done ∪ (主图 ∪ 子图节点) × {pre:N, N, post:N}
+// 派生挂载点全集：on:bootstrap / on:done ∪ 主图节点 × {pre:N, N, post:N}
 const mountPoints = new Set(['on:bootstrap', 'on:done']);
-for (const g of [graph, sub]) {
-  if (!g) continue;
-  for (const id of g.nodes.keys()) {
-    mountPoints.add(id);
-    mountPoints.add(`pre:${id}`);
-    mountPoints.add(`post:${id}`);
-  }
+for (const id of graph.nodes.keys()) {
+  mountPoints.add(id);
+  mountPoints.add(`pre:${id}`);
+  mountPoints.add(`post:${id}`);
 }
 
 for (const [name, a] of agents) {
@@ -1145,24 +1069,6 @@ if (cfg && cfg.disabledAgents.length > 0) {
   pass('config.disabled_agents', `已声明: ${cfg.disabledAgents.join(', ')}`);
 }
 
-// C4. 子图节点 required（子图契约保留在 multimodel-graph.yaml）每角色有履行者
-if (sub) {
-  for (const [id, n] of sub.nodes) {
-    if (!n.required) continue;
-    const roles = n.required.replace(/^\[|\]$/g, '').split(',').map((s) => s.trim()).filter(Boolean);
-    for (const role of roles) {
-      const fulfillers = [...agents.keys()].filter(
-        (name) => (roleOf(name) === role || name === role) && agents.get(name).mount.some((m) => m.at === id)
-      );
-      if (fulfillers.length > 0) {
-        pass(`subgraph.${id}.role.${role}`, `履行者: ${fulfillers.join(', ')}`);
-      } else {
-        fail(`subgraph.${id}.role.${role}`, `无智能体履行（需 mount at: ${id}）`);
-      }
-    }
-  }
-}
-
 // ============================================================
 // D. 配置校验
 // ============================================================
@@ -1183,17 +1089,13 @@ if (cfg) {
     }
     if (!bad) pass('config.timeouts.multiplier', `${cfg.multiplierEntries.length} 个条目合法`);
   }
-  // D3. tier_defaults 与 inquiry_tier_defaults 键 ⊆ {T0..T3}
+  // D3. tier_defaults 键 ⊆ {T0..T2}
   {
     const bad1 = [...cfg.tierAgents.keys()].filter((t) => !TIERS.has(t));
-    const bad2 = [...cfg.inquiryTierAgents.keys()].filter((t) => !TIERS.has(t));
-    if (bad1.length === 0 && bad2.length === 0) pass('config.tier.keys', 'tier 键全部合法（tier_defaults + inquiry_tier_defaults）');
-    for (const t of bad1) fail('config.tier.keys', `tier_defaults "${t}" ⊄ {T0,T1,T2,T3}`);
-    for (const t of bad2) fail('config.tier.keys', `inquiry_tier_defaults "${t}" ⊄ {T0,T1,T2,T3}`);
+    if (bad1.length === 0) pass('config.tier.keys', 'tier 键全部合法（tier_defaults）');
+    for (const t of bad1) fail('config.tier.keys', `tier_defaults "${t}" ⊄ {T0,T1,T2}`);
   }
     // D4. tier 开关键应对应"带 when 的智能体"（防僵尸开关）
-    // 例外白名单：multiModel 主控行为开关（非智能体挂载开关，无对应 agent when 引用）
-    const TIER_BEHAVIOR_KEYS = new Set(['mm_worktree']);
     {
     const whenKeys = new Set();
     for (const [, a] of agents) {
@@ -1205,17 +1107,8 @@ if (cfg) {
     }
     for (const [tier, keys] of cfg.tierAgents) {
       for (const k of keys) {
-        if (TIER_BEHAVIOR_KEYS.has(k)) continue;  // 行为开关豁免
         if (!whenKeys.has(k)) {
           warn(`config.tier.${tier}.${k}`, `无任何智能体 when 引用 config.agents.${k}（僵尸开关）`);
-        }
-      }
-    }
-    for (const [tier, keys] of cfg.inquiryTierAgents) {
-      for (const k of keys) {
-        if (TIER_BEHAVIOR_KEYS.has(k)) continue;  // 行为开关豁免
-        if (!whenKeys.has(k)) {
-          warn(`config.inquiry_tier.${tier}.${k}`, `无任何智能体 when 引用 config.agents.${k}（僵尸开关）`);
         }
       }
     }
@@ -1226,17 +1119,7 @@ if (cfg) {
 // E. 权限矩阵校验
 // ============================================================
 
-// E1. F2 invariant：conductor writes 含 memory_injection
-{
-  const c = agents.get('conductor');
-  if (c && c.writes.includes('memory_injection')) {
-    pass('matrix.conductor.memory_injection', 'F2 invariant 成立');
-  } else {
-    fail('matrix.conductor.memory_injection', 'agent/conductor.md frontmatter task_context.write 缺 memory_injection');
-  }
-}
-
-// E2. conductor.md 人类速查矩阵表与 frontmatter 派生一致（drift 检测）
+// E1. conductor.md 人类速查矩阵表与 frontmatter 派生一致（drift 检测）
 // 矩阵表行格式（规整）：| <name> | <read> | w1, w2, w3 | <forbid> |
 {
   const conductorText = readText(path.join(AGENT_DIR, 'conductor.md')) ?? '';
@@ -1276,8 +1159,8 @@ if (cfg) {
 // F. stages 正文硬编码智能体名检测（[DOC_DRIFT]）
 // ============================================================
 
-// 框架级名称（executor / provider），非硬编码
-const FRAMEWORK_NAMES = new Set(['conductor', 'multiModel']);
+// 框架级名称（executor），非硬编码
+const FRAMEWORK_NAMES = new Set(['conductor']);
 
 {
   const stageFiles = fs.readdirSync(STAGES_DIR).filter((f) => f.endsWith('.md') && f !== 'README.md');
@@ -1381,79 +1264,6 @@ if (kj) {
     }
   } else {
     warn('kilojson.default_agent', 'default_agent 未设置');
-  }
-
-  // G5. multiModel diversity_rule 机械校验（conductor.md §启动期装配 第 5 条）
-  // 读取 model-registry.md diversity_map
-  {
-    const REGISTRY_PATH = path.join(ROOT, 'docs', 'model-registry.md');
-    const regText = readText(REGISTRY_PATH);
-    let divMap = null;
-    if (regText) {
-      const regFm = extractFrontmatter(regText);
-      if (regFm) divMap = parseDiversityMap(regFm);
-    }
-
-    if (divMap && Object.keys(divMap).length > 0) {
-      pass('kilojson.diversity.map', `model-registry diversity_map 已加载（${Object.keys(divMap).length} 个模型）`);
-    } else {
-      warn('kilojson.diversity.map', 'model-registry.md diversity_map 缺失，diversity 校验降级为人工');
-    }
-
-    // 收集 diversity_rule 目标 agent
-    const diversityTargets = new Set();
-    if (sub) {
-      const dr = sub.top?.diversity_rule;
-      if (dr && dr.applies_to) {
-        for (const name of (Array.isArray(dr.applies_to) ? dr.applies_to : [dr.applies_to])) {
-          diversityTargets.add(name);
-        }
-      }
-    }
-    if (diversityTargets.size === 0) {
-      pass('kilojson.diversity.applies', 'multimodel-graph.yaml 无 diversity_rule（无需校验）');
-    } else {
-      let divFail = 0;
-      const collected = []; // { name, vendor, architecture }
-      for (const name of diversityTargets) {
-        const cfg = kj.agents.get(name);
-        if (!cfg || !cfg.model) {
-          fail('kilojson.diversity.model', `diversity 目标 agent ${name} 未声明 model`);
-          divFail++;
-          continue;
-        }
-        if (!divMap || !divMap[cfg.model]) {
-          if (divMap) {
-            fail('kilojson.diversity.model', `diversity 目标 agent ${name} model="${cfg.model}" 不在 diversity_map 中`);
-            divFail++;
-          }
-          continue;
-        }
-        const d = divMap[cfg.model];
-        collected.push({ name, vendor: d.vendor, architecture: d.architecture });
-      }
-
-      if (collected.length >= 2) {
-        // 两两比较
-        let violationFound = false;
-        for (let i = 0; i < collected.length; i++) {
-          for (let j = i + 1; j < collected.length; j++) {
-            const a = collected[i], b = collected[j];
-            if (a.vendor === b.vendor || a.architecture === b.architecture) {
-              violationFound = true;
-              fail('kilojson.diversity', `[DIVERSITY_VIOLATION] ${a.name}(${a.model || kj.agents.get(a.name)?.model}) vs ${b.name}(${b.model || kj.agents.get(b.name)?.model}): vendor=${a.vendor} arch=${a.architecture}`);
-              divFail++;
-            }
-          }
-        }
-        if (!violationFound) pass('kilojson.diversity', `diversity_rule 通过（${collected.length} 个目标全部不同 vendor/architecture）`);
-      }
-
-      if (divFail === 0 && collected.length === 0 && diversityTargets.size > 0 && !divMap) {
-        // diversity_map 缺失但有目标，仅 warn
-        warn('kilojson.diversity', `有 ${diversityTargets.size} 个 diversity 目标但 diversity_map 缺失，无法机械校验`);
-      }
-    }
   }
 }
 

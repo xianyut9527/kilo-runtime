@@ -1,21 +1,10 @@
 ---
 name: skills-lifecycle
-description: Skills 生命周期管理（v2.5 sqlite 唯一记忆原则：禁止 md append 时序数据；SKILL.md 仅作"how"模板保留，PATTERN/ANTIPATTERN 等"what"必须入 SQLite fact_store）
-keywords: skills, lifecycle, sqlite, fact-store, no-md-append
+description: Skills 生命周期管理
+keywords: skills, lifecycle
 ---
 
-# Skills Lifecycle Management（v2.5 — sqlite 唯一记忆）
-
-> **v2.5 强化原则**：所有时序数据 / 使用统计 / 累积经验必须入 SQLite（sqlite 唯一记忆原则）。md 文件仅保留：
-> - **静态规则**（本文件 = skills 生命周期规则）
-> - **how 模板**（SKILL.md = 工作流程模板，不累积时序）
-> - **what 数据**（PATTERN / ANTIPATTERN / RECIPE / WARNING）必须入 `fact_store`，禁止 md append
->
-> **回写流程**：去重查询 + fact_store 写入 + skill 升级检测 的完整逻辑由 `.kilo/memory/AGENTS.md` 与 `README.md` 统一定义。
->
-> 本文件保留 **SKILL.md 分类表 + 回写触发条件 + SKILL.md 条目模板 + frontmatter 规范**（即 SKILL.md 文件层面的生命周期）；不再重复 sqlite fact_store 的写入规则。
->
-> 模块入口：`.kilo/memory/README.md`（公共 API 文档）。
+# Skills Lifecycle Management
 
 ## Skills 分类表（与 `.kilo/skills/` 目录一一对应，新增/删除 skill 必须同步本表）
 
@@ -56,15 +45,13 @@ keywords: skills, lifecycle, sqlite, fact-store, no-md-append
 
 ## 回写触发条件
 
-以下场景触发 skills 回写（实际写入 sqlite fact_store，详见 `.kilo/memory/AGENTS.md`）：
+以下场景触发 skills 回写：
 
 1. 同类错误出现 2 次及以上
 2. 用户明确纠正
 3. 发现新坑/边界陷阱
 4. 未记录经验导致验证失败
 5. reviewer 标注 `[建议回写 skills]`
-
-**完整回写流程**（去重 SQL → fact_store INSERT/UPDATE → skill 升级检测）见 `.kilo/memory/AGENTS.md`。
 
 ## SKILL.md 条目模板
 

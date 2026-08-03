@@ -17,17 +17,17 @@ subagent_type: coder
 
 # mount：挂载点声明
 #   at    挂载点（EXECUTING 阶段主槽，派生自 graph.yaml EXECUTING 节点）
-#   无 when = 恒定挂载：T0-T2 均经 EXECUTING（T3 走子图不经主图），图拓扑天然限定，无需 config.agents 开关
+#   无 when = 恒定挂载：T0-T2 均经 EXECUTING，图拓扑天然限定，无需 config.agents 开关
 mount:
   - at: EXECUTING
 
 # task_context：读写边界声明
 #   read        可读切片（plan 设计方案；execution.diffs/changes/acceptance_map 当前代码产物——修复循环时读取；
-#                    execution.fused_output T3 回流后融合方案；forbidden_files 边界声明；memory_injection 记忆召回）
+#                    forbidden_files 边界声明）
 #   write       可写切片（diffs/changes/acceptance_map）
 #   forbid_write 禁写切片（execution.verification 写入边界硬门——自验声明不入 context，由 verifier 独立重跑）
 task_context:
-  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, execution.fused_output, forbidden_files, memory_injection]
+  read: [plan, execution.diffs, execution.changes, execution.acceptance_map, forbidden_files]
   write: [execution.diffs, execution.changes, execution.acceptance_map]
   forbid_write: [execution.verification]   # 自验声明不入 context，由 verifier 独立重跑
 ---
@@ -46,18 +46,6 @@ task_context:
 
 **不做什么**：不做架构设计（planner 已完成）、不做最终审查（reviewer 负责）、不做反向审计。
 
-## 记忆召回接口（M1-sub，subagent 自召回）
-
-> **记忆下沉**：coder 在 EXECUTING 编码前**自行调用 memory.db** 召回同类 pattern/anti-pattern，不再依赖 conductor 集中注入。让编码直接触达历史经验，避免重复造轮子。
-> 降级不阻塞：memory.db 不可用时跳过，按当前 plan 编码。
-
-**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
-- 同类 pattern（`fact_store` MATCH plan.keywords + plan.target_files 函数名，category=PATTERN，LIMIT 10）— 复用已验证实现模式
-- 同类 anti-pattern（`fact_store` MATCH，category=ANTIPATTERN，LIMIT 5）— 规避已知反模式
-- planner 已召回的 failures/patterns 从 `task_context.plan.memory_injection` 读取（不重复召回）
-
-**召回产物**：写入 task_context.execution.memory_injection = `{ patterns: [...], antipatterns: [...] }`，供后续 verifier 补验。
-
 ## 输入接口（从 task_context 注入）
 
 ```yaml
@@ -74,9 +62,6 @@ forbidden_files: ["string"]             # 禁止触碰的边界
 project_context:
   tech_stack: ["string"]
   existing_patterns: ["string"]
-memory_injections:                      # M1 注入
-  facts: [{ fact_id, action }]
-  failures: [{ failure_id, symptom, fix }]
 plan:                                   # planner 输出
   scheme_summary: "string"
   scan_checklist: ["string"]

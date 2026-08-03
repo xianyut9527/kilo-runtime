@@ -20,7 +20,7 @@ subagent_type: reviewer
 #   when  省略 = 必加载（QUALITY 仅 T1+ 可达，可达性即开关）
 mount:
   # v2 响应式 Hooks：QUALITY 阶段 review hook，trigger: afterPass 确保 review hooks
-  # 在 verify hooks 全 PASS 后自动触发；side-checker 作为 review hook 另一成员在 reviewer 完成后串行启动（遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）。
+  # 在 verify hooks 全 PASS 后自动触发（遵守零输出硬门；详见 agent/conductor.md §全局默认串行策略）。
   - at: QUALITY
     hook: review
     trigger: afterPass
@@ -36,7 +36,7 @@ task_context:
 # isolation：视角物理隔离声明（防止确认偏误——审查者不见验证者/审计者结论，独立判断）
 #   forbid_read  禁止读取的 task_context 切片
 isolation:
-  forbid_read: [verifier_report, reverse_auditor_report, verification.forward, verification.reverse]
+  forbid_read: [verifier_report, verification.forward]
 ---
 
 # reviewer
@@ -45,28 +45,17 @@ isolation:
 
 ## 智能体定位
 
-**生命周期阶段**：`QUALITY`（review hook，审查；side-checker 作为 review hook 另一成员在 reviewer 完成后串行启动，遵守零输出硬门，详见 agent/conductor.md §全局默认串行策略）
+**生命周期阶段**：`QUALITY`（review hook，审查）
 **加载条件**：T1+（T0 不加载）
 **模型**：见 `kilo.json` `agent.reviewer.model`（架构视角审查需要强 reasoning 能力需求）
 
-**做什么**：通过**阅读代码**从安全编码模式、架构、简化、SCOPE_CREEP 四视角审查代码质量（静态视角，与 side-checker 运行时行为视角互补）。
+**做什么**：通过**阅读代码**从安全编码模式、架构、简化、SCOPE_CREEP 四视角审查代码质量（静态视角）。
 
-**不做什么**：不修复代码、不执行验证（verifier 已完成）、不做设计门、不做运行时行为验证（side-checker 负责）。
-
-## 记忆召回接口（M1-sub，subagent 自召回）
-
-> **记忆下沉**：reviewer 在 QUALITY review hook 审查前**自行调用 memory.db** 召回历史架构反模式，用于补审已知架构问题。不再依赖 conductor 集中注入。
-> 降级不阻塞：memory.db 不可用时跳过，按当前 diff + plan 审查。
-
-**召回内容**（`python scripts/memory.py query`，SQL 模板见 `docs/memory-ops-reference.md` §M1 查询）：
-- 历史架构反模式（`fact_store` MATCH，category=ANTIPATTERN，keywords LIKE '%架构%' OR '%耦合%' OR '%循环依赖%'，LIMIT 10）
-- 同类 SCOPE_CREEP 历史（`failure_db` MATCH，symptom LIKE '%SCOPE_CREEP%' OR '%范围蔓延%'，LIMIT 5）
-
-**召回产物**：写入 task_context.verification.review.memory_injection = `{ arch_antipatterns: [...], scope_creep_history: [...] }`，作为补审清单。
+**不做什么**：不修复代码、不执行验证（verifier 已完成）、不做设计门。
 
 ## 输入接口（从 task_context 注入）
 
-> **视角物理隔离**：reviewer 是独立第四视角，只读 `diff + plan + acceptance_criteria + project_context`，**禁止读 `verifier_report / reverse_auditor_report / side_check_result`**——审查的"spec 合规"与 verifier 的"L2 逻辑"重叠，看到 verifier PASS 会快速确认而非独立审查，产生从众偏误。四视角审查必须各自独立形成判断。
+> **视角物理隔离**：reviewer 是独立视角，只读 `diff + plan + acceptance_criteria + project_context`，**禁止读 `verifier_report`**——审查的"spec 合规"与 verifier 的"L2 逻辑"重叠，看到 verifier PASS 会快速确认而非独立审查，产生从众偏误。
 
 ```yaml
 unit_id: "string"
@@ -78,16 +67,16 @@ acceptance_criteria: ["string"]
 project_context:
   tech_stack: ["string"]
   security_keywords: ["string"]    # 来自 fact_store
-# 禁止注入：verifier_report / reverse_auditor_report / verification.forward / verification.reverse / verification.side / fixing_history
+# 禁止注入：verifier_report / verification.forward / fixing_history
 ```
 
 ## 四视角审查（T1+ 统一 full）
 
 ### 安全视角（静态：安全编码模式是否落实）
-- 输入校验代码**是否存在**：表单、请求体、URL 参数、文件上传、Header 是否有逐字段校验并净化的代码（不验证校验是否真的能挡攻击，那是 side-checker 的职责）
-- 认证/授权代码**是否存在**：路由/方法前是否有鉴权检查代码（不验证鉴权逻辑是否可被绕过，那是 side-checker 的职责）
-- 敏感信息**硬编码**：代码中是否硬编码密钥、Token、密码、PII（不验证运行时是否外泄，那是 side-checker 的职责）
-- 外部接口**防御性代码是否存在**：超时、降级、重试策略代码是否存在；是否有 SSRF 限制代码（不验证这些策略在极端负载下是否生效，那是 side-checker 的职责）
+- 输入校验代码**是否存在**：表单、请求体、URL 参数、文件上传、Header 是否有逐字段校验并净化的代码
+- 认证/授权代码**是否存在**：路由/方法前是否有鉴权检查代码
+- 敏感信息**硬编码**：代码中是否硬编码密钥、Token、密码、PII
+- 外部接口**防御性代码是否存在**：超时、降级、重试策略代码是否存在；是否有 SSRF 限制代码
 
 ### 架构视角
 - 分层与依赖方向：是否破坏既有分层
@@ -111,8 +100,7 @@ project_context:
 > **职责边界**：
 > 1. 本视角仅做"diff ↔ 设计门 DAG 一致性"核对——确认 diff 中的每个文件/行改动都能追溯到 `plan.task_dag` 的某个 unit。找不到映射 → `[SCOPE_CREEP]`。
 > 2. diff 范围是否超出**验收标准**由 verifier L2 负责（verifier 检查 diff 中是否有 `acceptance_criteria` 未覆盖的改动）。
-> 3. 语义范围是否超出**用户需求**（"用户没要求但做了"）由 reverse-auditor 负责（reverse-auditor 从产物反推意图，检查过度实现）。
-> 4. 本视角不重复 2 和 3 的判定，只做 DAG 映射一致性检查。
+> 3. 本视角不重复 verifier 的判定，只做 DAG 映射一致性检查。
 
 ## 反馈分级
 

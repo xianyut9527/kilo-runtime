@@ -1,6 +1,6 @@
 # lifecycle/stages — 阶段执行逻辑导航
 
-> **本目录只是执行逻辑文档，不是图结构**。流转关系（节点/边/条件/门禁）的单一真相来源是 `lifecycle/graph.yaml`（T3 子图：`lifecycle/multimodel-graph.yaml`）。修改流转不要改本目录，改 graph.yaml。
+> **本目录只是执行逻辑文档，不是图结构**。流转关系（节点/边/条件/门禁）的单一真相来源是 `lifecycle/graph.yaml`。修改流转不要改本目录，改 graph.yaml。
 
 ## v2 响应式 Hooks 架构（当前版本）
 
@@ -16,15 +16,13 @@
 ```
 lifecycle/
 ├── graph.yaml              # 主 DAG：纯拓扑（节点 id/type/executor/on_fail + 边 + 流转条件）——稳定大框架，零智能体名
-├── multimodel-graph.yaml   # T3 multiModel 子图 DAG + diversity_rule 多样化硬规则（子图契约保留图内）
 ├── config.yaml             # 定级差异化开关 + 用户覆盖 + 熔断阈值 + hooks 级熔断（唯一真相）
 └── stages/                 # 阶段语义（本目录，文件名派生节点 ID）：执行逻辑 + frontmatter required_roles 契约
-    ├── intent.md           # INTENT        — conductor 内建
-    ├── sizing.md           # SIZING        — conductor 内建
+    ├── init.md             # INIT         — conductor 内建（意图判定 + 定级）
     ├── planning.md         # PLANNING      — frontmatter required_roles: [planner]
     ├── executing.md        # EXECUTING     — frontmatter required_roles: [coder]
-    ├── quality.md          # QUALITY       — v2 响应式 Hooks 阶段（合并原 CHECKING + REVIEWING + FIXING）
-    │                         #   hooks: verify (串行启动组) → fix (trigger:onFail) → review (串行启动组, trigger:afterPass) → fix (同一 fixer)
+    ├── quality.md          # QUALITY       — 检查修复循环：verify hooks → fix hooks（检查 FAIL 自动修复）→ review hooks → 再 verify，直到全 PASS
+    │                         #   hooks: verify (串行启动组) → fix (trigger:onFail) → review (trigger:afterPass) → fix (同一 fixer)
     └── delivering.md       # DELIVERING    — conductor 内建
 ```
 
@@ -32,20 +30,19 @@ lifecycle/
 
 | 阶段 ID | 文件 | 必配角色（stages frontmatter `required_roles`） | `on_fail`（graph.yaml） | 质量门禁 |
 |---------|------|-----------------------------------|------------------------|----------|
-| INTENT | `intent.md` | conductor 内建 | `pause` | 类型明确 |
-| SIZING | `sizing.md` | conductor 内建 | `pause` | T0-T3 准确 + 写入 `config.agents` 差异化开关 |
-| PLANNING | `planning.md` | `planner` | `escalate` | post:PLANNING 挂载点审查（`on_fail: abort` 中止流转） |
+| INIT | `init.md` | conductor 内建 | `pause` | 意图类型明确 + T0-T2 准确 + 写入 `config.agents` |
+| PLANNING | `planning.md` | `planner` | `escalate` | 方案含验收标准（post:PLANNING 挂载点可由用户挂方案审查，`on_fail: abort` 中止流转） |
 | EXECUTING | `executing.md` | `coder` | `retry_once` | 验收映射表 + 三件套 |
-| **QUALITY** | `quality.md` | `verifier` + `reviewer`（hooks 自动挂载） | `escalate` | hooks 全 PASS |
-| DELIVERING | `delivering.md` | conductor 内建 | `pause` | `[MISSING_MEMORY_WRITE]` 检查 |
+| **QUALITY** | `quality.md` | `verifier` + `reviewer` + `fixer`（hooks 自动挂载） | `escalate` | hooks 全 PASS |
+| DELIVERING | `delivering.md` | conductor 内建 | `pause` | 闭环确认输出 |
 
-> **QUALITY 阶段内部 hooks**：
-> - `hook: verify` verify hooks：verifier + reverse_auditor?（默认串行启动组，无 after = 默认串行，reverse_auditor after: [verifier]；详见 `agent/conductor.md` §智能体加载规则）
+> **QUALITY 阶段内部 hooks（检查修复循环）**：
+> - `hook: verify` verify hooks：verifier（检查代码是否满足验收标准）
 > - `hook: fix` fix hooks：fixer（trigger: onFail，任一 verify/review FAIL 时自动触发）
-> - `hook: review` review hooks：reviewer + side_checker?（默认串行启动组，trigger: afterPass，verify 全 PASS 后触发；无 after = 默认串行，side_checker after: [reviewer]；详见 `agent/conductor.md` §智能体加载规则）
+> - `hook: review` review hooks：reviewer（trigger: afterPass，verify 全 PASS 后触发；检查代码质量/架构/SCOPE_CREEP）
+> - **循环逻辑**：检查（verify/review）发现 FAIL → 自动触发 fix 修复 → 代码变化 → 重新 verify → 直到全部 PASS 才离开 QUALITY 进入 DELIVERING
 > - **顺序由 hook 类型定义**：verify → fix → review → fix 循环是框架内置的，不需要绝对编号
 > - **同 hook 类型默认串行启动**：无 `after` 时默认串行启动（按 agent 文件名字典序逐个启动；遵守零输出硬门；详见 `agent/conductor.md` §智能体加载规则）；需要顺序时声明 `after: [agent-name]`
-> - **循环逻辑**：code 变化 → 自动触发 verify → verify PASS → 自动触发 review → review PASS → quality_verdict=PASS → 离开 QUALITY
 > - **熔断**：`config.yaml hooks.quality.max_total_cycles`（唯一机械熔断阈值，按 `quality.round` 判定）
 
 > 注：角色名（如 `verifier`）是契约标识，实际挂载由 `agent/*.md` frontmatter `mount` 自注册决定。`config.agents` 开关见 `lifecycle/config.yaml` `tier_defaults`。
@@ -58,13 +55,11 @@ lifecycle/
 
 | 挂载点 | 触发时机 |
 |------|----------|
-| `on:bootstrap` | 装配完成后、INTENT 前（任务启动挂载点） |
+| `on:bootstrap` | 装配完成后、INIT 前（任务启动挂载点） |
 | `pre:<STAGE>` | 阶段主槽执行前 |
-| `<STAGE>` | 阶段主槽（阶段本体；`executor:` 内建阶段由 conductor/multiModel 占据） |
+| `<STAGE>` | 阶段主槽（阶段本体；`executor:` 内建阶段由 conductor 占据） |
 | `post:<STAGE>` | 阶段主槽执行后、edges 流转前 |
 | `on:done` | DELIVERING 完成后、DONE 前（收尾挂载点） |
-
-> 子图节点（MM_*）同样派生 `pre:`/主/`post:` 三挂载点。
 
 **frontmatter 声明（每个智能体 .md 自注册，可挂载一个或多个点）**：
 
@@ -76,7 +71,7 @@ mount:
     deps: ["execution.code", "plan"]  # 数据依赖：这些字段变化时自动触发
     after: [other-agent]           # 可选：在指定 agent 之后执行（相对依赖，类似 React hooks 声明顺序）；省略 = 串行启动组成员（按 agent 文件名字典序逐个启动；遵守零输出硬门）
     trigger: onChange              # 触发时机：onChange（默认）| afterPass | onFail
-    when: "config.agents.reverse_auditor"  # 可选：条件挂载
+    when: "config.agents.my_auditor"  # 可选：条件挂载（用户自建示例）
     on_fail: degrade               # 可选：abort|warn|skip|degrade
 
 # v1 传统阶段挂载（仍兼容，框架自动映射到 QUALITY hooks）
@@ -89,7 +84,7 @@ mount:
 - **`hook` 类型**：`verify`（验证，检查代码质量）、`review`（审查，检查代码风格/架构）、`fix`（修复，自动修复问题）；hook 类型定义执行顺序，不需要绝对编号
 - **`after` 语义**：声明在哪些 agent 之后执行（类似 React hooks 声明顺序）；省略 = 串行组成员（按 agent 文件名字典序逐个启动；遵守零输出硬门，详见 `agent/conductor.md` §智能体加载规则）
 - **`trigger` 语义**：`onChange`（deps 变化时触发，默认）、`afterPass`（前置 hooks 全 PASS 后触发）、`onFail`（前置 hooks 任一 FAIL 时触发）
-- **`when` 条件语法**：`config.agents.<key>` 由 conductor 在 SIZING 按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户显式覆盖写入；无 `when` = 恒定挂载（图拓扑可达即加载——推荐默认，新增智能体零配置）。
+- **`when` 条件语法**：`config.agents.<key>` 由 conductor 在 INIT 按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户显式覆盖写入；无 `when` = 恒定挂载（图拓扑可达即加载——推荐默认，新增智能体零配置）。
 - **必配角色校验**：阶段必配角色契约在本阶段 `stages/<id>.md` frontmatter `required_roles`（阶段语义内聚，单一真相）；角色名 = 智能体文件名（去 .md）或其 frontmatter 显式 `role` 字段。bootstrap/doctor 静态预演——无智能体在该主槽履行该角色 → `[ASSEMBLY_FAIL]`。**graph.yaml 永不出现角色名/智能体名**。
 
 ## 扩展指南（插拔式，文件制自动注册）
@@ -115,8 +110,8 @@ mount:
 
 1. **图与执行分离 + 三层正交**：graph.yaml 纯拓扑（节点/边/条件/on_fail，**零智能体名，稳定大框架**）；stages/*.md 阶段语义（输入/处理/输出信号 + frontmatter `required_roles` 契约）；agent/*.md 智能体（行为 + 挂载）。增删智能体不动框架。
 2. **一智能体一文件（v6 单源）**：智能体的行为描述与生命周期声明（mount/task_context/isolation/gate）合入 `agent/<name>.md` frontmatter，manifest 与行为文件合二为一——**丢一个 .md 文件即自动注册**，类似 Next.js/Nuxt 文件路由。bootstrap 负责注册、排序与覆盖校验。路由目标（阶段）不需要知道谁挂上来。
-3. **语义 ID**：阶段/节点 ID 用语义名（INTENT/SIZING/…），禁止数字前缀——插入不存在占号。
-4. **质量门禁不可跳过**：hooks 全 PASS、`[MISSING_MEMORY_WRITE]` 都是硬门。
+3. **语义 ID**：阶段/节点 ID 用语义名（INIT/PLANNING/…），禁止数字前缀——插入不存在占号。
+4. **质量门禁不可跳过**：QUALITY hooks 全 PASS 是硬门（检查 FAIL → 修复 → 再检查，直到通过才进入 DELIVERING）。
 5. **挂载点派生零声明**：节点存在即挂载点存在（`pre:`/主/`post:` + `on:bootstrap`/`on:done`），graph 无需声明挂载点。
 6. **顺序自包含**：`after: [agent-name]` 在 agent .md frontmatter 自己的文件里，只引用前驱 agent 名——改顺序只动一个文件（类似 React hooks 声明顺序，非绝对编号）。
 7. **权限派生化**：task_context 写权限矩阵（WRITE_MATRIX）由 `scripts/task-context.mjs` 从 frontmatter 自动派生；安全硬门（verification 双字段仅 verifier、quality 双字段仅 hooks 写入、quality.round 仅 conductor）保留脚本硬编码——插拔自由与框架安全不变量分离。

@@ -18,62 +18,22 @@
     "conductor": {
       "mode": "primary",
       "model": "hx/kimi-k2.7-code",
-      "prompt": "工作流编排者（conductor）。启动期装配 lifecycle/ 元数据，按挂载点加载职能智能体，管理 task_context 共享上下文与交叉验证门禁。核心动作：1)判定后写入 intent.intent_type ∈ {INQUIRY,EXECUTION}；2)定级后写入 sizing.tier ∈ {T0,T1,T2,T3} 与 config.agents/review_mode；3)委派 planner/coder/verifier/reviewer 等 subagent；4)流转前运行 transition-check.mjs；5)QUALITY verdict PASS 后写入 quality.verdict；6)DELIVERING 执行 M4-M8 记忆写入。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。委派稳定性硬门（防 Tool execution aborted，最高优先级）：一次只发起一个 task，禁止同一响应内并行发起多个 task；task 发起瞬间到 result 返回前，禁止输出任何文本、禁止调用任何其他工具（bash/read/edit/grep/glob 等一律禁止），task 调用必须是该响应的最后一个动作；违者立即自纠为串行；并行仅限 Agent Manager worktree 承载（T3 走 worktree 隔离），task 工具永远串行。"
-    },
-    "multiModel": {
-      "mode": "primary",
-      "model": "hx/kimi-k2.7-code",
-      "prompt": "多模型深度模式主控智能体。子图编排者，负责 T3 全流程：拆分→worktree 创建→3 coder 并行实现→verifier 验证→synthesizer-fusion 聚合→回流主图。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。委派稳定性硬门（防 Tool execution aborted，最高优先级）：T3 子图 3 个 coder **禁止用 task 工具在主会话串行 dispatch**——前一个 coder 返回 transcript 会撑爆主会话 context → 后续 coder Tool execution aborted（根因见 conductor.md §T3 编排稳定性）。必须用 agent_manager 工具 mode: worktree 启动独立会话（每 coder 独立 context + 独立 worktree），verifier/synthesizer-fusion 同理；委派包 prompt ≤1500 字符（生成时自检）；主会话只做编排（写 task_context 指针 + 读 Agent Manager 卡片状态），不承接 subagent 返回 transcript。"
-    },
-    "synthesizer-fusion": {
-      "mode": "subagent",
-      "model": "hx/MiniMax-M3",
-      "prompt": "多模型产物聚合裁决智能体。在 fusion worktree 聚合 3 个 coder 产物，选基底+吸收+冲突裁决+commit。只聚合不推理。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
+      "prompt": "工作流编排者（conductor）。启动期装配 lifecycle/ 元数据，按挂载点加载职能智能体，管理 task_context 共享上下文与交叉验证门禁。核心动作：1)判定后写入 intent.intent_type ∈ {INQUIRY,EXECUTION}；2)定级后写入 sizing.tier ∈ {T0,T1,T2} 与 config.agents/review_mode；3)委派 planner/coder/verifier/reviewer 等 subagent；4)流转前运行 transition-check.mjs；5)QUALITY verdict PASS 后写入 quality.verdict；6)DELIVERING 输出闭环确认。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。委派稳定性硬门（防 Tool execution aborted，最高优先级）：一次只发起一个 task，禁止同一响应内并行发起多个 task；task 发起瞬间到 result 返回前，禁止输出任何文本、禁止调用任何其他工具（bash/read/edit/grep/glob 等一律禁止），task 调用必须是该响应的最后一个动作；违者立即自纠为串行；task 工具永远串行。"
     },
     "planner": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
       "prompt": "规划智能体。分析需求、调研代码、输出设计方案、定义验收点。只设计不写代码。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
     },
-    "plan-reviewer": {
-      "mode": "subagent",
-      "model": "hx/MiniMax-M3",
-      "prompt": "独立审查 planner 方案，输出 PASS/FAIL verdict。只审查不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
-    },
     "coder": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-pro",
+      "model": "hx/deepseek-v4-flash",
       "prompt": "编码智能体。按方案实现代码、输出验收映射表+三件套。端到端闭环：读取→编码→测试→修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
-    },
-    "coder-a": {
-      "mode": "subagent",
-      "model": "hx/kimi-k2.6",
-      "prompt": "multiModel 逻辑推理派 coder。侧重复杂推理与边界发现。在专属 worktree 独立实现代码。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
-    },
-    "coder-b": {
-      "mode": "subagent",
-      "model": "hx/glm-5.2",
-      "prompt": "multiModel 安全边界派 coder。侧重防御性编程与风险识别。在专属 worktree 独立实现代码。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
-    },
-    "coder-c": {
-      "mode": "subagent",
-      "model": "hx/deepseek-v4-pro",
-      "prompt": "multiModel 代码生成派 coder。侧重代码风格一致与最小改动。在专属 worktree 独立实现代码。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
     },
     "verifier": {
       "mode": "subagent",
       "model": "hx/glm-5.2",
       "prompt": "正向验证智能体。按验收标准逐条验证、L1-L3 分层、5 元组证据、独立重跑。只验证不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
-    },
-    "reverse-auditor": {
-      "mode": "subagent",
-      "model": "hx/glm-5.2",
-      "prompt": "反向审计智能体。从产物反推是否满足原始意图，审计隐含假设与隐性遗漏。只审计不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
-    },
-    "side-checker": {
-      "mode": "subagent",
-      "model": "hx/deepseek-v4-pro",
-      "prompt": "侧向验证智能体。从边界条件、安全、性能、兼容性四维度实测验证产物。只验证不修复。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
     },
     "reviewer": {
       "mode": "subagent",
@@ -82,7 +42,7 @@
     },
     "fixer": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-pro",
+      "model": "hx/deepseek-v4-flash",
       "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约：只返回≤2000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。"
     }
   },
@@ -131,8 +91,8 @@
             "output": 16384
           }
         },
-        "deepseek-v4-pro": {
-          "name": "deepseek-v4-pro",
+        "deepseek-v4-flash": {
+          "name": "deepseek-v4-flash",
           "reasoning": true,
           "limit": {
             "context": 200000,

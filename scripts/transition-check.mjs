@@ -14,7 +14,7 @@
 //
 // 退出码：
 //   0 = 合法流转（计数已递增并持久化）
-//   1 = 非法流转 / gate 未过（[PROCESS_VIOLATION] / [MISSING_MEMORY_WRITE]）
+//   1 = 非法流转 / gate 未过（[PROCESS_VIOLATION]）
 //   2 = 参数错误
 //   3 = [CIRCUIT_BREAKER] 熔断（计数已持久化）
 //
@@ -23,10 +23,7 @@
 //   tier            → sizing.tier
 //   quality_verdict → quality.verdict
 //   forward_result  → verification.forward.forward_result ?? verification.forward.verdict
-//   reverse_result  → verification.reverse.reverse_result ?? verification.reverse.verdict ?? 'N/A'
-//   side_result     → verification.side.side_result ?? verification.side.verdict ?? 'N/A'
 //   review_result   → verification.review.review_result ?? verification.review.verdict
-//   subgraph_status → subgraph_status（顶层）
 // 变量为 undefined/null 时 ==/!=/in 比较结果恒为 false（条件不满足，流转拒绝）。
 //
 // 计数器规则（v2 响应式 Hooks：CHECKING+REVIEWING+FIXING 合并为 QUALITY）：
@@ -35,8 +32,7 @@
 //   quality.max_rounds 来源：config.yaml hooks.quality.max_total_cycles
 //
 // gate 语义：
-//   MEMORY_WRITE_COMPLETE → memory_write_status ∈ {OK, DEGRADED} 或 memory_write_complete === true
-//   其他 gate（如 FUSION_SELF_CHECK_10，属子图）→ WARN 放行
+//   当前图无 gate；未来新增 gate 在此声明求值规则
 //
 // 仅使用 Node 内置模块（Node 14 兼容）；graph 解析器为 lifecycle-doctor.mjs
 // 本地副本（仓库惯例：脚本自包含）。
@@ -70,7 +66,7 @@ function usage() {
       '',
       'Exit codes:',
       '  0 = legal transition (counters incremented & persisted)',
-      '  1 = illegal transition / gate failed ([PROCESS_VIOLATION] / [MISSING_MEMORY_WRITE])',
+      '  1 = illegal transition / gate failed ([PROCESS_VIOLATION])',
       '  2 = usage error',
       '  3 = [CIRCUIT_BREAKER] (counters persisted before exit)',
       '',
@@ -288,16 +284,12 @@ function resolveVars(ctx) {
   const sizing = ctx.sizing || {};
   const ver = ctx.verification || {};
   const fwd = ver.forward || {};
-  const rev = ver.reverse || {};
-  const side = ver.side || {};
   const review = ver.review || {};
   return {
     intent_type: pick(intent.intent_type, intent.transition_context && intent.transition_context.intent_type),
     tier: pick(sizing.tier),
     quality_verdict: pick(ctx.quality && ctx.quality.verdict),
     forward_result: pick(fwd.forward_result, fwd.verdict),
-    reverse_result: pick(rev.reverse_result, rev.verdict, 'N/A'),
-    side_result: pick(side.side_result, side.verdict, 'N/A'),
     review_result: pick(review.review_result, review.verdict),
     subgraph_status: pick(ctx.subgraph_status),
   };
@@ -328,11 +320,8 @@ function main() {
   }
   const graph = parseGraphFile(graphText);
 
-  // 子图节点（MM_* 除 MM_SUBGRAPH 外）不在本脚本范围
+  // 校验节点存在性
   for (const n of [FROM, TO]) {
-    if (/^MM_/.test(n) && n !== 'MM_SUBGRAPH') {
-      die(1, `[PROCESS_VIOLATION] "${n}" 是子图内部节点，子图流转不在本脚本范围（multiModel 主权）`);
-    }
     if (!graph.nodes.has(n)) {
       die(1, `[PROCESS_VIOLATION] unknown node "${n}"（graph.yaml 已声明节点: ${[...graph.nodes.keys()].join(', ')}）`);
     }
@@ -363,14 +352,12 @@ function main() {
   }
 
   // 关键字段缺失硬门（在求值 when 之前拒绝，给出明确错误）
-  if (FROM === 'INTENT') {
+  if (FROM === 'INIT') {
     if (vars.intent_type !== 'INQUIRY' && vars.intent_type !== 'EXECUTION') {
-      die(1, `[PROCESS_VIOLATION] INTENT 阶段未写入合法 intent_type（当前=${JSON.stringify(vars.intent_type)}）。必须执行 task-context.mjs set <task_id> intent.intent_type '<INQUIRY|EXECUTION>' --agent conductor`);
+      die(1, `[PROCESS_VIOLATION] INIT 阶段未写入合法 intent_type（当前=${JSON.stringify(vars.intent_type)}）。必须执行 task-context.mjs set <task_id> intent.intent_type '<INQUIRY|EXECUTION>' --agent conductor`);
     }
-  }
-  if (FROM === 'SIZING') {
-    if (!['T0', 'T1', 'T2', 'T3'].includes(vars.tier)) {
-      die(1, `[PROCESS_VIOLATION] SIZING 阶段未写入合法 tier（当前=${JSON.stringify(vars.tier)}）。必须执行 task-context.mjs set <task_id> sizing.tier '<T0|T1|T2|T3>' --agent conductor`);
+    if (!['T0', 'T1', 'T2'].includes(vars.tier)) {
+      die(1, `[PROCESS_VIOLATION] INIT 阶段未写入合法 tier（当前=${JSON.stringify(vars.tier)}）。必须执行 task-context.mjs set <task_id> sizing.tier '<T0|T1|T2>' --agent conductor`);
     }
   }
   if (FROM === 'QUALITY') {
@@ -402,24 +389,10 @@ function main() {
 
   // gate 校验
   if (edge.gate) {
-    if (edge.gate === 'MEMORY_WRITE_COMPLETE') {
-      const mws = pick(ctx.memory_write_status, ctx.delivery && ctx.delivery.memory_write_status);
-      const gateOk = mws === 'OK' || mws === 'DEGRADED' || ctx.memory_write_complete === true;
-      if (!gateOk) {
-        die(1, `[MISSING_MEMORY_WRITE] gate MEMORY_WRITE_COMPLETE failed: memory_write_status=${JSON.stringify(mws)} memory_write_complete=${JSON.stringify(ctx.memory_write_complete)}（DELIVERING 须先执行 M4-M8 并写入 memory_write_status）`);
-      }
-    } else {
-      process.stdout.write(`WARN unknown gate "${edge.gate}"（子图 gate 不在主图校验范围），放行\n`);
-    }
+    process.stdout.write(`WARN unknown gate "${edge.gate}"，放行\n`);
   }
 
   // quality 轮次机械递增（conductor 专属写权限的机械执行臂）
-  if (!ctx.convergence || typeof ctx.convergence !== 'object') {
-    ctx.convergence = {
-      mm_fusion_rounds: 0,
-      mm_fusion_max_rounds: 3,
-    };
-  }
   if (!ctx.quality || typeof ctx.quality !== 'object') {
     const conv = tcReadHooks();
     ctx.quality = {

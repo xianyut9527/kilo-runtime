@@ -39,57 +39,26 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 - 陌生项目先看构建配置、入口目录、关键导出、测试/Lint 命令。
 - 优先使用项目级 `AGENTS.md` 和 `.kilo/skills/`。
 
-### Memory 探测
-
-记忆系统采用 **全局 sqlite 优先 + 项目 md 兜底** 架构：
-
-**sqlite 层**（全局共享，`~/.config/kilo-data/memory.db`，通过 **`python scripts/memory.py`** 访问（v2.6 主通道，Python stdlib sqlite3 封装，跨平台免安装；sqlite3 CLI 可选替代）；数据目录独立于配置目录，install 同步不会清除）：
-- `fact_store`：结构化经验教训（PATTERN / ANTIPATTERN / RECIPE / WARNING）
-- `failure_db`：失败案例库（含根因、修复策略、复发次数）
-- `dispatch_log`：全链路任务日志
-- `project_context`：项目专属架构决策与约束
-- `model_calibration`：模型能力积累与偏差补偿
-
-**md 层**（静态规则兜底，v2.5 起不累积时序数据）：
-- `.kilo/memory/README.md`：公共 API 文档
-- `.kilo/memory/AGENTS.md`：agent 注入入口
-- 用户偏好 / 安全约束等低频内容通过 sqlite `project_context` 表承载，不再单独维护 `MEMORY.md` / `USER.md`
-
-**全局 Skill 层**（跨项目复用）：
-- `~/.config/kilo/.kilo/skills/`：全局通用 Skill（与 install.ps1 实际安装路径一致；另通过 `kilo.json` `skills.paths` 接入 `~/.agents/skills/` 社区技能源）
-- `.kilo/skills/`：项目专属 Skill（覆盖全局同名 Skill）
-
-**初始化检查**：`~/.config/kilo-data/memory.db` 不存在时，优先重新运行 `install.ps1`（Windows）或 `install.sh`（macOS/Linux）— 脚本会自动检测 `sqlite3` CLI，缺失时提示安装并自动初始化 `memory.db`（建表 + 迁移 bootstrap 经验 + 补种 project_context）。手动建表作为 fallback：执行 `sqlite3 ~/.config/kilo-data/memory.db < .kilo/memory/schema/init.sql`。模块入口：`.kilo/memory/README.md`；SQL 模板见 `docs/memory-ops-reference.md`。
-
 `gitnexus_*`：代码图谱（调用链/影响面）—— 由 `kilo.json` `mcp.gitnexus.enabled` 独立控制。
 
 ## 自进化触发点
 
-`.kilo/memory/` 目录存在时，以下条件命中后**强制**执行回溯查询，再决定修复策略：
+以下条件命中后**强制**执行回溯查询，再决定修复策略：
 
 > 4 个触发条件 + 强制回溯查询协议**单一源**在 `.kilo/instructions/reflection.md` §强制跨会话根因回溯，本节不重复。
 
 ### 强制回溯查询（优先级顺序）
 
-**第一步：sqlite 查询（必须）**
+**第一步：kilo_local_recall（必须）**
 
-完整 SQL 模板见 `docs/memory-ops-reference.md` §M1/M3（失败/回溯查询）。该文件是 SQL 唯一源，本节不再重复。
-
-**关键要求**（`memory-ops.md` 已强制）：
-- SELECT **必须带 ID 字段**（failure_id / fact_id）用于回溯
-- 检索主路径：FTS5 trigram `MATCH`（`fact_fts` / `failure_fts`，中文需 ≥3 字符）；LIKE 仅用于试用期/ANTIPATTERN 精确类别过滤等保留场景（`tags LIKE '%,%keyword%,%'` 逗号分隔精确匹配）
-- 注入门槛：fact_store confidence ≥ 0.7 + hit_count ≥ 2；failure_db resolved_at 非空
-
-**第二步：kilo_local_recall（补充）**
 - 搜索历史同类问题
 - 对比历史修复方案
 
-**第三步：gitnexus 验证（影响面确认）**
+**第二步：gitnexus 验证（影响面确认）**
+
 - `gitnexus_*` 验证修改影响面
 
-**未执行 sqlite 查询 → `[MISSING_RECALL]`，不得进入修复阶段。**
-
-`.kilo/memory/` 目录不存在时，跳过 sqlite 查询，`kilo_local_recall` 仍可作为独立工具手动调用。
+**未执行 kilo_local_recall 查询 → `[MISSING_RECALL]`，不得进入修复阶段。**
 
 ## 验证与安全
 
@@ -160,7 +129,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 编码前必须显式输出确认，不可跳过：
 
 1. **规则确认**：已读取通用安全约束、资源约束、生命周期基线。
-2. **等级确认**：已确认任务等级（T0/T1/T2/T3），非 T0 绝不跳过 verifier。
+2. **等级确认**：已确认任务等级（T0/T1/T2），非 T0 绝不跳过 verifier。
 3. **搜索确认**：已搜索现有实现和同类模式，确认可复用点。
 4. **Context 确认**：已按「Context Engine 自动查询规则」调用必要工具，确认影响面。
 5. **重复点/同类模式扫描确认**：已用 grep/glob/gitnexus 扫描同类实现，确认修复策略（共享组件 vs 单点例外）并记录理由。
