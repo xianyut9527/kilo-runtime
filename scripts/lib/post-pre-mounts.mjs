@@ -15,7 +15,6 @@
 //   discoverPostPreConstantMounts()        -> [{ name, stage, kind: 'post'|'pre' }]（恒定挂载）
 //   discoverPostPreTieredMounts()          -> [{ name, stage, kind: 'post'|'pre', tiers: [] }]（定级挂载）
 //   discoverPostPreConstantMountsByAgent() -> Map<agentName, Set<stageId>>（恒定挂载）
-//   discoverPostPreTieredMountsByAgent()   -> Map<agentName, Set<stageId>>（定级挂载）
 //
 // 纯 Node 内置模块，无第三方依赖。
 
@@ -119,23 +118,6 @@ export function discoverPostPreTieredMounts() {
 // ============================================================
 export function discoverPostPreConstantMountsByAgent() {
   const records = parsePostPreMounts('constant');
-  const map = new Map();
-  for (const r of records) {
-    if (!map.has(r.name)) map.set(r.name, new Set());
-    map.get(r.name).add(r.stage);
-  }
-  return map;
-}
-
-// ============================================================
-// 公开 API 4：task-context log-dispatch 用（定级挂载）
-//   返回 Map<agentName, Set<stageId>>（agent 在哪些 stage 上有 post:/pre: 定级挂载）。
-//   log-dispatch 扩展：--agent 在 --stage 上有 post:/pre: 恒定或定级挂载
-//   （plan-reviewer tiers: [T2] 的 post:PLANNING）即使不在 required_roles 也允许记录。
-//   与 discoverPostPreConstantMountsByAgent 同形，只是只含 tiers 条目。
-// ============================================================
-export function discoverPostPreTieredMountsByAgent() {
-  const records = parsePostPreMounts('tiered');
   const map = new Map();
   for (const r of records) {
     if (!map.has(r.name)) map.set(r.name, new Set());
