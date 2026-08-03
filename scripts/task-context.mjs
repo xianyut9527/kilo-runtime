@@ -54,6 +54,7 @@ import { readContext, writeContext, appendTransitionLog, contextPath, buildIniti
          readSizeCheckThreshold,
          assertValidTaskId, getByPath, setByPath, pathAllowedBy, pathPrefix, parseValue,
          extractFrontmatter, die } from './task-context-runtime.mjs';
+import { discoverPostPreConstantMountsByAgent } from './lib/post-pre-mounts.mjs';
 
 // 脚本所在目录（ESM 无 __dirname）
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -785,6 +786,12 @@ function readNodeExecutor(stageName) {
   return null;
 }
 
+// S9: 发现 post:<STAGE>/pre:<STAGE> 恒定挂载 agent（无 when）
+//   实现已抽取至 scripts/lib/post-pre-mounts.mjs（共享 helper）。
+//   返回 Map<agentName, Set<stageId>>（agent 在哪些 stage 上有 post:/pre: 恒定挂载）。
+//   log-dispatch 扩展：若 --agent 在 --stage 上有 post:/pre: 恒定挂载，即使不在
+//   required_roles 也允许记录（plan-reviewer 的 post:PLANNING 钩子 dispatch 不再被拒）。
+
 function cmdLogDispatch(taskId, agent, mode, stage) {
   assertValidTaskId(taskId);
   if (!agent) die(2, 'Error: log-dispatch requires --agent <name>');
@@ -804,21 +811,32 @@ function cmdLogDispatch(taskId, agent, mode, stage) {
     die(2, `[PROCESS_VIOLATION] --stage "${stage}" 不在 graph.yaml 节点集合（${nodeIds.join(', ')}）。`);
   }
   // agent-stage 匹配校验（防跨阶段乱派发）：
-  //   --agent 必须在该 stage 的 required_roles 中，或该 stage 是 conductor 内建阶段（executor: conductor）
+  //   --agent 必须在该 stage 的 required_roles 中，或该 stage 是 conductor 内建阶段（executor: conductor），
+  //   或 --agent 在 --stage 上有 post:/pre: 恒定挂载（S9 扩展：生命周期钩子 agent 放行）
   const executor = readNodeExecutor(stage);
   const requiredRoles = readStageRequiredRoles(stage);
   const agentNorm = agent.replace(/-/g, '_');
+  let allowed = false;
   if (executor === 'conductor' && agent === 'conductor') {
-    // conductor 内建阶段（INIT/DELIVERING）允许 conductor dispatch，豁免 required_roles
+    allowed = true; // conductor 内建阶段豁免 required_roles
   } else if (requiredRoles && requiredRoles.length > 0) {
-    // required_roles 角色名统一归一化（连字符→下划线），与 dispatch_log 写入格式一致
     const rolesNorm = requiredRoles.map((r) => r.replace(/-/g, '_'));
-    if (!rolesNorm.includes(agentNorm)) {
-      die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 stage "${stage}" 的 required_roles（${requiredRoles.join(', ')}）。防跨阶段乱派发：每个阶段只能 dispatch 其必配角色。`);
+    if (rolesNorm.includes(agentNorm)) allowed = true;
+  } else {
+    // requiredRoles 为 null/空 → fail-open（兼容无 required_roles 声明的 stage）
+    allowed = true;
+  }
+  // S9: post:/pre: 恒定挂载 agent 允许按对应阶段记录（即使不在 required_roles）
+  if (!allowed) {
+    const postPreMap = discoverPostPreConstantMountsByAgent();
+    const stages = postPreMap.get(agent);
+    if (stages && stages.has(stage)) {
+      allowed = true;
     }
   }
-  // requiredRoles 为 null（stage 文件缺 required_roles 或无 frontmatter）→ 放行（fail-open，
-  //   兼容 conductor 内建阶段无 required_roles 声明、或用户自建阶段尚未声明 required_roles）
+  if (!allowed) {
+    die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 stage "${stage}" 的 required_roles（${requiredRoles ? requiredRoles.join(', ') : '(无)'}），亦无 post:${stage}/pre:${stage} 恒定挂载。防跨阶段乱派发。`);
+  }
   const { ctx } = readContext(taskId);
   if (!Array.isArray(ctx.dispatch_log)) {
     ctx.dispatch_log = [];

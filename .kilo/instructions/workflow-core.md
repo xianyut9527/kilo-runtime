@@ -179,7 +179,7 @@ T1 / T2 → full（四视角：安全/架构/简化/SCOPE_CREEP）
 | 局部补丁拦截 | 重复模式未走组件化/共享抽象，逐处复制粘贴（UI 与非 UI 同等适用） | `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]` |
 | 扫描与防复发交付门 | coder 交付必须含全量同类点扫描清单 + 至少一项防复发产物 | `[MISSING_SCAN]` / `[MISSING_PREVENTION]` |
 | 同症状防空转 | 连续 2 轮 fixer 同症状 → 升级 reviewer | `[NEEDS_REVIEW]` |
-| Circuit Breaker | 连续 3 次无法收敛 → 停止 | `[CIRCUIT_BREAKER]` |
+| Circuit Breaker | 连续 4 次无法收敛 → 停止 | `[CIRCUIT_BREAKER]` |
 | 验收映射表 | 每条标准 → 实现位置 → 验证方式 → 边界覆盖 → 状态 | `[MISSING_ACCEPTANCE_MAP]` |
 | 计划执行门禁 | 计划执行前必须 critical review；遇 blocker 立即停止不猜测 | `[PLAN_DEVIATION]` |
 | 结构化输出验证 | agent 返回必须经过 schema 自检（JSON.parse/XML 标签检查），失败 → 重试 | `[MALFORMED_OUTPUT]` |
@@ -216,7 +216,7 @@ conductor 解析 agent 返回或工具调用结果时，按以下分级路由处
 | `[MISSING_RECALL]` | 回溯阶段未执行 kilo_local_recall | 1. 立即执行 kilo_local_recall<br>2. 查询完成前不得进入修复阶段 | 阻塞修复，直到查询完成 |
 | `[MISSING_CONTEXT_QUERY]` | 编码前未按规则调用 Context Engine | 1. 立即补调必要工具<br>2. 完成后重新检查点 | 阻塞编码，直到查询完成 |
 | `[PROCESS_VIOLATION]` | 流程跳步 | 1. 标记违规<br>2. 暂停执行<br>3. 修正后从上一个检查点恢复 | 任务暂停 |
-| `[CIRCUIT_BREAKER]` | 连续 3 次无法收敛 | 1. 停止修复<br>2. 生成降级交付报告<br>3. 建议用户决策 | 任务终止 |
+| `[CIRCUIT_BREAKER]` | 连续 4 次无法收敛 | 1. 停止修复<br>2. 生成降级交付报告<br>3. 建议用户决策 | 任务终止 |
 | `[NEEDS_REVIEW]` | fixer 连续 2 轮同症状 | 1. 停止 fixer<br>2. 升级 reviewer<br>3. reviewer 结论作为最终状态 | fixer 终止 |
 
 **执行要求**：

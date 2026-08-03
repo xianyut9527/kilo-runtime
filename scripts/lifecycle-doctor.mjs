@@ -1127,28 +1127,46 @@ if (cfg && cfg.disabledAgents.length > 0) {
   pass('config.disabled_agents', `已声明: ${cfg.disabledAgents.join(', ')}`);
 }
 
-// C4. 反向一致性：恒定挂载到非内建 stage 的 agent role 必须 ∈ 该 stage required_roles
-// 正方向（C1/C2）保证 required_roles 每角色有履行者；反方向（C4）保证恒定挂载的 agent
-// 不在 required_roles 契约内 → log-dispatch 机械拒绝（[PROCESS_VIOLATION] exit 2），
-// 装配期必须先行拦截。PASS 为明细级（--verbose 展示，与 B1 mount.at 同约定）；FAIL 恒显。
+// C4. 反向一致性：恒定挂载 agent 与 required_roles 契约
+//   主图 stage 挂载点（如 at: PLANNING）：恒定挂载 agent role ∉ required_roles → FAIL
+//     （log-dispatch 机械拒绝 [PROCESS_VIOLATION] exit 2，装配期必须先行拦截）
+//   post:<STAGE>/pre:<STAGE> 挂载点：恒定挂载 agent 不在 required_roles 内是预期
+//     （post/pre 是生命周期钩子，非主槽角色），豁免 FAIL，但输出 WARN
+//     post-mount-outside-required-roles（可见性：避免 log-dispatch 扩展后放行却被静默）
+//   PASS 为明细级（--verbose 展示，与 B1 mount.at 同约定）；FAIL/WARN 恒显。
 {
   for (const [name, a] of agents) {
     for (const m of a.mount) {
       if (m.when) continue;                          // 豁免：条件挂载（when 开关，非恒定）
       const node = graph.nodes.get(m.at);
-      if (!node || node.type !== 'stage') continue;  // 豁免：非主图 stage 挂载点（pre:/post:/on:）
-      if (node.executor) continue;                   // 豁免：executor 内建阶段（INIT/DELIVERING）
-      const stageText = readText(path.join(STAGES_DIR, `${m.at.toLowerCase()}.md`));
-      if (!stageText) continue;                      // A5 已报
+      const isStageMount = node && node.type === 'stage';
+      // post:<STAGE> / pre:<STAGE> 挂载点解析
+      const postPreM = m.at.match(/^(post|pre):(\S+)$/);
+      if (!isStageMount && !postPreM) continue;      // 豁免：on:bootstrap / on:done 等非 stage 挂载点
+      const stageId = isStageMount ? m.at : (postPreM ? postPreM[2] : null);
+      if (!stageId) continue;
+      const stageNode = graph.nodes.get(stageId);
+      if (!stageNode) continue;                     // 豁免：非主图 stage（A5 已报）
+      if (stageNode.executor) continue;              // 豁免：executor 内建阶段（INIT/DELIVERING）
+      const stageText = readText(path.join(STAGES_DIR, `${stageId.toLowerCase()}.md`));
+      if (!stageText) continue;                     // A5 已报
       const fm = extractFrontmatter(stageText);
       const roles = fm ? parseStageFrontmatter(fm) : [];
-      if (roles.length === 0) continue;              // 豁免：required_roles 为空（C1 已报）
+      if (roles.length === 0) continue;             // 豁免：required_roles 为空（C1 已报）
       const agentRole = (roleOf(name) || name).replace(/-/g, '_');
       const rolesNorm = new Set(roles.map((r) => r.replace(/-/g, '_')));
-      if (rolesNorm.has(agentRole)) {
-        if (VERBOSE) pass(`stage.${m.at}.required_roles.reverse_mount`, `${name} 恒定挂载 ${m.at}（role=${agentRole}）∈ required_roles`);
+      if (isStageMount) {
+        if (rolesNorm.has(agentRole)) {
+          if (VERBOSE) pass(`stage.${m.at}.required_roles.reverse_mount`, `${name} 恒定挂载 ${m.at}（role=${agentRole}）∈ required_roles`);
+        } else {
+          fail(`stage.${m.at}.required_roles.reverse_mount`, `${name} 恒定挂载 ${m.at} 但 role=${agentRole} ∉ required_roles=[${roles.join(', ')}]（log-dispatch 将机械拒绝）`);
+        }
       } else {
-        fail(`stage.${m.at}.required_roles.reverse_mount`, `${name} 恒定挂载 ${m.at} 但 role=${agentRole} ∉ required_roles=[${roles.join(', ')}]（log-dispatch 将机械拒绝）`);
+        // post:/pre: 恒定挂载：豁免 FAIL，但 agent 不在 required_roles 时输出 WARN（可见性）
+        if (!rolesNorm.has(agentRole)) {
+          warn(`stage.${stageId}.required_roles.${postPreM[1]}-mount-outside-required-roles`,
+            `${name} 恒定挂载 ${m.at}（role=${agentRole}）∉ ${stageId}.required_roles=[${roles.join(', ')}]——post/pre 生命周期钩子豁免 FAIL，但 log-dispatch 扩展后允许记录`);
+        }
       }
     }
   }
@@ -1205,6 +1223,167 @@ if (cfg) {
       pass('config.size_check_threshold', `size_check_threshold=${m[1]}`);
     } else {
       fail('config.size_check_threshold', 'size_check_threshold 缺失或非正整数（conductor pre-dispatch 安全门将回退缺省 120000）');
+    }
+  }
+}
+
+// ============================================================
+// D6/D7/D8. 语义一致性校验（P0：补 lifecycle-doctor 结构校验盲区）
+//   S7  conductor 编辑/写入双 deny 硬断言（静态）
+//   S1  permission.edit:deny 的 agent 正文不得含主动修改语态（静态，排除 conductor）
+//   S3  CIRCUIT_BREAKER 阈值三处一致（config.yaml / workflow-core.md / conductor.md）
+// ============================================================
+
+// 解析 agent frontmatter 的 permission 块（edit/write/task）
+function parseAgentPermission(fm) {
+  const perm = {};
+  const lines = fm.split(/\r?\n/);
+  let inPerm = false;
+  for (const line of lines) {
+    if (/^[^\s#]/.test(line)) {
+      inPerm = /^permission\s*:/.test(line);
+      continue;
+    }
+    if (!inPerm) continue;
+    const m = line.match(/^\s+([a-z_]+)\s*:\s*(\w+)\s*(?:#.*)?$/);
+    if (m) perm[m[1]] = m[2].trim();
+  }
+  return perm;
+}
+
+// S7. semantic.conductor_edit_deny_global
+//   conductor.md frontmatter permission.edit==deny && write==deny（任一 allow → FAIL）
+{
+  const condPath = path.join(AGENT_DIR, 'conductor.md');
+  const condText = readText(condPath);
+  if (!condText) {
+    fail('semantic.conductor_edit_deny_global', 'agent/conductor.md 缺失');
+  } else {
+    const fm = extractFrontmatter(condText);
+    if (!fm) {
+      fail('semantic.conductor_edit_deny_global', 'agent/conductor.md 缺 frontmatter');
+    } else {
+      const perm = parseAgentPermission(fm);
+      const edit = perm.edit;
+      const write = perm.write;
+      const bad = [];
+      if (edit !== 'deny') bad.push(`edit=${edit || '(未声明)'}`);
+      if (write !== 'deny') bad.push(`write=${write || '(未声明)'}`);
+      if (bad.length === 0) {
+        pass('semantic.conductor_edit_deny_global', 'conductor permission edit=deny & write=deny');
+      } else {
+        fail('semantic.conductor_edit_deny_global', `conductor permission 期望 edit=deny&write=deny，实际 ${bad.join(' & ')}（conductor 不得具备任何修改性权限）`);
+      }
+    }
+  }
+}
+
+// S1. semantic.permission_vs_role
+//   对每个 permission.edit==deny 的 agent（排除 conductor，由 S7 独占），
+//   剔除引用块（^> 行）与代码块（``` 段）后 grep 主动修改语态黑名单
+//   {修改,写入,修复,创建,删除,提交}；命中 → FAIL。
+//   否定语态豁免：命中词前后 8 字符内含白名单 {不得,禁止,不能,只读,仅用于,不得自行} → PASS。
+//   扩展豁免（避免合规仓库误判）：
+//     a) 否定前缀：命中词紧邻前 1 字符 ∈ {不,无,未,勿,前}（前 = "前修复"指交付前修复，
+//        描述时机非动作）→ PASS（如"不修复""未修改""前修复"）
+//     b) task_context 写入上下文：8 字符窗口含 {task_context, task_co, 边界, 产物, 独占,
+//        verification, review, plan, execution, plan_review} → PASS（"写入 task_context"
+//        是 frontmatter task_context.write 声明的合法权限，非文件编辑语态）
+//     c) 必须立即/交付前 副词修饰：8 字符窗口含 {必须立即, 交付前, 可操作} → PASS
+//        （"必须立即修复"是对下游修复要求的描述，非该 agent 自身动作）
+{
+  const MUTATION_TERMS = ['修改', '写入', '修复', '创建', '删除', '提交'];
+  const EXEMPTION_TERMS = ['不得', '禁止', '不能', '只读', '仅用于', '不得自行'];
+  const NEGATION_PREFIX = new Set(['不', '无', '未', '勿', '前']);
+  const TASK_CTX_CONTEXT = ['task_context', 'task_co', '边界', '产物', '独占',
+    'verification', 'review', 'plan', 'execution', 'plan_review',
+    '回显', '路径', '校验', '同症状'];
+  const ADVERB_CONTEXT = ['必须立即', '交付前', '可操作', '失败 →', '失败→'];
+  for (const [name, text] of
+    [...fs.readdirSync(AGENT_DIR)]
+      .filter((f) => f.endsWith('.md') && f !== 'conductor.md')
+      .map((f) => [f.slice(0, -3), readText(path.join(AGENT_DIR, f))])
+      .filter(([, t]) => t)) {
+    const fm = extractFrontmatter(text);
+    if (!fm) continue;
+    const perm = parseAgentPermission(fm);
+    if (perm.edit !== 'deny') continue; // 仅校验 edit:deny 的 agent
+    // 剔除 frontmatter、引用块、代码块
+    // frontmatter 剥离用与 extractFrontmatter 一致的锚定正则（^---\r?\n...\r?\n---），
+    // 避免裸 [\s\S]*?--- 误匹配正文注释里的 ---- 分隔线
+    let body = text.replace(/^---\r?\n[\s\S]*?\r?\n---/, '');
+    body = body
+      .replace(/^>.*$/mg, '')          // 引用块行（行首 >）
+      .replace(/```[\s\S]*?```/g, ''); // 代码块
+    const violations = [];
+    for (const term of MUTATION_TERMS) {
+      let idx = 0;
+      while ((idx = body.indexOf(term, idx)) !== -1) {
+        const window = body.slice(Math.max(0, idx - 8), idx + term.length + 8);
+        const exempt = EXEMPTION_TERMS.some((e) => window.includes(e))
+          || (idx > 0 && NEGATION_PREFIX.has(body[idx - 1]))
+          || TASK_CTX_CONTEXT.some((e) => window.includes(e))
+          || ADVERB_CONTEXT.some((e) => window.includes(e));
+        if (!exempt) {
+          // 取行号（粗略）：count \n before idx
+          const lineNo = body.slice(0, idx).split(/\r?\n/).length;
+          violations.push(`"${term}" @L${lineNo} 附近: ...${window.replace(/\r?\n/g, ' ')}...`);
+        }
+        idx += term.length;
+      }
+    }
+    if (violations.length === 0) {
+      pass(`semantic.permission_vs_role.${name}`, `edit=deny 且正文无主动修改语态`);
+    } else {
+      fail(`semantic.permission_vs_role.${name}`, `edit=deny 但正文含主动修改语态（${violations.length} 处）: ${violations.slice(0, 3).join(' | ')}${violations.length > 3 ? ' ...' : ''}`);
+    }
+  }
+}
+
+// S3. semantic.circuit_breaker_threshold
+//   从 lifecycle/config.yaml 读 hooks.quality.max_total_cycles；
+//   grep .kilo/instructions/workflow-core.md + agent/conductor.md 中
+//   CIRCUIT_BREAKER|连续\d+次|max_total_cycles 数字；三处一致 → PASS。
+{
+  const cfgValue = (() => {
+    if (!cfgText) return null;
+    const m = cfgText.match(/max_total_cycles\s*:\s*(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
+  })();
+  if (cfgValue === null) {
+    fail('semantic.circuit_breaker_threshold', 'lifecycle/config.yaml 缺 hooks.quality.max_total_cycles');
+  } else {
+    const wfPath = path.join(ROOT, '.kilo', 'instructions', 'workflow-core.md');
+    const wfText = readText(wfPath) ?? '';
+    const condText = readText(path.join(AGENT_DIR, 'conductor.md')) ?? '';
+    // workflow-core.md：连续 N 次无法收敛（仅限 CIRCUIT_BREAKER 上下文，排除 MALFORMED_OUTPUT/防空转等同名异义行）
+    const wfNums = [];
+    {
+      const re = /连续\s*(\d+)\s*次无法收敛/g;
+      let m;
+      while ((m = re.exec(wfText)) !== null) wfNums.push(parseInt(m[1], 10));
+    }
+    // conductor.md：max_total_cycles 或 默认 N 或 quality.round >= N
+    const condNums = [];
+    {
+      const re = /(?:max_total_cycles|默认|round\s*>=)\s*[：:]?\s*(\d+)/g;
+      let m;
+      while ((m = re.exec(condText)) !== null) condNums.push(parseInt(m[1], 10));
+    }
+    const sources = {
+      'config.yaml': cfgValue,
+      'workflow-core.md': wfNums.length > 0 ? wfNums : null,
+      'conductor.md': condNums.length > 0 ? condNums : null,
+    };
+    const allNums = [cfgValue, ...(wfNums || []), ...(condNums || [])];
+    const unique = [...new Set(allNums)];
+    const summary = Object.entries(sources)
+      .map(([k, v]) => `${k}=${Array.isArray(v) ? JSON.stringify(v) : v}`)
+      .join(' | ');
+    if (unique.length === 1) {
+      pass('semantic.circuit_breaker_threshold', `三处一致：max_total_cycles=${cfgValue}`);
+    } else {
+      fail('semantic.circuit_breaker_threshold', `CIRCUIT_BREAKER 阈值不一致（${summary}）——应统一为 config.yaml hooks.quality.max_total_cycles=${cfgValue}`);
     }
   }
 }

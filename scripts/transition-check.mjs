@@ -42,6 +42,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { readContext, writeContext, appendTransitionLog, readHooksFromConfig as tcReadHooks } from './task-context-runtime.mjs';
+import { discoverPostPreConstantMounts } from './lib/post-pre-mounts.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
@@ -90,6 +91,16 @@ function isConditionalRole(roleName) {
     .filter((line) => !/^\s*#/.test(line));
   return /trigger\s*:\s*onFail/.test(scopeLines.join('\n'));
 }
+
+// ============================================================
+// post:/pre: 恒定挂载 agent 发现（S9 扩展 provenance gate）
+//   实现已抽取至 scripts/lib/post-pre-mounts.mjs（共享 helper）。
+//   返回 [{ name, stage, kind: 'post'|'pre' }]：扫描 agent/*.md frontmatter
+//   mount.at 前缀匹配 post:<STAGE> 或 pre:<STAGE> 且无 when（恒定挂载）。
+//   这些 agent 不在 stages/<stage>.md required_roles 主槽契约内，但属于
+//   生命周期钩子必经智能体——transition-check provenance gate 必须校验它们
+//   已在 dispatch_log（防跳过 plan-reviewer 这类 post:PLANNING 钩子）。
+// ============================================================
 
 function usage() {
     const txt = [
@@ -450,6 +461,23 @@ function main() {
       // 其余边（PLANNING→EXECUTING / EXECUTING→QUALITY）的必配角色（planner/coder）无
       // onFail trigger，不受影响，保持全量强制。
       provenanceRequired.push(...getStageRequiredRoles('QUALITY').filter((r) => !isConditionalRole(r)));
+    }
+    // S9 扩展：post:/pre: 恒定挂载 agent 并入 provenance 校验
+    //   PLANNING→EXECUTING：post:PLANNING 恒定挂载 agent（如 plan-reviewer）必须已派发
+    //   EXECUTING→QUALITY：post:EXECUTING 恒定挂载 agent 必须已派发
+    //   QUALITY→DELIVERING：post:QUALITY 恒定挂载 agent 必须已派发
+    //   pre:<TO> 同理：pre:EXECUTING / pre:QUALITY / pre:DELIVERING 恒定挂载 agent
+    //   防跳过 post:PLANNING 的 plan-reviewer（本次 plan-reviewer 被跳过的根因）
+    const postPreMounts = discoverPostPreConstantMounts();
+    for (const m of postPreMounts) {
+      // post:<FROM> 恒定挂载：FROM 阶段主槽执行后、流转前的钩子
+      if (m.kind === 'post' && m.stage === FROM) {
+        provenanceRequired.push(m.name);
+      }
+      // pre:<TO> 恒定挂载：TO 阶段主槽执行前的钩子
+      if (m.kind === 'pre' && m.stage === TO) {
+        provenanceRequired.push(m.name);
+      }
     }
     if (provenanceRequired.length > 0) {
       // 双方统一归一化（连字符→下划线）：dispatch_log 写入时已归一化，required_roles 角色名可能带连字符
