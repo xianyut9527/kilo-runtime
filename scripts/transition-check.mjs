@@ -70,7 +70,7 @@ function usage() {
       '  2 = usage error',
       '  3 = [CIRCUIT_BREAKER] (counters persisted before exit)',
       '',
-      'when variables: intent_type tier quality_verdict forward_result reverse_result side_result review_result subgraph_status',
+      'when variables: intent_type tier quality_verdict forward_result review_result',
     ].join('\n');
   process.stdout.write(txt + '\n');
   process.exit(0);

@@ -1,7 +1,7 @@
 ---
 name: workflow-reference
-description: 工作流参考内容 — small_model 触发规则、程序化记忆、需求扩散与同类点扫描（按需读取，不自动注入）
-keywords: workflow, reference, small_model, 程序化记忆, 需求扩散
+description: 工作流参考内容 — small_model 触发规则、需求扩散与同类点扫描（按需读取，不自动注入）
+keywords: workflow, reference, small_model, 需求扩散
 ---
 
 # Workflow Reference
