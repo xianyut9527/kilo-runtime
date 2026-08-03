@@ -717,6 +717,8 @@ function cmdSizeCheck(taskId) {
 // 白名单（防任意伪造）：
 //   --agent ∈ 注册智能体名（WRITE_MATRIX 键，含 conductor）
 //   --stage ∈ graph.yaml 节点集合（主图节点）
+//   --agent ∈ stages/<stage>.md frontmatter required_roles（防跨阶段乱派发）
+//   conductor 内建阶段（INIT/DELIVERING，executor: conductor）豁免 required_roles 校验
 // ============================================================
 
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
@@ -743,6 +745,46 @@ function readGraphNodeIds() {
   return ids;
 }
 
+// 读 stage frontmatter required_roles（agent-stage 匹配校验依据）
+function readStageRequiredRoles(stageName) {
+  const stageLower = stageName.toLowerCase();
+  const stagePath = path.resolve(__dirname, '..', 'lifecycle', 'stages', `${stageLower}.md`);
+  if (!fs.existsSync(stagePath)) return null;
+  const stageText = fs.readFileSync(stagePath, 'utf8');
+  const fm = stageText.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!fm) return null;
+  const rm = fm[1].match(/^required_roles\s*:\s*\[(.*)\]\s*(?:#.*)?$/m);
+  if (!rm) return null;
+  return rm[1].split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+// 读 graph.yaml 节点的 executor 字段（判断是否 conductor 内建阶段）
+function readNodeExecutor(stageName) {
+  let text;
+  try {
+    text = fs.readFileSync(GRAPH_PATH, 'utf8');
+  } catch {
+    return null;
+  }
+  let inNodes = false;
+  let curId = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/\s#.*$/, '').trim();
+    if (!line) continue;
+    if (line === 'nodes:') { inNodes = true; continue; }
+    if (line === 'edges:') break;
+    if (inNodes) {
+      const idm = line.match(/^-\s*id\s*:\s*(\S+)\s*$/);
+      if (idm) { curId = idm[1]; continue; }
+      if (curId === stageName) {
+        const em = line.match(/^executor\s*:\s*(\S+)\s*$/);
+        if (em) return em[1];
+      }
+    }
+  }
+  return null;
+}
+
 function cmdLogDispatch(taskId, agent, mode, stage) {
   assertValidTaskId(taskId);
   if (!agent) die(2, 'Error: log-dispatch requires --agent <name>');
@@ -761,12 +803,26 @@ function cmdLogDispatch(taskId, agent, mode, stage) {
   if (!nodeIds.includes(stage)) {
     die(2, `[PROCESS_VIOLATION] --stage "${stage}" 不在 graph.yaml 节点集合（${nodeIds.join(', ')}）。`);
   }
+  // agent-stage 匹配校验（防跨阶段乱派发）：
+  //   --agent 必须在该 stage 的 required_roles 中，或该 stage 是 conductor 内建阶段（executor: conductor）
+  const executor = readNodeExecutor(stage);
+  const requiredRoles = readStageRequiredRoles(stage);
+  const agentNorm = agent.replace(/-/g, '_');
+  if (executor === 'conductor' && agent === 'conductor') {
+    // conductor 内建阶段（INIT/DELIVERING）允许 conductor dispatch，豁免 required_roles
+  } else if (requiredRoles && requiredRoles.length > 0) {
+    if (!requiredRoles.includes(agentNorm)) {
+      die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 stage "${stage}" 的 required_roles（${requiredRoles.join(', ')}）。防跨阶段乱派发：每个阶段只能 dispatch 其必配角色。`);
+    }
+  }
+  // requiredRoles 为 null（stage 文件缺 required_roles 或无 frontmatter）→ 放行（fail-open，
+  //   兼容 conductor 内建阶段无 required_roles 声明、或用户自建阶段尚未声明 required_roles）
   const { ctx } = readContext(taskId);
   if (!Array.isArray(ctx.dispatch_log)) {
     ctx.dispatch_log = [];
   }
   ctx.dispatch_log.push({
-    agent: agent.replace(/-/g, '_'),
+    agent: agentNorm,
     mode,
     stage,
     timestamp: Date.now(),
