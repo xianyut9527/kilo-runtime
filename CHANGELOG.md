@@ -11,6 +11,13 @@
   - **同步范围**：`agent/conductor.md` L88、`docs/agent-mount-guide.md`（tiers 语法+互斥）、`docs/multi-agent-lifecycle-architecture.md` L152、`lifecycle/stages/README.md`（示例 tiers 替代写法）、`.kilo/instructions/output-schema.md` L216 `[PLAN_REVIEW_MISS]` 改 T2 触发、`.kilo/instructions/workflow-core.md` L175 设计门行、`docs/conductor-full-spec.md` L45/170 求值说明、`docs/ARCHITECTURE.md`、`docs/configuration-guide.md`（tier_defaults 示例删 plan_reviewer 相关）、`CONFIG_CHANGE_CHECKLIST.md`。
   - **验证**：lifecycle-doctor 全 PASS；全仓已无 plan-reviewer 的 `config.agents` 开关残留（改走 tiers 定级挂载）；`agent/` 无未迁移 `when: "config.agents"` 实例。
 
+- **2026-08-03**: 定级规则优化——T1/T2 边界 AND→OR + 新增机制复杂度维度 + 升档硬规则硬化。
+  - **T1/T2 边界 AND→OR**：T2 正向条件改为 OR（任一命中即 T2：安全敏感词 / 跨模块 / 5+ 文件 / 规则扩散 / 机制·契约变更）；T1 反向 AND（全部满足且无 T2 命中）；else 判据不足强制升档标 `[TIER_UPGRADED]`（成本不对称原则）。
+  - **机制复杂度维度（Step 4a）**：排除条款（纯文案/格式/命名/删除/注释不属）+ 实质性门槛（≥2 下游消费方 / ≥2 单元 / 改变可观测行为）+ 3 类量化阈值（跨脚本耦合 / 架构语义 / 行为契约）。命中即升 T2，防复杂任务误判 T1。
+  - **校准块对称标记**：`[TIER_UPGRADED]` 与 `[DOWNGRADE_AFTER_PLAN]` 对称写入；偏差规则下调门第(5)条"不命中机制复杂度，与 Step 4a 同源"。
+  - **同步范围**：`.kilo/instructions/workflow-core.md` 定级决策树 + T1-T2 表 + 偏差规则。
+  - **验证**：lifecycle-doctor 49 PASS；plan-reviewer 3 轮审查（C1/C2/I3/I4/M6 全部收敛）；verify + reverse-auditor + reviewer 全 PASS。
+
 - **2026-08-03**: v3.2 编排策略由全局默认串行改为并行优先 — 官方 `task` 工具并发模式。
   - **策略变更**：`agent/conductor.md` 铁律 #11「全局默认串行策略」→「**全局默认并行策略**」——挂载点激活智能体 ≥2 且无 `after` 依赖时，conductor 在单条响应消息中并行发起多个 `task` 工具调用（官方并发模式：`Launch multiple agents concurrently whenever possible`）；有 `after` 的按拓扑排序串行执行；无 `after` 的按 agent 文件名字典序组织为同一并行组，共享一个零输出硬门；视角隔离仍物理独立（每个 task 独立 context）。
   - **同步范围**：AGENTS.md 锚点 12/13、`agent/verifier.md`、`agent/reverse-auditor.md`、`agent/reviewer.md`、`lifecycle/stages/quality.md`、`lifecycle/stages/README.md`、docs 5 文件（ARCHITECTURE / configuration-guide / agent-mount-guide / conductor-full-spec / multi-agent-lifecycle-architecture）的"串行"表述同步为并行优先；`quality.md` 编排规则附保留串行场景 4 项（有 after 相对依赖链 / fix→重新 verify / review hooks afterPass / 同一 after 链后继节点）。
