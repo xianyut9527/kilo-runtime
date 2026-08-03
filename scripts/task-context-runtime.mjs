@@ -217,6 +217,18 @@ function readTierDefaults() {
   }
 }
 
+// 从 lifecycle/config.yaml 读取 size-check 阈值（conductor pre-dispatch 硬门依据）
+// 缺省 120000 字符（约 30K token，主会话 context 安全水位）
+function readSizeCheckThreshold() {
+  try {
+    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
+    const m = text.match(/size_check_threshold:\s*(\d+)/);
+    return m ? parseInt(m[1], 10) : 120000;
+  } catch {
+    return 120000;
+  }
+}
+
 // 初始 task_context 结构（按 conductor.md §task_context 结构摘要）
 function buildInitialContext(taskId) {
   const hooks = readHooksFromConfig();
@@ -247,6 +259,8 @@ function buildInitialContext(taskId) {
       verdict: 'PENDING',
     },
     fixing_history: [],
+    dispatch_log: [],        // 每次 dispatch 记录 {agent, mode, stage, timestamp}（provenance gate 依据）
+    overload_count: 0,       // task 返回 >2000 字符累计次数；>=3 → [CONTEXT_UNSAFE] 强制切 agent_manager
     status: 'initialized',
     current_stage: 'START',
     transition_log: [],
@@ -468,6 +482,7 @@ export {
   readHooksFromConfig,
   readConvergenceFromConfig,
   readTierDefaults,
+  readSizeCheckThreshold,
   buildInitialContext,
   die,
   readContext,

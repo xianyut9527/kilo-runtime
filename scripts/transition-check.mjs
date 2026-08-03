@@ -56,6 +56,27 @@ function die(code, msg) {
   process.exit(code);
 }
 
+// ============================================================
+// 动态求值阶段必配角色（读 stages/<id>.md frontmatter required_roles）
+// provenance gate 依据：流转时校验 dispatch_log 是否包含必经智能体
+// ============================================================
+
+function getStageRequiredRoles(stageName) {
+  const stageLower = stageName.toLowerCase();
+  const stagesDir = path.resolve(__dirname, '..', 'lifecycle', 'stages');
+  const stagePath = path.resolve(stagesDir, `${stageLower}.md`);
+  const roles = [];
+  if (!fs.existsSync(stagePath)) return roles;
+  const stageText = fs.readFileSync(stagePath, 'utf8');
+  const fm = stageText.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!fm) return roles;
+  const rm = fm[1].match(/^required_roles\s*:\s*\[(.*)\]\s*(?:#.*)?$/m);
+  if (rm) {
+    roles.push(...rm[1].split(',').map((s) => s.trim()).filter(Boolean));
+  }
+  return roles;
+}
+
 function usage() {
     const txt = [
       'Usage:',
@@ -384,6 +405,38 @@ function main() {
     const dump = Object.keys(vars).map((k) => `${k}=${JSON.stringify(vars[k])}`).join(' ');
     const allWhens = candidateEdges.map((e) => e.when || '(none)').join(' | ');
     die(1, `[PROCESS_VIOLATION] transition ${FROM} -> ${TO} rejected by all when conditions: ${allWhens}\n  current: ${dump}`);
+  }
+
+  // ============================================================
+  // provenance gate（edge-conditioned，仅 T1/T2 EXECUTION 边）
+  // 校验 dispatch_log 中是否包含对应阶段的必配角色（防跳步绕过委派）
+  // 豁免：T0 边、INQUIRY 边、CIRCUIT_BREAKER 出口
+  // ============================================================
+  const tier = vars.tier;
+  const intentType = vars.intent_type;
+  const dispatchLog = Array.isArray(ctx.dispatch_log) ? ctx.dispatch_log : [];
+  const isT1orT2 = tier === 'T1' || tier === 'T2';
+  const isExempt = intentType !== 'EXECUTION' || !isT1orT2;
+  const isCircuitBreakerExit = FROM === 'QUALITY' && TO === 'DELIVERING' && vars.quality_verdict === 'CIRCUIT_BREAKER';
+
+  if (!isExempt && !isCircuitBreakerExit) {
+    const provenanceRequired = [];
+    if (FROM === 'PLANNING' && TO === 'EXECUTING') {
+      provenanceRequired.push(...getStageRequiredRoles('PLANNING'));
+    }
+    if (FROM === 'EXECUTING' && TO === 'QUALITY') {
+      provenanceRequired.push(...getStageRequiredRoles('EXECUTING'));
+    }
+    if (FROM === 'QUALITY' && TO === 'DELIVERING') {
+      provenanceRequired.push(...getStageRequiredRoles('QUALITY'));
+    }
+    if (provenanceRequired.length > 0) {
+      const dispatchedAgents = new Set(dispatchLog.map((e) => e.agent));
+      const missing = provenanceRequired.filter((a) => !dispatchedAgents.has(a));
+      if (missing.length > 0) {
+        die(1, `[PROCESS_VIOLATION] missing dispatch provenance for ${FROM} -> ${TO}: required agents ${JSON.stringify(provenanceRequired)}, missing ${JSON.stringify(missing)}. dispatch_log agents: ${JSON.stringify([...dispatchedAgents])}`);
+      }
+    }
   }
 
   // gate 校验

@@ -70,6 +70,13 @@ hooks:
     auto_fix: true              # 自动触发 fix hooks（false = 人工确认后修复）
 
 # ============================================================
+# pre-dispatch 安全门阈值（conductor 委派前 size-check 依据）
+# task_context 文件字符数 > 阈值 → [CONTEXT_UNSAFE] → 强制切 agent_manager worktree
+# 缺省 120000 字符（约 30K token，主会话 context 安全水位）
+# ============================================================
+size_check_threshold: 120000
+
+# ============================================================
 # timeouts：阶段/智能体级时间预算（唯一真相来源）
 # conductor 启动智能体时记录 start_time；超时 → [AGENT_TIMEOUT]
 # 按 graph.yaml 节点 on_fail 字段路由（未声明按默认值规则）
