@@ -43,7 +43,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { readContext, writeContext, appendTransitionLog, readHooksFromConfig as tcReadHooks, die } from './task-context-runtime.mjs';
 import { discoverPostPreConstantMounts, discoverPostPreTieredMounts } from './lib/post-pre-mounts.mjs';
-import { getStageRequiredRoles, isConditionalRole } from './lib/stage-roles.mjs';
+import { getStageRequiredRoles, isConditionalRole, hasRequirementSpread, hasSpreadTrigger, validateRequirementSpread } from './lib/stage-roles.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
@@ -457,6 +457,17 @@ function main() {
       const missing = requiredNorm.filter((a) => !dispatchedAgents.has(a));
       if (missing.length > 0) {
         die(1, `[PROCESS_VIOLATION] missing dispatch provenance for ${FROM} -> ${TO}: required agents ${JSON.stringify(provenanceRequired)}, missing ${JSON.stringify(missing)}. dispatch_log agents: ${JSON.stringify([...dispatchedAgents])}`);
+      }
+    }
+  }
+
+  // requirement_spread gate（命中扩散触发词时校验扩散包产物）
+  if (FROM === 'PLANNING' && TO === 'EXECUTING' && hasSpreadTrigger(ctx.intent?.user_request)) {
+    const unitsWithSpread = (ctx.plan?.task_dag || []).filter(u => hasRequirementSpread(u));
+    if (unitsWithSpread.length > 0) {
+      for (const unit of unitsWithSpread) {
+        const errs = validateRequirementSpread(unit);
+        if (errs.length > 0) die(1, `[PROCESS_VIOLATION] unit ${unit.unit_id} requirement_spread 校验失败: ${errs.join('; ')}`);
       }
     }
   }

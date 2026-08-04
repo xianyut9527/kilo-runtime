@@ -34,3 +34,6 @@ kilo.json.bak.*
 
 # MCP 运行时产物（playwright 等本地 MCP 生成的临时目录）
 .playwright-mcp/
+
+
+.kilo/skills

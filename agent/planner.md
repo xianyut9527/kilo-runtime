@@ -53,6 +53,22 @@ output_schema:
       type: array
     task_dag:
       type: array
+      items:
+        type: object
+        properties:
+          requirement_spread:                     # 命中扩散触发词时必填，见 workflow-core.md「需求扩散」
+            type: object
+            properties:
+              business_invariants:
+                type: array
+              impact_surface:
+                type: string
+              scan_evidence:
+                type: string
+              coverage_matrix:
+                type: array
+              acceptance_criteria:
+                type: array
 # 声明性拓扑提示（conductor 调度），非 agent 间直连调用
 can_handoff_to:
   - plan-reviewer
@@ -108,6 +124,7 @@ project_context:
 - 重复点扫描结论（UI 与非 UI 同等适用，不限于样式/布局/交互）
 - 组件化/共享抽象方案（如适用）
 - 扩展点设计（高频变更领域必填：表单/列表/权限/数据获取/第三方集成/错误处理/日志/配置）
+- 需求扩散包（命中扩散触发词必填）：业务不变量/影响面/扫描证据/覆盖矩阵/验收标准
 
 ## 设计前 checklist
 
@@ -134,6 +151,16 @@ task_dag:
     dependencies: ["string"]
     acceptance_criteria: ["string"]
     verification_method: "string"
+    requirement_spread:                     # 命中扩散触发词时必填（可选块）
+      business_invariants: ["string"]
+      impact_surface: "string"
+      scan_evidence: "string"
+      coverage_matrix:
+        - point: "string"                    # 同类点
+          handling: "string"                 # 处理方式：纳入/排除/合并
+          verification: "string"             # 验证方式
+          conclusion: "string"               # 结论：已验证/未验证/部分实现/回归
+      acceptance_criteria: ["string"]
 risks:
   - description: "string"
     mitigation: "string"
@@ -161,3 +188,4 @@ forbidden_files: ["string"]
 - 高频变更领域必须产出扩展点设计，即使当前只有 1 处实现
 - T2+ 必须包含单元 DAG + 依赖关系 + 风险应对
 - 跨层 unit 必须显式标注理由，不得默认放行
+- 命中扩散触发词时 requirement_spread 必填，未形成不得进入 DAG；触发词清单见 workflow-core.md

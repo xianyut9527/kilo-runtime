@@ -44,7 +44,7 @@ import os from 'node:os';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { readContext, writeContext } from './task-context-runtime.mjs';
-import { getStageRequiredRoles, isConditionalRole } from './lib/stage-roles.mjs';
+import { getStageRequiredRoles, isConditionalRole, hasCoverageMatrix, validateCoverageMatrix, hasSpreadTrigger } from './lib/stage-roles.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONTEXT_DIR = path.join(os.tmpdir(), 'kilo');
@@ -219,6 +219,16 @@ function auditContext(taskId) {
     ...checkDispatchLog(ctx, required),
     ...checkQualityVerdict(ctx, required),
   ];
+
+  // coverage_matrix 结论校验（命中扩散触发词任务交付前）
+  if (hasSpreadTrigger(ctx.intent?.user_request) && required.includes('DELIVERING')) {
+    for (const unit of (ctx.plan?.task_dag || [])) {
+      if (hasCoverageMatrix(unit)) {
+        const errs = validateCoverageMatrix(unit);
+        for (const e of errs) errors.push(`[FLOW_AUDIT_FAIL] unit ${unit.unit_id} ${e}`);
+      }
+    }
+  }
 
   return { taskId, intentType, tier, status, required, errors, ctx };
 }
