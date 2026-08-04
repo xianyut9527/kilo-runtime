@@ -13,6 +13,13 @@
 - **同步 sync-agent-prompt**：conductor prompt 末尾"能力沉淀闭环"句从 kilo.json 删除
 - **验证**：lifecycle-doctor 49+ PASS / 0 FAIL / WARN → 0（49+50=49，因 H3 删除少 1 PASS，ironclad 由 WARN→INFO）；sync drift=0
 ## [Unreleased]
+
+- **feat(quality): 搜索纪律 T1 优化——四层阶梯 + 8 agent prompt 同步 + 机械门禁**
+  - AGENTS.md #15 锚点：搜索四层阶梯 + 禁全仓无 include Grep + 业务仓库优先图谱
+  - kilo.json 8 个 agent prompt 末尾加搜索纪律段（≤80 字符/agent）
+  - 新增 scripts/search-discipline-check.mjs（4 类违规检测）
+  - lifecycle-doctor 新增 H3 search-discipline 检测（PASS 数 50→51）
+  - 验证：lifecycle-doctor 51 PASS / 0 FAIL / 0 WARN
 - **2026-08-04**: QUALITY 提速--T1/T2 分档 + 机械前置门 fail-fast + verify/review 并行 + diff-boundary-check（T1 happy path ~30min -> ~12min，T2 保留全视角，质量由机械门托底不靠模型）。
   - **根因**：T1 半小时主因是 QUALITY--happy path 就 2 轮串行（verify -> review afterPass）+ reverse-auditor 绑最慢模型 deepseek-v4-pro 且 always-on 每轮跑 + 普通模型首版常 FAIL 触发 fix 轮。
   - **新增 `scripts/diff-boundary-check.mjs`（A 层第四机械门）**：读 `execution.changes` vs `plan.task_dag` 的 `key_files`/`forbidden_files`，机械防 SCOPE_CREEP/FORBIDDEN_TOUCH。exit 0 在界内 / 2 越界 / 1 无 plan 回退 LLM。把 reverse-auditor 的机械可覆盖职责转脚本断言。

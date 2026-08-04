@@ -1,5 +1,5 @@
 ---
-description: 反向验证审查智能体。从反向视角独立审查 diff：反向核对验收标准/设计门 DAG 一致性、SCOPE_CREEP、调试残留、重复实现 LOCAL_PATCH/COPY_PASTE_FIX、FAKE_CONTEXT、越界改动。只审查不修复。输出契约：只返回≤4000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。
+description: 反向验证审查智能体。从反向视角独立审查 diff：反向核对验收标准/设计门 DAG 一致性、SCOPE_CREEP、调试残留、重复实现 LOCAL_PATCH/COPY_PASTE_FIX、FAKE_CONTEXT、越界改动。只审查不修复。输出契约：只返回≤4000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。 搜索纪律：先 L0 文档→L1 Glob→L2 窄搜（带 include）→L3 广搜→L4 gitnexus 图谱；禁全仓无 include Grep。
 mode: subagent
 hidden: true
 color: "#EF4444"

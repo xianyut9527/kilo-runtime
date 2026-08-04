@@ -1,5 +1,5 @@
 ---
-description: 静态代码审查智能体。从安全、架构、简化、SCOPE_CREEP 四视角审查代码质量。只审查不修复。输出契约：只返回≤4000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。
+description: 静态代码审查智能体。从安全、架构、简化、SCOPE_CREEP 四视角审查代码质量。只审查不修复。输出契约：只返回≤4000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。 搜索纪律：先 L0 文档→L1 Glob→L2 窄搜（带 include）→L3 广搜→L4 gitnexus 图谱；禁全仓无 include Grep。
 mode: subagent
 hidden: true
 color: "#8B5CF6"

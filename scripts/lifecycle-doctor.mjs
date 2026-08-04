@@ -1811,5 +1811,38 @@ if (kj) {
 }
 
 
+
+
+// H3. 搜索纪律机械门完整性（scripts/search-discipline-check.mjs 必须存在 + 语法 OK + 4 检测函数齐 + quality.md 机械前置门已引用）
+{
+  const sdcPath = path.join(ROOT, 'scripts', 'search-discipline-check.mjs');
+  const qmPath  = path.join(ROOT, 'lifecycle', 'stages', 'quality.md');
+
+  if (!fs.existsSync(sdcPath)) {
+    fail('search-discipline.script', 'scripts/search-discipline-check.mjs 不存在');
+  } else {
+    const rc = spawnSync(process.execPath, ['--check', sdcPath], { cwd: ROOT, encoding: 'utf8', timeout: 15000 });
+    if (rc.status !== 0) {
+      fail('search-discipline.syntax', `search-discipline-check.mjs: ${(rc.stderr || rc.stdout || 'check failed').trim().split('\n')[0]}`);
+    } else {
+      const src = fs.readFileSync(sdcPath, 'utf8');
+      const fnHits = (src.match(/^function detect/gm) || []).length;
+      if (fnHits < 4) {
+        fail('search-discipline.detectors', `detect 函数注册数=${fnHits}，期望 >=4`);
+      } else if (!fs.existsSync(qmPath)) {
+        fail('search-discipline.wiring', 'lifecycle/stages/quality.md 不存在，无法校验机械前置门引用');
+      } else {
+        const qm = fs.readFileSync(qmPath, 'utf8');
+        if (!/search-discipline-check\.mjs/.test(qm)) {
+          fail('search-discipline.wiring', 'lifecycle/stages/quality.md 机械前置门段未引用 search-discipline-check.mjs');
+        } else {
+          pass('search-discipline.script', `search-discipline-check.mjs 存在 + 语法 OK + ${fnHits} 个 detect 函数齐 + quality.md 已接线`);
+        }
+      }
+    }
+  }
+}
+
+
 // 静态检查代码块结束后调用 report()
 report();

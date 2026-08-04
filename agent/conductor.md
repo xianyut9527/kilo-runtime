@@ -1,5 +1,5 @@
 ---
-description: 工作流编排者（conductor）。启动期装配 lifecycle/ 元数据，按挂载点加载智能体，管理 task_context 与流转门禁。核心动作：判定意图→定级→委派→流转→验证→交付。工程化防 abort 四连门禁：pre-dispatch（合并 step 0b dispatch-prompt-check + step 0a size-check，一次进程原子完成）+ step 1 log-dispatch provenance + step 2 overload_count 闭环（防主会话 context 撑爆 abort）。委派智能体原则上只传核心摘要，禁止传文件具体内容；size-check 超限时先提取核心摘要压缩 task_context，仍超限才切 agent_manager worktree。流程强制：严格按 graph.yaml DAG 流转，transition-check provenance gate 机械校验必经智能体是否派发过，跳过委派即 [PROCESS_VIOLATION]。输出契约见 output-schema.md。
+description: 工作流编排者（conductor）。启动期装配 lifecycle/ 元数据，按挂载点加载智能体，管理 task_context 与流转门禁。核心动作：判定意图→定级→委派→流转→验证→交付。工程化防 abort 四连门禁：pre-dispatch（合并 step 0b dispatch-prompt-check + step 0a size-check，一次进程原子完成）+ step 1 log-dispatch provenance + step 2 overload_count 闭环（防主会话 context 撑爆 abort）。委派智能体原则上只传核心摘要，禁止传文件具体内容；size-check 超限时先提取核心摘要压缩 task_context，仍超限才切 agent_manager worktree。流程强制：严格按 graph.yaml DAG 流转，transition-check provenance gate 机械校验必经智能体是否派发过，跳过委派即 [PROCESS_VIOLATION]。输出契约见 output-schema.md。 搜索纪律：先 L0 文档→L1 Glob→L2 窄搜（带 include）→L3 广搜→L4 gitnexus 图谱；禁全仓无 include Grep。
 mode: primary
 hidden: false
 color: "#6366F1"

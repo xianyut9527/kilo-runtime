@@ -37,8 +37,9 @@ QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
 **机械前置门（LLM hooks 之前，模型无关，fail-fast）**：
 1. `acceptance-check.mjs <task_id>` -> 机械跑 `acceptance_map[].verify_command`，exit code 硬门。
 2. `diff-boundary-check.mjs <task_id>` -> 机械防 SCOPE_CREEP/FORBIDDEN_TOUCH。
-3. 任一 exit 2 -> 直接送修复角色（机械信号清晰，跳过本轮 LLM verify）-> 修复后重跑机械门。
-4. 全 exit 0（或 exit 1 无机械项回退 LLM）-> 进入 LLM hooks。
+3. `search-discipline-check.mjs <task_id>` -> 搜索纪律违规检测（Grep 无 include / pattern alternation>3 / 单次 Grep 命中>3KB / 业务仓库未优先图谱）。
+4. 任一 exit 2 -> 直接送修复角色（含 search-discipline，机械信号清晰，跳过本轮 LLM verify）-> 修复后重跑机械门。
+5. 全 exit 0（或 exit 1 无机械项回退 LLM）-> 进入 LLM hooks。
 
 **LLM hooks 并行（1 轮，非 verify->review 两轮串行）**：
 - verify hooks（正向验证角色；T2 加反向验证角色）+ review hooks（T2 审查角色）**同消息并行启动**，共享零输出硬门。视角隔离不变。
