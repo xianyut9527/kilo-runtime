@@ -3,6 +3,15 @@
 本文件记录 `kilo_config` 全局配置仓库的演进。遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
 ## [Unreleased]
+- **2026-08-04**: 编排性能与检索本地化加固——gitnexus 默认启用 + context7 降噪 + 检索本地化规范 + T0 硬否决 + 逐单元派发。
+  - **逻辑变更范围**：源文件改动与文档同步分两批落地，本条目一并记录。
+  - **kilo.json**：`gitnexus.enabled: true`（默认启用本地调用链/影响面分析，替代慢速远程检索）；`context7.timeout` 8000→6000（降噪，减少远程文档等待）。
+  - **`.kilo/instructions/core.md`**：新增 §检索本地化规范——rg 模板强制 exclude（`-g '!node_modules' -g '!dist' -g '!.git'`）、semantic_search 收紧（仅 rg 未命中且影响面 ≥3 文件时用）、LSP / 本地 `.d.ts` 优先于 context7；Context Engine 表「使用陌生第三方库」行加脚注 ¹（陌生 = 本地无该包 `.d.ts` / 无 LSP 类型定义 / 包名首次出现；命中顺序 grep → LSP → context7，前两者命中不得调用 context7）。
+  - **`.kilo/instructions/workflow-core.md`**：新增 Step 1a「T0 前置硬否决闸门」4 条——(a) 改动 >3 文件 / (b) 跨模块（≥2 独立目录）/ (c) 需新增测试用例 / (d) 命中安全敏感关键词，任一命中禁止 T0、强制最低 T1；顺带修复 Step 2 标题「5 条全部满足」→「6 条全部满足」及 Item 6 语义（「命中扩散触发词」→「未命中扩散触发词（需求明确）」）。
+  - **agent/conductor.md**：铁律 #2 补 T0 前置硬否决引用 +「五条标准」→「六条标准」；新增 §EXECUTING 逐单元派发——按 `plan.task_dag.units` 拓扑分层逐单元派发 task、每单元独立执行四连门禁（step 0b → 0a → 1 → 2）、单元 FAIL 仅重派该单元 coder（不重派已过单元）、禁止批量派发整个 EXECUTING 段。
+  - **lifecycle/stages/executing.md**：`token_budget` 注释补「多单元按组分配」；编码前知识获取补检索优先级链（rg 本地 → LSP / 本地 `.d.ts` → gitnexus → context7）；编码改为「按当前 unit_id 编码，不跨单元改动」。
+  - **同步范围**：`docs/conductor-full-spec.md`（主槽逐单元派发 + 委派包六条含 token_budget 预算声明 + T0 硬否决引用）、`AGENTS.md`（新增锚点 14 逐单元派发）、`README.md`（gitnexus 默认启用描述，两处）、全局配置 `~/.config/kilo`（install.ps1 purge 重建 + 本轮补齐 package.json / package-lock.json / node_modules 整体备份恢复（消除超前声明））。
+  - **验证**：lifecycle-doctor 51 PASS / 0 FAIL；QUALITY 三轮收敛（verifier / reviewer / reverse-auditor 全 PASS）；flow-audit PASS。
 
 - **2026-08-04**: 工程化防 abort 门禁升级——dispatch-prompt-check 事前审计门禁引入（三连→四连）。
   - **新增 step 0b dispatch-prompt-check**：conductor dispatch 前写入 `dispatch_pending.prompt_chars`（留痕）→ `task-context.mjs dispatch-prompt-check <task_id>` 校验——未写入/非法 exit 1（审计失败）；超限 exit 2（阻断）；通过 exit 0。替代“大任务 prompt 事后补救”模式，事前拦截大任务 abort 复发（根因：单次委派 8 文件 prompt 过大）。

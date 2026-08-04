@@ -158,6 +158,7 @@ INIT（conductor 内建）→ INIT（conductor 内建）
 > **并行安全边界**（见铁律 #9 工程化四连）：对每个待 dispatch 的 task——1. step 0b dispatch-prompt-check 逐个先行（未写入 dispatch_pending → exit 1 审计失败；prompt 超 dispatch_prompt_threshold → exit 2 阻断）；2. step 0a size-check 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；3. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；4. 结果返回后逐个 log-dispatch（step 1）；5. 任一并行 task 返回 >4000 字符 → `overload_count` +1（step 2）；≥3 → 摘要压缩→仍超限切 worktree。
 > 
 
+   2. 执行 `N` 主槽（委派或内建）——**主槽逐单元派发**：conductor 不批量派发整个 EXECUTING 段，按 `plan.task_dag.units` 逐单元派发 task，每单元独立 goal + acceptance_criteria + forbidden_files + token_budget；单元依赖按 DAG 拓扑排序；可并行同层单元按并行组规则组织（引用铁律 #11 并行策略）。
    3. 执行 `post:N` 挂载点（同 pre 语义）
    4. **机械流转裁判**：流转前必须执行 `node scripts/transition-check.mjs <task_id> --from <当前节点> --to <目标节点>`；
       - exit 0 → 允许流转（`quality.round` 已由框架自动递增，conductor 禁止手工 set convergence/quality 计数字段）；
@@ -215,8 +216,11 @@ T1+ 任务加载 coder 智能体时，委派包仍必须包含（**核心摘要*
 - **goal 单一**：一个委派包只解决一个可验证单元
 - **context_anchor 精确**：具体文件:行号或符号 UID
 - **acceptance_criteria 可验**：每条能用一条命令证实/证伪
-- **known_failures 透明**：已尝试方案及失败原因
 - **forbidden_files 边界声明**：越界 → `[SCOPE_CREEP]`
+- **验证命令**：每条验收标准对应的可执行验证命令
+- **返回契约（≤4000 字符摘要）**：subagent 只返回核心摘要（verdict + 证据 file:line + 关键结论），禁止完整报告/长表/复述文件内容
+
+> **token_budget 单列（单元级调度参数，不进委派包六条）**：每单元 token 预算由 conductor 在逐单元派发时单列（与铁律 #6 六条标准一致）。
 
 委派前工程化安全门（替代旧 prompt 长度文字约束，运行时机械强制，见铁律 #9）：
 1. **step 0b dispatch-prompt-check（事前审计）**：conductor dispatch 前先 `task-context.mjs set <task_id> dispatch_pending.prompt_chars <N> --agent conductor`（及可选 dispatch_pending.file_count）写入待派 prompt 信息，再 `task-context.mjs dispatch-prompt-check <task_id>` 校验——dispatch_pending 未写入/非法 → exit 1（审计失败）；prompt_chars > `config.dispatch_prompt_threshold`（缺省 3000）或 file_count > `max_files_per_task`（缺省 3）→ exit 2（阻断 dispatch）；通过 → exit 0
@@ -241,6 +245,8 @@ T1+ 任务加载 coder 智能体时，委派包仍必须包含（**核心摘要*
 ```
 
 > T0 仅需前 2 节点 + EXECUTING→DELIVERING（无验证/审查）；T1/T2 加 QUALITY（verify→fix→review 自动循环，检查 FAIL 即修复，修复后重新检查，直到全部 PASS 才进入 DELIVERING）。具体智能体名由 `agent/*.md` frontmatter `mount` 自注册决定，本表只列角色语义。
+>
+> **T0 前置硬否决**：T0 快通道判定前须先核验 workflow-core.md T0 前置硬否决 4 条（>3 文件 / 跨模块 / 需新增测试 / 安全敏感），任一命中强制升 T1（详见 workflow-core.md，不展开）。
 
 ## 模型选择
 

@@ -36,7 +36,7 @@ status_signal: "DONE" | "DONE_WITH_CONCERNS" | "NEEDS_CONTEXT"
 transition_context:
   tier: "T1" | "T2"
   design_gate_type: "short" | "full"
-  units: [{ unit_id, goal, key_files, dependencies, acceptance_criteria }]
+  units: [{ unit_id, goal, key_files, forbidden_files, token_budget, dependencies, acceptance_criteria, verification_method }]
 scan_coverage: "full" | "partial" | "N/A"
 componentization_plan: "yes" | "no" | "N/A"
 extension_points:

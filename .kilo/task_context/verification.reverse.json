@@ -1,0 +1,54 @@
+{
+  "status_signal": "PASS",
+  "verdict": "PASS",
+  "evidence": [
+    {
+      "command": "cd .kilo/skills/report-analyzer && python -m pytest tests/test_v19.py -q",
+      "exit_code": 0,
+      "stdout_snippet": "85 passed in 0.08s",
+      "stderr_snippet": "无 stderr"
+    },
+    {
+      "command": "python -c verify stats JSON records/workdays/totalHours/memberCount",
+      "exit_code": 0,
+      "stdout_snippet": "records: 2472, workdays: 152, totalHours: 13776.0, memberCount: 13",
+      "stderr_snippet": "无 stderr"
+    },
+    {
+      "command": "python -c verify workdays 2026-01-01~07-31 Mon-Fri",
+      "exit_code": 0,
+      "stdout_snippet": "Workdays 2026-01-01 to 2026-07-31: 152",
+      "stderr_snippet": "无 stderr"
+    },
+    {
+      "command": "node --check on rendered HTML JS",
+      "exit_code": 0,
+      "stdout_snippet": "exit: 0",
+      "stderr_snippet": "无 stderr"
+    },
+    {
+      "command": "git diff HEAD -- .kilo/skills/report-analyzer/",
+      "exit_code": 0,
+      "stdout_snippet": "(no output - working tree clean)",
+      "stderr_snippet": "无 stderr"
+    }
+  ],
+  "issues": [
+    {
+      "severity": "warning",
+      "tag": "UNCOVERED_CHANGE",
+      "file": ".kilo/skills/report-analyzer/report-analyzer.py",
+      "line": 3736,
+      "message": "维护类规则(1≤dev_count≤2)未被真实数据命中——唯一 dev_count=2 的项目是「其他」聚合桶(isAggregated=True)，被跳过回填。单元测试覆盖但生产数据未验证。",
+      "evidence": "stats JSON: 其他 dev_count=2 isAggregated=True; 其余4项目 dev_count=8/6/5/3 均为开发类"
+    },
+    {
+      "severity": "warning",
+      "tag": "SCOPE_CREEP",
+      "file": ".tmp/项目成员工作报告-2026-06-01_2026-07-31.html",
+      "line": 1,
+      "message": "旧产物未清理：.tmp/ 存在 2026-06-01_2026-07-31.html 和 2026-07-01_2026-07-21.html 两份旧报告，非本次改动范围但可能造成混淆。",
+      "evidence": "glob .tmp/ 列出 3 个 HTML + 2 个 JSON + 1 个源数据文件"
+    }
+  ]
+}

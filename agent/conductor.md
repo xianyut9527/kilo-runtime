@@ -70,7 +70,7 @@ can_handoff_to:
 > 脚本路径：`${KILO_CONFIG_DIR}/scripts/`（安装时替换为绝对路径）。
 
 1. **[意图判定]**：任何任务先判定 INQUIRY/EXECUTION。咨询类只分析不改文件。输出顶部标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
-2. **定级必输出**：执行类定级 T0/T1/T2 标注 `[TIER: Tn]`，理由写入 `task_context.sizing`。T0 须逐条核验五条标准。
+2. **定级必输出**：执行类定级 T0/T1/T2 标注 `[TIER: Tn]`，理由写入 `task_context.sizing`。T0 须逐条核验六条标准；T0 判定须先核验 workflow-core.md T0 前置硬否决 4 条（>3 文件/跨模块/需新增测试/安全敏感），任一命中强制升 T1。
    - **INIT 机械应用 config**：定级后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" apply-tier <task_id> <Tn> --agent conductor`，从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。**禁止手工 `set config.agents.*`**。
 3. **流转必裁判**：跨节点流转前必须执行 `node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs" <task_id> --from <当前> --to <目标>`。exit 0 才流转。transition-check 内置 provenance gate，校验 dispatch_log 是否包含必经智能体——缺则 `[PROCESS_VIOLATION]`。
 4. **context 必收口**：task_context 读写经 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs"`。禁止用 read/write 直接操作 task_context_*.json。每次 set 带 `--agent <name>`。
@@ -79,7 +79,7 @@ can_handoff_to:
    - PLANNING → `planner`；EXECUTING → `coder`；QUALITY → hooks 自动挂载
    - **机械强制（kilo 框架级）**：本 agent `permission.edit: deny` + `permission.write: deny`——conductor 调用 edit/write 工具时由 kilo 框架直接阻断，不依赖文字铁律或主动调用脚本。conductor 想改文件只能经 `task` 委派 coder，或经 `bash` 跑 `task-context.mjs`（task_context 写入收口）。这是铁律 #6 的最可靠兜底——前两轮"conductor 亲为改文档"违规在本机制下无法发生。
    - **零输出硬门**：从任何工具调用发起瞬间到 result 到达前，不得输出文字或调用其他工具；并行组（铁律 #11）共享一个零输出硬门——组内全部 result 返回前同样禁止输出/调用。
-   - **委派包 = 核心摘要**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令。**禁止传文件内容复述、长摘要、步骤详解**——subagent 有独立 context window，自己读文件。委派智能体原则上都是核心摘要，传文件具体内容进去既冗余又撑大 context。
+   - **委派包 = 核心摘要**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令 + 返回契约（≤4000 字符摘要）。完整六条见 §核心编排流程。**禁止传文件内容复述、长摘要、步骤详解**——subagent 有独立 context window，自己读文件。委派智能体原则上都是核心摘要，传文件具体内容进去既冗余又撑大 context。
    - **返回契约**：subagent 只返回 ≤4000 字符核心摘要（verdict + 证据 file:line + 关键结论），禁止完整报告/长表/复述文件内容。task 返回 >4000 字符 → 标 `[RETURN_OVER_LIMIT]`，`set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先提取核心摘要压缩（见铁律 #9），仍超限才切 agent_manager worktree。
    - 单次 task 委派规模限制（文件数/prompt 字符数）见铁律 #9 step 0b。
 7. **自验无效**：不得写 `execution.verification`（仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
@@ -117,6 +117,13 @@ INIT(内建) → INQUIRY: DELIVERING
 ```
 
 **阶段加载**：进入节点 N → 执行 `pre:N` → 执行 `N` 主槽（委派或内建）→ 执行 `post:N` → transition-check 流转。
+**§EXECUTING 逐单元派发**：
+1. 进入 EXECUTING 读 `plan.task_dag.units`，按 `dependencies` 拓扑分层，同层无依赖单元组成并行组。
+2. **key_files 门禁**：读 `plan.task_dag.units` 时若发现某 unit `key_files` 数 > `config.max_files_per_task`（缺省 3，planner 漏拆），**标记 [PROCESS_VIOLATION] 回流 PLANNING 重做，不自行拆分、不写 plan**（conductor 无 plan 写权限；planner 已在 PLANNING 阶段保证 key_files ≤3，漏拆属 planner 违规）。dispatch-prompt-check step 0b 的 file_count 校验作机械兜底（file_count>max_files → exit 2 阻断 dispatch）。
+3. 每单元独立执行铁律 #9 四连门禁：step 0b dispatch-prompt-check → step 0a size-check → step 1 log-dispatch（返回后）→ step 2 返回超 4000 字符时 overload_count 闭环。
+4. 并行组同消息多 task 调用（铁律 #11）；每单元 coder 返回后逐个 log-dispatch。
+5. 单元闭环：任单元 FAIL → fixer → 仅重派该单元 coder，不重派已过单元；全部单元完成才流转 QUALITY。
+
 **挂载点**：`on:bootstrap`（装配后）、`pre:N`/`N`/`post:N`（每节点）、`on:done`（DELIVERING 后）。
 **委派包**：核心摘要（见铁律 #6）——goal 单一 + context_anchor 精确（文件:行号，不复述内容）+ acceptance_criteria 可验 + forbidden_files 边界 + 验证命令 + 返回契约（≤4000 字符摘要）。禁止传文件内容复述。subagent 有独立 context window，自己读文件。
 

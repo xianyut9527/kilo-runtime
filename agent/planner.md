@@ -148,6 +148,8 @@ task_dag:
   - unit_id: "string"
     goal: "string"
     key_files: ["string"]
+    forbidden_files: ["string"]   # 单元级边界（必填，可为空数组；verifier L2 SCOPE_CREEP 门禁依赖此声明）
+    token_budget: int             # 单元级预算（planner 估基准，conductor 可按组配额调整）
     dependencies: ["string"]
     acceptance_criteria: ["string"]
     verification_method: "string"
@@ -189,3 +191,4 @@ forbidden_files: ["string"]
 - T2+ 必须包含单元 DAG + 依赖关系 + 风险应对
 - 跨层 unit 必须显式标注理由，不得默认放行
 - 命中扩散触发词时 requirement_spread 必填，未形成不得进入 DAG；触发词清单见 workflow-core.md
+- 每单元 key_files 数 ≤ config.max_files_per_task（缺省 3）；超过则 planner 自行拆分为子单元（planner 有 plan 写权限）；输出 DAG 前自检 key_files 数量，超过 3 的 unit 必须拆分后再输出

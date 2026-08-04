@@ -165,10 +165,19 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 | 修改 API/Router/Handler | `gitnexus_route_map` 或 `gitnexus_api_impact` | 接口消费方检查 |
 | 修改核心工具/配置 | `gitnexus_query` | 架构约束检索 |
 | 同类实现模式 ≥2 处（UI 与非 UI 同等适用） | `grep` / `glob` / `gitnexus_query` | 全量扫描同类点，优先组件化/共享抽象修复 |
-| 使用陌生第三方库 | `context7_query-docs` | 文档查询 |
+| 使用陌生第三方库 ¹ | `context7_query-docs` | 文档查询 |
 | 修复失败/报错 | `kilo_local_recall` | 历史同类问题回溯 |
 
 未执行 → `[MISSING_CONTEXT_QUERY]`
+
+> ¹ **陌生第三方库**：本地无该包 `.d.ts`、无 LSP 类型定义、或包名首次出现。检索命中顺序：`grep`/`rg` node_modules 类型定义 → LSP 定义跳转 → `context7_query-docs`；前两者命中则不得调用 context7。
+
+## 检索本地化规范
+
+1. **rg 用法模板**：全仓检索必须带 exclude：`rg -n -g '!node_modules' -g '!dist' -g '!.git'`，禁止无 exclude 的全仓 grep。
+2. **semantic_search 收紧**：仅在 rg/grep 未命中且影响面 ≥3 文件时使用；单文件定位禁用。
+3. **LSP / 本地 .d.ts 优先于 context7**：熟悉库禁用 context7；LSP 不可用时回退读本地 `.d.ts`。
+4. **与「Context Engine 自动查询规则」表衔接**：本规范约束表中「使用陌生第三方库 → context7_query-docs」行的触发与命中判定，不删改表中其他行。
 
 ## 编码前强制检查点
 

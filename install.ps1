@@ -10,7 +10,13 @@
 # The installer recursively copies everything above (minus EXCLUDE lists) to the global config dir.
 
 $Source = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Target = "$env:USERPROFILE\.config\kilo"
+$Target = if ($env:KILO_INSTALL_TARGET) { $env:KILO_INSTALL_TARGET } else { "$env:USERPROFILE\.config\kilo" }
+# 路径安全校验：必须为绝对路径且规范化
+if (-not ([System.IO.Path]::IsPathRooted($Target))) {
+    Write-Host "[SYNC] FAIL: KILO_INSTALL_TARGET must be an absolute path: $Target" -ForegroundColor Red
+    exit 1
+}
+$Target = [System.IO.Path]::GetFullPath($Target)  # 规范化（解析 .. 等）
 
 # Items excluded only at the repo root level (to avoid clobbering same-named legit files)
 $RootOnlyExclude = @("install.ps1", "install.sh", "README.md", "LICENSE")
@@ -43,8 +49,28 @@ try {
     # then sync from source. Ensures the target is identical to the
     # source after each install, leaving no stale artifacts behind.
     # ============================================================
+
+    # === D: gitnexus 全局 PATH 前置校验（警告非阻断，缺失降级 grep/glob） ===
+    if (-not (Get-Command gitnexus -ErrorAction SilentlyContinue)) {
+        Write-Host "[WARN]   gitnexus 不在 PATH；调用链分析将降级为 grep/glob。安装: npm i -g gitnexus" -ForegroundColor Yellow
+    }
+
+    $HasBackup = $false
     if (Test-Path $Target) {
         Write-Host "[CLEAN] Purging target directory: $Target" -ForegroundColor Yellow
+    # === E: 备份 node_modules + package.json + package-lock.json（purge 前保全 @kilocode/plugin 依赖） ===
+    $BackupDir = Join-Path $env:TEMP "kilo_backup_$(Get-Date -Format yyyyMMdd_HHmmss)"
+    $PkgJson = Join-Path $Target "package.json"
+    $PkgLock = Join-Path $Target "package-lock.json"
+    $NodeMods = Join-Path $Target "node_modules"
+    if ((Test-Path $PkgJson) -or (Test-Path $PkgLock) -or (Test-Path $NodeMods)) {
+        New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
+        if (Test-Path $PkgJson)  { Copy-Item $PkgJson  $BackupDir -Force -ErrorAction Stop }
+        if (Test-Path $PkgLock)  { Copy-Item $PkgLock  $BackupDir -Force -ErrorAction Stop }
+        if (Test-Path $NodeMods) { Copy-Item $NodeMods $BackupDir -Recurse -Force -ErrorAction Stop }
+        $HasBackup = $true
+        Write-Host "[BACKUP] node_modules + package.json + package-lock.json -> $BackupDir" -ForegroundColor Cyan
+    }
         Remove-Item -Path "$Target\*" -Recurse -Force -ErrorAction Stop
     }
 
@@ -85,6 +111,13 @@ try {
     $CopiedFiles = 0
     $CopiedDirs = 0
     Copy-SourceTree $Source $Target 0
+    # === E: 恢复 node_modules + package.json + package-lock.json（sync 后还原 @kilocode/plugin 依赖） ===
+    if ($HasBackup) {
+        if (Test-Path (Join-Path $BackupDir "package.json"))  { Copy-Item (Join-Path $BackupDir "package.json")  $PkgJson -Force -ErrorAction Stop }
+        if (Test-Path (Join-Path $BackupDir "package-lock.json")) { Copy-Item (Join-Path $BackupDir "package-lock.json") $PkgLock -Force -ErrorAction Stop }
+        if (Test-Path (Join-Path $BackupDir "node_modules")) { Copy-Item (Join-Path $BackupDir "node_modules") $NodeMods -Recurse -Force -ErrorAction Stop }
+        Write-Host "[RESTORE] @kilocode/plugin deps restored from backup" -ForegroundColor Green
+    }
 
     # Note: agents/ compat copy intentionally removed.
     # Having both agent/ and agents/ causes duplicate agent registration,

@@ -9,7 +9,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 - **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow-core.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`workflow-reference.md` / `skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 conductor 在需要时主动读取。`security-checklist.md` 作为 verifier 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按智能体按需加载，不作为通用上下文全量注入。
 - **长文档转为参考资料**：`AGENTS.md` 保留为设计标准和人工维护参考，不再承担高频运行时注入职责。
 - **默认路由**：模型选择只在 `kilo.json` 中维护；运行规则按角色和任务复杂度路由，不硬编码具体模型名。
-- **扩展入口内置**：默认仅启用 `context7` 远程文档检索；`gitnexus`（调用链/影响面分析）与 `playwright`（浏览器端验证）按需手动开启。
+- **扩展入口内置**：`context7` 远程文档检索与 `gitnexus`（调用链/影响面分析）默认启用；`playwright`（浏览器端验证）按需手动开启。
 - **职责分层**：通用规则集中在 `.kilo/instructions/`；`agent/*.md` 作为人工维护参考与职责差异记录；`kilo.json` 中的 `agent.*.prompt` 提供运行时行为锚点（极简、稳定、不堆积通用规则）。三层各司其职，避免重复维护。
 - **项目知识隔离**：项目特化知识不放在本仓库，而是下沉到真实项目根目录的 `AGENTS.md` 和 `.kilo/skills/`。
 - **质量改进依赖项目反馈**：质量提升依赖具体项目的测试、review 审查与反馈，不依赖自动改写规则文件。
@@ -150,7 +150,7 @@ diff -rq . ~/.config/kilo \
 
 本配置启用以下 MCP 服务器（详见 `kilo.json` 中的 `mcp` 节）：
 
-- **GitNexus** (`gitnexus`): 本地调用链与影响面分析（默认关闭，按需手动开启）
+- **GitNexus** (`gitnexus`): 本地调用链与影响面分析（默认启用）。需全局安装 `npm i -g gitnexus`，install.ps1 会前置校验 PATH 存在性。索引存于 `~/.gitnexus`，项目代码大改后建议跑 `gitnexus analyze <path>` 刷新图谱（注意：`gitnexus index` 仅注册已有 .gitnexus/ 文件夹，不重新分析）。
 - **Context7** (`context7`): 远程文档检索，用于拉取最新官方文档与库文档（默认启用，增强编码准确度）
 - **Playwright** (`playwright`): 浏览器端验证、截图和交互检查（默认关闭，按需手动开启）
 

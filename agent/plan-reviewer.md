@@ -102,6 +102,8 @@ plan:
     - unit_id: "string"
       goal: "string"
       key_files: ["string"]
+      forbidden_files: ["string"]
+      token_budget: int
       dependencies: ["string"]
       acceptance_criteria: ["string"]
       verification_method: "string"

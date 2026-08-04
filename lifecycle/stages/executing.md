@@ -1,7 +1,7 @@
 ---
 description: 生命周期阶段 EXECUTING — 实现。读取→编码→测试→修复，交付可运行代码。
 model_capability: code-generation
-token_budget: 16000        # 按单元拆分，每单元 ≤ 16000
+token_budget: 16000        # 按单元拆分，每单元 ≤ 16000，多单元按组分配
 # required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
 required_roles: [coder]
 ---
@@ -24,8 +24,9 @@ required_roles: [coder]
 2. **编码前知识获取**：
    - T0：读取目标文件，简短搜索确认范围。
    - T1+：优先用 GitNexus 分析执行流、调用链和影响面。
+   - 检索优先级链：rg 本地（排除 node_modules/dist/.git）→ LSP/本地 .d.ts → gitnexus（启用后）→ context7（仅陌生第三方库）。
    - 重复模式扫描：用 grep/glob 扫描本次改动模式在代码库的同类实现（UI 与非 UI 同等适用，不限于样式/布局/交互）；命中 ≥2 处必须走组件化/共享抽象方案。
-3. **编码**：最小改动原则，遵循现有代码风格，修改后搜索调用方确认兼容性。
+3. **编码**：按 conductor 派发的当前 unit_id 编码，不跨单元改动；最小改动原则，遵循现有代码风格，修改后搜索调用方确认兼容性。
 4. **自测自修**：改代码 → 跑测试 → 修复 → 再跑。TDD 模板：红→绿→重构。
 5. **运行验证**：测试、构建、类型检查、Lint、编码扫描（`node scripts/scan-encoding.mjs`）。
 6. **输出**：变更摘要、验收映射表、验证结果（含命令+exit code+关键输出片段）、遗留风险。
