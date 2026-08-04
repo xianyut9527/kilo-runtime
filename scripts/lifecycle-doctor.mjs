@@ -1813,7 +1813,7 @@ if (kj) {
 
 
 
-// H3. 搜索纪律机械门完整性（scripts/search-discipline-check.mjs 必须存在 + 语法 OK + 4 检测函数齐 + quality.md 机械前置门已引用）
+// H3. 搜索纪律机械门完整性（scripts/search-discipline-check.mjs 必须存在 + 语法 OK +  3 检测函数齐 + quality.md 机械前置门已引用）
 {
   const sdcPath = path.join(ROOT, 'scripts', 'search-discipline-check.mjs');
   const qmPath  = path.join(ROOT, 'lifecycle', 'stages', 'quality.md');
@@ -1827,8 +1827,8 @@ if (kj) {
     } else {
       const src = fs.readFileSync(sdcPath, 'utf8');
       const fnHits = (src.match(/^function detect/gm) || []).length;
-      if (fnHits < 4) {
-        fail('search-discipline.detectors', `detect 函数注册数=${fnHits}，期望 >=4`);
+      if (fnHits < 3) {
+        fail('search-discipline.detectors', `detect 函数注册数=${fnHits}，期望 >=3`);
       } else if (!fs.existsSync(qmPath)) {
         fail('search-discipline.wiring', 'lifecycle/stages/quality.md 不存在，无法校验机械前置门引用');
       } else {

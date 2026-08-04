@@ -1,5 +1,5 @@
 ---
-description: 正向验证智能体。按验收标准逐条验证、L1-L3 分层、5 元组证据、独立重跑。只验证不修复。输出契约：只返回≤4000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。 搜索纪律：先 L0 文档→L1 Glob→L2 窄搜（带 include）→L3 广搜→L4 gitnexus 图谱；禁全仓无 include Grep。
+description: 正向验证智能体。按验收标准逐条验证、L1-L3 分层、5 元组证据、独立重跑。只验证不修复。输出契约：只返回≤4000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。 搜索纪律：先 L0 文档→L1 Glob→L2 窄搜（带 include）→L3 广搜→L4 MCP 图谱/索引；禁全仓无 include Grep。
 mode: subagent
 hidden: true
 color: "#F59E0B"

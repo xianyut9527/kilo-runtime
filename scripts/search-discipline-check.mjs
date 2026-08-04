@@ -2,11 +2,10 @@
 // search-discipline-check.mjs
 // 搜索纪律机械门（A 层，模型无关）-- 防 agent 无脑全仓 Grep / pattern 爆炸 / 未优先图谱。
 //
-// 4 类违规检测（函数式注册，方便 U4 扩展）：
+// 3 类违规检测（函数式注册，方便 U4 扩展）：
 //   1. detectNoInclude           — Grep 无 include 限定（dispatch 缺文件范围）
 //   2. detectPatternAlternation  — pattern 顶层 | 数量 > 3
 //   3. detectOversizedPattern    — 单次 prompt_chars > 3000
-//   4. detectGraphNotPreferred   — 业务仓库（多 unit）未优先 gitnexus 图谱
 //
 // 用法：node scripts/search-discipline-check.mjs <task_id>
 // 退出码：
@@ -63,7 +62,7 @@ function countTopLevelPipe(s) {
 }
 
 // ============================================================
-// 4 类检测函数（注册式，U4 扩展只需 push 一个 {name, run}）
+// 3 类检测函数（注册式，U4 扩展只需 push 一个 {name, run}）
 // 返回 { violated: bool, detail: string }
 // ============================================================
 
@@ -133,30 +132,6 @@ function detectOversizedPattern(ctx) {
   return { violated: false, detail: `prompt_chars=${dp.prompt_chars} ≤ 3000` };
 }
 
-// 4. 业务仓库未优先图谱
-// 启发式：plan.units 数 > 3（= 业务仓库规模）但 dispatch_log 无任何 gitnexus/图谱 调度
-function detectGraphNotPreferred(ctx) {
-  const units = ctx?.plan?.task_dag?.units;
-  if (!Array.isArray(units) || units.length <= 3) {
-    return { violated: false, detail: `units=${units?.length || 0} ≤ 3，跳过` };
-  }
-  const log = Array.isArray(ctx?.dispatch_log) ? ctx.dispatch_log : [];
-  const usedGraph = log.some((e) => {
-    const a = String(e?.agent || '').toLowerCase();
-    return a.includes('gitnexus') || a.includes('graph') || a.includes('图谱');
-  });
-  if (!usedGraph && log.length > 0) {
-    return {
-      violated: true,
-      detail: `units=${units.length}（业务仓库规模）但 ${log.length} 次 dispatch 均未用 gitnexus/图谱`,
-    };
-  }
-  if (log.length === 0) {
-    return { violated: false, detail: 'dispatch_log 空（未到 dispatch 阶段），跳过' };
-  }
-  return { violated: false, detail: `已用图谱（dispatch=${log.length}）` };
-}
-
 // ============================================================
 // 注册表（U4 扩展 push 即可）
 // ============================================================
@@ -164,7 +139,6 @@ const checks = [
   { name: 'no_include',           run: detectNoInclude },
   { name: 'pattern_alternation',  run: detectPatternAlternation },
   { name: 'oversized_pattern',    run: detectOversizedPattern },
-  { name: 'graph_not_preferred',  run: detectGraphNotPreferred },
 ];
 
 // ============================================================

@@ -14,6 +14,12 @@
 - **验证**：lifecycle-doctor 49+ PASS / 0 FAIL / WARN → 0（49+50=49，因 H3 删除少 1 PASS，ironclad 由 WARN→INFO）；sync drift=0
 ## [Unreleased]
 
+- **fix(quality): 搜索纪律架构纯粹化——移除 gitnexus 硬编码耦合**
+  - AGENTS.md #15 L4 段：gitnexus_query/gitnexus_impact/gitnexus_context → MCP 图谱/索引能力（工具无关）
+  - kilo.json 8 agent prompt 末尾段同步
+  - scripts/search-discipline-check.mjs：移除 detectGraphNotPreferred（gitnexus 特定硬编码）
+  - lifecycle-doctor.mjs H3 段：4 函数齐 → 3 函数齐联动
+  - Kilo 框架搜索纪律不绑定任何特定图谱实现，由当前环境 MCP 决定
 - **feat(quality): 搜索纪律 T1 优化——四层阶梯 + 8 agent prompt 同步 + 机械门禁**
   - AGENTS.md #15 锚点：搜索四层阶梯 + 禁全仓无 include Grep + 业务仓库优先图谱
   - kilo.json 8 个 agent prompt 末尾加搜索纪律段（≤80 字符/agent）
