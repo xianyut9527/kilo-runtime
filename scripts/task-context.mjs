@@ -56,6 +56,7 @@ import { readContext, writeContext, appendTransitionLog, contextPath, buildIniti
          extractFrontmatter, die } from './task-context-runtime.mjs';
 import { discoverPostPreConstantMountsByAgent, discoverPostPreTieredMounts } from './lib/post-pre-mounts.mjs';
 import { getStageRequiredRoles } from './lib/stage-roles.mjs';
+import { cachedDerive, listMdFiles } from './lib/derived-cache.mjs';
 
 // 脚本所在目录（ESM 无 __dirname）
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -141,7 +142,8 @@ function deriveWriteMatrix() {
   return Object.freeze(matrix);
 }
 
-const WRITE_MATRIX = deriveWriteMatrix();
+// 静态派生（agent/*.md frontmatter 运行期不变）走 mtime 缓存，避免每次脚本启动全量扫描
+const WRITE_MATRIX = cachedDerive('writeMatrix', listMdFiles(AGENT_DIR), deriveWriteMatrix);
 
 // 编译期校验：派生矩阵中 conductor 必须包含关键字段；如 frontmatter 被破坏则启动即报错，fail-closed
 const REQUIRED_CONDUCTOR_FIELDS = [
@@ -868,6 +870,10 @@ function cmdDispatchPromptCheck(taskId) {
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
 
 function readGraphNodeIds() {
+  return cachedDerive('graphNodeIds', [GRAPH_PATH], _readGraphNodeIdsUncached);
+}
+
+function _readGraphNodeIdsUncached() {
   const ids = [];
   let text;
   try {
@@ -891,29 +897,31 @@ function readGraphNodeIds() {
 
 // 读 graph.yaml 节点的 executor 字段（判断是否 conductor 内建阶段）
 function readNodeExecutor(stageName) {
-  let text;
-  try {
-    text = fs.readFileSync(GRAPH_PATH, 'utf8');
-  } catch {
-    return null;
-  }
-  let inNodes = false;
-  let curId = null;
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(/\s#.*$/, '').trim();
-    if (!line) continue;
-    if (line === 'nodes:') { inNodes = true; continue; }
-    if (line === 'edges:') break;
-    if (inNodes) {
-      const idm = line.match(/^-\s*id\s*:\s*(\S+)\s*$/);
-      if (idm) { curId = idm[1]; continue; }
-      if (curId === stageName) {
+  const executors = cachedDerive('graphExecutors', [GRAPH_PATH], () => {
+    const map = {};
+    let text;
+    try {
+      text = fs.readFileSync(GRAPH_PATH, 'utf8');
+    } catch {
+      return map;
+    }
+    let inNodes = false;
+    let curId = null;
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.replace(/\s#.*$/, '').trim();
+      if (!line) continue;
+      if (line === 'nodes:') { inNodes = true; continue; }
+      if (line === 'edges:') break;
+      if (inNodes) {
+        const idm = line.match(/^-\s*id\s*:\s*(\S+)\s*$/);
+        if (idm) { curId = idm[1]; continue; }
         const em = line.match(/^executor\s*:\s*(\S+)\s*$/);
-        if (em) return em[1];
+        if (em && curId) map[curId] = em[1];
       }
     }
-  }
-  return null;
+    return map;
+  });
+  return executors[stageName] || null;
 }
 
 // S9: 发现 post:<STAGE>/pre:<STAGE> 恒定挂载 agent（无 when）

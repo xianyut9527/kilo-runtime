@@ -21,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cachedDerive, listMdFiles } from './derived-cache.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 模块位于 scripts/lib/，agent/ 在仓库根——需回溯两层（../.. ）
@@ -39,6 +40,10 @@ const AGENT_DIR = path.resolve(__dirname, '..', '..', 'agent');
 //     - tiers: [T2] 解析为数组（去空格）；恒定判定不纳入
 // ============================================================
 function parsePostPreMounts(mode) {
+  return cachedDerive(`postPreMounts:${mode}`, listMdFiles(AGENT_DIR), () => _parsePostPreMountsUncached(mode));
+}
+
+function _parsePostPreMountsUncached(mode) {
   const result = [];
   let files;
   try { files = fs.readdirSync(AGENT_DIR); } catch { return result; }

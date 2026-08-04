@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cachedDerive } from './derived-cache.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 模块位于 scripts/lib/，lifecycle/ 与 agent/ 在仓库根——需回溯两层（../..）
@@ -26,6 +27,12 @@ const STAGES_DIR = path.join(ROOT, 'lifecycle', 'stages');
 // 读 stage frontmatter required_roles（agent-stage 匹配 / provenance gate 依据）
 // 无 frontmatter 或无 required_roles 声明 → []（fail-open 兼容）
 export function getStageRequiredRoles(stageName) {
+  const stageLower = stageName.toLowerCase();
+  const stagePath = path.join(STAGES_DIR, `${stageLower}.md`);
+  return cachedDerive(`stageRoles:${stageLower}`, [stagePath], () => _getStageRequiredRolesUncached(stageName));
+}
+
+function _getStageRequiredRolesUncached(stageName) {
   const stageLower = stageName.toLowerCase();
   const stagePath = path.join(STAGES_DIR, `${stageLower}.md`);
   if (!fs.existsSync(stagePath)) return [];
@@ -41,6 +48,11 @@ export function getStageRequiredRoles(stageName) {
 // （如 fixer——仅 QUALITY 任一视角 FAIL 时才派发）。文件不存在 → false。
 // 仅扫描 mount: 声明段（剔除注释行），避免误匹配 description 等文本。
 export function isConditionalRole(roleName) {
+  const agentPath = path.join(ROOT, 'agent', `${roleName}.md`);
+  return cachedDerive(`condRole:${roleName}`, [agentPath], () => _isConditionalRoleUncached(roleName));
+}
+
+function _isConditionalRoleUncached(roleName) {
   const agentPath = path.join(ROOT, 'agent', `${roleName}.md`);
   if (!fs.existsSync(agentPath)) return false;
   const text = fs.readFileSync(agentPath, 'utf8');

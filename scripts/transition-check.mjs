@@ -44,6 +44,7 @@ import { fileURLToPath } from 'node:url';
 import { readContext, writeContext, appendTransitionLog, readHooksFromConfig as tcReadHooks, die } from './task-context-runtime.mjs';
 import { discoverPostPreConstantMounts, discoverPostPreTieredMounts } from './lib/post-pre-mounts.mjs';
 import { getStageRequiredRoles, isConditionalRole, hasRequirementSpread, hasSpreadTrigger, validateRequirementSpread } from './lib/stage-roles.mjs';
+import { cachedDerive } from './lib/derived-cache.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
@@ -158,6 +159,22 @@ function parseGraphFile(text) {
     }
   }
   return { nodes, edges, top };
+}
+
+// graph.yaml 走 mtime 缓存（静态拓扑运行期不变）。parseGraphFile 返回 Map（不可
+// JSON 序列化），缓存层存 plain object，取出后还原 Map，调用方 API 不变。
+function loadGraphCached() {
+  const data = cachedDerive('graphFile', [GRAPH_PATH], () => {
+    let text;
+    try {
+      text = fs.readFileSync(GRAPH_PATH, 'utf8');
+    } catch (e) {
+      die(1, `Error: cannot read graph.yaml: ${e.message}`);
+    }
+    const { nodes, edges, top } = parseGraphFile(text);
+    return { nodes: Object.fromEntries(nodes), edges, top };
+  });
+  return { nodes: new Map(Object.entries(data.nodes)), edges: data.edges, top: data.top };
 }
 
 // ============================================================
@@ -315,13 +332,8 @@ function main() {
   const TO = args[toIdx + 1];
 
   // 加载 graph.yaml（仅主图）
-  let graphText;
-  try {
-    graphText = fs.readFileSync(GRAPH_PATH, 'utf8');
-  } catch (e) {
-    die(1, `Error: cannot read graph.yaml: ${e.message}`);
-  }
-  const graph = parseGraphFile(graphText);
+  // 加载 graph.yaml（仅主图，走 mtime 缓存；读失败由 loadGraphCached 内部 die 处理）
+  const graph = loadGraphCached();
 
   // 校验节点存在性
   for (const n of [FROM, TO]) {

@@ -12,6 +12,7 @@ import path from 'node:path';
 import os from 'node:os';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { cachedDerive } from './lib/derived-cache.mjs';
 
 // 脚本所在目录（ESM 无 __dirname）
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -84,29 +85,26 @@ function assertValidTaskId(taskId) {
 
 // 从 lifecycle/config.yaml 读取响应式 Hooks 阈值（v2：hooks.quality.max_total_cycles）
 // 失败降级到 7
+function readConfigText() {
+  return cachedDerive('configText', [CONVERGENCE_SOURCE], () => {
+    try { return fs.readFileSync(CONVERGENCE_SOURCE, 'utf8'); }
+    catch { return null; }
+  });
+}
+
 function readHooksFromConfig() {
-  try {
-    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
-    const mtc = text.match(/max_total_cycles:\s*(\d+)/);
-    return {
-      max_total_cycles: mtc ? parseInt(mtc[1], 10) : 7,
-    };
-  } catch {
-    return { max_total_cycles: 7 };
-  }
+  const text = readConfigText();
+  if (!text) return { max_total_cycles: 7 };
+  const mtc = text.match(/max_total_cycles:\s*(\d+)/);
+  return { max_total_cycles: mtc ? parseInt(mtc[1], 10) : 7 };
 }
 
 // 从 lifecycle/config.yaml 读取子图融合阈值（保留 convergence.mm_fusion_max_rounds）
 function readConvergenceFromConfig() {
-  try {
-    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
-    const mm = text.match(/mm_fusion_max_rounds:\s*(\d+)/);
-    return {
-      mm_fusion_max_rounds: mm ? parseInt(mm[1], 10) : 3,
-    };
-  } catch {
-    return { mm_fusion_max_rounds: 3 };
-  }
+  const text = readConfigText();
+  if (!text) return { mm_fusion_max_rounds: 3 };
+  const mm = text.match(/mm_fusion_max_rounds:\s*(\d+)/);
+  return { mm_fusion_max_rounds: mm ? parseInt(mm[1], 10) : 3 };
 }
 
 // ============================================================
@@ -209,48 +207,36 @@ function parseTierDefaults(text) {
 }
 
 function readTierDefaults() {
-  try {
-    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
-    return parseTierDefaults(text);
-  } catch {
-    return { execution: {} };
-  }
+  const text = readConfigText();
+  if (!text) return { execution: {} };
+  return parseTierDefaults(text);
 }
 
 // 从 lifecycle/config.yaml 读取 size-check 阈值（conductor pre-dispatch 硬门依据）
 // 缺省 120000 字符（约 30K token，主会话 context 安全水位）
 function readSizeCheckThreshold() {
-  try {
-    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
-    const m = text.match(/size_check_threshold:\s*(\d+)/);
-    return m ? parseInt(m[1], 10) : 120000;
-  } catch {
-    return 120000;
-  }
+  const text = readConfigText();
+  if (!text) return 120000;
+  const m = text.match(/size_check_threshold:\s*(\d+)/);
+  return m ? parseInt(m[1], 10) : 120000;
 }
 
 // 从 lifecycle/config.yaml 读取 dispatch-prompt-check 阈值（conductor pre-dispatch 硬门依据）
 // 缺省 3000 字符：单次 task prompt 字符数上限（小任务上限 ×1.5 安全系数）
 function readDispatchPromptThreshold() {
-  try {
-    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
-    const m = text.match(/dispatch_prompt_threshold:\s*(\d+)/);
-    return m ? parseInt(m[1], 10) : 3000;
-  } catch {
-    return 3000;
-  }
+  const text = readConfigText();
+  if (!text) return 3000;
+  const m = text.match(/dispatch_prompt_threshold:\s*(\d+)/);
+  return m ? parseInt(m[1], 10) : 3000;
 }
 
 // 从 lifecycle/config.yaml 读取单次 task 委派涉及文件数上限（dispatch-prompt-check 依据）
 // 缺省 3；配置缺失时返回 null（表示不限制）
 function readMaxFilesPerTask() {
-  try {
-    const text = fs.readFileSync(CONVERGENCE_SOURCE, 'utf8');
-    const m = text.match(/max_files_per_task:\s*(\d+)/);
-    return m ? parseInt(m[1], 10) : null;
-  } catch {
-    return null;
-  }
+  const text = readConfigText();
+  if (!text) return null;
+  const m = text.match(/max_files_per_task:\s*(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
 }
 
 // 初始 task_context 结构（按 conductor.md §task_context 结构摘要）
