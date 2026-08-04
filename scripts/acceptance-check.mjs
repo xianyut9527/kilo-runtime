@@ -17,7 +17,6 @@
 //   1 = 无 acceptance_map / 无 verify_command（建议性，回退 LLM verifier，不算 FAIL）
 //   2 = 任一 verify_command exit 非零（FAIL，列出哪条）
 //
-// FAIL 时 conductor 应捕获教训：category=ACCEPTANCE_FAIL（lessons.mjs record）。
 
 import fs from 'node:fs';
 import path from 'node:path';

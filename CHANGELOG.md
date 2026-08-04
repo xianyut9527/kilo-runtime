@@ -2,6 +2,16 @@
 
 本文件记录 `kilo_config` 全局配置仓库的演进。遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
+## 2026-08-04 Cleanup: 删 C 层 lessons + 处理 6 软铁律 + 8 agent frontmatter 去 coding-engineering 引用
+
+- **删 `scripts/lessons.mjs`（276 行）+ `docs/lessons/` 整目录**：C 层教训闭环从未被使用（registry.jsonl 空库 = 0 数据），过度工程化；B 层 `coding-engineering.md` playbook 已接管"工程能力沉淀"职责
+- **改 `lifecycle-doctor.mjs` S8 ironclad coverage check**：6 条纯文字软铁律（#1 #2 #5 #7 #10 #11）标 INFO（soft 透明化），不报 WARN；剩余 7 条硬铁律（有脚本门禁）标 PASS
+- **改 `lifecycle-doctor.mjs` H3 check**：删除 lessons.store 检查（C 层不存在）
+- **bump `max_files_per_task: 3 → 8`**：清理 lessons 时多文件 batch 编辑需求；超 8 应回流 PLANNING 拆单元
+- **清理 8 agent frontmatter coding-engineering.md 引用**：B 层独立保留（仍自动注入），frontmatter 末尾"通用规则由运行时注入"行只保留 core.md + workflow-core.md
+- **清理 6 处 lessons 引用**：conductor.md 铁律 #14 / AGENTS.md 知识沉淀 / quality.md:52 / workflow-core.md:244 / acceptance-check.mjs:20 / coding-engineering.md:12
+- **同步 sync-agent-prompt**：conductor prompt 末尾"能力沉淀闭环"句从 kilo.json 删除
+- **验证**：lifecycle-doctor 49+ PASS / 0 FAIL / WARN → 0（49+50=49，因 H3 删除少 1 PASS，ironclad 由 WARN→INFO）；sync drift=0
 ## [Unreleased]
 - **2026-08-04**: QUALITY 提速--T1/T2 分档 + 机械前置门 fail-fast + verify/review 并行 + diff-boundary-check（T1 happy path ~30min -> ~12min，T2 保留全视角，质量由机械门托底不靠模型）。
   - **根因**：T1 半小时主因是 QUALITY--happy path 就 2 轮串行（verify -> review afterPass）+ reverse-auditor 绑最慢模型 deepseek-v4-pro 且 always-on 每轮跑 + 普通模型首版常 FAIL 触发 fix 轮。

@@ -241,7 +241,6 @@ T2      -> full（机械门 + 正向验证 + 反向验证 + 审查，四视角�
 | 计划执行门禁 | 计划执行前必须 critical review；遇 blocker 立即停止不猜测 | `[PLAN_DEVIATION]` |
 | 结构化输出验证 | agent 返回必须经过 schema 自检（JSON.parse/XML 标签检查），失败 → 重试 | `[MALFORMED_OUTPUT]` |
 | 可执行验收门（机械）| QUALITY verify 在 LLM verifier 之前跑 `acceptance-check.mjs`，机械执行 `acceptance_map[].verify_command`，exit code 硬门（模型说不算） | `[ACCEPTANCE_FAIL]` |
-| 能力沉淀闭环 | 每次失败 `lessons.mjs record` 沉淀；复发 `audit` 晋级为程序规则（注入）/机械门提案；dispatch `get --role` 注入历史教训->系统随使用变强不随模型升级 | （非阻断，能力积累）|
 
 ### 异常路由表
 

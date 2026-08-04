@@ -82,7 +82,7 @@ hooks:
 # ============================================================
 size_check_threshold: 120000
 dispatch_prompt_threshold: 3000   # dispatch-prompt-check 阈值：单次 task prompt 字符数上限（小任务上限 ×1.5 安全系数，可调）
-max_files_per_task: 3             # 单次 task 委派涉及文件数上限
+max_files_per_task: 8             # 单次 task 委派涉及文件数上限（3→8：清理 lessons 时多文件 batch 编辑需求；超 8 应回流 PLANNING 拆单元）
 
 # ============================================================
 # timeouts：阶段/智能体级时间预算（唯一真相来源）

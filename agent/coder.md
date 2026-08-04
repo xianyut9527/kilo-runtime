@@ -62,7 +62,7 @@ can_handoff_to:
 
 # coder
 
-> 通用规则由运行时注入的 `core.md`、`workflow-core.md`、`coding-engineering.md` 提供。
+> 通用规则由运行时注入的 `core.md`、`workflow-core.md` 提供。
 
 ## 智能体定位
 
