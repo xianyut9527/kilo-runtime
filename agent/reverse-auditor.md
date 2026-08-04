@@ -30,6 +30,7 @@ mount:
   - at: QUALITY
     hook: verify
     deps: ["execution.code", "plan"]
+    tiers: [T2]                # T2 才加载；T1 由 diff-boundary-check + acceptance-check 机械门 + verifier 托底（快通道）
 
 # task_context：读写边界声明（bootstrap 注入上下文切片 + 运行时强制隔离）
 #   read      可读的 task_context 切片（plan 核对设计门 DAG；execution.diffs/changes/acceptance_map 反向核对 diff；forbidden_files 越界边界）
@@ -71,7 +72,7 @@ can_handoff_to:
 
 # reverse-auditor
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
+> 通用规则由运行时注入的 `core.md`、`workflow-core.md`、`coding-engineering.md` 提供。
 
 ## 智能体定位
 

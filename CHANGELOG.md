@@ -3,6 +3,46 @@
 本文件记录 `kilo_config` 全局配置仓库的演进。遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
 ## [Unreleased]
+- **2026-08-04**: QUALITY 提速--T1/T2 分档 + 机械前置门 fail-fast + verify/review 并行 + diff-boundary-check（T1 happy path ~30min -> ~12min，T2 保留全视角，质量由机械门托底不靠模型）。
+  - **根因**：T1 半小时主因是 QUALITY--happy path 就 2 轮串行（verify -> review afterPass）+ reverse-auditor 绑最慢模型 deepseek-v4-pro 且 always-on 每轮跑 + 普通模型首版常 FAIL 触发 fix 轮。
+  - **新增 `scripts/diff-boundary-check.mjs`（A 层第四机械门）**：读 `execution.changes` vs `plan.task_dag` 的 `key_files`/`forbidden_files`，机械防 SCOPE_CREEP/FORBIDDEN_TOUCH。exit 0 在界内 / 2 越界 / 1 无 plan 回退 LLM。把 reverse-auditor 的机械可覆盖职责转脚本断言。
+  - **T1/T2 分档**：`agent/reverse-auditor.md` + `agent/reviewer.md` mount 加 `tiers: [T2]`--T1 不加载（走机械门+verifier 快通道），T2 全视角。`lifecycle/stages/quality.md` `required_roles` 从 `[verifier, reverse-auditor, reviewer, fixer]` -> `[verifier, fixer]`（reverse-auditor/reviewer 经 tiers:[T2] 仅 T2 加载，非 T1 必配）。
+  - **机械前置门 fail-fast（QUALITY LLM 之前）**：`quality.md` v3 段--acceptance-check + diff-boundary-check 并行先跑，任一 exit 2 直接送 fixer（机械信号清晰，跳过本轮 LLM verify），全 PASS 才进 LLM hooks。conductor 铁律 #14 验收门 bullet 同步补 diff-boundary-check。
+  - **verify + review 并行（1 轮替 2 轮）**：reviewer 去 `trigger: afterPass`，verify hooks + review hooks 同消息并行启动（视角隔离不变）。happy path 省 1 整轮。
+  - **workflow-core.md review_mode 决策表**：T0=none / T1=fast（机械门+正向验证）/ T2=full（四视角全并行）。明示"T1 快通道不是质量打折"--质量由 acceptance-check（机器证明对）+ diff-boundary（机器证明在界）+ verifier + coding-engineering.md playbook 托底，判断类职责留 T2 升级。
+  - **质量保证（不靠模型）**：T1 机械可覆盖职责（correctness/scope）由脚本门机器证明；判断类职责（LOCAL_PATCH/FAKE_CONTEXT/设计质量）由 coding-engineering.md playbook 注入 + 留 T2 升级 + lessons 闭环捕获复发。T2 复杂/安全/跨模块保留四视角完整审查。
+  - **验证**：lifecycle-doctor 49 PASS / 0 FAIL / 2 WARN（required_roles 减 2 角色 -> PASS 数 51->49 正常；lessons.store 空库 WARN + 既有 ironclad WARN）；diff-boundary-check 三路径（越界+触禁 exit2 / 在界 exit0 / 无 plan exit1）；sync drift=0。
+
+- **2026-08-04**: B 层编码工程能力沉淀--`coding-engineering.md` playbook 自动注入（设计模式决策表 + 组件化硬规则 + 优雅编码硬标准 + 反模式检测）。补齐三层沉淀的中间层。
+  - **背景**：A 层（机械验证）+ C 层（教训闭环）已建，但 coder 自身工程能力仍靠模型即兴--普通模型不懂设计模式/组件化/优雅，写出来质量低、fixer 来回修、又慢又差。B 层把编码思维沉淀进程序，普通模型照顶级工程流程写。
+  - **新增 `.kilo/instructions/coding-engineering.md`（全局自动注入，与 core.md/workflow-core.md 同级）**：
+    - **设计模式决策表**：≥2 分叉先匹配模式（Strategy/Adapter/Factory/State/Observer/Decorator/Builder/Facade 等）+ YAGNI 守门（≥3 分叉或预期增长才引入）。禁止 if/else 长链。
+    - **组件化硬规则**：≥2 处同类必须抽象（util/hook/component/service/adapter/mixin/design token）；抽象层级归位（UI/逻辑/集成分域）；数据流单向、依赖方向合规；公共 API 稳定；依赖注入；扩展点预留。违反 -- `[LOCAL_PATCH]`/`[COPY_PASTE_FIX]`。
+    - **优雅编码硬标准**（可检测非审美）：命名/函数≤40行/参数≤4/嵌套≤3/early return/immutability/无魔法数字/边界错误处理/DRY 但不过度。
+    - **反模式检测表**：God object/散弹手术/基本类型偏执/深嵌套/长参数列/注释代偿/死代码残留，含检测信号 + 修正。
+    - **落地流程 9 步**（编码前过一遍，T1+ 硬门）：落点/依赖方向/复用优先/模式匹配/组件化前摄扫描/影响面/反模式自查/编码/改后 grep 调用方。
+  - **接线**：8 个 agent .md 的"运行时注入"引用行加 coding-engineering.md；coder.md 架构意识段加指针（指向完整 playbook + 落地 9 步）。与 `docs/lessons/` 联动：本文件是**基线工程能力**（静态），lessons 是**积累的失败教训**（动态晋级）--coding 失败（LOCAL_PATCH 等）经 lessons 闭环晋级回填本 playbook。
+  - **验证**：lifecycle-doctor 51 PASS / 0 FAIL / 2 WARN；sync drift=0。
+
+- **2026-08-04**: 能力沉淀架构--C 层自改进教训闭环 + A 层可执行验收门（能力长在程序里，随使用越来越强，跟模型解耦；模型绑定不动）。
+  - **原则**：LLM 判定的门禁随模型智商缩放，机械断言的门禁不缩放。把每一次失败自动沉淀成永久能力（程序规则或机械脚本门），agent 带着系统历史教训开干。普通模型 + 100 条教训 > 强模型 + 0 条教训。
+  - **C 层 `scripts/lessons.mjs`（教训库 CLI，核心）**：跨任务持久教训库 `docs/lessons/registry.jsonl` + 晋级规则 `<category>.md`。子命令 record/get/audit/promote/list。闭环：捕获（QUALITY FAIL/fixer）-> audit 复发检测 -> 程序类自动晋级（追加规则到 <category>.md，git diff 可回退）/ 机械类提案（人工建脚本门，范本 scan-encoding.mjs）-> get 注入每次 dispatch。分类 = reverse-auditor issues[].tag + ACCEPTANCE_FAIL。
+  - **A 层 `scripts/acceptance-check.mjs`（可执行验收门，第一门）**：读 `execution.acceptance_map[]`，机械跑每条 `verify_command`，exit code 硬门。在 LLM verifier 之前跑（fail fast）。exit 2=FAIL -> fixer + 捕获教训 / exit 1=无 verify_command 回退 LLM / exit 0=继续 LLM 做边界判定。把"代码对不对"从 LLM 判定转为机器证明。
+  - **接线 `agent/conductor.md` 铁律 #14（能力沉淀闭环）**：pre-dispatch 注入（`lessons.mjs get --role <role>`）/ QUALITY verify 验收门（`acceptance-check.mjs`）/ FAIL 捕获（`lessons.mjs record`）/ on:done 晋级（`lessons.mjs audit`）。description 同步经 sync-agent-prompt 写入 kilo.json。
+  - **schema**：`agent/coder.md` + `.kilo/instructions/output-schema.md` 的 acceptance_map 加可选 `verify_command` 字段（能机械化时必写，沉淀为机械门）。`workflow-core.md` 质量门禁表加"可执行验收门"+"能力沉淀闭环"两行。
+  - **检测**：`lifecycle-doctor.mjs` 新增 H3 lessons 库完整性（registry.jsonl 每行可解析；首次空库 WARN 不 FAIL）。
+  - **文档**：`docs/lessons/README.md`（三层沉淀模型 + 分类表 + 晋级生命周期 + "scan-encoding.mjs 是手动沉淀范本"说明）。
+  - **模型绑定不动**：conductor + small_model 维持 `hx/MiniMax-M3`。质量提升走工程沉淀（机械门 + 注入规则 + 自改进闭环），不走换模型--目标普通模型也能输出顶级质量。
+  - **验证**：lessons.mjs 端到端（record 3 条同类 -> audit 自动晋级程序类 -> get 注入可见）；acceptance-check.mjs 三路径（pass exit0 / fail exit2 / 无命令 exit1）；lifecycle-doctor 51 PASS / 0 FAIL / 2 WARN（lessons.store 空库 WARN + 既有 ironclad WARN）；sync drift=0；kilo.json 仅 conductor prompt 一处变更（数组紧凑格式保留）。
+
+- **2026-08-04**: 编排工程化提速--pre-dispatch 门禁合并 + 独立单元默认并行（砍结构浪费不碰质量机制；模型绑定不动--质量靠工程沉淀，不靠换模型，目标是普通模型也能输出顶级质量）。
+  - **改动 1·四连门禁 pre-dispatch 合并（零舍弃）**：`scripts/task-context.mjs` 新增 `pre-dispatch <task_id> --prompt-chars <N> [--file-count <F>]` 子命令--一次进程原子完成"写 dispatch_pending + prompt 规模校验 + size 校验"，返回单一 verdict（exit 0/1/2 语义与旧三连等价）。替代旧 `set dispatch_pending` + `dispatch-prompt-check` + `size-check` 三连串行调用，每次 dispatch 省 2 次 node 进程启动 + 2 个 conductor reasoning 回合。抽 `evalSizeCheck`/`evalDispatchPrompt` 纯判定函数（不副作用 exit），独立 `size-check`/`dispatch-prompt-check` 命令保留不动（doctor / 向后兼容）。T1 任务 ~6 dispatch ≈ 省 12 个 reasoning 回合。
+  - **改动 2·独立单元默认并行（零舍弃，与改动 1 联动）**：`docs/conductor-full-spec.md` §智能体加载规则"主槽逐单元派发"段 + `AGENTS.md` 锚点 14 由"可并行同层单元"（许可式）改为"同层无依赖单元默认按并行组规则并行 dispatch"（默认式）；有 DAG 依赖的单元仍按依赖串行。`workflow-core.md` 早有"无依赖单元->并行执行"，但被四连门禁的串行脚本调用堵死--门禁合并后并行才真正可行。每单元仍独立 coder+verifier 闭环，视角隔离物理独立，质量不变，只省 wall-clock。多单元任务 EXECUTING 省 ~40-60%。
+  - **模型绑定不动（质量走工程沉淀，不换模型）**：conductor + small_model 维持 `hx/MiniMax-M3`。明确放弃"换更强模型提质量"路径--目标是靠机械门禁把质量门槛固化进脚本/配置，使普通模型也能输出顶级质量。下一阶段工程化沉淀方向：可执行验收门（acceptance criteria -> test 命令 -> exit code 机械门禁，替代 LLM 判定）、符号存在性检查（防幻觉 import/API）、diff 边界检查（机械防 SCOPE_CREEP）、spec 冻结逐字重注入（防漂移）。
+  - **同步范围**：`agent/conductor.md`（铁律 #9 step 0b+0a -> step 0 pre-dispatch + description + 每单元门禁 + 并行边界 + key_files 兜底引用）、`docs/conductor-full-spec.md`（§委派前工程化安全门合并+重编号 + §智能体加载规则默认并行 + 并行安全边界 + 异常表 [AGENT_UNAVAILABLE] 行）、`AGENTS.md`（锚点 13 门禁流程 + 锚点 14 并行）、`kilo.json`（conductor prompt 经 sync-agent-prompt 同步为 pre-dispatch description；模型绑定不动）。`lifecycle/config.yaml` 阈值字段不变（pre-dispatch 复用 `dispatch_prompt_threshold`/`size_check_threshold`/`max_files_per_task`）。
+  - **明示不动（守"零舍弃"）**：三验证视角（verifier+reviewer+reverse-auditor）全保留；四连门禁检查语义全保留（只合并调用方式），exit code/审计/阻断不变；定级规则、"连 1 行也走设计门"、"拿不准就升档"、T0 前置硬否决、`max_total_cycles=3` 熔断、transition-check provenance gate 全不动；模型绑定不动。
+  - **验证**：lifecycle-doctor 51 PASS / 0 FAIL / 1 WARN（WARN 为既有纯文字铁律覆盖率提示，与本次无关）；`node --check scripts/task-context.mjs` 通过；`sync-agent-prompt --check` drift=0；`pre-dispatch --prompt-chars 500` exit 0 PASS / `--prompt-chars 99999` exit 2 阻断 / 缺 `--prompt-chars` exit 2 用法错误 / 旧 `size-check` 独立命令仍可用。
+
 - **2026-08-04**: 编排性能与检索本地化加固——gitnexus 默认启用 + context7 降噪 + 检索本地化规范 + T0 硬否决 + 逐单元派发。
   - **逻辑变更范围**：源文件改动与文档同步分两批落地，本条目一并记录。
   - **kilo.json**：`gitnexus.enabled: true`（默认启用本地调用链/影响面分析，替代慢速远程检索）；`context7.timeout` 8000→6000（降噪，减少远程文档等待）。

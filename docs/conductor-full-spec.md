@@ -155,10 +155,10 @@ INIT（conductor 内建）→ INIT（conductor 内建）
 >   1. 先对声明了 `after` 的智能体做拓扑排序（按依赖链先后串行执行）；
 >   2. 未声明 `after` 的智能体按 **agent 文件名字典序** 排列，组织为同一并行组；
 >   3. 两种顺序在 resolved 视图中合并为该挂载点的最终启动序列（并行组 + after 拓扑链）。
-> **并行安全边界**（见铁律 #9 工程化四连）：对每个待 dispatch 的 task——1. step 0b dispatch-prompt-check 逐个先行（未写入 dispatch_pending → exit 1 审计失败；prompt 超 dispatch_prompt_threshold → exit 2 阻断）；2. step 0a size-check 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；3. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；4. 结果返回后逐个 log-dispatch（step 1）；5. 任一并行 task 返回 >4000 字符 → `overload_count` +1（step 2）；≥3 → 摘要压缩→仍超限切 worktree。
+> **并行安全边界**（见铁律 #9 工程化四连）：对每个待 dispatch 的 task——1. pre-dispatch 逐个先行（合并 0b+0a 一次进程；prompt 超 dispatch_prompt_threshold 或 file_count 超限 → exit 2 阻断；size 超限 → 摘要压缩 → 仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch（step 1）；4. 任一并行 task 返回 >4000 字符 → `overload_count` +1（step 2）；≥3 → 摘要压缩→仍超限切 worktree。
 > 
 
-   2. 执行 `N` 主槽（委派或内建）——**主槽逐单元派发**：conductor 不批量派发整个 EXECUTING 段，按 `plan.task_dag.units` 逐单元派发 task，每单元独立 goal + acceptance_criteria + forbidden_files + token_budget；单元依赖按 DAG 拓扑排序；可并行同层单元按并行组规则组织（引用铁律 #11 并行策略）。
+   2. 执行 `N` 主槽（委派或内建）——**主槽逐单元派发**：conductor 不批量派发整个 EXECUTING 段，按 `plan.task_dag.units` 逐单元派发 task，每单元独立 goal + acceptance_criteria + forbidden_files + token_budget；单元依赖按 DAG 拓扑排序；同层无依赖单元默认按并行组规则并行 dispatch（铁律 #11）；有 DAG 依赖的单元按依赖串行。
    3. 执行 `post:N` 挂载点（同 pre 语义）
    4. **机械流转裁判**：流转前必须执行 `node scripts/transition-check.mjs <task_id> --from <当前节点> --to <目标节点>`；
       - exit 0 → 允许流转（`quality.round` 已由框架自动递增，conductor 禁止手工 set convergence/quality 计数字段）；
@@ -223,11 +223,10 @@ T1+ 任务加载 coder 智能体时，委派包仍必须包含（**核心摘要*
 > **token_budget 单列（单元级调度参数，不进委派包六条）**：每单元 token 预算由 conductor 在逐单元派发时单列（与铁律 #6 六条标准一致）。
 
 委派前工程化安全门（替代旧 prompt 长度文字约束，运行时机械强制，见铁律 #9）：
-1. **step 0b dispatch-prompt-check（事前审计）**：conductor dispatch 前先 `task-context.mjs set <task_id> dispatch_pending.prompt_chars <N> --agent conductor`（及可选 dispatch_pending.file_count）写入待派 prompt 信息，再 `task-context.mjs dispatch-prompt-check <task_id>` 校验——dispatch_pending 未写入/非法 → exit 1（审计失败）；prompt_chars > `config.dispatch_prompt_threshold`（缺省 3000）或 file_count > `max_files_per_task`（缺省 3）→ exit 2（阻断 dispatch）；通过 → exit 0
-2. **step 0a pre-dispatch size-check**：`task-context.mjs size-check <task_id>`，task_context 字符数 > `config.size_check_threshold`（缺省 120000）→ exit 2 → 先提取核心摘要压缩（保留 intent/sizing/config/current_stage/quality.verdict/dispatch_log/status，清空 execution/verification/plan 细节）→ 重测 → 仍超限才 `[CONTEXT_UNSAFE]` 切 agent_manager worktree
-3. **step 1 log-dispatch provenance**：`task-context.mjs log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>`，agent 白名单（注册智能体）+ stage 白名单（graph.yaml 节点）+ agent-stage 匹配（agent ∈ stage.required_roles）
-4. **transition-check provenance gate**：PLANNING→EXECUTING / EXECUTING→QUALITY / QUALITY→DELIVERING 边校验 dispatch_log 含必经智能体，缺则 `[PROCESS_VIOLATION]`
-5. **step 2 overload_count 闭环**：task 返回 >4000 字符 → `[RETURN_OVER_LIMIT]` + 计数 +1；≥3 → 先摘要压缩，仍超限才切 agent_manager
+1. **step 0 pre-dispatch（合并 0b prompt-check + 0a size-check，一次进程）**：conductor dispatch 前执行 `task-context.mjs pre-dispatch <task_id> --prompt-chars <N> [--file-count <F>]`，原子完成"写 dispatch_pending + prompt 规模校验 + size 校验"--dispatch_pending 非法 → exit 1（审计失败）；prompt_chars > `config.dispatch_prompt_threshold`（缺省 3000）或 file_count > `max_files_per_task`（缺省 3）或 task_context 字符数 > `config.size_check_threshold`（缺省 120000）→ exit 2（阻断 dispatch；区分来源看 stdout：`FAIL dispatch-prompt-check` = prompt/文件超限，压缩重试；size 行超限 = 先提取核心摘要压缩保留 intent/sizing/config/current_stage/quality.verdict/dispatch_log/status 清空 execution/verification/plan 细节，重测仍超限才 `[CONTEXT_UNSAFE]` 切 agent_manager worktree）；通过 → exit 0
+2. **step 1 log-dispatch provenance**：`task-context.mjs log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>`，agent 白名单（注册智能体）+ stage 白名单（graph.yaml 节点）+ agent-stage 匹配（agent ∈ stage.required_roles）
+3. **transition-check provenance gate**：PLANNING→EXECUTING / EXECUTING→QUALITY / QUALITY→DELIVERING 边校验 dispatch_log 含必经智能体，缺则 `[PROCESS_VIOLATION]`
+4. **step 2 overload_count 闭环**：task 返回 >4000 字符 → `[RETURN_OVER_LIMIT]` + 计数 +1；≥3 → 先摘要压缩，仍超限才切 agent_manager
 
 ## 强制流程日志（T1+，6 节点）
 
@@ -262,7 +261,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 | 触发源                                 | 信号                                                         | 说明                                                                                                 |
 | -------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | 智能体 wall-clock 超时                 | `[AGENT_TIMEOUT]`                                            | 见 §智能体加载流程 §超时守卫；分启动卡死（agent_startup_s）与执行超时（per_agent_s/stage_default_s） |
-| `task` 工具抛异常/启动失败/并发调度被中断（`Tool execution aborted` / `Tool execution cancelled`） | `[AGENT_UNAVAILABLE]`                                        | abort 后会话断开几乎无法重试：**前置杜绝**（见铁律 #9 工程化四连：step 0b dispatch-prompt-check + step 0a size-check + step 1 log-dispatch provenance + step 2 overload_count 闭环 + 铁律 #11 并行策略的并行安全边界），不尝试重试，直接按节点 on_fail 派发或降级 conductor 内建；区别于超时 |
+| `task` 工具抛异常/启动失败/并发调度被中断（`Tool execution aborted` / `Tool execution cancelled`） | `[AGENT_UNAVAILABLE]`                                        | abort 后会话断开几乎无法重试：**前置杜绝**（见铁律 #9 工程化四连：step 0 pre-dispatch（合并 0b+0a）+ step 1 log-dispatch provenance + step 2 overload_count 闭环 + 铁律 #11 并行策略的并行安全边界），不尝试重试，直接按节点 on_fail 派发或降级 conductor 内建；区别于超时 |
 | 智能体返回 `BLOCKED` / `NEEDS_CONTEXT` | 状态信号                                                     | 需补上下文或升级                                                                                     |
 | 跳步/越界/自验污染                     | `[PROCESS_VIOLATION]` / `[SCOPE_CREEP]` / `[TRUST_TRANSFER]` | 即停，不走 on_fail（见 §流程级即停规则）                                                             |
 

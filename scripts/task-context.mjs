@@ -175,6 +175,7 @@ function usage() {
     '  node scripts/task-context.mjs assert <task_id> <type> [args...]',
     '  node scripts/task-context.mjs size-check <task_id>',
     '  node scripts/task-context.mjs dispatch-prompt-check <task_id>',
+    '  node scripts/task-context.mjs pre-dispatch <task_id> --prompt-chars <N> [--file-count <F>]',
     "  node scripts/task-context.mjs log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>",
     '',
     'Assert types:',
@@ -194,6 +195,7 @@ function usage() {
     '  validate    Check required top-level fields, quality integers, and convergence mm_fusion integers.',
     '  size-check  Print task_context file character count (pre-dispatch safety gate vs config.size_check_threshold; exit=2 if exceeded).',
     "  dispatch-prompt-check Read dispatch_pending.prompt_chars/file_count written by conductor pre-dispatch; exit=1 if pending info missing, exit=2 if prompt_chars>dispatch_prompt_threshold or file_count>max_files_per_task. PASS otherwise.",
+    "  pre-dispatch    Combined gate: writes dispatch_pending then runs dispatch-prompt-check + size-check in one process. Replaces the 3-call `set` + `dispatch-prompt-check` + `size-check` sequence. exit=0 pass / 1 audit fail / 2 over-limit (same semantics).",
     "  log-dispatch Append {agent, mode, stage, timestamp} to dispatch_log[] (provenance gate). --agent must be in write-matrix agent set; --stage must be a graph.yaml node. Whitelist-enforced.",
     '',
     'Agents in write matrix: ' + Object.keys(WRITE_MATRIX).join(', '),
@@ -696,6 +698,98 @@ function cmdAssert(taskId, assertionType, args) {
 // 强制切 agent_manager，禁止 task dispatch（防主会话 context 撑爆 abort）
 // ============================================================
 
+// ============================================================
+// eval 辅助：纯判定函数，返回 { exitCode, line }（不副作用 exit）
+// 供合并子命令 cmdPreDispatch 使用，一次进程原子完成 dispatch 前
+// prompt 审计 + size 审计。语义与 cmdDispatchPromptCheck / cmdSizeCheck 一致，
+// 改动阈值判定逻辑需同步两处（共用 readDispatchPromptThreshold/readSizeCheckThreshold）。
+// ============================================================
+
+function evalSizeCheck(taskId) {
+  const p = contextPath(taskId);
+  const threshold = readSizeCheckThreshold();
+  if (!fs.existsSync(p)) {
+    return { exitCode: 0, line: `0 threshold=${threshold}` };
+  }
+  try {
+    const text = fs.readFileSync(p, 'utf8');
+    const len = text.length;
+    return { exitCode: len > threshold ? 2 : 0, line: `${len} threshold=${threshold}` };
+  } catch (e) {
+    return { exitCode: 1, line: `Error: cannot read task_context for task_id=${taskId}: ${e.message}` };
+  }
+}
+
+function evalDispatchPrompt(ctx) {
+  const dp = (ctx && ctx.dispatch_pending) || {};
+  const promptChars = dp.prompt_chars;
+  const fileCount = dp.file_count;
+  const promptThreshold = readDispatchPromptThreshold();
+  const maxFiles = readMaxFilesPerTask();
+
+  if (typeof promptChars !== 'number' || !Number.isInteger(promptChars) || promptChars < 0) {
+    return { exitCode: 1, line: 'FAIL dispatch-prompt-check - dispatch_pending.prompt_chars 未设置或非法（conductor 未写入 dispatch 前 pending 信息），阻断 dispatch' };
+  }
+  if (promptChars > promptThreshold) {
+    return { exitCode: 2, line: `FAIL dispatch-prompt-check (prompt_chars=${promptChars} threshold=${promptThreshold}) - prompt 超限，阻断 dispatch` };
+  }
+  if (fileCount !== undefined && fileCount !== null) {
+    if (typeof fileCount !== 'number' || !Number.isInteger(fileCount) || fileCount < 0) {
+      return { exitCode: 1, line: 'FAIL dispatch-prompt-check - dispatch_pending.file_count 非法（' + JSON.stringify(fileCount) + '），阻断 dispatch' };
+    }
+    if (maxFiles !== null && fileCount > maxFiles) {
+      return { exitCode: 2, line: `FAIL dispatch-prompt-check (file_count=${fileCount} max_files=${maxFiles}) - 文件数超限，阻断 dispatch` };
+    }
+  }
+  const fc = typeof fileCount === 'number' ? fileCount : 'null';
+  return { exitCode: 0, line: `PASS dispatch-prompt-check (prompt_chars=${promptChars} threshold=${promptThreshold} file_count=${fc} max_files=${maxFiles === null ? 'unset' : maxFiles})` };
+}
+
+// ============================================================
+// pre-dispatch 子命令：合并 step 0b（dispatch-prompt-check）+ step 0a（size-check）
+// 一次进程原子完成：写 dispatch_pending -> prompt 校验 -> size 校验 -> 单一 verdict。
+// 替代旧的 `set dispatch_pending` + `dispatch-prompt-check` + `size-check` 三连串行调用，
+// 省 2 次 node 进程启动 + 2 个 conductor reasoning 回合 / 每次 dispatch。
+// 语义与三连等价：exit 0=全通过可 dispatch / 1=审计失败（pending 非法）/ 2=超限阻断。
+// size-check 超限时本命令仅返回 exit 2（阻断）；摘要压缩 + 切 worktree 仍由 conductor
+// 在收到 exit 2 后按铁律 #9 step 0a 流程处理（脚本不做副作用压缩）。
+// ============================================================
+function cmdPreDispatch(taskId, promptCharsArg, fileCountArg) {
+  assertValidTaskId(taskId);
+  const promptChars = Number.parseInt(promptCharsArg, 10);
+  if (!Number.isInteger(promptChars) || promptChars < 0) {
+    die(2, 'Error: pre-dispatch requires --prompt-chars <non-negative integer>');
+  }
+  let fileCount = null;
+  if (fileCountArg !== undefined && fileCountArg !== null) {
+    fileCount = Number.parseInt(fileCountArg, 10);
+    if (!Number.isInteger(fileCount) || fileCount < 0) {
+      die(2, 'Error: --file-count must be a non-negative integer');
+    }
+  }
+
+  // 1. 写 dispatch_pending（替代 `set <task_id> dispatch_pending.prompt_chars <N> --agent conductor`）
+  const { ctx } = readContext(taskId);
+  ctx.dispatch_pending = { prompt_chars: promptChars, file_count: fileCount };
+  writeContext(taskId, ctx);
+
+  // 2. dispatch-prompt-check（对刚写入的 pending 校验）
+  const dpc = evalDispatchPrompt(ctx);
+  // 3. size-check（writeContext 后文件已是最新）
+  const sc = evalSizeCheck(taskId);
+
+  // 合并：取最严重 exit code（2 > 1 > 0）
+  const exitCode = Math.max(dpc.exitCode, sc.exitCode);
+  process.stdout.write(`[pre-dispatch] ${dpc.line}\n`);
+  process.stdout.write(`[pre-dispatch] ${sc.line}\n`);
+  if (exitCode === 0) {
+    process.stdout.write('PASS pre-dispatch (combined) - 允许 dispatch\n');
+  } else {
+    process.stdout.write(`FAIL pre-dispatch (combined) - 阻断 dispatch（见上 ${exitCode === 2 ? '超限' : '审计失败'} 项）\n`);
+  }
+  process.exit(exitCode);
+}
+
 function cmdSizeCheck(taskId) {
   assertValidTaskId(taskId);
   const p = contextPath(taskId);
@@ -976,6 +1070,20 @@ function main() {
   if (sub === 'dispatch-prompt-check') {
     if (args.length !== 2) die(2, 'Error: dispatch-prompt-check requires exactly <task_id>');
     cmdDispatchPromptCheck(args[1]);
+  }
+  if (sub === 'pre-dispatch') {
+    // pre-dispatch <task_id> --prompt-chars <N> [--file-count <F>]
+    // 合并 set dispatch_pending + dispatch-prompt-check + size-check（一次进程）
+    if (args.length < 4) die(2, 'Error: pre-dispatch requires <task_id> --prompt-chars <N>');
+    const taskId = args[1];
+    const pcIdx = args.indexOf('--prompt-chars');
+    const fcIdx = args.indexOf('--file-count');
+    if (pcIdx === -1 || pcIdx + 1 >= args.length) {
+      die(2, 'Error: pre-dispatch requires --prompt-chars <N>');
+    }
+    const promptChars = args[pcIdx + 1];
+    const fileCount = fcIdx !== -1 && fcIdx + 1 < args.length ? args[fcIdx + 1] : undefined;
+    cmdPreDispatch(taskId, promptChars, fileCount);
   }
   if (sub === 'log-dispatch') {
     // log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>

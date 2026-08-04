@@ -1814,5 +1814,24 @@ if (kj) {
   if (bad === 0) pass('scripts.modules', `${libFiles.length} 个 lib 模块动态加载冒烟 PASS`);
 }
 
+// H3. 能力沉淀教训库完整性（铁律 #14 依赖）：docs/lessons/ 存在；registry.jsonl 每行可解析
+{
+  const lessonsDir = path.join(ROOT, 'docs', 'lessons');
+  if (!fs.existsSync(lessonsDir)) {
+    check('WARN', 'lessons.store', 'docs/lessons/ 不存在（lessons.mjs 首次 record 时自动创建，正常）');
+  } else {
+    const regPath = path.join(lessonsDir, 'registry.jsonl');
+    if (!fs.existsSync(regPath)) {
+      check('WARN', 'lessons.store', 'docs/lessons/registry.jsonl 不存在（首次使用，教训库为空，正常）');
+    } else {
+      const lines = fs.readFileSync(regPath, 'utf8').split('\n').filter((l) => l.trim());
+      let bad = 0;
+      for (const l of lines) { try { JSON.parse(l); } catch { bad++; } }
+      if (bad > 0) fail('lessons.store', `registry.jsonl ${bad}/${lines.length} 行不可解析`);
+      else pass('lessons.store', `registry.jsonl ${lines.length} 条教训全部可解析`);
+    }
+  }
+}
+
 // 静态检查代码块结束后调用 report()
 report();

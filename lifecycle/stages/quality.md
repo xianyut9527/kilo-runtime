@@ -1,10 +1,11 @@
 ---
-description: 生命周期阶段 QUALITY — 质量保障（响应式 Hooks 阶段）。内部 hooks 自动循环：verify → fix(onFail) → verify，review afterPass。
+description: 生命周期阶段 QUALITY — 质量保障。机械前置门（acceptance-check + diff-boundary-check）fail-fast → LLM hooks 并行（verify+review 同轮）→ fix(onFail) 循环。T1=机械门+正向验证快通道（反向验证/审查角色 tiers:[T2] 不加载）；T2=全视角并行。
 model_capability: strict-verification
 token_budget: 10000        # × 智能体数
 # required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
-# 必配：verifier（verify hook）；reviewer（review hook）；fixer（fix hook, auto-trigger）
-required_roles: [verifier, reverse-auditor, reviewer, fixer]
+# 必配：verifier（verify hook）；fixer（fix hook, auto-trigger）
+# reverse-auditor / reviewer 经 tiers:[T2] 仅 T2 加载（T1 走机械门+verifier 快通道）
+required_roles: [verifier, fixer]
 ---
 
 # lifecycle/stages/quality
@@ -28,6 +29,27 @@ QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
       → 任一 FAIL → fix hooks（同一修复角色，trigger: onFail）→ code 变化 → 重新 verify
       → 全 PASS → quality_verdict=PASS → 离开 QUALITY → DELIVERING
 ```
+
+## T1/T2 分档 + 机械前置门 + verify/review 并行（v3 提速，覆盖下方旧 verify->review 串行语义）
+
+> v3 起：机械门先行 fail-fast + verify/review 同轮并行 + T1/T2 分档。下方"设计理念/伪代码"中的 verify -> review afterPass 串行语义被本节覆盖。
+
+**机械前置门（LLM hooks 之前，模型无关，fail-fast）**：
+1. `acceptance-check.mjs <task_id>` -> 机械跑 `acceptance_map[].verify_command`，exit code 硬门。
+2. `diff-boundary-check.mjs <task_id>` -> 机械防 SCOPE_CREEP/FORBIDDEN_TOUCH。
+3. 任一 exit 2 -> 直接送修复角色（机械信号清晰，跳过本轮 LLM verify）-> 修复后重跑机械门。
+4. 全 exit 0（或 exit 1 无机械项回退 LLM）-> 进入 LLM hooks。
+
+**LLM hooks 并行（1 轮，非 verify->review 两轮串行）**：
+- verify hooks（正向验证角色；T2 加反向验证角色）+ review hooks（T2 审查角色）**同消息并行启动**，共享零输出硬门。视角隔离不变。
+- 任一 FAIL -> 修复角色 -> 修复后重跑机械门 + LLM hooks。
+- 全 PASS -> quality_verdict=PASS -> DELIVERING。
+
+**T1/T2 分档**：
+- **T1 快通道**：机械门 + 正向验证角色。反向验证/审查角色不加载（对应 agent frontmatter 声明 `tiers: [T2]`，仅 T2 加载）。happy path = 编码产物 + 机械门 + 正向验证 -> PASS。FAIL -> 修复角色 -> 重跑；熔断 -> escalate（可升 T2 拉审查/反向验证角色深挖）。
+- **T2 全视角**：机械门 + 正向验证 + 反向验证 + 审查角色，全并行。复杂/安全/跨模块任务保留四视角完整审查。
+
+**质量保证（不靠模型，靠工程）**：T1 质量由 acceptance-check（机器证明对）+ diff-boundary（机器证明在界）+ 正向验证（forward 逻辑/边界）+ coding-engineering.md playbook（注入工程能力）托底；反向验证/审查角色的机械可覆盖职责（SCOPE_CREEP/FORBIDDEN_TOUCH）已由脚本门接管，判断类职责（LOCAL_PATCH/FAKE_CONTEXT/设计质量）留 T2 升级。
 
 ## 输入
 

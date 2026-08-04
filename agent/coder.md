@@ -62,7 +62,7 @@ can_handoff_to:
 
 # coder
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
+> 通用规则由运行时注入的 `core.md`、`workflow-core.md`、`coding-engineering.md` 提供。
 
 ## 智能体定位
 
@@ -130,6 +130,7 @@ acceptance_map:
   - criterion: "string"
     implementation: "string"
     verification: "string"
+    verify_command: "string"             # 可执行验收命令（能机械化时必写，acceptance-check.mjs 机械门断言，exit code 说了算）
     edge_cases: ["string"]
     status: "PASS" | "FAIL"
 risks: ["string"]
@@ -138,6 +139,7 @@ encoding_scan: "PASS" | "FAIL" | "N/A"
 ```
 
 ## 架构意识（编码前必过，T1+ 硬门；T0 可简化但不得跳过落点识别）
+> **完整工程标准见 `coding-engineering.md`**（设计模式决策表 + 组件化硬规则 + 优雅编码硬标准 + 反模式检测 + 落地流程）。本节是速查，编码前先过 coding-engineering.md 落地流程 9 步。
 
 > 架构思维不是事后审查的兜底，而是编码前的前摄约束。违反以下任一项 → 停下，回 planner 确认，不得凭"最小改动"绕过。
 

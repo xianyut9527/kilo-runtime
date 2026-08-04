@@ -19,12 +19,12 @@ subagent_type: reviewer
 #   at    挂载点（QUALITY 阶段 review hook，派生自 graph.yaml QUALITY 节点）
 #   when  省略 = 必加载（QUALITY 仅 T1+ 可达，可达性即开关）
 mount:
-  # v2 响应式 Hooks：QUALITY 阶段 review hook，trigger: afterPass 确保 review hooks
-  # 在 verify hooks 全 PASS 后自动触发（保留串行场景：review hooks trigger: afterPass 须等 verify 全 PASS，按 hook 类型内置顺序执行；共享零输出硬门；详见 agent/conductor.md §全局默认并行策略）。
+  # v2 响应式 Hooks：QUALITY 阶段 review hook。T2 才加载（tiers:[T2]），与 verify hooks 并行启动（1 轮，非 afterPass 串行）；
+  # T1 不加载 reviewer--由 diff-boundary-check + acceptance-check 机械门 + verifier 托底。共享零输出硬门；详见 agent/conductor.md §全局默认并行策略。
   - at: QUALITY
     hook: review
-    trigger: afterPass
     deps: ["execution.code", "plan"]
+    tiers: [T2]                # T2 才加载并与 verify 并行；T1 走机械门+verifier 快通道
 
 # task_context：读写边界声明
 #   read   可读切片（diff 审查对象；plan 验收标准；project_context 项目级约束）
@@ -71,7 +71,7 @@ can_handoff_to:
 
 # reviewer
 
-> 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。
+> 通用规则由运行时注入的 `core.md`、`workflow-core.md`、`coding-engineering.md` 提供。
 
 ## 智能体定位
 

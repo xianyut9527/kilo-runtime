@@ -204,18 +204,20 @@ planner 规划 → 生成单元列表 → 并行/串行执行 → 逐单元验�
 #### review_mode 决策表
 
 ```
-预估等级 → review_mode
+预估等级 -> review_mode
 ──────────────────────────
-T0      → none（无 reviewer）
-T1 / T2 → full（四视角：安全/架构/简化/SCOPE_CREEP）
+T0      -> none（无验证/审查角色；机械门 scan-encoding）
+T1      -> fast（机械门 acceptance-check + diff-boundary-check + 正向验证；反向验证/审查角色 tiers:[T2] 不加载）
+T2      -> full（机械门 + 正向验证 + 反向验证 + 审查，四视角全并行）
 ```
 
-> **不采用"轻量档位"**：质量门禁不打折。任何审查档位化设计（如"跳过安全视角以节省 token"）都意味着质量妥协——属于无意义的工程化控制。T1+ 一律走四视角完整审查。
+> **T1 快通道不是"质量打折"**：T1 质量由 acceptance-check（机器证明对）+ diff-boundary（机器证明在界）+ 正向验证（forward 逻辑/边界）+ coding-engineering.md playbook（注入工程能力）托底--机械门替代了反向验证/审查角色的机械可覆盖职责（SCOPE_CREEP/FORBIDDEN_TOUCH），判断类职责（LOCAL_PATCH/FAKE_CONTEXT/设计质量）留 T2 升级。质量由工程保证，不靠模型、不打折。T2 复杂/安全/跨模块任务保留四视角完整审查。
 
 #### 模式说明
 
-- **none**：跳过 reviewer。仅 T0（极速通道）适用。
-- **full**：四视角审查（安全/架构/简化/SCOPE_CREEP），T1+ 唯一模式。
+- **none**：跳过验证/审查角色。仅 T0（极速通道）适用。
+- **fast**：机械门 + 正向验证。T1 模式。FAIL -> 修复 -> 重跑；熔断 -> escalate（可升 T2 拉反向验证/审查角色深挖）。
+- **full**：机械门 + 正向验证 + 反向验证 + 审查，四视角全并行。T2 模式。
 
 #### 总体验收三步
 
@@ -238,6 +240,8 @@ T1 / T2 → full（四视角：安全/架构/简化/SCOPE_CREEP）
 | 验收映射表 | 每条标准 → 实现位置 → 验证方式 → 边界覆盖 → 状态 | `[MISSING_ACCEPTANCE_MAP]` |
 | 计划执行门禁 | 计划执行前必须 critical review；遇 blocker 立即停止不猜测 | `[PLAN_DEVIATION]` |
 | 结构化输出验证 | agent 返回必须经过 schema 自检（JSON.parse/XML 标签检查），失败 → 重试 | `[MALFORMED_OUTPUT]` |
+| 可执行验收门（机械）| QUALITY verify 在 LLM verifier 之前跑 `acceptance-check.mjs`，机械执行 `acceptance_map[].verify_command`，exit code 硬门（模型说不算） | `[ACCEPTANCE_FAIL]` |
+| 能力沉淀闭环 | 每次失败 `lessons.mjs record` 沉淀；复发 `audit` 晋级为程序规则（注入）/机械门提案；dispatch `get --role` 注入历史教训->系统随使用变强不随模型升级 | （非阻断，能力积累）|
 
 ### 异常路由表
 
