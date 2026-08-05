@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
-# Kilo 全局配置安装脚本 (macOS / Linux)
-# 将本仓库内容复制到全局配置目录：~/.config/kilo/
+# Kilo Global Config Installer (macOS / Linux)
+# Syncs this repo to: ~/.config/kilo/
 # IMPORTANT: EXCLUDE lists must be kept in sync with install.ps1
 #
-# v6.1 架构同步说明：
-#   lifecycle/              - graph.yaml（DAG）、config.yaml（定级组合）、stages/*.md
-#   agent/                  - 一智能体一文件；frontmatter mount 自注册到生命周期
-#   .kilo/instructions/     - 跨智能体通用基线规则
-#   .kilo/skills/           - 能力扩展 skill
-# 本脚本递归复制以上目录（除去 EXCLUDE 列表）到全局配置目录。
+# v6.1 architecture sync:
+#   lifecycle/              - graph.yaml (DAG), config.yaml (tier defaults), stages/*.md
+#   agent/                  - one .md per agent; frontmatter mount auto-registers into lifecycle
+#   .kilo/instructions/     - cross-agent baseline rules
+#   .kilo/skills/           - capability extensions
+# The installer recursively copies everything above (minus EXCLUDE lists) to the global config dir.
 
 set -euo pipefail
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET_DIR="${HOME}/.config/kilo"
+TARGET_DIR="${KILO_INSTALL_TARGET:-${HOME}/.config/kilo}"
+# IMPORTANT: KILO_INSTALL_TARGET must be an absolute path (aligns with install.ps1 L14-18)
+case "${TARGET_DIR}" in
+    /*) ;;
+    *) echo "[SYNC] FAIL: KILO_INSTALL_TARGET must be absolute: ${TARGET_DIR}"; exit 1 ;;
+esac
 
-# 仅在仓库根层级排除的项（防止误伤子目录中同名合法文件）
+# Items excluded only at the repo root level (to avoid clobbering same-named legit files)
 ROOT_ONLY_EXCLUDE=(
     "install.ps1"
     "install.sh"
@@ -23,7 +28,7 @@ ROOT_ONLY_EXCLUDE=(
     "LICENSE"
 )
 
-# 所有层级都排除的项（必须与 install.ps1 保持完全一致）
+# Items excluded at all levels (must stay in sync with install.ps1)
 RECURSIVE_EXCLUDE=(
     ".git"
     ".gitignore"
@@ -53,17 +58,15 @@ echo "Source : ${SOURCE_DIR}"
 echo "Target : ${TARGET_DIR}"
 echo ""
 
-# 创建目标目录
 mkdir -p "${TARGET_DIR}"
 
-# 全量覆盖式更新：先清空目标目录，再同步（保留目标目录本身）
+# Full overwrite: purge target first, then sync.
 purge_target() {
     echo "[CLEAN] Purging target directory: ${TARGET_DIR}"
     find "${TARGET_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
 }
 
-# 递归复制源目录到目标目录，同时按层级排除
-# depth=0 表示仓库根层级
+# Fallback recursive copy when rsync is unavailable. Counts files/dirs for stats line.
 copy_source_tree() {
     local src_dir="$1"
     local dst_dir="$2"
@@ -101,11 +104,9 @@ copy_source_tree() {
             local target_item="${dst_dir}/${basename_item}"
             if [ -d "$item" ]; then
                 copy_source_tree "$item" "${target_item}" $((depth + 1))
-                echo "Copied: ${target_item#$TARGET_DIR/}/"
                 COPIED_DIRS=$((COPIED_DIRS + 1))
             else
                 cp "$item" "${target_item}"
-                echo "Copied: ${target_item#$TARGET_DIR/}"
                 COPIED_FILES=$((COPIED_FILES + 1))
             fi
         fi
@@ -113,7 +114,20 @@ copy_source_tree() {
     shopt -u dotglob
 }
 
-# 构建 rsync 排除参数：根层级项用前导 / 锚定，递归项不加 /
+# Parse rsync stats output (rsync 3.1+ emits "Number of regular files transferred:",
+# while older rsync 2.x/3.0 emits "Number of files:"; the dirs line is identical).
+# Usage: parse_rsync_stats <output> <files_line_prefix>
+#   prints "<files> <dirs>" on a single line
+parse_rsync_stats() {
+    local output="$1"
+    local file_pattern="$2"
+    local files dirs
+    files=$(printf '%s\n' "${output}" | awk -F': *' -v p="${file_pattern}:" '$0 ~ p { gsub(/[^0-9].*/, "", $2); print $2; exit }')
+    dirs=$(printf  '%s\n' "${output}" | awk -F': *' '$0 ~ /^Number of created directories:/ { gsub(/[^0-9].*/, "", $2); print $2; exit }')
+    echo "${files:-0} ${dirs:-0}"
+}
+
+# Build rsync exclude args: root-only items anchored with leading /, recursive items bare.
 EXCLUDE_ARGS=()
 for item in "${ROOT_ONLY_EXCLUDE[@]}"; do
     EXCLUDE_ARGS+=("--exclude=/${item}")
@@ -122,35 +136,29 @@ for item in "${RECURSIVE_EXCLUDE[@]}"; do
     EXCLUDE_ARGS+=("--exclude=${item}")
 done
 
-# 使用 rsync 复制（先清空目标目录再同步）
+# Use rsync for the main path; fall back to cp loop if rsync is missing.
 if command -v rsync &> /dev/null; then
     purge_target
-    rsync -av --delete "${EXCLUDE_ARGS[@]}" "${SOURCE_DIR}/" "${TARGET_DIR}/"
-
-    # 统计 rsync 同步结果
-    for item in "${SOURCE_DIR}"/*; do
-        if [ -e "$item" ]; then
-            basename_item=$(basename "$item")
-            skip=false
-            for exclude in "${ROOT_ONLY_EXCLUDE[@]}" "${RECURSIVE_EXCLUDE[@]}"; do
-                if [ "$basename_item" = "$exclude" ]; then
-                    skip=true
-                    break
-                fi
-            done
-            if [ "$skip" = false ]; then
-                if [ -d "$item" ]; then
-                    COPIED_DIRS=$((COPIED_DIRS + 1))
-                else
-                    COPIED_FILES=$((COPIED_FILES + 1))
-                fi
-            fi
-        fi
-    done
+    # --info=stats2 prints a summary block including
+    #   "Number of regular files transferred: N"
+    #   "Number of created directories: N"
+    # Detect rsync version: --info=stats2 is rsync 3.1.0+ (macOS ships 2.6.9, which only supports --stats)
+    RSYNC_VERSION=$(rsync --version 2>/dev/null | head -n1 | awk '{print $3}')
+    RSYNC_MAJOR=$(echo "${RSYNC_VERSION}" | cut -d. -f1)
+    RSYNC_MINOR=$(echo "${RSYNC_VERSION}" | cut -d. -f2)
+    if [ "${RSYNC_MAJOR}" -gt 3 ] || { [ "${RSYNC_MAJOR}" -eq 3 ] && [ "${RSYNC_MINOR}" -ge 1 ]; }; then
+        # rsync 3.1.0+: --info=stats2 outputs 'Number of regular files transferred: N'
+        RSYNC_OUTPUT=$(rsync -a --delete --info=stats2 "${EXCLUDE_ARGS[@]}" "${SOURCE_DIR}/" "${TARGET_DIR}/" 2>&1 || true)
+        read -r COPIED_FILES COPIED_DIRS < <(parse_rsync_stats "${RSYNC_OUTPUT}" "Number of regular files transferred")
+    else
+        # rsync < 3.1.0 (incl. macOS 2.6.9): --stats outputs 'Number of files: N'
+        RSYNC_OUTPUT=$(rsync -a --delete --stats "${EXCLUDE_ARGS[@]}" "${SOURCE_DIR}/" "${TARGET_DIR}/" 2>&1 || true)
+        read -r COPIED_FILES COPIED_DIRS < <(parse_rsync_stats "${RSYNC_OUTPUT}" "Number of files")
+    fi
+    COPIED_FILES=${COPIED_FILES:-0}
+    COPIED_DIRS=${COPIED_DIRS:-0}
 else
-    # 如果没有 rsync，使用递归 cp（先清空再复制）
     echo "rsync not found, using cp -r instead..."
-
     purge_target
     copy_source_tree "${SOURCE_DIR}" "${TARGET_DIR}" 0
 fi
@@ -160,9 +168,7 @@ fi
 # which makes agent routing unstable.
 # See https://kilo.ai/docs/configure/agents
 
-# ============================================================
-# 关键文件存在性校验
-# ============================================================
+# Critical file existence check
 CRITICAL_FILES=(
     "kilo.json"
     "AGENTS.md"
@@ -188,18 +194,15 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     exit 1
 fi
 
-echo ""
-echo "[SYNC] OK | files=${COPIED_FILES} dirs=${COPIED_DIRS} | critical=${#CRITICAL_FILES[@]}/${#CRITICAL_FILES[@]} | target=${TARGET_DIR}"
-echo ""
+# UTF-8 note: bash inherits locale from the environment; if you see CJK mojibake,
+# add `export LANG=en_US.UTF-8` (or your locale) to your shell profile.
 
-# ============================================================
-# .md 文件路径占位符替换
-# agent/*.md 和 .kilo/instructions/*.md 中包含 ${KILO_CONFIG_DIR} 占位符
-# 在命令示例中（如 node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs"）。
-# 必须替换为实际全局配置目录路径，确保 conductor 和其他智能体
-# 在任何项目中都能执行 lifecycle 脚本。
-# ${HOME} 在 .md 文件中保留不替换——bash/PowerShell 运行时自动解析。
-# ============================================================
+# .md file path placeholder substitution
+# agent/*.md and .kilo/instructions/*.md contain ${KILO_CONFIG_DIR} placeholders
+# in command examples (e.g. node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs").
+# These must be replaced with the actual global config directory path so that
+# conductor and other agents can execute lifecycle scripts from any project.
+# ${HOME} in .md files is left as-is because bash/PowerShell resolve it at runtime.
 echo ""
 echo "Substituting .md file path placeholders..."
 MD_REPLACED=0
@@ -224,10 +227,7 @@ else
     echo "[WRITE] ${MD_REPLACED} .md file(s) had KILO_CONFIG_DIR placeholders substituted"
 fi
 
-
-# ============================================================
 # Ensure skill directories exist
-# ============================================================
 echo ""
 echo "Ensuring skill directories exist..."
 SKILL_DIRS=(
@@ -242,11 +242,10 @@ for dir in "${SKILL_DIRS[@]}"; do
         echo "[OK]     ${dir} already exists"
     fi
 done
-# ============================================================
+
 # Agent prompt auto-sync (single source: agent/*.md description -> kilo.json prompt)
 # Eliminates manual prompt maintenance: description is the single source of truth,
 # install auto-generates prompt to ensure stable agent triggering.
-# ============================================================
 echo ""
 echo "Syncing agent prompts from descriptions..."
 SYNC_SCRIPT="${TARGET_DIR}/scripts/sync-agent-prompt.mjs"
@@ -257,6 +256,7 @@ else
 fi
 
 echo ""
-echo "Please restart Kilo in your projects for changes to take effect."
+echo "[SYNC] OK | files=${COPIED_FILES} dirs=${COPIED_DIRS} | critical=${#CRITICAL_FILES[@]}/${#CRITICAL_FILES[@]} | target=${TARGET_DIR}"
 echo ""
+echo "Please restart Kilo in your projects for changes to take effect."
 exit 0

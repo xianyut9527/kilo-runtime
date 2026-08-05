@@ -15,6 +15,11 @@
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
   },
   "agent": {
+    "delivery": {
+      "mode": "subagent",
+      "model": "hx/MiniMax-M2.7-highspeed",
+      "prompt": "交付智能体（delivery）。DELIVERING 阶段主槽执行者，把 task_context 整理为用户可读的最终交付物。EXECUTION 模式：闭环确认表 + 变更回顾 + 分支收尾协议（git status/log、告知分支去向，不擅自 push/commit）；INQUIRY 模式：核心结论 + 维度覆盖 + 证据清单 + 行动建议 + 分析局限。强制排版：结构化 Markdown、关键结论 **加粗**、多方案用表格、重点用 > 引用、代码块带语言标识、无 emoji、无口语填充、单答案 ≤800 字。权限：bash:allow（仅 git 操作）/ read:allow / edit:deny / write:deny / task:deny。输出契约：只返回≤4000字符结构化摘要（verdict+intent_type+sections+git_state）。搜索纪律：先 L0 文档→L1 Glob→L2 窄搜（带 include）→L3 广搜→L4 MCP 图谱/索引；禁全仓无 include Grep。"
+    },
     "conductor": {
       "mode": "primary",
       "model": "hx/MiniMax-M3",
@@ -97,8 +102,8 @@
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "baseURL": "https://huixin.nat100.top/v1",
-        "timeout": 300000,
-        "chunkTimeout": 60000,
+        "timeout": 600000,
+        "chunkTimeout": 300000,
         "maxRetries": 2
       },
       "models": {

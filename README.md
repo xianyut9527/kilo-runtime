@@ -124,14 +124,14 @@ test -f ~/.config/kilo/kilo.json && echo "OK"
 对比仓库与全局配置差异（Windows）：
 
 ```powershell
-robocopy . "$env:USERPROFILE\.config\kilo" /E /XJ /XD .git node_modules /XF install.ps1 install.sh README.md LICENSE .gitignore package.json package-lock.json pnpm-lock.yaml bun.lock yarn.lock agent-manager.json /L /NS /NC /NP /NDL
+robocopy . "$env:USERPROFILE\.config\kilo" /E /XJ /XD .git node_modules .tmp worktrees .pytest_cache __pycache__ .kilo_tmp .playwright-mcp /XF install.ps1 install.sh README.md LICENSE .gitignore package.json package-lock.json pnpm-lock.yaml bun.lock yarn.lock agent-manager.json /L /NS /NC /NP /NDL
 ```
 
 对比仓库与全局配置差异（macOS / Linux）：
 
 ```bash
 diff -rq . ~/.config/kilo \
-  --exclude=.git --exclude=node_modules \
+  --exclude=.git --exclude=node_modules --exclude=.tmp --exclude=worktrees --exclude=.pytest_cache --exclude=__pycache__ --exclude=.kilo_tmp --exclude=.playwright-mcp \
   --exclude=install.ps1 --exclude=install.sh \
   --exclude=README.md --exclude=LICENSE --exclude=.gitignore \
   --exclude=package.json --exclude=package-lock.json \

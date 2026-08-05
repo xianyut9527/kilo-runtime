@@ -37,3 +37,6 @@ kilo.json.bak.*
 
 
 .kilo/skills
+
+# 测试残留目录防护（不应进入 git 或被 install 同步）
+_test_target_orig/
