@@ -473,6 +473,28 @@ function main() {
     }
   }
 
+  // 产物非空门禁（防形式 dispatch 但产物空转 / conductor 假写 verdict=PASS）
+  // execution 产物校验：所有 EXECUTING 出口（T0->DELIVERING, T1/T2->QUALITY）--diffs/changes/acceptance_map 任一非空
+  if (FROM === 'EXECUTING' && (TO === 'QUALITY' || TO === 'DELIVERING')) {
+    const exec = ctx.execution || {};
+    if (!exec.diffs && !exec.changes && !exec.acceptance_map) {
+      die(1, `[MISSING_EXECUTION_PRODUCT] ${FROM} -> ${TO}: execution 产物全空（coder 未产出 diffs/changes/acceptance_map，禁止空转流转）`);
+    }
+  }
+  // plan / verification.forward 校验：T1/T2 非 CB 出口
+  if (!isExempt && !isCircuitBreakerExit) {
+    if (FROM === 'PLANNING' && TO === 'EXECUTING') {
+      if (!ctx.plan || typeof ctx.plan !== 'object' || Object.keys(ctx.plan).length === 0) {
+        die(1, `[MISSING_PLAN_PRODUCT] PLANNING -> EXECUTING: plan 为空（planner 未产出方案，禁止空转流转）`);
+      }
+    }
+    if (FROM === 'QUALITY' && TO === 'DELIVERING') {
+      if (!ctx.verification || !ctx.verification.forward) {
+        die(1, `[MISSING_VERIFICATION_PRODUCT] QUALITY -> DELIVERING: verification.forward 为空（verifier 未产出验证结果，禁止 conductor 假写 verdict=PASS）`);
+      }
+    }
+  }
+
   // requirement_spread gate（命中扩散触发词时校验扩散包产物）
   if (FROM === 'PLANNING' && TO === 'EXECUTING' && hasSpreadTrigger(ctx.intent?.user_request)) {
     const unitsWithSpread = (ctx.plan?.task_dag || []).filter(u => hasRequirementSpread(u));

@@ -52,7 +52,7 @@
 INIT（conductor 内建）→ INIT（conductor 内建）
   → T0: EXECUTING [履行 required_roles: [coder] 的智能体] → DELIVERING
   → T1+: PLANNING [履行 required_roles: [planner] 的智能体] → EXECUTING [履行 required_roles: [coder] 的智能体]
-         → QUALITY [hooks 自动挂载：verify + review + fix 循环] → DELIVERING（conductor 内建）
+         → QUALITY [hooks 自动挂载：verify + review + fix 循环] → DELIVERING（delivery subagent，mount at: DELIVERING）
 ```
 
 > 智能体名**不出现在上述流程图**中。各阶段加载谁由 `agent/*.md` frontmatter `mount` 自注册决定，stage 文件只声明 `required_roles` 契约。

@@ -148,7 +148,7 @@ function checkTransitionLog(ctx, required) {
   return errors;
 }
 
-// 校验 dispatch_log 含每个必经阶段的 required_roles 派发（跳过 conductor 内建阶段）
+// 校验 dispatch_log 含每个必经阶段的 required_roles 派发（CONDITIONAL skip：INIT 无条件 skip；DELIVERING 仅在无 required_roles 时 skip）
 function checkDispatchLog(ctx, required) {
   const errors = [];
   const dispatchLog = Array.isArray(ctx.dispatch_log) ? ctx.dispatch_log : [];
@@ -157,9 +157,11 @@ function checkDispatchLog(ctx, required) {
   if (required.length === 0) return errors;  // 豁免
 
   // 对每个需要委派的阶段（非 conductor 内建），校验 required_roles 已派发
+  // INIT 仍为 conductor 内建（无条件 skip）；DELIVERING 仅在无 required_roles 时 skip
+  // （v6 wire-up 修复后 DELIVERING 有 required_roles=[delivery]，需校验）
   for (const stage of required) {
-    // conductor 内建阶段（INIT/DELIVERING）无 required_roles 或无需委派
-    if (stage === 'INIT' || stage === 'DELIVERING') continue;
+    if (stage === 'INIT') continue;
+    if (stage === 'DELIVERING' && getStageRequiredRoles('DELIVERING').length === 0) continue;
     const roles = getStageRequiredRoles(stage);
     // QUALITY→DELIVERING 边的 fixer 是 onFail 条件角色，PASS 路径不派发属正确
     const rolesToCheck = stage === 'QUALITY' ? roles.filter((r) => !isConditionalRole(r)) : roles;

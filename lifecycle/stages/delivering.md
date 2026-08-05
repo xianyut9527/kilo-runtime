@@ -1,8 +1,9 @@
 ---
 description: 生命周期阶段 DELIVERING — 交付。闭环确认、变更回顾、分支收尾。
-executor: conductor        # conductor 内建主槽，不经 mount 挂载
+# executor 内建主槽已移除（v6 wire-up 修复）；现在走 mount agent=delivery 路线
 model_capability: fast-reasoning
 token_budget: 6000
+required_roles: [delivery]
 ---
 
 # lifecycle/stages/delivering

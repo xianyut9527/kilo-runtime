@@ -92,7 +92,6 @@ nodes:
   # 交付收尾：conductor 执行分支收尾协议、输出闭环确认
   - id: DELIVERING
     type: stage
-    executor: conductor        # conductor 内建；分支收尾协议
     on_fail: pause             # 内建阶段失败挂起（不自动 commit/push，等人决策）
 
   # 终态

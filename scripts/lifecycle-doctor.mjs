@@ -609,7 +609,7 @@ function rtCheckDispatchProvenance(ctx, env, rtCheck) {
     return;
   }
 
-  // 必经阶段（跳过 conductor 内建阶段 INIT/DELIVERING）
+  // 必经阶段（跳过 conductor 内建阶段 INIT）
   const requiredStages = ['PLANNING', 'EXECUTING', 'QUALITY'];
   const dispatchLog = Array.isArray(ctx.dispatch_log) ? ctx.dispatch_log : [];
   const dispatchedAgents = new Set(dispatchLog.map((e) => (e.agent || '').replace(/-/g, '_')));
@@ -1158,7 +1158,7 @@ if (cfg && cfg.disabledAgents.length > 0) {
       if (!stageId) continue;
       const stageNode = graph.nodes.get(stageId);
       if (!stageNode) continue;                     // 豁免：非主图 stage（A5 已报）
-      if (stageNode.executor) continue;              // 豁免：executor 内建阶段（INIT/DELIVERING）
+      if (stageNode.executor) continue;              // 豁免：executor 内建阶段（INIT）
       const stageText = readText(path.join(STAGES_DIR, `${stageId.toLowerCase()}.md`));
       if (!stageText) continue;                     // A5 已报
       const fm = extractFrontmatter(stageText);
@@ -1330,6 +1330,9 @@ function parseAgentPermission(fm) {
       .replace(/^>.*$/mg, '')          // 引用块行（行首 >）
       .replace(/```[\s\S]*?```/g, ''); // 代码块
     const violations = [];
+    // git 操作语境豁免（delivery 等 edit:deny 交付 agent 正文提"提交/删除分支/合并"
+    // 是在"不做什么/告知用户分支去向"语境，非自身代码修改动作）
+    const GIT_CONTEXT = ['推送', '分支', 'commit', 'push', 'git ', '擅自', '告知', 'PR', '合并', '未推送', '未提交'];
     for (const term of MUTATION_TERMS) {
       let idx = 0;
       while ((idx = body.indexOf(term, idx)) !== -1) {
@@ -1337,7 +1340,8 @@ function parseAgentPermission(fm) {
         const exempt = EXEMPTION_TERMS.some((e) => window.includes(e))
           || (idx > 0 && NEGATION_PREFIX.has(body[idx - 1]))
           || TASK_CTX_CONTEXT.some((e) => window.includes(e))
-          || ADVERB_CONTEXT.some((e) => window.includes(e));
+          || ADVERB_CONTEXT.some((e) => window.includes(e))
+          || GIT_CONTEXT.some((e) => window.includes(e));
         if (!exempt) {
           // 取行号（粗略）：count \n before idx
           const lineNo = body.slice(0, idx).split(/\r?\n/).length;
