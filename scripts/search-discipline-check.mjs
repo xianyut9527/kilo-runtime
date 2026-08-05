@@ -2,10 +2,12 @@
 // search-discipline-check.mjs
 // 搜索纪律机械门（A 层，模型无关）-- 防 agent 无脑全仓 Grep / pattern 爆炸 / 未优先图谱。
 //
-// 3 类违规检测（函数式注册，方便 U4 扩展）：
+// 4 类违规检测（函数式注册，方便 U4 扩展）：
 //   1. detectNoInclude           — Grep 无 include 限定（dispatch 缺文件范围）
 //   2. detectPatternAlternation  — pattern 顶层 | 数量 > 3
 //   3. detectOversizedPattern    — 单次 prompt_chars > 3000
+//   4. detectUnsupportedRegex    — pattern 含 ripgrep 默认引擎不支持的 PCRE 特性
+//                                  （lookaround (?=)(?!)(?<=)(?<!)/\K/原子组/反向引用）
 //
 // 用法：node scripts/search-discipline-check.mjs <task_id>
 // 退出码：
@@ -62,7 +64,7 @@ function countTopLevelPipe(s) {
 }
 
 // ============================================================
-// 3 类检测函数（注册式，U4 扩展只需 push 一个 {name, run}）
+// 4 类检测函数（注册式，U4 扩展只需 push 一个 {name, run}）
 // 返回 { violated: bool, detail: string }
 // ============================================================
 
@@ -132,6 +134,40 @@ function detectOversizedPattern(ctx) {
   return { violated: false, detail: `prompt_chars=${dp.prompt_chars} ≤ 3000` };
 }
 
+// 4. pattern 含 ripgrep 默认引擎不支持的 PCRE 特性
+// ripgrep 默认用 Rust regex 引擎（不支持 lookaround / \K / 原子组 / 反向引用），
+// 用此类 pattern 会抛 "regex parse error"；需 --pcre2 启用。
+// 启发式：扫 plan.units[].goal / verify_command / acceptance_criteria 中是否含
+//   (?! (?= (?<! (?<= \K (?> \1..\9
+function detectUnsupportedRegex(ctx) {
+  const units = ctx?.plan?.task_dag?.units;
+  if (!Array.isArray(units) || units.length === 0) {
+    return { violated: false, detail: 'no plan units, skip' };
+  }
+  // 匹配 ripgrep 默认引擎不支持的语法
+  // (?=  (?!  (?<=  (?<!  \K  (?>  \1..\9
+  const pcreOnly = /(\(\?[=!]|\(\?<[=!]|\\K|\(\?>)|\\\d/;
+  const violations = [];
+  for (const u of units) {
+    const fields = [
+      ['goal', u.goal],
+      ['verify_command', u.verify_command],
+      ...(Array.isArray(u.acceptance_criteria) ? u.acceptance_criteria.map((c, i) => [`ac[${i}]`, c]) : []),
+    ];
+    for (const [label, text] of fields) {
+      if (typeof text !== 'string') continue;
+      const m = text.match(pcreOnly);
+      if (m) {
+        violations.push(`${u.unit_id}.${label}: PCRE-only=${m[0]}（需 rg --pcre2）`);
+      }
+    }
+  }
+  if (violations.length > 0) {
+    return { violated: true, detail: `pattern 含 ripgrep 不支持语法: ${violations.join('; ')}` };
+  }
+  return { violated: false, detail: 'all patterns within ripgrep default engine' };
+}
+
 // ============================================================
 // 注册表（U4 扩展 push 即可）
 // ============================================================
@@ -139,6 +175,7 @@ const checks = [
   { name: 'no_include',           run: detectNoInclude },
   { name: 'pattern_alternation',  run: detectPatternAlternation },
   { name: 'oversized_pattern',    run: detectOversizedPattern },
+  { name: 'unsupported_regex',    run: detectUnsupportedRegex },
 ];
 
 // ============================================================
