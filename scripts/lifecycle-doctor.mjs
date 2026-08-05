@@ -30,6 +30,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { VALID_STATUSES } from './task-context-runtime.mjs';
 import { isConditionalRole } from './lib/stage-roles.mjs';
+import { buildInitialContext as _bootstrapBuildInitialContext } from './task-context.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -440,6 +441,65 @@ function parseConfig(text) {
 }
 
 // ============================================================
+// tier_escalation 段解析（D5 静态校验用；语义对齐 task-context-runtime.mjs:parseTierEscalation）
+// 返回 { present, mode, keyword_groups: {<group>: [kws]}, sensitive_path_globs: [globs] }
+//   present=false 表示 tier_escalation 顶层段缺失；其余字段在缺失时返回默认值
+// ============================================================
+function parseTierEscalationCfg(text) {
+  const result = { present: false, mode: 'any', keyword_groups: {}, sensitive_path_globs: [] };
+  if (!text) return result;
+  const lines = text.split(/\r?\n/);
+  let inEsc = false, inKG = false, inGlobs = false, curGroup = null;
+  for (const raw of lines) {
+    const hashIdx = raw.search(/\s#/);
+    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
+    if (!line.trim()) continue;
+    if (/^tier_escalation\s*:/.test(line)) {
+      inEsc = true; inKG = false; inGlobs = false; curGroup = null;
+      result.present = true;
+      continue;
+    }
+    if (!inEsc) continue;
+    if (/^[^\s#]/.test(line) && !/^tier_escalation/.test(line)) { inEsc = false; break; }
+    const modeM = line.match(/^\s{2}mode\s*:\s*(\w+)\s*$/);
+    if (modeM) { result.mode = modeM[1]; continue; }
+    if (/^\s{2}keyword_groups\s*:\s*$/.test(line)) { inKG = true; inGlobs = false; curGroup = null; continue; }
+    if (/^\s{2}sensitive_path_globs\s*:\s*$/.test(line)) { inGlobs = true; inKG = false; curGroup = null; continue; }
+    if (inKG) {
+      const gm = line.match(/^\s{4}([a-z_]+)\s*:\s*$/);
+      if (gm) { curGroup = gm[1]; if (!result.keyword_groups[curGroup]) result.keyword_groups[curGroup] = []; continue; }
+      if (curGroup) {
+        const km = line.match(/^\s{6}-\s+(.+?)\s*$/);
+        if (km) { result.keyword_groups[curGroup].push(km[1]); continue; }
+      }
+    }
+    if (inGlobs) {
+      const glm = line.match(/^\s{4}-\s+"(.+?)"\s*$/);
+      if (glm) { result.sensitive_path_globs.push(glm[1]); continue; }
+    }
+  }
+  return result;
+}
+
+// ============================================================
+// 极简 glob -> RegExp（D5 静态校验用；语义对齐 task-context.mjs:534-545）
+//   ** -> .*    * -> [^/]*    ? -> [^/]    元字符转义
+// 仅供 D5 静态校验调用；不与 apply-escalation 共享执行路径。
+// ============================================================
+function globToRegexLocal(glob) {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*') { re += '.*'; i++; }
+    else if (c === '*') { re += '[^/]*'; }
+    else if (c === '?') { re += '[^/]'; }
+    else if ('.+^$()|{}[]\\\\'.indexOf(c) !== -1) { re += '\\\\' + c; }
+    else re += c;
+  }
+  return new RegExp('^' + re + '$');
+}
+
+// ============================================================
 // 运行时模式（--runtime）：task_context 运行时状态探针
 // 扫描 $TEMP/kilo/task_context_*.json，对每个活跃 task_context 做静态契约 ×
 // 运行时状态交叉验证--发现"LLM 漂移"最早信号。
@@ -696,7 +756,134 @@ function runRuntimeChecksForTask(filePath, taskId, graph) {
   return runtimeResults;
 }
 
+
+// ============================================================
+// --runtime --dry-run 模式：5 个 mock 场景端到端验证 apply-escalation
+// 直接 spawn `node task-context.mjs apply-escalation <task_id> --agent conductor`,
+// 走真实生产路径（readTierEscalation + globToRegex + tier 覆盖），不是 mock 假函数。
+// 每个场景独立 taskId，结束后清理 $TEMP 下的临时文件。
+// 任意场景 FAIL -> 进程 exit 1。
+// ============================================================
+function runDryRunEscalation() {
+  const SCENARIOS = [
+    {
+      id: 1,
+      label: "场景 1: 命中关键词（intent=权限管理, 无 key_files）",
+      build: () => ({ intent: { raw: '权限管理' }, sizing: { tier: 'T0', key_files: [] } }),
+      expect: { tier: 'T2', reasonMin: 1, hasPath: false },
+    },
+    {
+      id: 2,
+      label: "场景 2: 不命中（intent=重构Button组件, key_files=[src/components/Button.tsx]）",
+      build: () => ({ intent: { raw: '重构Button组件' }, sizing: { tier: 'T0', key_files: ['src/components/Button.tsx'] } }),
+      expect: { tier: 'T0', reasonEq: 0, hasPath: false },
+    },
+    {
+      id: 3,
+      label: "场景 3: 路径命中（intent=UI优化, key_files=[src/auth/login.ts]）",
+      build: () => ({ intent: { raw: 'UI优化' }, sizing: { tier: 'T0', key_files: ['src/auth/login.ts'] } }),
+      expect: { tier: 'T2', reasonMin: 1, hasPath: true },
+    },
+    {
+      id: 4,
+      label: "场景 4: 混合命中（intent=权限管理, key_files=[src/auth/login.ts]）",
+      build: () => ({ intent: { raw: '权限管理' }, sizing: { tier: 'T0', key_files: ['src/auth/login.ts'] } }),
+      expect: { tier: 'T2', reasonEq: 2, hasPath: true },
+    },
+    {
+      id: 5,
+      label: "场景 5: custom_overrides 覆盖（intent=权限审计, custom_overrides.tier=T1）",
+      build: () => ({ intent: { raw: '权限审计' }, sizing: { tier: 'T0', key_files: [] }, config: { custom_overrides: { tier: 'T1' } } }),
+      expect: { tier: 'T0', reasonMin: 1, skipped: true },
+    },
+  ];
+
+  const tmpDir = path.join(os.tmpdir(), 'kilo');
+  try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
+
+  let passCount = 0, failCount = 0;
+  const failDetails = [];
+
+  for (const sc of SCENARIOS) {
+    const taskId = `dryrun_s${sc.id}_${Date.now()}`;
+    const ctxPath = path.join(tmpDir, `task_context_${taskId}.json`);
+    const ctx = _bootstrapBuildInitialContext(taskId);
+    const seed = sc.build();
+    if (seed.intent) ctx.intent = Object.assign({}, ctx.intent, seed.intent);
+    if (seed.sizing) ctx.sizing = Object.assign({}, ctx.sizing, seed.sizing);
+    if (seed.config) ctx.config = Object.assign({}, ctx.config, seed.config);
+    try {
+      fs.writeFileSync(ctxPath, JSON.stringify(ctx, null, 2), 'utf8');
+    } catch (e) {
+      process.stdout.write(`[FAIL] ${sc.label}\n  写 task_context 失败: ${e.message}\n`);
+      failCount++; failDetails.push(sc.id); continue;
+    }
+
+    const r = spawnSync(
+      process.execPath,
+      [path.join(SCRIPTS_DIR, 'task-context.mjs'), 'apply-escalation', taskId, '--agent', 'conductor'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 15000 }
+    );
+
+    if (r.status !== 0) {
+      process.stdout.write(`[FAIL] ${sc.label}\n  apply-escalation 退出码=${r.status} stderr=${(r.stderr || "").trim().split("\n")[0] || "(empty)"}\n`);
+      failCount++; failDetails.push(sc.id);
+      try { fs.unlinkSync(ctxPath); } catch {}
+      continue;
+    }
+
+    let result;
+    try {
+      result = JSON.parse(fs.readFileSync(ctxPath, 'utf8'));
+    } catch (e) {
+      process.stdout.write(`[FAIL] ${sc.label}\n  读回 task_context 失败: ${e.message}\n`);
+      failCount++; failDetails.push(sc.id);
+      try { fs.unlinkSync(ctxPath); } catch {}
+      continue;
+    }
+
+    const tier = result.sizing && result.sizing.tier;
+    const reasons = Array.isArray(result.sizing && result.sizing.escalation_reasons) ? result.sizing.escalation_reasons : [];
+    const exp = sc.expect;
+    const errs = [];
+    if (tier !== exp.tier) errs.push(`tier=${tier} (期望 ${exp.tier})`);
+    if (typeof exp.reasonEq === 'number' && reasons.length !== exp.reasonEq) {
+      errs.push(`reasons 数=${reasons.length} (期望 =${exp.reasonEq})`);
+    } else if (typeof exp.reasonMin === 'number' && reasons.length < exp.reasonMin) {
+      errs.push(`reasons 数=${reasons.length} (期望 ≥${exp.reasonMin})`);
+    }
+    if (exp.hasPath && !reasons.some((rr) => String(rr).startsWith('path:'))) {
+      errs.push('缺少 path: 原因项');
+    }
+    if (exp.skipped && !reasons.some((rr) => String(rr).startsWith('skipped:'))) {
+      errs.push('缺少 skipped: 原因项');
+    }
+
+    if (errs.length === 0) {
+      const preview = reasons.length > 2 ? reasons.slice(0, 2).join(', ') + '...' : reasons.join(', ');
+      process.stdout.write(`[PASS] ${sc.label}\n  tier=${tier} reasons=${reasons.length} (${preview})\n`);
+      passCount++;
+    } else {
+      process.stdout.write(`[FAIL] ${sc.label}\n  tier=${tier} reasons=${reasons.length}\n  断言: ${errs.join("; ")}\n  reasons=${JSON.stringify(reasons)}\n`);
+      failCount++; failDetails.push(sc.id);
+    }
+
+    try { fs.unlinkSync(ctxPath); } catch {}
+  }
+
+  process.stdout.write(`\nDRYRUN SUMMARY: ${passCount} PASS / ${failCount} FAIL (5 场景)\n`);
+  if (failCount > 0) {
+    process.stderr.write(`[DRYRUN_VIOLATION] 失败场景 id: ${failDetails.join(", ")}\n`);
+    process.exit(1);
+  }
+}
+
 function runRuntimeMode() {
+  // --runtime --dry-run 模式：mock 5 场景端到端验证 apply-escalation 行为；不走运行时探针
+  if (process.argv.includes('--dry-run')) {
+    runDryRunEscalation();
+    return;
+  }
   const tmpDir = path.join(os.tmpdir(), 'kilo');
   let files = [];
   try {
@@ -1227,6 +1414,59 @@ if (cfg) {
       }
     }
     }
+  // D5. tier_escalation 段合法性（U1 实施；U3 静态校验；与下方 D5 pre-dispatch 共存，PASS/FAIL 计数独立）
+  //   - 顶层段存在
+  //   - mode ∈ {any, all}
+  //   - keyword_groups 含 5 个必需组（auth/payment/crypto/security/personal_data），少一个 FAIL
+  //   - 每组 ≥ 3 个关键词
+  //   - sensitive_path_globs ≥ 5 个
+  //   - 每个 glob 可编译为合法 RegExp（U2 globToRegex 同源实现）
+  {
+    const esc = parseTierEscalationCfg(cfgText);
+    const REQUIRED_GROUPS = ['auth', 'payment', 'crypto', 'security', 'personal_data'];
+    if (!esc.present) {
+      fail('config.tier_escalation.exists', 'lifecycle/config.yaml 缺 tier_escalation 顶层段');
+    } else {
+      pass('config.tier_escalation.exists', 'tier_escalation 顶层段存在');
+      if (esc.mode !== 'any' && esc.mode !== 'all') {
+        fail('config.tier_escalation.mode', `mode="${esc.mode}" ∉ {any, all}`);
+      } else {
+        pass('config.tier_escalation.mode', `mode=${esc.mode}`);
+      }
+      const missing = REQUIRED_GROUPS.filter((g) => !Array.isArray(esc.keyword_groups[g]));
+      if (missing.length > 0) {
+        fail('config.tier_escalation.keyword_groups', `缺必需组: ${missing.join(', ')}`);
+      } else {
+        pass('config.tier_escalation.keyword_groups', `5 个必需组齐: ${REQUIRED_GROUPS.join('/')}`);
+      }
+      let thinGroup = null;
+      for (const g of REQUIRED_GROUPS) {
+        if (!esc.keyword_groups[g] || esc.keyword_groups[g].length < 3) {
+          thinGroup = g; break;
+        }
+      }
+      if (thinGroup) {
+        fail('config.tier_escalation.keyword_min', `组 "${thinGroup}" 关键词数 < 3`);
+      } else {
+        pass('config.tier_escalation.keyword_min', '5 个组每组 ≥ 3 关键词');
+      }
+      if (esc.sensitive_path_globs.length < 5) {
+        fail('config.tier_escalation.globs_count', `sensitive_path_globs 数=${esc.sensitive_path_globs.length} < 5`);
+      } else {
+        pass('config.tier_escalation.globs_count', `sensitive_path_globs=${esc.sensitive_path_globs.length} ≥ 5`);
+      }
+      let badGlob = null;
+      for (const g of esc.sensitive_path_globs) {
+        try { new RegExp(globToRegexLocal(g).source); } catch (e) { badGlob = `${g} (${e.message})`; break; }
+      }
+      if (badGlob) {
+        fail('config.tier_escalation.globs_compile', `glob 无法编译为 RegExp: ${badGlob}`);
+      } else {
+        pass('config.tier_escalation.globs_compile', `${esc.sensitive_path_globs.length} 个 glob 全部编译通过`);
+      }
+    }
+  }
+
   // D5. pre-dispatch 安全门阈值：size_check_threshold / dispatch_prompt_threshold 存在且为正整数
   //      max_files_per_task 存在且为正整数（缺失同样 FAIL，同硬门模式）
   {

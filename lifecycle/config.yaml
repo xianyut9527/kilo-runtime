@@ -27,6 +27,19 @@
 #         命中才加载；不依赖 config.agents 开关（与路径A互斥，不得同时声明）
 #   review_mode：none（无审查）/ full（正向+审查）
 #
+# tier_escalation：定级自动升级触发器（任务内容/路径命中敏感域 → 强制升 T2）
+#   - 触发模式 mode：any（缺省）= 任一关键词组内任一关键词命中 或 任一路径 glob 命中即升级
+#                   / all           = 全部 5 个关键词组都命中才升级（更严）
+#   - 5 个安全域关键词组 keyword_groups：auth / payment / crypto / security / personal_data
+#     每组 ≥ 3 个关键词；命中任一组任一关键词即视为该组匹配
+#   - 5 个敏感路径 glob sensitive_path_globs：**/auth/**, **/payment/**, **/crypto/**,
+#     **/security/**, **/pii/**（注意 pii ≠ personal_data 关键词组名）；按 minimatch 语义匹配
+#   - 升级优先级：tier_escalation 命中 > tier_defaults 当前 tier；
+#                 命中后 sizing.tier 强制设为 T2（即使用户声明 T0/T1 也升 T2）
+#   - 与 overrides 关系：本段是声明式规则集（默认机制），overrides 段不直接覆盖本段；
+#     用户如需关闭特定组，可在 prompt 显式声明 custom_overrides.disable_escalation_groups
+#     （黑名单语义，列出要禁用的安全域名）
+#
 # agents 键命名规则（自动派生，无需手写映射表）：
 #   键 = agent 文件名去 .md 后连字符转下划线
 # ============================================================
@@ -50,6 +63,71 @@ tier_defaults:
   T2:
     agents: {}
     review_mode: full
+
+# ============================================================
+# tier_escalation：定级自动升级触发器
+# 任务内容/路径命中敏感域 → 强制升级 T2（即使 tier_defaults 当前是 T0/T1）
+# 语义详见本文件头部 tier_escalation 段说明
+# ============================================================
+tier_escalation:
+  # 触发模式：any（缺省）= 任一关键词组命中或任一路径 glob 命中即升级
+  #          all        = 全部 5 个关键词组都命中才升级（更严）
+  mode: any
+
+  # 5 个安全域关键词组；任一组任一关键词命中即视为该组匹配
+  keyword_groups:
+    auth:
+      - 权限
+      - 认证
+      - 登录
+      - oauth
+      - jwt
+      - session
+      - rbac
+      - 鉴权
+    payment:
+      - 支付
+      - 收款
+      - 退款
+      - 计费
+      - billing
+      - invoice
+      - 订单金额
+    crypto:
+      - 加密
+      - 解密
+      - hash
+      - md5
+      - sha256
+      - rsa
+      - aes
+      - 签名
+    security:
+      - 安全
+      - 漏洞
+      - xss
+      - csrf
+      - sql注入
+      - 越权
+      - 风控
+      - 防火墙
+    personal_data:
+      - 身份证
+      - 手机号
+      - 邮箱
+      - 住址
+      - pii
+      - gdpr
+      - 隐私
+      - 个人信息
+
+  # 5 个敏感路径 glob（minimatch 语义）；任一文件路径命中即触发
+  sensitive_path_globs:
+    - "**/auth/**"
+    - "**/payment/**"
+    - "**/crypto/**"
+    - "**/security/**"
+    - "**/pii/**"
 
 # ============================================================
 # overrides：用户/环境覆盖（默认全空 = 全量自动发现注册）

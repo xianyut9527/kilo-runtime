@@ -144,7 +144,7 @@ function parseTierDefaults(text) {
 
     // top-level keys we care about
     if (/^tier_defaults\s*:/.test(line)) { flush(); section = 'execution'; curTier = null; inAgents = false; continue; }
-    if (/^(overrides|convergence|hooks|timeouts|inquiry_tier_defaults)\s*:/.test(line)) { flush(); section = null; curTier = null; inAgents = false; continue; }
+    if (/^(overrides|convergence|hooks|timeouts|inquiry_tier_defaults|tier_escalation)\s*:/.test(line)) { flush(); section = null; curTier = null; inAgents = false; continue; }
 
     if (!section) continue;
 
@@ -477,6 +477,53 @@ function parseValue(rawValue) {
 }
 
 // ============================================================
+// ============================================================
+// 从 lifecycle/config.yaml 解析 tier_escalation（定级自动升级触发器）
+// 返回 { mode: 'any'|'all', keyword_groups: {auth: [...], ...}, sensitive_path_globs: [...] }
+// apply-escalation 子命令的扫描依据。
+// ============================================================
+function parseTierEscalation(text) {
+  const result = { mode: 'any', keyword_groups: {}, sensitive_path_globs: [] };
+  let inEscalation = false;
+  let inKeywordGroups = false;
+  let inGlobs = false;
+  let curGroup = null;
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const hashIdx = raw.search(/\s#/);
+    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
+    if (!line.trim()) continue;
+    if (/^tier_escalation\s*:/.test(line)) {
+      inEscalation = true; inKeywordGroups = false; inGlobs = false; curGroup = null; continue;
+    }
+    if (!inEscalation) continue;
+    if (/^[^\s#]/.test(line) && !/^tier_escalation/.test(line)) { inEscalation = false; break; }
+    const modeM = line.match(/^  mode\s*:\s*(\w+)\s*$/);
+    if (modeM) { result.mode = modeM[1]; continue; }
+    if (/^  keyword_groups\s*:\s*$/.test(line)) { inKeywordGroups = true; inGlobs = false; curGroup = null; continue; }
+    if (/^  sensitive_path_globs\s*:\s*$/.test(line)) { inGlobs = true; inKeywordGroups = false; curGroup = null; continue; }
+    if (inKeywordGroups) {
+      const gm = line.match(/^    ([a-z_]+)\s*:\s*$/);
+      if (gm) { curGroup = gm[1]; if (!result.keyword_groups[curGroup]) result.keyword_groups[curGroup] = []; continue; }
+      if (curGroup) {
+        const km = line.match(/^      -\s+(.+?)\s*$/);
+        if (km) { result.keyword_groups[curGroup].push(km[1]); continue; }
+      }
+    }
+    if (inGlobs) {
+      const gm = line.match(/^    -\s+"(.+?)"\s*$/);
+      if (gm) { result.sensitive_path_globs.push(gm[1]); continue; }
+    }
+  }
+  return result;
+}
+
+function readTierEscalation() {
+  const text = readConfigText();
+  if (!text) return { mode: 'any', keyword_groups: {}, sensitive_path_globs: [] };
+  return parseTierEscalation(text);
+}
 // 模块导出
 // ============================================================
 
@@ -492,6 +539,8 @@ export {
   readHooksFromConfig,
   readConvergenceFromConfig,
   readTierDefaults,
+  readTierEscalation,
+  parseTierEscalation,
   readSizeCheckThreshold,
   readDispatchPromptThreshold,
   readMaxFilesPerTask,

@@ -51,6 +51,7 @@ import { fileURLToPath } from 'node:url';
 import { readContext, writeContext, appendTransitionLog, contextPath, buildInitialContext,
          VALID_STATUSES, VERIFICATION_FIELDS, QUALITY_ROUND_FIELD, CURRENT_STAGE_FIELD,
          TOTAL_ROUNDS_FIELD, readHooksFromConfig, readConvergenceFromConfig, readTierDefaults,
+         readTierEscalation,
          readSizeCheckThreshold, readDispatchPromptThreshold, readMaxFilesPerTask,
          assertValidTaskId, getByPath, setByPath, pathAllowedBy, pathPrefix, parseValue,
          extractFrontmatter, die } from './task-context-runtime.mjs';
@@ -173,6 +174,7 @@ function usage() {
     "  node scripts/task-context.mjs set <task_id> <dot.path> <json-value> --agent <name>",
     "  node scripts/task-context.mjs set <task_id> --batch '<json-object>' --agent <name>",
     '  node scripts/task-context.mjs apply-tier <task_id> <T0|T1|T2> --agent conductor',
+    '  node scripts/task-context.mjs apply-escalation <task_id> --agent conductor',
     '  node scripts/task-context.mjs validate <task_id>',
     '  node scripts/task-context.mjs assert <task_id> <type> [args...]',
     '  node scripts/task-context.mjs size-check <task_id>',
@@ -194,6 +196,7 @@ function usage() {
     '  get         Print value at dot.path (JSON).',
     '  set         Write JSON value to dot.path. Enforces write matrix.',
     '  apply-tier  Apply config.yaml tier_defaults to config.agents + review_mode (INIT helper).',
+    '  apply-escalation Scan intent.raw + sizing.key_files against config.yaml tier_escalation; auto-upgrade to T2 if matched (INIT helper).',
     '  validate    Check required top-level fields, quality integers, and convergence mm_fusion integers.',
     '  size-check  Print task_context file character count (pre-dispatch safety gate vs config.size_check_threshold; exit=2 if exceeded).',
     "  dispatch-prompt-check Read dispatch_pending.prompt_chars/file_count written by conductor pre-dispatch; exit=1 if pending info missing, exit=2 if prompt_chars>dispatch_prompt_threshold or file_count>max_files_per_task. PASS otherwise.",
@@ -519,6 +522,115 @@ function cmdApplyTier(taskId, tier, agent, opts) {
   process.stdout.write(
     `ok: apply-tier ${tier} → config.agents=${JSON.stringify(agentsValue)} review_mode=${reviewMode}\n`
   );
+  process.exit(0);
+}
+
+// ============================================================
+// 极简 glob -> RegExp 转换器（零依赖，支持 ** / * / ? 通配符）
+// 语义对齐 minimatch：
+//   ** -> 任意字符（含 /）  * -> 任意非 / 字符  ? -> 单个非 / 字符
+// 其他字符按 RegExp 元字符转义。仅供 apply-escalation 内部使用。
+// ============================================================
+function globToRegex(glob) {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*') { re += '.*'; i++; }
+    else if (c === '*') { re += '[^/]*'; }
+    else if (c === '?') { re += '[^/]'; }
+    else if ('.+^$()|{}[]\\'.indexOf(c) !== -1) { re += '\\' + c; }
+    else re += c;
+  }
+  return new RegExp('^' + re + '$');
+}
+
+// ============================================================
+// apply-escalation: INIT 阶段扫描 intent.raw + sizing.key_files，
+// 命中 config.yaml tier_escalation 规则时自动覆盖 sizing.tier=T2。
+// 优先级：custom_overrides.tier 存在时跳过升级（用户明示偏好）。
+// 幂等：sizing.escalation_reasons 已非空则直接 return。
+// ============================================================
+function cmdApplyEscalation(taskId, agent, opts) {
+  assertValidTaskId(taskId);
+  if (agent !== 'conductor') {
+    die(1, `[PROCESS_VIOLATION] apply-escalation is conductor-only (got --agent "${agent}")`);
+  }
+  const p = contextPath(taskId);
+  if (!fs.existsSync(p)) {
+    die(1, `Error: task_context not found for task_id=${taskId}`);
+  }
+  const { ctx } = readContext(taskId);
+  ctx.sizing = ctx.sizing || {};
+  // 幂等：已应用过则直接返回
+  if (Array.isArray(ctx.sizing.escalation_reasons) && ctx.sizing.escalation_reasons.length > 0) {
+    process.stdout.write(`ok: apply-escalation already applied; reasons=${JSON.stringify(ctx.sizing.escalation_reasons)}\n`);
+    process.exit(0);
+  }
+  const keyFiles = Array.isArray(ctx.sizing.key_files) ? ctx.sizing.key_files : [];
+  const esc = readTierEscalation();
+  const reasons = [];
+  const matchedGroups = new Set();
+  const matchedGlobs = new Set();
+
+  // 1) 扫描 intent.raw（支持 string 或 {raw: string}；大小写不敏感）
+  let rawIntent = '';
+  if (typeof ctx.intent === 'string') {
+    rawIntent = ctx.intent;
+  } else if (ctx.intent && typeof ctx.intent === 'object' && typeof ctx.intent.raw === 'string') {
+    rawIntent = ctx.intent.raw;
+  }
+  const lowerIntent = rawIntent.toLowerCase();
+  for (const [group, kws] of Object.entries(esc.keyword_groups || {})) {
+    for (const kw of kws) {
+      if (lowerIntent.includes(String(kw).toLowerCase())) {
+        matchedGroups.add(group);
+        reasons.push(`keyword:${group}:${kw}`);
+        break;
+      }
+    }
+  }
+
+  // 2) 扫描 key_files（按 sensitive_path_globs glob 匹配；Windows 路径反斜杠规范化）
+  for (const glob of esc.sensitive_path_globs || []) {
+    let re;
+    try { re = globToRegex(glob); } catch { continue; }
+    for (const f of keyFiles) {
+      const fNorm = String(f).replace(/\\/g, '/');
+      if (re.test(fNorm)) {
+        matchedGlobs.add(glob);
+        reasons.push(`path:${glob}:${f}`);
+        break;
+      }
+    }
+  }
+
+  // 3) 判定升级：mode=any 任一命中；mode=all 全部 keyword_groups 命中 + 任一 glob 命中
+  const mode = String(esc.mode || 'any').toLowerCase();
+  let shouldUpgrade = false;
+  if (mode === 'all') {
+    const groups = Object.keys(esc.keyword_groups || {});
+    const allGroupsHit = groups.length > 0 && groups.every(g => matchedGroups.has(g));
+    shouldUpgrade = allGroupsHit && matchedGlobs.size > 0;
+  } else {
+    shouldUpgrade = matchedGroups.size > 0 || matchedGlobs.size > 0;
+  }
+
+  // 4) 用户覆盖优先
+  const customTier = ctx.config && ctx.config.custom_overrides && ctx.config.custom_overrides.tier;
+
+  if (shouldUpgrade) {
+    if (customTier) {
+      ctx.sizing.escalation_reasons = [`skipped: custom_overrides.tier=${customTier} present`];
+    } else {
+      ctx.sizing.tier = 'T2';
+      ctx.sizing.escalation_reasons = reasons;
+    }
+  } else {
+    ctx.sizing.escalation_reasons = [];
+  }
+
+  writeContext(taskId, ctx);
+  process.stdout.write(`ok: apply-escalation tier=${ctx.sizing.tier || '(unchanged)'} reasons=${JSON.stringify(ctx.sizing.escalation_reasons)}\n`);
   process.exit(0);
 }
 
@@ -1063,6 +1175,19 @@ function main() {
       die(2, 'Error: apply-tier requires <task_id> <T0|T1|T2> --agent conductor');
     }
     cmdApplyTier(positional[0], positional[1], agent, {});
+  }
+  if (sub === 'apply-escalation') {
+    // apply-escalation <task_id> --agent conductor
+    const agentIdx = args.indexOf('--agent');
+    if (agentIdx === -1 || agentIdx + 1 >= args.length) {
+      die(2, 'Error: apply-escalation requires --agent <name>');
+    }
+    const agent = args[agentIdx + 1];
+    const positional = args.slice(1, agentIdx).concat(args.slice(agentIdx + 2));
+    if (positional.length !== 1) {
+      die(2, 'Error: apply-escalation requires <task_id> --agent conductor');
+    }
+    cmdApplyEscalation(positional[0], agent, {});
   }
   if (sub === 'assert') {
     // assert <task_id> <assertion-type> [args...]

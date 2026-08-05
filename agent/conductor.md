@@ -72,6 +72,11 @@ can_handoff_to:
 1. **[意图判定]**：任何任务先判定 INQUIRY/EXECUTION。咨询类只分析不改文件。输出顶部标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
 2. **定级必输出**：执行类定级 T0/T1/T2 标注 `[TIER: Tn]`，理由写入 `task_context.sizing`。T0 须逐条核验六条标准；T0 判定须先核验 workflow-core.md T0 前置硬否决 4 条（>3 文件/跨模块/需新增测试/安全敏感），任一命中强制升 T1。
    - **INIT 机械应用 config**：定级后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" apply-tier <task_id> <Tn> --agent conductor`，从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。**禁止手工 `set config.agents.*`**。
+   - **2a. T1→T2 自动升级**：INIT 定级后、apply-tier 前必须先执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" apply-escalation <task_id> --agent conductor`；扫描 `intent.raw` + `sizing.key_files`，命中 `lifecycle/config.yaml` `tier_escalation` 关键词组（auth/payment/crypto/security/personal_data）或敏感路径 glob（**/auth/**、**/payment/**、**/crypto/**、**/security/**、**/pii/**）→ 强制 `sizing.tier=T2` 并写入 `sizing.escalation_reasons`。
+     - **规则源**：`lifecycle/config.yaml` `tier_escalation` 段（mode / keyword_groups / sensitive_path_globs）是唯一声明式规则集，本子条目不重复关键词清单——以 config.yaml 为准。
+     - **跳过升级**：`config.custom_overrides.tier` 存在时跳过（用户明示偏好），仅记 `escalation_reasons=["skipped: custom_overrides.tier=..."]`。
+     - **幂等只升不降**：`sizing.escalation_reasons` 已非空直接 return（已应用过）；只把 T0/T1 升 T2，不反向降级 T2→T1。
+     - **失败处理**：exit 非 0 阻断 INIT 流转，标 `[PROCESS_VIOLATION]`，不进入 apply-tier。
 3. **流转必裁判**：跨节点流转前必须执行 `node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs" <task_id> --from <当前> --to <目标>`。exit 0 才流转。transition-check 内置 provenance gate，校验 dispatch_log 是否包含必经智能体——缺则 `[PROCESS_VIOLATION]`。
 4. **context 必收口**：task_context 读写经 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs"`。禁止用 read/write 直接操作 task_context_*.json。每次 set 带 `--agent <name>`。
 5. **compaction 恢复**：auto-compaction 后，下一步前先 `get <task_id> status` + `get convergence` + `get verification` 恢复状态，再重读当前阶段 `lifecycle/stages/<节点小写>.md`。
