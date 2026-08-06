@@ -21,6 +21,7 @@
 //   node scripts/task-context.mjs assert <task_id> <assertion-type> [args...]
 //   node scripts/task-context.mjs size-check <task_id>          pre-dispatch 安全门：task_context 字符数 > 阈值 → exit 2
 //   node scripts/task-context.mjs log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>
+//   node scripts/task-context.mjs delete <task_id> [--force]
 //   node scripts/task-context.mjs --help
 //
 // assert 子命令（运行时状态断言，供 conductor compaction 恢复后自检）：
@@ -181,6 +182,7 @@ function usage() {
     '  node scripts/task-context.mjs dispatch-prompt-check <task_id>',
     '  node scripts/task-context.mjs pre-dispatch <task_id> --prompt-chars <N> [--file-count <F>]',
     "  node scripts/task-context.mjs log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>",
+    "  node scripts/task-context.mjs delete <task_id> [--force]",
     '',
     'Assert types:',
     '  current-stage <NODE>   Assert current_stage == NODE',
@@ -202,6 +204,7 @@ function usage() {
     "  dispatch-prompt-check Read dispatch_pending.prompt_chars/file_count written by conductor pre-dispatch; exit=1 if pending info missing, exit=2 if prompt_chars>dispatch_prompt_threshold or file_count>max_files_per_task. PASS otherwise.",
     "  pre-dispatch    Combined gate: writes dispatch_pending then runs dispatch-prompt-check + size-check in one process. Replaces the 3-call `set` + `dispatch-prompt-check` + `size-check` sequence. exit=0 pass / 1 audit fail / 2 over-limit (same semantics).",
     "  log-dispatch Append {agent, mode, stage, timestamp} to dispatch_log[] (provenance gate). --agent must be in write-matrix agent set; --stage must be a graph.yaml node. Whitelist-enforced.",
+    "  delete       Remove task_context_<task_id>.json. Default: only DONE/FAILED statuses may be deleted; --force skips the status check.",
     '',
     'Agents in write matrix: ' + Object.keys(WRITE_MATRIX).join(', '),
     '',
@@ -1132,6 +1135,35 @@ function cmdLogDispatch(taskId, agent, mode, stage) {
 }
 
 // ============================================================
+// delete 子命令：清理 task_context JSON（默认仅 DONE/FAILED 状态可删，--force 跳过）
+// 用于 5 次 scan-cleanup + V8 模拟测试产生的临时 task_context 清理。
+// 路径：os.tmpdir()/kilo/task_context_<task_id>.json（复用 contextPath helper）
+// 退出码：0=已删 / 1=业务拒绝（不存在/状态非 DONE|FAILED/解析失败）/ 2=参数错误
+// ============================================================
+function cmdDelete(taskId, force) {
+  assertValidTaskId(taskId);
+  const p = contextPath(taskId);
+  if (!fs.existsSync(p)) {
+    die(1, `Error: task_context not found for task_id=${taskId} (path: ${p})`);
+  }
+  if (!force) {
+    let status;
+    try {
+      const ctx = JSON.parse(fs.readFileSync(p, 'utf8'));
+      status = ctx.status;
+    } catch (e) {
+      die(1, `Error: failed to read/parse ${p}: ${e.message}`);
+    }
+    if (status !== 'DONE' && status !== 'FAILED') {
+      die(1, `Error: cannot delete task_id=${taskId} with status=${status}（默认仅 DONE/FAILED 可删，加 --force 跳过状态检查）`);
+    }
+  }
+  fs.unlinkSync(p);
+  process.stdout.write(`ok: deleted ${p}${force ? ' (--force)' : ''}\n`);
+  process.exit(0);
+}
+
+// ============================================================
 // 入口
 // ============================================================
 
@@ -1243,6 +1275,14 @@ function main() {
     if (modeIdx === -1 || modeIdx + 1 >= args.length) die(2, 'Error: log-dispatch requires --mode <task|agent_manager>');
     if (stageIdx === -1 || stageIdx + 1 >= args.length) die(2, 'Error: log-dispatch requires --stage <STAGE>');
     cmdLogDispatch(args[1], args[agentIdx + 1], args[modeIdx + 1], args[stageIdx + 1]);
+  }
+  if (sub === 'delete') {
+    // delete <task_id> [--force]  — 清理 task_context JSON（默认仅 DONE/FAILED 可删）
+    if (args.length < 2 || args[1].startsWith('--')) {
+      die(2, 'Error: delete requires <task_id> [--force]');
+    }
+    const force = args.includes('--force');
+    cmdDelete(args[1], force);
   }
   die(2, `Error: unknown subcommand "${sub}". Use --help.`);
 }

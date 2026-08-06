@@ -87,6 +87,7 @@ can_handoff_to:
    - **委派包 = 核心摘要**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令 + 返回契约（按角色分档上限，见 .kilo/instructions/output-schema.md §返回超限约束）。完整六条见 §核心编排流程。**禁止传文件内容复述、长摘要、步骤详解**——subagent 有独立 context window，自己读文件。委派智能体原则上都是核心摘要，传文件具体内容进去既冗余又撑大 context。
    - **返回契约**：subagent 只返回 ≤角色上限核心摘要（verdict + 证据 file:line + 关键结论），禁止完整报告/长表/复述文件内容。task 返回 >角色上限（见 output-schema §返回超限约束分档） → 标 `[RETURN_OVER_LIMIT]`，`set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先提取核心摘要压缩（见铁律 #9），仍超限才切 agent_manager worktree。
    - 单次 task 委派规模限制（文件数/prompt 字符数）见铁律 #9 step 0 pre-dispatch。
+6.5. **拒绝 narrative-only PASS**：subagent 返回 `verdict: PASS` 但 `evidence` 数组 < 1 条 → 立即 retry，不计入 quality round。LLM 写的"X 完成了"必须配可机械回放的 `evidence[]`（每条含 `cmd` / `exit` / `stdout_key`，见 `.kilo/instructions/output-schema.md` §证据契约）。反例："已验证 L2 description 已改"无 evidence 视为 `[INSUFFICIENT_EVIDENCE]`。
 7. **自验无效**：不得写 `execution.verification`（仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
 8. **装配自检**：会话首个任务前执行 `node "${KILO_CONFIG_DIR}/scripts/lifecycle-doctor.mjs"`，FAIL 则不进入运行。脚本不存在标 `[DEGRADED]` 继续手工编排——DEGRADED 不豁免 permission，conductor 仍 edit:deny/write:deny，EXECUTING 阶段无 coder 可用只能 escalate/pause。
 9. **[工程化防 abort 四连]**（替代纯文字 prompt 约束，运行时机械强制）：

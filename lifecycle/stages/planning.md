@@ -46,6 +46,57 @@ extension_points:
 forbidden_files: ["string"]
 ```
 
+## premise_audit（每个 unit 必填，写不出 = 不可 dispatch）
+
+> **目的**：把"我假设 X"提前到可证伪的形态，杜绝"想当然设计"。LLM 的"应该这样吧"在编码前必须落地为可机械回放的命令。
+
+**每条 `plan.task_dag.units[i]` 必含 `premise_audit`**（5 字段）：
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `existence_cmd` | string | L3 广搜命令字面量（rg / glob），用于验证"项目里是否已有同类" |
+| `existence_result` | object | **新增** — 记录 `existence_cmd` 实际跑过的结果，绝结 LLM 写假命令字面量。必含 3 子字段：`cmd`（实际跑的命令）、`stdout_key`（≤200 字关键输出）、`hit_count`（命中数） |
+| `falsifiable_test` | string | 关键前提 + 验证方法（< 30s 可证伪） |
+| `user_hints` | string[] | 用户 prompt 中含的常识暗示（grep "应该有/不是有/对吧"）；允许 `["(none)"]` 显式声明无 |
+| `alternatives` | string[] | 替代方案 ≥ 2；只有 1 个 = 高风险 |
+
+**validator 规则**（transition-check PLANNING→EXECUTING 边）：
+- 缺 `premise_audit` → `[MISSING_PREMISE_AUDIT]`
+- 缺 `existence_cmd` → `[MISSING_EXISTENCE_CMD]`
+- 缺 `existence_result` → `[MISSING_EXISTENCE_RESULT]`
+- `falsifiable_test` 空 → `[MISSING_FALSIFIABLE_TEST]`
+- `user_hints` 数组空 → `[MISSING_USER_HINTS]`
+- `alternatives.length < 2` → `[FEW_ALTERNATIVES]`
+
+**反例**（拒绝）：
+```json
+{
+  "id": "U1",
+  "goal": "加 403 跳转"
+  // 缺 premise_audit → 拒绝
+}
+```
+
+**正例**：
+```json
+{
+  "id": "U1",
+  "goal": "无权限时跳独立页面",
+  "key_files": ["src/router/guards.ts"],
+  "premise_audit": {
+    "existence_cmd": "rg -n 403 src/views --type vue",
+    "existence_result": {
+      "cmd": "rg -n 403 src/views --type vue",
+      "stdout_key": "src/views/403/index.vue:1: <template>...</template>",
+      "hit_count": 1
+    },
+    "falsifiable_test": "读 views/403/router.js meta.requireAuth=false 字段值（短路第1步 return true，不死循环）",
+    "user_hints": ["系统不是有 403 页面吗"],
+    "alternatives": ["跳 /403（推荐，语义清晰）", "默默 redirect defaultPath", "弹 toast 提示"]
+  }
+}
+```
+
 ## 路由规则（边定义见 graph.yaml）
 
 - `PLANNING → EXECUTING`：方案输出后无条件流转（执行类 T1/T2 必经）

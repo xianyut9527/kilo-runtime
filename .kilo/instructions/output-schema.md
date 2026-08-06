@@ -235,6 +235,42 @@ agent 返回后、进入下游流程前，conductor 必须按以下规则自检�
 - 9 个 agent frontmatter `description` 末：`输出契约见 .kilo/instructions/output-schema.md §返回契约`
 - 8 个 agent body 末 `## 返回契约` 段：`输出契约见 .kilo/instructions/output-schema.md §返回契约`
 
+
+### §证据契约（subagent 返回必填，机械可回放）
+
+> **核心原则**：LLM 写的"X 完成了"必须配可机械回放的证据，不接受纯 narrative 断言。`verdict: PASS` 无 `evidence[]` 视为 `[INSUFFICIENT_EVIDENCE]`，conductor 必须拒绝流转。
+
+**每条 evidence 必含 3 字段**：
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `cmd` | string | 实际执行的命令字符串（与 transcript 1:1 对应） |
+| `exit` | number | 命令退出码（0=成功，非 0=失败） |
+| `stdout_key` | string | 关键输出片段（≤200 字，用于人工核对） |
+
+**反例（拒绝）**：
+- "已验证 L2 description 已改" ← 无 evidence
+- "transition-check PASS" ← 无 exit code + stdout
+- "lifecycle-doctor 全过" ← 无 "60 PASS / 0 FAIL / 0 WARN" 字符串
+
+**正例**：
+
+```yaml
+evidence:
+  - cmd: "rg -n 'claude code 风格' agent/delivery.md"
+    exit: 1
+    stdout_key: "" # 空输出 = 0 命中
+  - cmd: "node scripts/lifecycle-doctor.mjs"
+    exit: 0
+    stdout_key: "SUMMARY: 60 PASS / 0 FAIL / 0 WARN"
+```
+
+**conductor 拒绝条件**（铁律 #6.5 配套）：
+- `verdict: PASS` 但 `evidence` 数组 < 1 条 → 立即 retry
+- `evidence[].cmd` 缺失或为空 → `[MISSING_CMD]`
+- `evidence[].exit` 缺失或非数字 → `[MISSING_EXIT]`
+- `evidence[].stdout_key` 缺失 → `[MISSING_STDOUT_KEY]`
+
 ## 返回超限约束（返回契约 §防 abort）
 
 ### 返回上限按角色分档

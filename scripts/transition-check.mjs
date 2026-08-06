@@ -492,6 +492,52 @@ function main() {
       if (!ctx.verification || !ctx.verification.forward) {
         die(1, `[MISSING_VERIFICATION_PRODUCT] QUALITY -> DELIVERING: verification.forward 为空（verifier 未产出验证结果，禁止 conductor 假写 verdict=PASS）`);
       }
+      const evidence = ctx.verification.forward.evidence;
+      if (!Array.isArray(evidence) || evidence.length < 1) {
+        die(1, `[INSUFFICIENT_EVIDENCE] QUALITY -> DELIVERING: verification.forward.evidence 数组必填 ≥1 条,见 .kilo/instructions/output-schema.md §证据契约`);
+      }
+      for (let i = 0; i < evidence.length; i++) {
+        const e = evidence[i];
+        if (!e.cmd || typeof e.cmd !== 'string' || e.cmd.trim().length === 0) {
+          die(1, `[MISSING_EVIDENCE_FIELD] evidence[${i}].cmd 缺失或非字符串`);
+        }
+        if (typeof e.exit !== 'number') {
+          die(1, `[MISSING_EVIDENCE_FIELD] evidence[${i}].exit 缺失或非数字(0/非0)`);
+        }
+        if (!e.stdout_key || typeof e.stdout_key !== 'string') {
+          die(1, `[MISSING_EVIDENCE_FIELD] evidence[${i}].stdout_key 缺失或非字符串(≤200字关键输出)`);
+        }
+      }
+    }
+  }
+
+  // premise_audit 必填校验（U1+U2 配套，U3 实现）：T1+ plan 流转 PLANNING->EXECUTING 时
+  // 每个 unit 必须带 premise_audit 段（含 existence_cmd + ≥2 alternatives），
+  // 拒绝"拍脑袋方案"——planner 必须先 L3 广搜证明假设存在，并列出 ≥2 个备选方案 + 风险评分。
+  if (FROM === 'PLANNING' && TO === 'EXECUTING' && !isExempt && !isCircuitBreakerExit) {
+    const units = ctx.plan?.task_dag?.units;
+    if (Array.isArray(units) && units.length > 0) {
+      for (const u of units) {
+        const unitId = u.id || u.unit_id || 'unknown';  // 重构:提取 helper
+        if (!u.premise_audit) {
+          die(1, `[MISSING_PREMISE_AUDIT] unit=${unitId} — plan.task_dag.units[].premise_audit 必填,见 planning.md §premise_audit`);
+        }
+        if (!u.premise_audit.existence_cmd || typeof u.premise_audit.existence_cmd !== 'string' || u.premise_audit.existence_cmd.trim().length === 0) {
+          die(1, `[MISSING_EXISTENCE_CMD] unit=${unitId} — premise_audit.existence_cmd 必填(L3 广搜命令字面量,见 planning.md §premise_audit.existence_cmd)`);
+        }
+        if (!Array.isArray(u.premise_audit.alternatives) || u.premise_audit.alternatives.length < 2) {
+          die(1, `[FEW_ALTERNATIVES] unit=${unitId} — premise_audit.alternatives 必填 ≥ 2 个方案,只有 ${Array.isArray(u.premise_audit.alternatives) ? u.premise_audit.alternatives.length : 0} 个 = 高风险(planner 必须对比 ≥2 个备选并给评分,见 planning.md §premise_audit.alternatives)`);
+        }
+        if (!u.premise_audit.falsifiable_test || typeof u.premise_audit.falsifiable_test !== 'string' || u.premise_audit.falsifiable_test.trim().length === 0) {
+          die(1, `[MISSING_FALSIFIABLE_TEST] unit=${unitId} — premise_audit.falsifiable_test 必填非空(关键前提+验证方法)`);
+        }
+        if (!Array.isArray(u.premise_audit.user_hints) || u.premise_audit.user_hints.length < 1) {
+          die(1, `[MISSING_USER_HINTS] unit=${unitId} — premise_audit.user_hints 必填 ≥1 数组(用户常识暗示,允许 ["(none)"] 显式声明无)`);
+        }
+        if (!u.premise_audit.existence_result || typeof u.premise_audit.existence_result !== 'object') {
+          die(1, `[MISSING_EXISTENCE_RESULT] unit=${unitId} — premise_audit.existence_result 必填对象(cmd/stdout_key/hit_count 字段,记录 existence_cmd 实际跑过的结果,杜绝 LLM 写假命令字面量)`);
+        }
+      }
     }
   }
 
