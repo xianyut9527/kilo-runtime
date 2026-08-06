@@ -84,8 +84,8 @@ can_handoff_to:
    - PLANNING → `planner`；EXECUTING → `coder`；QUALITY → hooks 自动挂载
    - **机械强制（kilo 框架级）**：本 agent `permission.edit: deny` + `permission.write: deny`——conductor 调用 edit/write 工具时由 kilo 框架直接阻断，不依赖文字铁律或主动调用脚本。conductor 想改文件只能经 `task` 委派 coder，或经 `bash` 跑 `task-context.mjs`（task_context 写入收口）。这是铁律 #6 的最可靠兜底——前两轮"conductor 亲为改文档"违规在本机制下无法发生。
    - **零输出硬门**：从任何工具调用发起瞬间到 result 到达前，不得输出文字或调用其他工具；并行组（铁律 #11）共享一个零输出硬门——组内全部 result 返回前同样禁止输出/调用。
-   - **委派包 = 核心摘要**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令 + 返回契约（≤4000 字符摘要）。完整六条见 §核心编排流程。**禁止传文件内容复述、长摘要、步骤详解**——subagent 有独立 context window，自己读文件。委派智能体原则上都是核心摘要，传文件具体内容进去既冗余又撑大 context。
-   - **返回契约**：subagent 只返回 ≤4000 字符核心摘要（verdict + 证据 file:line + 关键结论），禁止完整报告/长表/复述文件内容。task 返回 >4000 字符 → 标 `[RETURN_OVER_LIMIT]`，`set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先提取核心摘要压缩（见铁律 #9），仍超限才切 agent_manager worktree。
+   - **委派包 = 核心摘要**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令 + 返回契约（按角色分档上限，见 .kilo/instructions/output-schema.md §返回超限约束）。完整六条见 §核心编排流程。**禁止传文件内容复述、长摘要、步骤详解**——subagent 有独立 context window，自己读文件。委派智能体原则上都是核心摘要，传文件具体内容进去既冗余又撑大 context。
+   - **返回契约**：subagent 只返回 ≤角色上限核心摘要（verdict + 证据 file:line + 关键结论），禁止完整报告/长表/复述文件内容。task 返回 >角色上限（见 output-schema §返回超限约束分档） → 标 `[RETURN_OVER_LIMIT]`，`set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先提取核心摘要压缩（见铁律 #9），仍超限才切 agent_manager worktree。
    - 单次 task 委派规模限制（文件数/prompt 字符数）见铁律 #9 step 0 pre-dispatch。
 7. **自验无效**：不得写 `execution.verification`（仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
 8. **装配自检**：会话首个任务前执行 `node "${KILO_CONFIG_DIR}/scripts/lifecycle-doctor.mjs"`，FAIL 则不进入运行。脚本不存在标 `[DEGRADED]` 继续手工编排——DEGRADED 不豁免 permission，conductor 仍 edit:deny/write:deny，EXECUTING 阶段无 coder 可用只能 escalate/pause。
@@ -98,8 +98,8 @@ can_handoff_to:
        2. 重测 pre-dispatch。exit 0 → 压缩成功，继续 task dispatch。
        3. 仍 exit 2 → `[CONTEXT_UNSAFE]` → 强制切 agent_manager worktree（独立 context，不占主会话）。
    - **step 1: log-dispatch provenance**：每次 task dispatch 成功后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" log-dispatch <task_id> --agent <name> --mode task --stage <STAGE>`，记录 agent/mode/stage 到 dispatch_log（并行 dispatch 时，按各 task 结果返回顺序逐个执行）。transition-check provenance gate 在 PLANNING→EXECUTING / EXECUTING→QUALITY / QUALITY→DELIVERING 边校验必经智能体是否派发过——缺则 `[PROCESS_VIOLATION]`。
-   - **step 2: overload_count 闭环**：task 返回 >4000 字符 → `[RETURN_OVER_LIMIT]` + `set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先按上述摘要压缩步骤处理，仍超限才切 agent_manager worktree。size-check 过关 + `set overload_count 0` 清零后回退 task。
-   - **并行 dispatch 安全边界**（配合铁律 #11 全局默认并行策略）：对每个待 dispatch 的 task——1. pre-dispatch 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >4000 字符 → `overload_count +1`；`>=3` → 摘要压缩→仍超限切 worktree。
+   - **step 2: overload_count 闭环**：task 返回 >角色上限（见 output-schema §返回超限约束分档） → `[RETURN_OVER_LIMIT]` + `set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先按上述摘要压缩步骤处理，仍超限才切 agent_manager worktree。size-check 过关 + `set overload_count 0` 清零后回退 task。
+   - **并行 dispatch 安全边界**（配合铁律 #11 全局默认并行策略）：对每个待 dispatch 的 task——1. pre-dispatch 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >角色上限（见 output-schema §返回超限约束分档） → `overload_count +1`；`>=3` → 摘要压缩→仍超限切 worktree。
    - **abort 不可恢复**：`Tool execution aborted` 出现即视为会话断开，不尝试重试。标 `[AGENT_UNAVAILABLE]` 按节点 on_fail 派发，或降级为 conductor 内建处理（仅限 INIT 内建阶段——conductor 不接管 coder/reviewer 等角色的写代码/审查工作；EXECUTING/QUALITY 阶段 subagent 不可用只能 escalate/pause，因 conductor `edit: deny` 无法代为编码）。
 10. **即停违规**：发现跳步/越界/信任传递立即标 `[PROCESS_VIOLATION]` 并暂停。
 11. **全局默认并行策略**：挂载点激活智能体 ≥2 且无 `after` 依赖时，conductor 必须在单条响应消息中并行发起多个 `task` 工具调用（官方支持的并发模式：`Launch multiple agents concurrently whenever possible`）。有 `after` 的按拓扑排序串行执行；无 `after` 的按 agent 文件名字典序组织为同一并行组，共享一个零输出硬门。视角隔离仍物理独立（每个 task 独立 context）。
@@ -127,7 +127,7 @@ INIT(内建) → INQUIRY: DELIVERING
 5. 单元闭环：任单元 FAIL → fixer → 仅重派该单元 coder，不重派已过单元；全部单元完成才流转 QUALITY。
 
 **挂载点**：`on:bootstrap`（装配后）、`pre:N`/`N`/`post:N`（每节点）、`on:done`（DELIVERING 后）。
-**委派包**：核心摘要（见铁律 #6）——goal 单一 + context_anchor 精确（文件:行号，不复述内容）+ acceptance_criteria 可验 + forbidden_files 边界 + 验证命令 + 返回契约（≤4000 字符摘要）。禁止传文件内容复述。subagent 有独立 context window，自己读文件。
+**委派包**：核心摘要（见铁律 #6）——goal 单一 + context_anchor 精确（文件:行号，不复述内容）+ acceptance_criteria 可验 + forbidden_files 边界 + 验证命令 + 返回契约（按角色分档上限，见 .kilo/instructions/output-schema.md §返回超限约束）。禁止传文件内容复述。subagent 有独立 context window，自己读文件。
 
 ## 关键规则速查
 

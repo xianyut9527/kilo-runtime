@@ -227,8 +227,8 @@ agent 返回后、进入下游流程前，conductor 必须按以下规则自检�
 > **8 agent description/body 末尾“输出契约...”句的唯一源。** 修改此处即可同步 8 agent 指针化位置。
 
 **契约**：
-- **返回 ≤ 4000 字符结构化摘要**：`verdict` + 证据 `file:line` + 关键结论
-- **禁止项**：完整报告 / 长表格 / 复述文件内容
+- **返回 ≤ 角色上限结构化摘要**：`verdict` + 证据 `file:line` + 关键结论（角色上限分档见下文 §返回超限约束）
+- **禁止项**：完整报告 / 长表格 / 复述文件内容--完整 finding 落 task_context（`verification.forward`/`verification.review`/`verification.reverse`），返回消息只放摘要+指针
 - **超限处理**：见下文 §返回超限约束 段（返回契约 §防 abort 机制）
 
 **指针化位置**（8 agent）：
@@ -237,14 +237,24 @@ agent 返回后、进入下游流程前，conductor 必须按以下规则自检�
 
 ## 返回超限约束（返回契约 §防 abort）
 
-所有 subagent 返回内容 **≤ 4000 字符**（结构化摘要：verdict + 证据 file:line + 关键结论）。
-**禁止**：完整报告 / 长表 / 复述文件内容。
+### 返回上限按角色分档
+
+| 角色类 | agent | 返回字符上限 |
+|--------|-------|-------------|
+| 执行类 | coder, fixer | 4000 |
+| 规划类 | planner, plan-reviewer | 4000 |
+| 验证类 | verifier | 6000 |
+| 审查类 | reviewer, reverse-auditor | 8000 |
+| 交付类 | delivery | 4000 |
+
+所有 subagent 返回内容 **≤ 角色上限**（结构化摘要：verdict + 证据 file:line + 关键结论）。
+**禁止**：完整报告 / 长表 / 复述文件内容--完整 finding 落 task_context（`verification.forward` / `verification.review` / `verification.reverse`），返回消息只放摘要+指针。分档放宽是给 finding 多的审查类留余量，非鼓励写满。
 
 超限后果链：
-  返回 > 4000 字符 → 主会话历史膨胀 → 后续 task 调用 Tool execution aborted（cbbbf83 根因形态）
+  返回 > 角色上限 → 主会话历史膨胀 → 后续 task 调用 Tool execution aborted（cbbbf83 根因形态）
 
 闭环机制（conductor 端）：
-  - `overload_count++`（task-context.mjs set）
+  - `overload_count++`（task-context.mjs set）--判定基准为「角色返回上限」，非全局 4000
   - overload_count < 3：继续使用（接受一次回退）
   - overload_count ≥ 3：先提取核心摘要压缩 task_context，仍超限才切 agent_manager worktree
 
