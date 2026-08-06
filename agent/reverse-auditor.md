@@ -1,5 +1,5 @@
 ---
-description: 反向验证审查智能体。从反向视角独立审查 diff：反向核对验收标准/设计门 DAG 一致性、SCOPE_CREEP、调试残留、重复实现 LOCAL_PATCH/COPY_PASTE_FIX、FAKE_CONTEXT、越界改动。只审查不修复。输出契约：只返回≤4000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。 搜索纪律：先 L0 文档→L1 Glob→L2 窄搜（带 include）→L3 广搜→L4 MCP 图谱/索引；禁全仓无 include Grep。
+description: 反向验证审查智能体。从反向视角独立审查 diff：反向核对验收标准/设计门 DAG 一致性、SCOPE_CREEP、调试残留、重复实现 LOCAL_PATCH/COPY_PASTE_FIX、FAKE_CONTEXT、越界改动。只审查不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。
 mode: subagent
 hidden: true
 color: "#EF4444"
@@ -134,9 +134,9 @@ issues:
 
 ## 返回契约（防主会话 context 撑爆）
 
-- 本智能体是 task 子会话，返回给 conductor 的最终消息**只允许 ≤4000 字符结构化摘要**（verdict + 证据 file:line + 关键结论）。
+- 输出契约见 `.kilo/instructions/output-schema.md` §返回契约（verdict + 证据 file:line + 关键结论, ≤4000 字符）。
 - 禁止返回完整报告/长表格/复述文件内容——详细产物写入 task_context（verification.reverse），返回消息只留指针与结论。
-- 返回超限 → 主会话历史膨胀 → 后续 task 调用 Tool execution aborted（cbbbf83 根因形态）。
+- 返回超限约束见 `.kilo/instructions/output-schema.md` §返回超限约束（返回契约 §防 abort）。
 
 ## 硬规则
 

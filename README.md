@@ -99,6 +99,41 @@ chmod +x install.sh
 - **macOS / Linux**：`~/.config/kilo/`
 - 安装脚本将本仓库内容同步到全局配置目录，不再创建 `agents/` 兼容副本。
 
+## 子智能体冒烟测试
+
+通过 `scripts/agents-smoke-test.mjs` 对 8 个 subagent（`planner / coder / verifier / reviewer / plan-reviewer / reverse-auditor / fixer / delivery`）做端到端连通性验证：实际向 `kilo.json` 中配置的 `provider.hx` 发起一次 chat completion 请求，校验模型路由、超时、HTTP 状态与响应解析是否正常。
+
+### 用法
+
+```bash
+# 查看帮助与全部 flag
+node scripts/agents-smoke-test.mjs --help
+
+# 单跑：指定 agent + 自定义 prompt + 短超时（适合 401/超时快速失败场景）
+node scripts/agents-smoke-test.mjs --agent planner --prompt ping --timeout 30s
+
+# 全跑：8 个 agent 顺序调度，进度走 stderr，结构化结果走 stdout
+node scripts/agents-smoke-test.mjs --full --timeout 60s --json
+```
+
+`--timeout` 支持 `30s` / `500ms` / `1m` / 纯数字（毫秒）。`--json` 模式下单跑输出 1 元素数组，`--full` 输出 8 元素 + 1 summary 元素。进度/进度信息走 stderr，结构化输出走 stdout，避免污染 JSON 解析。
+
+### PASS 判据
+
+- **单跑（`--agent`）**：`ok=true` 且 `error=null` → exit `0`；`http:401` / `timeout` / `parse` 等任意失败 → exit `1`。
+- **全跑（`--full`）**：8 个 agent 全部 `ok=true` → exit `0`；至少 1 个 `ok=false` → exit `1`。
+- **用法错误**：未知 flag / 缺值 / 未知 agent / `--agent` 与 `--full` 互斥 → exit `2`（含 stderr 错误信息）。
+
+### 与其他诊断脚本的定位区分
+
+| 脚本 | 关注点 | 触发条件 |
+| --- | --- | --- |
+| `scripts/lifecycle-doctor.mjs` | **装配**自检：frontmatter 注册、stage 挂载、`required_roles` 契约是否齐备 | 配置变更后 / 装配异常 |
+| `scripts/agents-smoke-test.mjs`（本脚本） | **可达性**自检：subagent 端到端能否真正调到 provider 并拿到合法响应 | provider 异常 / 模型路由调整 / 新接入 subagent |
+| `scripts/flow-audit.mjs` | **流程**自检：DAG 节点/边的合法性与触发条件 | lifecycle 拓扑调整 |
+
+三者互补：装配通过 ≠ 可达（provider 401 仍会 fail）、可达通过 ≠ 流程合规（缺边仍报 PASS）、流程合规 ≠ 装配完整（缺 frontmatter 不被 flow-audit 捕获）。完整健康度需要三脚本全绿。
+
 ## 使用
 
 ### 维护全局骨架

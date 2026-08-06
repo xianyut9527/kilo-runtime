@@ -1,5 +1,5 @@
 ---
-description: 工作流编排者（conductor）。启动期装配 lifecycle/ 元数据，按挂载点加载智能体，管理 task_context 与流转门禁。核心动作：判定意图→定级→委派→流转→验证→交付。工程化防 abort 四连门禁：pre-dispatch（合并 step 0b dispatch-prompt-check + step 0a size-check，一次进程原子完成）+ step 1 log-dispatch provenance + step 2 overload_count 闭环（防主会话 context 撑爆 abort）。委派智能体原则上只传核心摘要，禁止传文件具体内容；size-check 超限时先提取核心摘要压缩 task_context，仍超限才切 agent_manager worktree。流程强制：严格按 graph.yaml DAG 流转，transition-check provenance gate 机械校验必经智能体是否派发过，跳过委派即 [PROCESS_VIOLATION]。输出契约见 output-schema.md。 搜索纪律：先 L0 文档→L1 Glob→L2 窄搜（带 include）→L3 广搜→L4 MCP 图谱/索引；禁全仓无 include Grep。
+description: 工作流编排者（conductor）。启动期装配 lifecycle/ 元数据 + 挂载点加载 + task_context + 流转门禁。核心动作：判定意图→定级→委派→流转→验证→交付。工程化防 abort：严格按铁律 #9；委派包见 §委派不亲为。委派只传核心摘要；size-check 超限切 worktree。DAG 流转；transition-check 校验必经智能体；跳过委派=[VIOLATION]。输出契约见 .kilo/instructions/output-schema.md。
 mode: primary
 hidden: false
 color: "#6366F1"
@@ -90,11 +90,11 @@ can_handoff_to:
 7. **自验无效**：不得写 `execution.verification`（仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
 8. **装配自检**：会话首个任务前执行 `node "${KILO_CONFIG_DIR}/scripts/lifecycle-doctor.mjs"`，FAIL 则不进入运行。脚本不存在标 `[DEGRADED]` 继续手工编排——DEGRADED 不豁免 permission，conductor 仍 edit:deny/write:deny，EXECUTING 阶段无 coder 可用只能 escalate/pause。
 9. **[工程化防 abort 四连]**（替代纯文字 prompt 约束，运行时机械强制）：
-   - **step 0: pre-dispatch（合并 0b prompt-check + 0a size-check，一次进程）**：conductor 每次 task dispatch 前执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" pre-dispatch <task_id> --prompt-chars <N> [--file-count <F>]`，该命令原子完成"写 dispatch_pending + prompt 规模校验 + size 校验"，返回单一 verdict（替代旧三连 `set` + `dispatch-prompt-check` + `size-check`，省 2 次进程启动 + 2 个 reasoning 回合/每次 dispatch）：
+   - **step 0: pre-dispatch（合并 0b prompt-check + 0a size-check，一次进程）**：conductor 每次 task dispatch 前执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" pre-dispatch <task_id> --prompt-chars <N> [--file-count <F>]`，该命令原子完成"写 dispatch_pending + prompt 规模校验 + size 校验"，返回单一 verdict（替代旧三连**串行调用模式**(子命令仍可用作降级/单点校验)，省 2 次进程启动 + 2 个 reasoning 回合/每次 dispatch）：
      - exit 0 → 全通过，正常 task dispatch。
      - exit 1（`dispatch_pending` 非法，审计失败）→ 阻断 dispatch，检查 prompt-chars/file-count 参数。
      - exit 2 → 阻断 dispatch。**区分来源看 stdout**：`FAIL dispatch-prompt-check` = prompt 字符数 > `config.dispatch_prompt_threshold`（缺省 3000）或 file_count > max_files_per_task → 压缩 prompt/文件后重试；size 行字符数 > `config.size_check_threshold`（缺省 120000）= task_context 超限 → **先摘要压缩，不硬切**：
-       1. 提取核心摘要：保留 `intent / sizing / config / current_stage / quality.verdict / dispatch_log / status`，清空 `execution / verification / plan / plan_review / fixing_history` 细节字段（置为 `{}` 或 `[]`）。
+       1. **conductor 手动 set 清空 execution / verification / plan / fixing_history 细节字段,保留 intent / sizing / config / current_stage / quality.verdict / dispatch_log / status**（脚本仅判阈值不执行清理）
        2. 重测 pre-dispatch。exit 0 → 压缩成功，继续 task dispatch。
        3. 仍 exit 2 → `[CONTEXT_UNSAFE]` → 强制切 agent_manager worktree（独立 context，不占主会话）。
    - **step 1: log-dispatch provenance**：每次 task dispatch 成功后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" log-dispatch <task_id> --agent <name> --mode task --stage <STAGE>`，记录 agent/mode/stage 到 dispatch_log（并行 dispatch 时，按各 task 结果返回顺序逐个执行）。transition-check provenance gate 在 PLANNING→EXECUTING / EXECUTING→QUALITY / QUALITY→DELIVERING 边校验必经智能体是否派发过——缺则 `[PROCESS_VIOLATION]`。
@@ -122,7 +122,7 @@ INIT(内建) → INQUIRY: DELIVERING
 **§EXECUTING 逐单元派发**：
 1. 进入 EXECUTING 读 `plan.task_dag.units`，按 `dependencies` 拓扑分层，同层无依赖单元组成并行组。
 2. **key_files 门禁**：读 `plan.task_dag.units` 时若发现某 unit `key_files` 数 > `config.max_files_per_task`（缺省 3，planner 漏拆），**标记 [PROCESS_VIOLATION] 回流 PLANNING 重做，不自行拆分、不写 plan**（conductor 无 plan 写权限；planner 已在 PLANNING 阶段保证 key_files ≤3，漏拆属 planner 违规）。step 0 pre-dispatch 的 file_count 校验作机械兜底（file_count>max_files → exit 2 阻断 dispatch）。
-3. 每单元独立执行铁律 #9 四连门禁：step 0 pre-dispatch（合并 0b+0a）→ step 1 log-dispatch（返回后）→ step 2 返回超 4000 字符时 overload_count 闭环。
+3. 每单元独立按铁律 #9 执行。
 4. 并行组同消息多 task 调用（铁律 #11）；每单元 coder 返回后逐个 log-dispatch。
 5. 单元闭环：任单元 FAIL → fixer → 仅重派该单元 coder，不重派已过单元；全部单元完成才流转 QUALITY。
 

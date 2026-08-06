@@ -78,6 +78,8 @@ task_context:
 
 ## 2. 挂载点全集
 
+> **指针**：速查见 `lifecycle/stages/README.md` 阶段索引 + 挂载机制；本节为完整 mount 指南。
+
 挂载点从 `lifecycle/graph.yaml` 节点**自动派生**，零声明——节点存在即挂载点存在。
 
 ### 主图挂载点
@@ -97,6 +99,8 @@ task_context:
 ---
 
 ## 3. frontmatter `mount` 字段详解
+
+> **指针**：frontmatter 字段权威定义见 `lifecycle/stages/README.md` + 各 `agent/*.md` frontmatter（单一真相）；本节为人类速查手册。
 
 `mount` 是**数组**，每个元素是一个挂载点条目。同一 `.md` 可挂一个或多个点。
 
@@ -192,7 +196,7 @@ mount:
 
 > **默认值**：`pre:`/`post:`/`on:` 挂载点默认 `warn`；主槽挂载点由阶段 `required_roles` 决定（必配角色失败 → escalate，可选视角失败 → degrade）。
 
-> **节点级 `on_fail` 与挂载点 `mount[].on_fail` 是两套独立系统**：节点级 5 值（`abort|retry_once|degrade|escalate|pause`）在 `graph.yaml` 中声明，控制**整个阶段**的失败策略；挂载点 `on_fail` 4 值（`abort|warn|skip|degrade`）在 frontmatter 中声明，控制**单个智能体**在该挂载点的失败行为。二者互不干涉。
+> **节点级 `on_fail` 与挂载点 `mount[].on_fail` 是两套独立系统**：取值集与默认值规则见 `lifecycle/graph.yaml` L30-39 + `lifecycle/config.yaml` L208-218；二者互不干涉。
 
 ---
 
@@ -266,6 +270,8 @@ mount:
 
 ## 6. 多阶段挂载示例
 
+> **指针**：扩展模式 + 用户自建阶段/挂载详见 `lifecycle/stages/README.md` 扩展指南；本节为典型示例集合。
+
 ### 示例 A：单点挂载（最简）
 
 `agent/coder.md`：
@@ -325,6 +331,8 @@ mount:
 ---
 
 ## 7. 实际仓库案例
+
+> **指针**：当前仓库真实挂载清单由 `node scripts/lifecycle-doctor.mjs --verbose` 实时输出（单源）；本表为历史快照参考。
 
 当前仓库 6 个智能体的挂载分布：
 
@@ -442,3 +450,5 @@ isolation:
 
 > **模型绑定不在 frontmatter 中声明**，统一在 `kilo.json` `agent.<name>.model` 配置。能力倾向参考 `docs/model-registry.md` 人工维护。
 
+
+-NoNewline

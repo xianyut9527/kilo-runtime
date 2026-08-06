@@ -28,6 +28,8 @@ lifecycle/
 
 ## 阶段索引
 
+> **单源声明**：本表为人类速查，**单源在 `lifecycle/stages/<id>.md` frontmatter `required_roles` + `lifecycle/graph.yaml` 节点 `on_fail` 字段**。若 `stages/*.md` frontmatter 改动，本表需手工同步（脚本化生成属后续 backlog，见 planner 方案 类3）。
+
 | 阶段 ID | 文件 | 必配角色（stages frontmatter `required_roles`） | `on_fail`（graph.yaml） | 质量门禁 |
 |---------|------|-----------------------------------|------------------------|----------|
 | INIT | `init.md` | conductor 内建 | `pause` | 意图类型明确 + T0-T2 准确 + 写入 `config.agents` |
@@ -47,7 +49,7 @@ lifecycle/
 
 > 注：角色名（如 `verifier`）是契约标识，实际挂载由 `agent/*.md` frontmatter `mount` 自注册决定。`config.agents` 开关见 `lifecycle/config.yaml` `tier_defaults`。
 
-> `on_fail` 取值：`abort` | `retry_once` | `degrade` | `escalate` | `pause`。未声明按 `config.yaml §on_fail 默认值规则` 求值（required_roles 必配 → escalate；可选挂载 → degrade；executor 内建 → pause；terminal → abort）。派发动作详见 `agent/conductor.md` §异常处理派发表。挂载点 `mount[].on_fail`（abort|warn|skip|degrade）覆盖 pre:/post:/on:/可选视角失败，与节点级 `on_fail` 互不干涉。
+> `on_fail` 取值集与默认值规则见 `lifecycle/graph.yaml` 节点字段说明 + `lifecycle/config.yaml` on_fail 默认值规则段（本文件不重复）。派发动作详见 `agent/conductor.md` §异常处理派发表。
 
 ## 文件路由挂载机制（唯一挂载方式）
 
@@ -120,3 +122,5 @@ mount:
 8. **装配可机检**：`scripts/lifecycle-doctor.mjs` 是 `[ASSEMBLY_FAIL]` 校验的可执行实现——配置健康有机械化守卫，不靠人工核对。
 
 
+
+-NoNewline

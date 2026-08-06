@@ -513,8 +513,15 @@ function globToRegexLocal(glob) {
 // ============================================================
 
 // R1: status 字段合法
+// F3 修复：先做 typeof 类型守卫，非 string 直接 FAIL 并提示类型
+//（原实现对 object status 仅报 `status="[object Object]" ∉ {...}`，无法定位根因）
 function rtCheckStatus(ctx, env, rtCheck) {
   const s = ctx.status;
+  if (typeof s !== 'string') {
+    const t = s === null ? 'null' : (s === undefined ? 'undefined' : typeof s);
+    rtCheck('FAIL', 'runtime.status', `status is ${t} (should be string)`);
+    return;
+  }
   if (VALID_STATUSES.includes(s)) {
     rtCheck('PASS', 'runtime.status', `status=${s}`);
   } else {
@@ -591,10 +598,18 @@ function rtCheckTransitionLog(ctx, env, rtCheck) {
 }
 
 // R6: config.agents 与 sizing.tier 存在性一致性
+// F4 修复：当 status=DELIVERING/DONE 时 sizing.tier 缺失应从 WARN 升级为 FAIL
+//（DELIVERING/DONE 阶段必须先有 tier 才会进入——tier 缺失说明 apply-tier 漏跑）
 function rtCheckTier(ctx, env, rtCheck) {
   const tier = ctx.sizing && ctx.sizing.tier;
   if (!tier) {
-    rtCheck('WARN', 'runtime.tier', 'sizing.tier 未设置（可能尚未 INIT 定级）');
+    const status = ctx.status;
+    const finalStatuses = ['DELIVERING', 'DONE'];
+    if (finalStatuses.includes(status)) {
+      rtCheck('FAIL', 'runtime.tier', `status=${status} 但 sizing.tier 未设置（DELIVERING/DONE 阶段必须先有 tier）`);
+    } else {
+      rtCheck('WARN', 'runtime.tier', 'sizing.tier 未设置（可能尚未 INIT 定级）');
+    }
     return;
   }
   const agents = ctx.config && ctx.config.agents;
@@ -636,6 +651,12 @@ function rtCheckTier(ctx, env, rtCheck) {
 // R7: 阶段产物完整性（QUALITY 后要求 quality.verify.forward 已填充；同时保留 verification.forward 向后兼容）
 function rtCheckVerification(ctx, env, rtCheck) {
   const stage = ctx.current_stage;
+  const tier = ctx.sizing && ctx.sizing.tier;
+  // 豁免：T0 极速通道跳过 QUALITY 阶段，无 quality.verify.forward 是设计内行为
+  if (tier === 'T0') {
+    rtCheck('PASS', 'runtime.verification', `tier=${tier}（T0 跳过 QUALITY，不要求 verification.forward）`);
+    return;
+  }
   const postQuality = ['DELIVERING', 'DONE'];
   if (!stage || !postQuality.includes(stage)) {
     rtCheck('PASS', 'runtime.verification', `current_stage=${stage || '(未设置)'} 不要求 verification`);
@@ -912,7 +933,7 @@ function runRuntimeMode() {
 
     process.stdout.write(`\n=== task ${taskId} ===\n`);
     for (const r of results) {
-      process.stdout.write(`${r.level} ${r.name}${r.detail ? ' - ' + r.detail : ''}\n`);
+      process.stdout.write(`${r.level} ${r.name} [${taskId}]${r.detail ? ' - ' + r.detail : ''}\n`);
       if (r.level === 'PASS') totalPass++;
       if (r.level === 'FAIL') totalFail++;
       if (r.level === 'WARN') totalWarn++;

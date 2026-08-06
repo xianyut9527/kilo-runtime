@@ -1,6 +1,6 @@
 ---
 name: coding-engineering
-description: 编码工程化标准 - 设计模式决策、组件化硬规则、优雅编码硬标准、反模式检测。沉淀进程序不靠模型，每次编码/审查自动注入。
+description: 编码工程化标准 - 设计模式决策、组件化硬规则（见 §组件化硬规则）、优雅编码硬标准（见 §优雅编码硬标准）、反模式检测（见 §反模式检测）。沉淀进程序不靠模型，每次编码/审查自动注入。
 keywords: coding, design-patterns, componentization, elegant-code, antipatterns
 ---
 
@@ -74,7 +74,7 @@ keywords: coding, design-patterns, componentization, elegant-code, antipatterns
 5. **组件化前摄扫描**：本次改动模式在代码库同类 ≥2 处 -> 强制组件化（硬规则 1）。
 6. **影响面**：高扇入符号改动列影响清单。
 7. **反模式自查**：上表逐项过。
-8. **编码**：最小改动、遵循现有风格、优雅硬标准。
+8. **编码**：最小改动、遵循现有风格、优雅硬标准（见 §优雅编码硬标准 7 条 bullet）。
 9. **改后**：grep 调用方确认兼容性。
 
 > 违反任一项 -> 输出 `BLOCKED`/`NEEDS_CONTEXT`，由 conductor 判断是否回流 PLANNING。

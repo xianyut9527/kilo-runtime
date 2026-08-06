@@ -269,6 +269,10 @@ function buildInitialContext(taskId) {
       verdict: 'PENDING',
     },
     fixing_history: [],
+    convergence: {
+      mm_fusion_rounds: 0,
+      mm_fusion_max_rounds: 3,
+    },
     dispatch_log: [],        // 每次 dispatch 记录 {agent, mode, stage, timestamp}（provenance gate 依据）
     overload_count: 0,       // task 返回 >4000 字符累计次数；>=3 → [CONTEXT_UNSAFE] 强制切 agent_manager
     status: 'initialized',

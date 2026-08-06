@@ -1,5 +1,5 @@
 ---
-description: 方案审查智能体（plan-reviewer）。审查 planner 输出方案的需求完整性/一致性/可行性/可测性/范围与需求扩散覆盖，只审查不修复。verdict=FAIL → 方案回流 planner 重做（round 自增，max_rounds=3，超限 ESCALATE 升级人工）；审查者自身异常/超时 → 挂载点 on_fail: abort 中止流转。输出契约：只返回≤4000字符结构化摘要（verdict+证据file:line+关键结论），禁止完整报告/长表/复述文件内容。 搜索纪律：先 L0 文档→L1 Glob→L2 窄搜（带 include）→L3 广搜→L4 MCP 图谱/索引；禁全仓无 include Grep。
+description: 方案审查智能体（plan-reviewer）。审查 planner 输出方案的需求完整性/一致性/可行性/可测性/范围与需求扩散覆盖，只审查不修复。verdict=FAIL → 方案回流 planner 重做（round 自增，max_rounds=3，超限 ESCALATE 升级人工）；审查者自身异常/超时 → 挂载点 on_fail: abort 中止流转。输出契约见 .kilo/instructions/output-schema.md §返回契约。
 mode: subagent
 hidden: true
 color: "#E11D48"
@@ -157,9 +157,9 @@ feedback: "string"      # FAIL 时回流给 planner 的重做要点（按 findin
 
 ## 返回契约（防主会话 context 撑爆）
 
-- 本智能体是 task 子会话，返回给 conductor 的最终消息**只允许 ≤4000 字符结构化摘要**（verdict + 证据 file:line + 关键结论）。
+- 输出契约见 `.kilo/instructions/output-schema.md` §返回契约（verdict + 证据 file:line + 关键结论，≤4000 字符）。
 - 禁止返回完整报告/长表格/复述文件内容——详细产物写入 task_context（plan_review 字段），返回消息只留指针与结论。
-- 返回超限 → 主会话历史膨胀 → 后续 task 调用 Tool execution aborted（cbbbf83 根因形态）。
+- 返回超限约束见 `.kilo/instructions/output-schema.md` §返回超限约束（返回契约 §防 abort）。
 
 ## 硬规则
 

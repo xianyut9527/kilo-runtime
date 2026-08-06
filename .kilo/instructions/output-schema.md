@@ -220,3 +220,32 @@ agent 返回后、进入下游流程前，conductor 必须按以下规则自检�
 
 **写法规则**：全大写，下划线分隔；就近引用；路径格式 `文件:行号`；空值显式写 `无`。
 
+
+
+## §返回契约（subagent 返回格式 SSOT）
+
+> **8 agent description/body 末尾“输出契约...”句的唯一源。** 修改此处即可同步 8 agent 指针化位置。
+
+**契约**：
+- **返回 ≤ 4000 字符结构化摘要**：`verdict` + 证据 `file:line` + 关键结论
+- **禁止项**：完整报告 / 长表格 / 复述文件内容
+- **超限处理**：见下文 §返回超限约束 段（返回契约 §防 abort 机制）
+
+**指针化位置**（8 agent）：
+- 9 个 agent frontmatter `description` 末：`输出契约见 .kilo/instructions/output-schema.md §返回契约`
+- 8 个 agent body 末 `## 返回契约` 段：`输出契约见 .kilo/instructions/output-schema.md §返回契约`
+
+## 返回超限约束（返回契约 §防 abort）
+
+所有 subagent 返回内容 **≤ 4000 字符**（结构化摘要：verdict + 证据 file:line + 关键结论）。
+**禁止**：完整报告 / 长表 / 复述文件内容。
+
+超限后果链：
+  返回 > 4000 字符 → 主会话历史膨胀 → 后续 task 调用 Tool execution aborted（cbbbf83 根因形态）
+
+闭环机制（conductor 端）：
+  - `overload_count++`（task-context.mjs set）
+  - overload_count < 3：继续使用（接受一次回退）
+  - overload_count ≥ 3：先提取核心摘要压缩 task_context，仍超限才切 agent_manager worktree
+
+详细 step 0/1/2 实现见 `agent/conductor.md` 铁律 #9。

@@ -131,6 +131,8 @@ function checkTransitionLog(ctx, required) {
     if (!visited.includes(e.from)) visited.push(e.from);
     if (!visited.includes(e.to)) visited.push(e.to);
   }
+  // INIT 是 conductor 内建阶段,无 transition_check 入口,无条件注入 visited
+  if (!visited.includes('INIT')) visited.unshift('INIT');
 
   // 校验 required 序列都在 visited 中且相对顺序正确
   let lastIdx = -1;

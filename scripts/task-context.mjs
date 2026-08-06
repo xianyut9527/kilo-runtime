@@ -354,7 +354,17 @@ function validateSingleWrite(agent, dotPath, value) {
   }
 
   // status schema 校验：仅 conductor 可写，且值必须在合法集合中
-  if (dotPath === 'status') {
+  // F3 修复：path 以 status 结尾的写入做类型守卫——仅允许 string，
+  // 其余类型（含 object/array/number/boolean）直接 reject exit 1，
+  // 避免 [object Object] 字符串化事故污染 task_context。
+  if (dotPath === 'status' || dotPath.endsWith('.status')) {
+    if (typeof value !== 'string') {
+      return {
+        allowed: false,
+        code: 1,
+        message: `Error: status must be a string, got ${value === null ? 'null' : typeof value}`,
+      };
+    }
     if (!VALID_STATUSES.includes(value)) {
       return {
         allowed: false,
@@ -517,10 +527,16 @@ function cmdApplyTier(taskId, tier, agent, opts) {
   ctx.config = ctx.config || {};
   ctx.config.agents = agentsValue;
   ctx.config.review_mode = reviewMode;
+  // 同步写 sizing.tier（消除 INIT 后 transition-check 报 "tier undefined" 的根因）
+  // 幂等：当前 tier 与目标 tier 一致则不写多余字段
+  ctx.sizing = ctx.sizing || {};
+  if (ctx.sizing.tier !== tier) {
+    ctx.sizing.tier = tier;
+  }
   writeContext(taskId, ctx);
 
   process.stdout.write(
-    `ok: apply-tier ${tier} → config.agents=${JSON.stringify(agentsValue)} review_mode=${reviewMode}\n`
+    `ok: apply-tier ${tier} → config.agents=${JSON.stringify(agentsValue)} review_mode=${reviewMode} sizing.tier=${tier}\n`
   );
   process.exit(0);
 }
