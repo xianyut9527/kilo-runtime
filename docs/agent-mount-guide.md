@@ -93,7 +93,7 @@ task_context:
 | QUALITY 内部 hooks | `QUALITY hook:verify`, `QUALITY hook:fix`, `QUALITY hook:review` | 响应式 Hooks：hook 类型定义顺序，`after` 声明相对依赖；数据驱动自动触发（deps 变化/FAIL/PASS） |
 | 生命周期钩子 | `on:done` | DELIVERING 完成后、DONE 前（一次性） |
 
-> **注意**：`INIT` 的 executor 为 `conductor`（内建），主槽由 conductor 占据。`DELIVERING` 不再 executor 内建，改走 mount 挂载（`at: DELIVERING` → agent/delivery.md，frontmatter required_roles: [delivery]）。`pre:`/`post:` 钩子仍可挂载。
+> **注意**：`INIT` 的 executor 为 `conductor`（内建），主槽由 conductor 占据。`DELIVERING` 与 `INIT` 同为 conductor 内建阶段（`executor: conductor`，无 mount agent）；v6 wire-up 修复后回归内建模式。`pre:`/`post:` 钩子仍可挂载。
 > **QUALITY hooks 循环**：QUALITY 阶段内部通过 `hook` + `after` + `deps` + `trigger` 声明响应式挂载——`verify → fix → verify` 自动循环：检查（verify/review）FAIL 自动触发 fix，修复后代码变化再触发 verify，直到全部 PASS 才流转 DELIVERING。
 
 ---

@@ -160,7 +160,7 @@ function checkDispatchLog(ctx, required) {
 
   // 对每个需要委派的阶段（非 conductor 内建），校验 required_roles 已派发
   // INIT 仍为 conductor 内建（无条件 skip）；DELIVERING 仅在无 required_roles 时 skip
-  // （v6 wire-up 修复后 DELIVERING 有 required_roles=[delivery]，需校验）
+  // DELIVERING 与 INIT 同为 conductor 内建阶段（executor: conductor），无需 required_roles 校验
   for (const stage of required) {
     if (stage === 'INIT') continue;
     if (stage === 'DELIVERING' && getStageRequiredRoles('DELIVERING').length === 0) continue;

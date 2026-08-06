@@ -1591,7 +1591,7 @@ function parseAgentPermission(fm) {
       .replace(/^>.*$/mg, '')          // 引用块行（行首 >）
       .replace(/```[\s\S]*?```/g, ''); // 代码块
     const violations = [];
-    // git 操作语境豁免（delivery 等 edit:deny 交付 agent 正文提"提交/删除分支/合并"
+    // git 操作语境豁免（edit:deny 交付类 agent 正文提"提交/删除分支/合并"
     // 是在"不做什么/告知用户分支去向"语境，非自身代码修改动作）
     const GIT_CONTEXT = ['推送', '分支', 'commit', 'push', 'git ', '擅自', '告知', 'PR', '合并', '未推送', '未提交'];
     for (const term of MUTATION_TERMS) {

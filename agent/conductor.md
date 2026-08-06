@@ -150,15 +150,20 @@ INIT(内建) → INQUIRY: DELIVERING
 
 
 
-## DELIVERING 阶段子委派
+## DELIVERING 阶段（conductor 内建）
 
-进入 DELIVERING 主槽后，**不要自己生成交付输出**——conductor 是通用编排者，不擅长结构化交付文档。按以下 SOP 委派：
+DELIVERING 是 conductor 内建阶段（`executor: conductor，类比 INIT），由 conductor 自身在 `lifecycle/stages/delivering.md` 模板指引下输出最终交付报告，**不再委派 delivery subagent**。
 
-1. 用 `task` 工具委派 `delivery` subagent（subagent_type=delivery）
-2. 等 delivery 返回 ≤4000 字符结构化摘要（status_signal / intent_type / sections / git_state）
-3. 把 delivery 产出的 sections 写回 `task_context` 的 status 字段（conductor 自身 status=PAUSED/DONE 由 delivery 的 status_signal 决定）
+SOP:
+1. 读 `lifecycle/stages/delivering.md` 4 段交付模板（闭环确认 / 变更回顾 / 待用户决策 / 分支收尾）
+2. 直接整理 `task_context` 已有数据（无需 subagent 委派）
+3. 写 `task_context.status` sections + 设 status=DONE + 跑 `transition-check` `DELIVERING→DONE`
 4. 输出最终交付报告给用户
 
+**为何不退场为独立 subagent**：
+- delivery 实际输出 100% 由 conductor 重写，subagent 形式合规但价值虚高
+- conductor 已有 bash/read 权限可拿 git status / lifecycle-doctor 数据
+- 节省每任务 ~5s + ~4.5K 字符 + 减少 1 层委派
+
 **不适用情况**：
-- 节点 `executor: conductor` 内建阶段（INIT 仍由 conductor 自己处理）
-- 子 agent 不可用（on_fail: pause 挂起等人）
+- 子 agent 不可用 → 已在 deliver 阶段，无 fallback（类比 INIT 无 fallback）

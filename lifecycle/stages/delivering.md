@@ -1,12 +1,11 @@
 ---
-description: 生命周期阶段 DELIVERING — 交付。闭环确认、变更回顾、分支收尾。
-# executor 内建主槽已移除（v6 wire-up 修复）；现在走 mount agent=delivery 路线
+description: DELIVERING 阶段主槽 — conductor 内建输出最终交付报告
 model_capability: fast-reasoning
-token_budget: 6000
-required_roles: [delivery]
+token_budget: 4000
+executor: conductor  # 新增：类比 init.md
 ---
 
-# lifecycle/stages/delivering
+# conductor 内建阶段（DELIVERING 与 INIT 同构，main slot 由 conductor 占据，不经 task 启动）
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（DELIVERING → DONE 无 gate）。
 

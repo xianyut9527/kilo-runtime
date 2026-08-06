@@ -257,7 +257,7 @@ agent 返回后、进入下游流程前，conductor 必须按以下规则自检�
 
 ```yaml
 evidence:
-  - cmd: "rg -n 'claude code 风格' agent/delivery.md"
+  - cmd: "rg -n 'X 风格' agent/coding-engineering.md"
     exit: 1
     stdout_key: "" # 空输出 = 0 命中
   - cmd: "node scripts/lifecycle-doctor.mjs"
@@ -281,7 +281,6 @@ evidence:
 | 规划类 | planner, plan-reviewer | 4000 |
 | 验证类 | verifier | 6000 |
 | 审查类 | reviewer, reverse-auditor | 8000 |
-| 交付类 | delivery | 4000 |
 
 所有 subagent 返回内容 **≤ 角色上限**（结构化摘要：verdict + 证据 file:line + 关键结论）。
 **禁止**：完整报告 / 长表 / 复述文件内容--完整 finding 落 task_context（`verification.forward` / `verification.review` / `verification.reverse`），返回消息只放摘要+指针。分档放宽是给 finding 多的审查类留余量，非鼓励写满。

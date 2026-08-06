@@ -123,7 +123,7 @@ required_roles: [verifier]       # 主挂载点必须覆盖（无 agent frontmat
 
 > 角色名 = 智能体文件名（去 .md）或其 frontmatter 显式 `role` 字段（多智能体同角色）。路由目标不需要知道谁挂上来——校验由 bootstrap / `scripts/lifecycle-doctor.mjs` 静态预演。**增删智能体永不改 graph.yaml**；仅引入"新角色作为某阶段必配"时才动该阶段 stages 文件 frontmatter 一行（阶段语义变化，内聚）。
 >
-> conductor 内建阶段（仅 INIT）声明 `executor: conductor`，主挂载点由内建逻辑占据，不经 `task` 启动。DELIVERING 改走 mount agent=delivery 路线（v6 wire-up 修复）。
+> conductor 内建阶段（INIT + DELIVERING）声明 `executor: conductor`，主挂载点由内建逻辑占据，不经 `task` 启动。v7 修复后 DELIVERING 回归内建模式。
 
 ### 可插拔机制（启动期装配 / bootstrap）
 

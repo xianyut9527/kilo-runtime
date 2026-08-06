@@ -101,7 +101,7 @@ chmod +x install.sh
 
 ## 子智能体冒烟测试
 
-通过 `scripts/agents-smoke-test.mjs` 对 8 个 subagent（`planner / coder / verifier / reviewer / plan-reviewer / reverse-auditor / fixer / delivery`）做端到端连通性验证：实际向 `kilo.json` 中配置的 `provider.hx` 发起一次 chat completion 请求，校验模型路由、超时、HTTP 状态与响应解析是否正常。
+通过 `scripts/agents-smoke-test.mjs` 对 7 个 subagent（`planner / coder / verifier / reviewer / plan-reviewer / reverse-auditor / fixer`）做端到端连通性验证：实际向 `kilo.json` 中配置的 `provider.hx` 发起一次 chat completion 请求，校验模型路由、超时、HTTP 状态与响应解析是否正常。
 
 ### 用法
 

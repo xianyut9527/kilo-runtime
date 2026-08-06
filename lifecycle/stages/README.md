@@ -23,7 +23,7 @@ lifecycle/
     ├── executing.md        # EXECUTING     — frontmatter required_roles: [coder]
     ├── quality.md          # QUALITY       — 检查修复循环：verify hooks → fix hooks（检查 FAIL 自动修复）→ review hooks → 再 verify，直到全 PASS
     │                         #   hooks: verify (并行启动组，无 after 依赖) → fix (trigger:onFail) → review (trigger:afterPass) → fix (同一 fixer)
-    └── delivering.md       # DELIVERING    — delivery subagent（frontmatter required_roles: [delivery]）
+    └── delivering.md       # DELIVERING    — conductor 内建（executor: conductor，类比 init.md）
 ```
 
 ## 阶段索引
@@ -36,7 +36,7 @@ lifecycle/
 | PLANNING | `planning.md` | `planner` | `escalate` | 方案含验收标准（post:PLANNING 挂载点可由用户挂方案审查，`on_fail: abort` 中止流转） |
 | EXECUTING | `executing.md` | `coder` | `retry_once` | 验收映射表 + 三件套 |
 | **QUALITY** | `quality.md` | `verifier` + `reviewer` + `fixer`（hooks 自动挂载） | `escalate` | hooks 全 PASS |
-| DELIVERING | `delivering.md` | delivery（mount at: DELIVERING） | `pause` | 闭环确认输出 |
+| DELIVERING | `delivering.md` | conductor 内建（无 mount） | `pause` | 闭环确认输出 |
 
 > **QUALITY 阶段内部 hooks（检查修复循环）**：
 > - `hook: verify` verify hooks：verifier（检查代码是否满足验收标准）

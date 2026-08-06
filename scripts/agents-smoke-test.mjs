@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // agents-smoke-test.mjs
-// 8 个 subagent 的端到端冒烟测试调度引擎。
+// 7 个 subagent 的端到端冒烟测试调度引擎。
 //
 // 用途：unit-2 写 CLI 入口串联所有 subagent；unit-1（当前）只暴露核心引擎。
 // 前置：Node 18+（内置 fetch + AbortController），零 npm 依赖。
@@ -99,7 +99,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const KILO_JSON = path.join(ROOT, 'kilo.json');
 
-// 期望的 8 个 subagent 清单（按字母序稳定；缺一 loadAgents 即 FAIL）
+// 期望的 7 个 subagent 清单（按字母序稳定；缺一 loadAgents 即 FAIL）
 const EXPECTED_SUBAGENTS = [
   'planner',
   'coder',
@@ -108,7 +108,6 @@ const EXPECTED_SUBAGENTS = [
   'plan-reviewer',
   'reverse-auditor',
   'fixer',
-  'delivery',
 ];
 
 // ---------- loadAgents() ----------
@@ -331,7 +330,7 @@ export async function dispatchOne(agentName, userPrompt, timeoutMs) {
 //   1 = ok=false（单跑）/ --full 至少 1 个 fail
 //   2 = 用法错误（未知 flag、缺值、未知 agent、--agent 与 --full 互斥等）
 // 人类可读模式列：agent | model | ok | http | len | ms | err，最后 1 行 Total: N pass / M fail。
-// JSON 模式：单跑输出 [result] 1 元素；--full 输出 8 元素 + 1 summary 元素（共 9）。
+// JSON 模式：单跑输出 [result] 1 元素；--full 输出 7 元素 + 1 summary 元素（共 9）。
 // 进度信息走 stderr，结构化输出走 stdout，避免污染 JSON 解析。
 
 function usage() {
@@ -341,14 +340,14 @@ function usage() {
     '',
     'Options:',
     '  --agent <name>            Run a single subagent and print the result',
-    '  --full                    Run all 8 subagents sequentially (planner to delivery)',
+    '  --full                    Run all 7 subagents sequentially (planner to fixer)',
     '  --prompt <text>           User prompt (default: "ping")',
     '  --timeout <duration>      Per-call timeout, e.g. 30s / 500ms / 1m (default: 60000ms)',
-    '  --json                    Emit JSON array to stdout (single=1 elem, full=8+summary)',
+    '  --json                    Emit JSON array to stdout (single=1 elem, full=7+summary)',
     '  --help, -h                Show this help and exit 0',
     '',
     'Exit codes:',
-    '  0 = dispatch ok (single) / all 8 passed (--full)',
+    '  0 = dispatch ok (single) / all 7 passed (--full)',
     '  1 = dispatch failed (single) / >=1 failed (--full)',
     '  2 = usage error (unknown flag, missing value, unknown agent, --agent+--full conflict)',
   ].join('\n');
