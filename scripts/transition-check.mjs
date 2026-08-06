@@ -45,6 +45,7 @@ import { readContext, writeContext, appendTransitionLog, readHooksFromConfig as 
 import { discoverPostPreConstantMounts, discoverPostPreTieredMounts } from './lib/post-pre-mounts.mjs';
 import { getStageRequiredRoles, isConditionalRole, hasRequirementSpread, hasSpreadTrigger, validateRequirementSpread } from './lib/stage-roles.mjs';
 import { cachedDerive } from './lib/derived-cache.mjs';
+import { ERROR_CODES, codeMsg } from './error-codes.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
@@ -478,34 +479,34 @@ function main() {
   if (FROM === 'EXECUTING' && (TO === 'QUALITY' || TO === 'DELIVERING')) {
     const exec = ctx.execution || {};
     if (!exec.diffs && !exec.changes && !exec.acceptance_map) {
-      die(1, `[MISSING_EXECUTION_PRODUCT] ${FROM} -> ${TO}: execution 产物全空（coder 未产出 diffs/changes/acceptance_map，禁止空转流转）`);
+      die(1, codeMsg('MISSING_EXECUTION_PRODUCT', `${FROM} -> ${TO}: execution 产物全空（coder 未产出 diffs/changes/acceptance_map，禁止空转流转）`));
     }
   }
   // plan / verification.forward 校验：T1/T2 非 CB 出口
   if (!isExempt && !isCircuitBreakerExit) {
     if (FROM === 'PLANNING' && TO === 'EXECUTING') {
       if (!ctx.plan || typeof ctx.plan !== 'object' || Object.keys(ctx.plan).length === 0) {
-        die(1, `[MISSING_PLAN_PRODUCT] PLANNING -> EXECUTING: plan 为空（planner 未产出方案，禁止空转流转）`);
+        die(1, codeMsg('MISSING_PLAN_PRODUCT', `PLANNING -> EXECUTING: plan 为空（planner 未产出方案，禁止空转流转）`));
       }
     }
     if (FROM === 'QUALITY' && TO === 'DELIVERING') {
       if (!ctx.verification || !ctx.verification.forward) {
-        die(1, `[MISSING_VERIFICATION_PRODUCT] QUALITY -> DELIVERING: verification.forward 为空（verifier 未产出验证结果，禁止 conductor 假写 verdict=PASS）`);
+        die(1, codeMsg('MISSING_VERIFICATION_PRODUCT', `QUALITY -> DELIVERING: verification.forward 为空（verifier 未产出验证结果，禁止 conductor 假写 verdict=PASS）`));
       }
       const evidence = ctx.verification.forward.evidence;
       if (!Array.isArray(evidence) || evidence.length < 1) {
-        die(1, `[INSUFFICIENT_EVIDENCE] QUALITY -> DELIVERING: verification.forward.evidence 数组必填 ≥1 条,见 .kilo/instructions/output-schema.md §证据契约`);
+        die(1, codeMsg('INSUFFICIENT_EVIDENCE', `QUALITY -> DELIVERING: verification.forward.evidence 数组必填 ≥1 条`));
       }
       for (let i = 0; i < evidence.length; i++) {
         const e = evidence[i];
         if (!e.cmd || typeof e.cmd !== 'string' || e.cmd.trim().length === 0) {
-          die(1, `[MISSING_EVIDENCE_FIELD] evidence[${i}].cmd 缺失或非字符串`);
+          die(1, codeMsg('MISSING_EVIDENCE_FIELD', `evidence[${i}].cmd 缺失或非字符串`));
         }
         if (typeof e.exit !== 'number') {
-          die(1, `[MISSING_EVIDENCE_FIELD] evidence[${i}].exit 缺失或非数字(0/非0)`);
+          die(1, codeMsg('MISSING_EVIDENCE_FIELD', `evidence[${i}].exit 缺失或非数字(0/非0)`));
         }
         if (!e.stdout_key || typeof e.stdout_key !== 'string') {
-          die(1, `[MISSING_EVIDENCE_FIELD] evidence[${i}].stdout_key 缺失或非字符串(≤200字关键输出)`);
+          die(1, codeMsg('MISSING_EVIDENCE_FIELD', `evidence[${i}].stdout_key 缺失或非字符串(≤200字关键输出)`));
         }
       }
     }
@@ -520,22 +521,22 @@ function main() {
       for (const u of units) {
         const unitId = u.id || u.unit_id || 'unknown';  // 重构:提取 helper
         if (!u.premise_audit) {
-          die(1, `[MISSING_PREMISE_AUDIT] unit=${unitId} — plan.task_dag.units[].premise_audit 必填,见 planning.md §premise_audit`);
+          die(1, codeMsg('MISSING_PREMISE_AUDIT', `unit=${unitId} — plan.task_dag.units[].premise_audit 必填`));
         }
         if (!u.premise_audit.existence_cmd || typeof u.premise_audit.existence_cmd !== 'string' || u.premise_audit.existence_cmd.trim().length === 0) {
-          die(1, `[MISSING_EXISTENCE_CMD] unit=${unitId} — premise_audit.existence_cmd 必填(L3 广搜命令字面量,见 planning.md §premise_audit.existence_cmd)`);
+          die(1, codeMsg('MISSING_EXISTENCE_CMD', `unit=${unitId} — premise_audit.existence_cmd 必填(L3 广搜命令字面量)`));
         }
         if (!Array.isArray(u.premise_audit.alternatives) || u.premise_audit.alternatives.length < 2) {
-          die(1, `[FEW_ALTERNATIVES] unit=${unitId} — premise_audit.alternatives 必填 ≥ 2 个方案,只有 ${Array.isArray(u.premise_audit.alternatives) ? u.premise_audit.alternatives.length : 0} 个 = 高风险(planner 必须对比 ≥2 个备选并给评分,见 planning.md §premise_audit.alternatives)`);
+          die(1, codeMsg('FEW_ALTERNATIVES', `unit=${unitId} — premise_audit.alternatives 必填 ≥ 2 个方案,只有 ${Array.isArray(u.premise_audit.alternatives) ? u.premise_audit.alternatives.length : 0} 个 = 高风险`));
         }
         if (!u.premise_audit.falsifiable_test || typeof u.premise_audit.falsifiable_test !== 'string' || u.premise_audit.falsifiable_test.trim().length === 0) {
-          die(1, `[MISSING_FALSIFIABLE_TEST] unit=${unitId} — premise_audit.falsifiable_test 必填非空(关键前提+验证方法)`);
+          die(1, codeMsg('MISSING_FALSIFIABLE_TEST', `unit=${unitId} — premise_audit.falsifiable_test 必填非空(关键前提+验证方法)`));
         }
         if (!Array.isArray(u.premise_audit.user_hints) || u.premise_audit.user_hints.length < 1) {
-          die(1, `[MISSING_USER_HINTS] unit=${unitId} — premise_audit.user_hints 必填 ≥1 数组(用户常识暗示,允许 ["(none)"] 显式声明无)`);
+          die(1, codeMsg('MISSING_USER_HINTS', `unit=${unitId} — premise_audit.user_hints 必填 ≥1 数组(用户常识暗示,允许 ["(none)"] 显式声明无)`));
         }
         if (!u.premise_audit.existence_result || typeof u.premise_audit.existence_result !== 'object') {
-          die(1, `[MISSING_EXISTENCE_RESULT] unit=${unitId} — premise_audit.existence_result 必填对象(cmd/stdout_key/hit_count 字段,记录 existence_cmd 实际跑过的结果,杜绝 LLM 写假命令字面量)`);
+          die(1, codeMsg('MISSING_EXISTENCE_RESULT', `unit=${unitId} — premise_audit.existence_result 必填对象(cmd/stdout_key/hit_count 字段,记录 existence_cmd 实际跑过的结果,杜绝 LLM 写假命令字面量)`));
         }
       }
     }

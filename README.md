@@ -67,7 +67,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   ├── agent-mount-guide.md        # 智能体挂载注册指南（frontmatter mount 字段）
 │   ├── conductor-full-spec.md      # conductor 完整设计规范（运行时精简版的完整版）
 │   ├── configuration-guide.md      # 配置指南（快速上手：新增智能体/阶段/模型/定级调整）
-│   ├── multi-agent-lifecycle-architecture.md  # 多智能体协作生命周期架构（设计门产物）
+│   ├── conductor-full-spec.md      # conductor 完整设计规范（设计门产物 + 多智能体架构历史）
 │   └── model-registry.md          # 模型能力倾向矩阵人类可读版（v6.1 唯一能力参考，无机器可读副本）
 ├── install.ps1                   # Kilo 配置安装脚本（Windows）
 ├── install.sh                    # Kilo 配置安装脚本（macOS/Linux）

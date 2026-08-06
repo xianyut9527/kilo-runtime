@@ -45,7 +45,7 @@ kilo_config/
 │       └── delivering.md                  #   交付（分支收尾）→ DELIVERING
 ├── docs/
 │   ├── configuration-guide.md             # ← 本文件
-│   ├── multi-agent-lifecycle-architecture.md  # 架构设计文档（历史 + 现状）
+│   ├── conductor-full-spec.md             # conductor 完整设计规范（多智能体架构历史）
 │   ├── model-registry.md                  # 模型能力倾向人类可读版（人工维护）
 └── lifecycle-doctor.mjs                    # 配置校验脚本（56 项检查）
 ```

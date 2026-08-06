@@ -1,6 +1,6 @@
 # kilocode 生命周期架构 v2.1（综合导航）
 
-> **定位**：架构设计门落地产物 + 日常运维速查手册。本文档在 `multi-agent-lifecycle-architecture.md`（设计历史）与 `configuration-guide.md`（操作手册）之间，提供**架构全景 + 速查入口**。   
+> **定位**：架构设计门落地产物 + 日常运维速查手册。本文档在 `conductor-full-spec.md`（设计门产物 + 多智能体架构历史）与 `configuration-guide.md`（操作手册）之间，提供**架构全景 + 速查入口**。   
 > **更新日期**：2026-07-29   
 > **版本**：v2.1（响应式 Hooks + after 相对依赖）   
 
@@ -269,7 +269,7 @@ hooks:
 | 文件 | 职责 |
 |------|------|
 | `docs/configuration-guide.md` | 操作手册：新增智能体/阶段/模型/定级调整 |
-| `docs/multi-agent-lifecycle-architecture.md` | 设计历史：v1→v2 迁移、架构决策记录 |
+| `docs/conductor-full-spec.md` | conductor 完整设计规范（设计门产物 + 多智能体架构历史） |
 | `docs/agent-mount-guide.md` | 挂载指南：frontmatter 字段详解、示例、FAQ |
 | `docs/model-registry.md` | 模型能力倾向矩阵（人工维护，无机械校验） |
 | `CONFIG_CHANGE_CHECKLIST.md` | 配置变更一致性检查清单 |

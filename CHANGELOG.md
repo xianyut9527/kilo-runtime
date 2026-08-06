@@ -14,6 +14,11 @@
 - **验证**：lifecycle-doctor 49+ PASS / 0 FAIL / WARN → 0（49+50=49，因 H3 删除少 1 PASS，ironclad 由 WARN→INFO）；sync drift=0
 ## [Unreleased]
 
+- **chore(scan-cleanup-009 U5): 删 `scripts/heavy-test-e2e.mjs`（742 行）**
+  - **理由**：8 次 scan-cleanup 累计未使用；全仓零正式引用（仅 `.tmp/heavy-test-report.md` / `.tmp/new-diffs.json` / `.tmp/new-plan.json` / `.tmp/plan-heavy-test.json` 临时产物 + 自身自引用）；git log 仅 1 commit（cf0de47 refactor(docs)），系单次验证任务产物（heavy-test-2026-08-06 U3）。
+  - **功能替代**：`lifecycle-doctor.mjs` H1 脚本完整性门（检查 scripts/*.mjs 存在 & 可 import）+ R1-R9 runtime 检查已覆盖；`transition-check.mjs` 单独覆盖阶段流转。
+  - **验证**：lifecycle-doctor 57 PASS / 0 FAIL / 0 WARN（实际基线，少 1 文件 H1 仍 OK）；全仓 `heavy-test` 引用仅剩 .tmp/ 临时产物（按规则不污染）。
+
 - **fix(quality): 搜索纪律架构纯粹化——移除 gitnexus 硬编码耦合**
   - AGENTS.md #15 L4 段：gitnexus_query/gitnexus_impact/gitnexus_context → MCP 图谱/索引能力（工具无关）
   - kilo.json 8 agent prompt 末尾段同步

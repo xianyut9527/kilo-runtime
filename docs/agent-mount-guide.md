@@ -12,7 +12,7 @@
 4. [条件挂载（`when`）](#4-条件挂载when)
 5. [失败策略（`on_fail`）](#5-失败策略on_fail)
 6. [多阶段挂载示例](#6-多阶段挂载示例)
-7. [实际仓库案例](#7-实际仓库案例)
+7. [实际仓库案例（已抽离）](#7-实际仓库案例已抽离)
 8. [校验与调试](#8-校验与调试)
 9. [常见错误速查](#9-常见错误速查)
 
@@ -93,7 +93,7 @@ task_context:
 | QUALITY 内部 hooks | `QUALITY hook:verify`, `QUALITY hook:fix`, `QUALITY hook:review` | 响应式 Hooks：hook 类型定义顺序，`after` 声明相对依赖；数据驱动自动触发（deps 变化/FAIL/PASS） |
 | 生命周期钩子 | `on:done` | DELIVERING 完成后、DONE 前（一次性） |
 
-> **注意**：`INIT` 的 executor 为 `conductor`（内建），主槽由 conductor 占据。`DELIVERING` 与 `INIT` 同为 conductor 内建阶段（`executor: conductor`，无 mount agent）；v6 wire-up 修复后回归内建模式。`pre:`/`post:` 钩子仍可挂载。
+> **注意**：`INIT` 的 executor 为 `conductor`（内建），主槽由 conductor 占据。`DELIVERING` 与 `INIT` 同为 conductor 内建阶段（`executor: conductor`，无 mount agent）。`pre:`/`post:` 钩子仍可挂载。v6 wire-up 修复记录见 `docs/archive/agent-mount-guide-v1.md` 附录 B。
 > **QUALITY hooks 循环**：QUALITY 阶段内部通过 `hook` + `after` + `deps` + `trigger` 声明响应式挂载——`verify → fix → verify` 自动循环：检查（verify/review）FAIL 自动触发 fix，修复后代码变化再触发 verify，直到全部 PASS 才流转 DELIVERING。
 
 ---
@@ -107,7 +107,7 @@ task_context:
 ```yaml
 mount:
   - at: QUALITY                  # 挂载点名称（必填）
-    hook: verify                 # v2 响应式 hook：verify | fix | review
+    hook: verify                 # 响应式 hook：verify | fix | review（v2 引入，见 archive 附录 C）
     deps: [execution.code, plan] # hook 依赖（deps 变化时自动触发）
     after: [other-agent]          # 可选相对依赖（省略 = 与同 hook 类型其他 agent 并行，按 agent 文件名字典序组织并行组，单条消息并行发起）
     trigger: onChange             # 触发时机：onChange（默认）| afterPass | onFail
@@ -150,7 +150,7 @@ mount:
 ```
 
 
-> v2 废弃 `order: <数字>` 绝对编号系统。QUALITY 内部顺序由 `hook` 类型内置定义（`verify → fix → review → fix`），同 hook 类型内默认并行（无 after 依赖时单条消息并行发起），需要相对顺序时用 `after` 声明前驱（有 after 按拓扑串行）。仅 `graph.yaml` 声明 `parallel: true` 的节点保留并行语义。
+> QUALITY 内部顺序由 `hook` 类型内置定义（`verify → fix → review → fix`），同 hook 类型内默认并行（无 after 依赖时单条消息并行发起），需要相对顺序时用 `after` 声明前驱（有 after 按拓扑串行）。仅 `graph.yaml` 声明 `parallel: true` 的节点保留并行语义。`order` 字段废弃历史见 `docs/archive/agent-mount-guide-v1.md` 附录 D。
 
 ### `when`（可选）
 
@@ -330,20 +330,10 @@ mount:
 
 ---
 
-## 7. 实际仓库案例
+## 7. 实际仓库案例（已抽离）
 
-> **指针**：当前仓库真实挂载清单由 `node scripts/lifecycle-doctor.mjs --verbose` 实时输出（单源）；本表为历史快照参考。
-
-当前仓库 6 个智能体的挂载分布：
-
-| 智能体 | 挂载点 | 类型 | `when` | `on_fail` | 说明 |
-|--------|--------|------|--------|-----------|------|
-| `planner` | `PLANNING` | 主槽 | 无 | 默认 | 设计方案 |
-| `coder` | `EXECUTING` | 主槽 | 无 | 默认 | 标准编码 |
-| `reviewer` | `QUALITY hook:review` | 主图hook | 无 | 默认 | 代码审查 |
-| `fixer` | `QUALITY hook:fix` | 主图hook | 无 | 默认 | 定向修复（auto-trigger） |
-| `conductor` | — | primary | — | — | 主图编排者（不经 mount） |
-
+> **指针**：当前仓库真实挂载清单由 `node scripts/lifecycle-doctor.mjs --verbose` 实时输出（单源）。
+> v1 时期的智能体挂载快照已抽离至 `docs/archive/agent-mount-guide-v1.md` 附录 A，作为历史参考。
 
 ---
 
