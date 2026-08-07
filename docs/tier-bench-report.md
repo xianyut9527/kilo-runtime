@@ -38,7 +38,7 @@
 1. **T0-3 重复 [Unreleased] 段**：commit 21cbf4f 在 L5 插入新 [Unreleased] + ### Changed + 1 bullet，但 L4 已存在 [Unreleased] 段；L9 又重复 [Unreleased] 标题。subagent 自检漏报 0 错。修复：FIX-1 amend commit 去重。
 
 ### P0 文档死引用
-2. **`node scripts/lifecycle-doctor.mjs` 全仓死引用**：commit 0a119e5 删单文件后重组为 scripts/lifecycle-doctor/ 目录（index.mjs 入口已验证 68 PASS）。死引用分布：AGENTS.md(2) + CONFIG_CHANGE_CHECKLIST.md(6) + agent/conductor.md(2) + README.md(1) + docs/ARCHITECTURE.md(3) + docs/agent-mount-guide.md(3) + docs/conductor-full-spec.md(3) + docs/archive/multi-agent-lifecycle-architecture-v1.md(6) = 9 文件 26+ 处。修复：FIX-2..5。
+2. **`node scripts/lifecycle-doctor.mjs` 全仓死引用**：commit 0a119e5 删单文件后重组为 scripts/lifecycle-doctor/ 目录（index.mjs 入口已验证 57 PASS / 1 FAIL，1 FAIL 为 decouple-audit 独立检查与本次重构无关）。FIX2-A/B/C 完成后实测死引用分布：docs/tier-bench-report.md(1，本报告自指历史描述) = 1 文件 1 处（FIX2-B 已清 configuration-guide.md 等 8 文件 26 处，剩余仅本报告自指）。修复：FIX-2..5。
 
 ### P1 内容质量
 3. **T1-1 derived-cache.mjs +110 行超范围**：原任务仅要求"找 1 个 path.join 接入"，subagent 实际添加 110 行（含 20 行注释 + fail-safe 原则 + 进程内 memo + 原子落盘）。属 bench-t1-1 worktree 产物不合并。
@@ -52,7 +52,7 @@
 
 详见 tier-bench-fix-20260807 task_context 7 unit：
 - FIX-1: bench-t0-3 CHANGELOG amend
-- FIX-2..5: 9 文件 26+ 处死引用 → /index.mjs
+- FIX-2..5: 1 文件 1 处死引用 → /index.mjs (FIX2-A/B/C 已清 9 文件 32 处，剩本报告 1 处自指)
 - FIX-6: 本报告文档
 - FIX-7: scripts/lib/powershell-escape.mjs helper
 
