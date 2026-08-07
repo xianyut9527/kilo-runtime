@@ -92,5 +92,5 @@ if (!readme.includes(`${id.toLowerCase()}.md`)) {
 console.log(`\n[完成] 新 stage "${id}" 已注册。建议:`);
 console.log(`  1. 编辑 lifecycle/stages/${id.toLowerCase()}.md 完善输入/处理/输出/路由`);
 console.log(`  2. 改 lifecycle/graph.yaml 加边（XX -> ${id} -> YY）`);
-console.log(`  3. 跑 node scripts/lifecycle-doctor.mjs 验证`);
+console.log(`  3. 跑 node scripts/lifecycle-doctor/index.mjs 验证`);
 console.log(`  4. 跑 node scripts/transition-check.mjs scan-cleanup-009 --from ${id} --to DONE 测试流转`);

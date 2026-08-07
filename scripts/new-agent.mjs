@@ -79,5 +79,5 @@ if (!smoke.includes(`'${name}'`)) {
 
 console.log(`\n[完成] 新 subagent "${name}" 已注册。建议:`);
 console.log(`  1. 编辑 agent/${name}.md 完善行为/权限/返回契约`);
-console.log(`  2. 跑 node scripts/lifecycle-doctor.mjs 验证`);
+console.log(`  2. 跑 node scripts/lifecycle-doctor/index.mjs 验证`);
 console.log(`  3. 跑 node scripts/agents-smoke-test.mjs --full 测试连通性`);

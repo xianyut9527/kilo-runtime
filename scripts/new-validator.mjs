@@ -47,5 +47,5 @@ console.log(`  注意:放在校验块合适位置,可参考 L488-516 现有 8 �
 console.log(`\n[完成] 新 validator "${code}" 已登记。建议:`);
 console.log(`  1. 手工改 transition-check.mjs 加 die 调用（context-dependent）`);
 console.log(`  2. 改 lifecycle/stages/${fromStage.toLowerCase()}.md 与 ${toStage.toLowerCase()}.md 加契约描述`);
-console.log(`  3. 跑 node scripts/lifecycle-doctor.mjs 验证`);
+console.log(`  3. 跑 node scripts/lifecycle-doctor/index.mjs 验证`);
 console.log(`  4. 跑模拟测试：构造正/反 fixture 验证 die 工作`);
