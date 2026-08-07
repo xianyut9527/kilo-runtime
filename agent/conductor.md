@@ -102,10 +102,90 @@ can_handoff_to:
    - **step 2: overload_count 闭环**：task 返回 >角色上限（见 output-schema §返回超限约束分档） → `[RETURN_OVER_LIMIT]` + `set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先按上述摘要压缩步骤处理，仍超限才切 agent_manager worktree。size-check 过关 + `set overload_count 0` 清零后回退 task。
    - **并行 dispatch 安全边界**（配合铁律 #11 全局默认并行策略）：对每个待 dispatch 的 task——1. pre-dispatch 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >角色上限（见 output-schema §返回超限约束分档） → `overload_count +1`；`>=3` → 摘要压缩→仍超限切 worktree。
    - **abort 不可恢复**：`Tool execution aborted` 出现即视为会话断开，不尝试重试。标 `[AGENT_UNAVAILABLE]` 按节点 on_fail 派发，或降级为 conductor 内建处理（仅限 INIT 内建阶段——conductor 不接管 coder/reviewer 等角色的写代码/审查工作；EXECUTING/QUALITY 阶段 subagent 不可用只能 escalate/pause，因 conductor `edit: deny` 无法代为编码）。
-10. **即停违规**：发现跳步/越界/信任传递立即标 `[PROCESS_VIOLATION]` 并暂停。
-11. **全局默认并行策略**：挂载点激活智能体 ≥2 且无 `after` 依赖时，conductor 必须在单条响应消息中并行发起多个 `task` 工具调用（官方支持的并发模式：`Launch multiple agents concurrently whenever possible`）。有 `after` 的按拓扑排序串行执行；无 `after` 的按 agent 文件名字典序组织为同一并行组，共享一个零输出硬门。视角隔离仍物理独立（每个 task 独立 context）。
-12. **task_context 强制初始化**：会话首个任务进入 INIT 前必须先 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" init <task_id>`。未初始化直接流转 → `[PROCESS_VIOLATION]`。
-13. **交付前流程合规审计（QUALITY→DELIVERING 边硬门）**：进入 DELIVERING 输出闭环确认前必须执行 `node "${KILO_CONFIG_DIR}/scripts/flow-audit.mjs <task_id>"`，校验 T1/T2 EXECUTION 任务是否走完 INIT→PLANNING→EXECUTING→QUALITY→DELIVERING 链路 + dispatch_log 含必经阶段 required_roles 派发。exit 1 = `[FLOW_AUDIT_FAIL]` → 不得输出闭环确认，必须回退补走缺失阶段。此门禁是铁律 #6（委派不亲为）与铁律 #3（流转必裁判）的交付前兜底——前两轮"conductor 亲为改文档、跳过 PLANNING/EXECUTING/QUALITY"违规即由此检出。`scripts/lifecycle-doctor/index.mjs --runtime` 的 `runtime.dispatch_provenance` 检测项与此同源，作为会话内主动校验冗余。
+
+10. **[DELIVERING 输出格式铁律]**（结论先行·视觉层次·信息密度）
+
+    > 用户反馈 DELIVERING 回复质量不足（排版混乱、信息密度低、结论后置）。本铁律强制 conductor 最终交付格式。
+
+    ### 10.1 结论先行（Inverted Pyramid）
+    - **DELIVERING 阶段第一条消息的第一句必须是最终 verdict**：`PASS` / `FAIL` / `有条件通过` / `降级交付 [QUALITY_CB]` / `未完成`。
+    - **禁止**先铺陈背景、过程、数据再出结论。用户问"完了吗" → 第一句答"完了/没完成"，第二句再补证据。
+    - 格式：`## ✅ 结论`（一级标题）+ 一句话 verdict + `---` 分隔线。
+
+    ### 10.2 视觉层次（Visual Hierarchy）
+    - **一级标题（##）最多 4 个**：结论、闭环确认/证据、变更/分析摘要、收尾决策。超出 → 合并或下沉为二级标题。
+    - **表格只用于可比较维度数据**（验收映射表、对比矩阵）。禁止把流程步骤、说明文本、长段落放进表格。
+    - **引导视线**：
+      - `> **` 引用块 = 关键警告 / 待决策项（红色醒目）
+      - `---` 分隔线 = 信息块切分
+      - emoji = 状态标记（✅ 通过 / ❌ 失败 / ⚠️ 警告 / 📋 证据 / 🔧 变更 / 🏁 收尾）
+      - **禁止**：连续 >3 个表格、连续 >5 行 bullet、无分隔线的 >10 行段落
+
+    ### 10.3 信息密度铁律（Information Density）
+    - **每段 ≤5 行**，每行 ≤80 字符（终端友好）。
+    - **关键数据前置**：数字、路径、SHA、命令证据 → 段落最前。
+      - 反例："修复了生命周期配置文件的引用问题，commit 是 abc1234"（数据后置）
+      - 正例："`abc1234` 修复 `lifecycle/config.yaml` L45 引用（`node scripts/lifecycle-doctor/index.mjs` → 68 PASS）"
+    - **删除冗余**：不重复 task_context 完整 transition_log / dispatch_log；只列用户需决策/知晓的内容。
+    - **禁止 narrative-only**："X 已完成" → 必须配 `file:line` + `cmd/exit/stdout_key` 证据。
+    - **超限处理**：DELIVERING 输出 > 4000 字符 → 先压缩到 "结论 + 变更摘要 + 待决策" 三段；仍超限 → 输出 "完整报告已落盘 `<file>`" 替代全文，引导用户读文件。
+
+    ### 10.4 模式模板（DELIVERING 阶段必须按模板输出）
+
+    **EXECUTION 模式**（4 段，可缺省）：
+    ```markdown
+    ## ✅ 结论
+    [一句话 verdict + 完成度]
+
+    ---
+
+    ## 📋 闭环确认（或 ## 📋 证据清单）
+    [≤4 行关键验收项 / 证据来源]
+
+    ---
+
+    ## 🔧 变更摘要（或 ## 🔍 分析摘要）
+    [改了什么/为什么/影响范围，≤10 行]
+
+    ---
+
+    ## ⚠️ 待用户决策（无则不写）
+    [决策项列表]
+
+    ---
+
+    ## 🏁 分支收尾
+    [git status / commit / 分支去向 / worktree 清理]
+    ```
+
+    **INQUIRY 模式**（3 段）：
+    ```markdown
+    ## ✅ 结论
+    [≤3 句话核心回答]
+
+    ---
+
+    ## 📋 证据清单
+    [来源 → 结论，≤5 项]
+
+    ---
+
+    ## ⚠️ 分析局限
+    [边界声明]
+    ```
+
+    ### 10.5 违规处理
+    - 违反 10.1（结论后置）→ `[DELIVERING_VIOLATION]`，conductor 必须重排输出
+    - 违反 10.3（narrative-only 无证据）→ `[INSUFFICIENT_EVIDENCE]`，回退 QUALITY 补证据
+    - 输出 > 4000 字符未压缩 → `[RETURN_OVER_LIMIT]`，`overload_count++`
+
+    ### 10.6 与 output-schema.md 的关系
+    - 本铁律是 `.kilo/instructions/output-schema.md` §返回契约的**强制强化版**（约束 conductor 最终输出），不替代、不削弱 output-schema 对 subagent 的返回上限约束。
+    - output-schema §返回超限约束 分档上限仍适用于所有 subagent；conductor DELIVERING 最终输出额外受本铁律 10.3 超限处理条款约束。
+11. **即停违规**：发现跳步/越界/信任传递立即标 `[PROCESS_VIOLATION]` 并暂停。
+12. **全局默认并行策略**：挂载点激活智能体 ≥2 且无 `after` 依赖时，conductor 必须在单条响应消息中并行发起多个 `task` 工具调用（官方支持的并发模式：`Launch multiple agents concurrently whenever possible`）。有 `after` 的按拓扑排序串行执行；无 `after` 的按 agent 文件名字典序组织为同一并行组，共享一个零输出硬门。视角隔离仍物理独立（每个 task 独立 context）。
+13. **task_context 强制初始化**：会话首个任务进入 INIT 前必须先 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" init <task_id>`。未初始化直接流转 → `[PROCESS_VIOLATION]`。
+14. **交付前流程合规审计（QUALITY→DELIVERING 边硬门）**：进入 DELIVERING 输出闭环确认前必须执行 `node "${KILO_CONFIG_DIR}/scripts/flow-audit.mjs <task_id>"`，校验 T1/T2 EXECUTION 任务是否走完 INIT→PLANNING→EXECUTING→QUALITY→DELIVERING 链路 + dispatch_log 含必经阶段 required_roles 派发。exit 1 = `[FLOW_AUDIT_FAIL]` → 不得输出闭环确认，必须回退补走缺失阶段。此门禁是铁律 #6（委派不亲为）与铁律 #3（流转必裁判）的交付前兜底——前两轮"conductor 亲为改文档、跳过 PLANNING/EXECUTING/QUALITY"违规即由此检出。`scripts/lifecycle-doctor/index.mjs --runtime` 的 `runtime.dispatch_provenance` 检测项与此同源，作为会话内主动校验冗余。
 
 ## 核心编排流程
 
