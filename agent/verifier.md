@@ -129,7 +129,7 @@ verification_commands: [{ cmd, expected_exit_code }]
 - 状态信号合规：coder 输出是否含 `DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`
 
 ### L3（覆盖/安全/架构，仅 T2）
-- API 兼容性（`gitnexus_api_impact`）
+- API 兼容性（可选 MCP 索引工具 — 可用时 `*_api_impact`，否则用 grep 收窄 + 查 import 调用图）
 - 安全/性能检测（`security-checklist.md`）
 - 跨文件/模块重复模式反向 grep（UI 与非 UI 同等适用）
 

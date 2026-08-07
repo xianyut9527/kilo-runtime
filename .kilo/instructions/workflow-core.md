@@ -82,7 +82,7 @@ T0 直达 coder，无需 planner、verifier、reviewer。
 | L1 Glob | 按文件名/路径模式精确定位 | 路径前缀 | 第二步 |
 | L2 窄搜 | Grep 带 `include` 限定文件类型/路径前缀 | 目标 ≤3 文件 | 第三步 |
 | L3 广搜 | Grep 全仓（仅在前三阶梯无果、且明确知晓调用方后使用） | 全仓 | 末位 |
-| L4 MCP 图谱/索引 | GitNexus / Context7 等索引工具 | 调用链/影响面/官方文档 | 业务仓库默认 |
+| L4 MCP 索引（可选） | 通用 MCP 工具（按 IDE 注入） | 调用链/影响面/官方文档 | 业务仓库默认（若启用） |
 
 **阶梯跳级违规**：
 - 绕过 L2 直接全仓 Grep → `[SEARCH_LADDER_VIOLATION]`
@@ -91,12 +91,12 @@ T0 直达 coder，无需 planner、verifier、reviewer。
 
 ### §MCP 优先：业务仓库默认走 MCP 图谱/索引能力
 
-- **业务仓库默认 L4 起步**：大代码库（>1000 文件）首选 GitNexus `query` / `context` / `impact`，避免暴力文本搜索
+- **业务仓库默认 L4 起步**：大代码库（>1000 文件）首选 MCP 索引工具（可选，可用时调 `mcp_*_query` / `mcp_*_context` / `mcp_*_impact`），避免暴力文本搜索
 - **未启用图谱的仓库回退 L3**：L3 广搜必须有明确调用方知晓，全仓 Grep 必须带 `include` 限定目录/扩展名
-- **Kilo 框架不绑定特定 MCP**：具体工具由当前环境 MCP 决定（GitNexus / Context7 / 其他）
-- **索引刷新**：代码大改后建议跑 `gitnexus analyze <path>` 刷新图谱
+- **Kilo 框架默认零耦合**：`kilo.json` 中 MCP 默认 `enabled: false`；用户按需 enable
+- **索引刷新（可选）**：若启用 MCP 索引，按所选工具文档跑对应 refresh
 
-> **反例**：在已索引仓库用 `rg "funcName" .` 全仓扫描是阶梯跳级。正确做法：`mcp_gitnexus_context name=funcName` 或先 `mcp_gitnexus_query` 收窄范围。
+> **反例**：在已索引仓库用 `rg "funcName" .` 全仓扫描是阶梯跳级。正确做法：`mcp_*_context name=funcName` 或先 `mcp_*_query` 收窄范围（若该 MCP 已启用）。
 
 ## 单元化编排
 
