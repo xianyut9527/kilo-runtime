@@ -128,7 +128,7 @@ node scripts/agents-smoke-test.mjs --full --timeout 60s --json
 
 | 脚本 | 关注点 | 触发条件 |
 | --- | --- | --- |
-| `scripts/lifecycle-doctor.mjs` | **装配**自检：frontmatter 注册、stage 挂载、`required_roles` 契约是否齐备 | 配置变更后 / 装配异常 |
+| `scripts/lifecycle-doctor/index.mjs` | **装配**自检：frontmatter 注册、stage 挂载、`required_roles` 契约是否齐备 | 配置变更后 / 装配异常 |
 | `scripts/agents-smoke-test.mjs`（本脚本） | **可达性**自检：subagent 端到端能否真正调到 provider 并拿到合法响应 | provider 异常 / 模型路由调整 / 新接入 subagent |
 | `scripts/flow-audit.mjs` | **流程**自检：DAG 节点/边的合法性与触发条件 | lifecycle 拓扑调整 |
 

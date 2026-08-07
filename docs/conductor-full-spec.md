@@ -11,7 +11,7 @@
 ## 三层正交（举一反三扩展点）
 
 - **Layer 0（行为规范主源）**：`agent/conductor.md`——铁律 + 流程细节 + 编排逻辑，权威完整。加铁律改本文件 + prompt 同步。
-- **Layer 2（运行时探针）**：`node scripts/lifecycle-doctor.mjs --runtime`——扫描活跃 task_context，注册式检测项（`runtimeChecks.push(fn)`）。加检测只 push 一行。
+- **Layer 2（运行时探针）**：`node scripts/lifecycle-doctor/index.mjs --runtime`——扫描活跃 task_context，注册式检测项（`runtimeChecks.push(fn)`）。加检测只 push 一行。
 - **Layer 3（状态断言）**：`node scripts/task-context.mjs assert <task_id> <type>`——compaction 恢复后自检。加断言只往 `ASSERTIONS` 对象加一个键。
 
 ## 核心转变
@@ -28,7 +28,7 @@
 
 > **指针**：完整机制 + 校验脚本见 `agent/conductor.md` §铁律（启动期装配 + 挂载点机制）。本节只保留设计决策 + 校验项示例。
 
-会话首个任务进入 INIT 前，conductor 执行一次性装配（结果缓存于会话内存，不落盘）。**架构三层正交**：graph.yaml 纯拓扑（零智能体名）/ stages/<id>.md 阶段语义（含 required_roles 契约）/ agent/*.md 智能体（mount 挂载 + task_context 权限）。机械化校验工具：`node scripts/lifecycle-doctor.mjs`（以下全部校验项的可执行实现）。
+会话首个任务进入 INIT 前，conductor 执行一次性装配（结果缓存于会话内存，不落盘）。**架构三层正交**：graph.yaml 纯拓扑（零智能体名）/ stages/<id>.md 阶段语义（含 required_roles 契约）/ agent/*.md 智能体（mount 挂载 + task_context 权限）。机械化校验工具：`node scripts/lifecycle-doctor/index.mjs`（以下全部校验项的可执行实现）。
 
 2. **读注册**：扫描 `agent/*.md` 全部 frontmatter（YAML 头），按 `mount[].at` 把智能体注册进对应挂载点（携带 `hook`/`after`/`when`/`on_fail`）——**文件制自动注册，丢一个 .md 文件即挂载**（manifest 与行为文件合二为一，单源无冗余）。
 3. **读契约**：扫描 `lifecycle/stages/*.md` frontmatter 的 `required_roles`（阶段必配角色契约，阶段语义内聚）。
@@ -69,7 +69,7 @@ INIT（conductor 内建）→ INIT（conductor 内建）
 
 <!-- matrix-table: none -->
 
-> **单源声明**：以下矩阵由各 `agent/*.md` frontmatter 的 `task_context.read/write/forbid_write` + `isolation.forbid_read` 字段聚合而成，frontmatter 是单一真相。本表仅供人类速查，**编辑时改 frontmatter，不改本表**。写入列用逗号分隔完整路径（机器可校验格式）——`node scripts/lifecycle-doctor.mjs` 校验本表与 frontmatter 派生矩阵一致，drift → FAIL。
+> **单源声明**：以下矩阵由各 `agent/*.md` frontmatter 的 `task_context.read/write/forbid_write` + `isolation.forbid_read` 字段聚合而成，frontmatter 是单一真相。本表仅供人类速查，**编辑时改 frontmatter，不改本表**。写入列用逗号分隔完整路径（机器可校验格式）——`node scripts/lifecycle-doctor/index.mjs` 校验本表与 frontmatter 派生矩阵一致，drift → FAIL。
 >
 > **不列出全部智能体**：新增智能体只需在 `agent/<name>.md` frontmatter 声明 `task_context` 字段；本表不硬编码清单，运行期由 `task-context.mjs` 自动从 frontmatter 派生 WRITE_MATRIX。人类读者直接阅读各 `agent/<name>.md` frontmatter（单源）。
 >

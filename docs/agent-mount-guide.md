@@ -332,7 +332,7 @@ mount:
 
 ## 7. 实际仓库案例（已抽离）
 
-> **指针**：当前仓库真实挂载清单由 `node scripts/lifecycle-doctor.mjs --verbose` 实时输出（单源）。
+> **指针**：当前仓库真实挂载清单由 `node scripts/lifecycle-doctor/index.mjs --verbose` 实时输出（单源）。
 > v1 时期的智能体挂载快照已抽离至 `docs/archive/agent-mount-guide-v1.md` 附录 A，作为历史参考。
 
 ---
@@ -343,10 +343,10 @@ mount:
 
 ```bash
 # 全量装配校验：图/挂载/契约/配置/矩阵 drift
-node scripts/lifecycle-doctor.mjs
+node scripts/lifecycle-doctor/index.mjs
 
 # 带详细输出（列出每个 agent 的 mount 点）
-node scripts/lifecycle-doctor.mjs --verbose
+node scripts/lifecycle-doctor/index.mjs --verbose
 ```
 
 校验项：

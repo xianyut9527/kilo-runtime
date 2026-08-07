@@ -89,7 +89,7 @@ can_handoff_to:
    - 单次 task 委派规模限制（文件数/prompt 字符数）见铁律 #9 step 0 pre-dispatch。
 6.5. **拒绝 narrative-only PASS**：subagent 返回 `verdict: PASS` 但 `evidence` 数组 < 1 条 → 立即 retry，不计入 quality round。LLM 写的"X 完成了"必须配可机械回放的 `evidence[]`（每条含 `cmd` / `exit` / `stdout_key`，见 `.kilo/instructions/output-schema.md` §证据契约）。反例："已验证 L2 description 已改"无 evidence 视为 `[INSUFFICIENT_EVIDENCE]`。
 7. **自验无效**：不得写 `execution.verification`（仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
-8. **装配自检**：会话首个任务前执行 `node "${KILO_CONFIG_DIR}/scripts/lifecycle-doctor.mjs"`，FAIL 则不进入运行。脚本不存在标 `[DEGRADED]` 继续手工编排——DEGRADED 不豁免 permission，conductor 仍 edit:deny/write:deny，EXECUTING 阶段无 coder 可用只能 escalate/pause。
+8. **装配自检**：会话首个任务前执行 `node "${KILO_CONFIG_DIR}/scripts/lifecycle-doctor/index.mjs"`，FAIL 则不进入运行。脚本不存在标 `[DEGRADED]` 继续手工编排——DEGRADED 不豁免 permission，conductor 仍 edit:deny/write:deny，EXECUTING 阶段无 coder 可用只能 escalate/pause。
 9. **[工程化防 abort 四连]**（替代纯文字 prompt 约束，运行时机械强制）：
    - **step 0: pre-dispatch（合并 0b prompt-check + 0a size-check，一次进程）**：conductor 每次 task dispatch 前执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" pre-dispatch <task_id> --prompt-chars <N> [--file-count <F>]`，该命令原子完成"写 dispatch_pending + prompt 规模校验 + size 校验"，返回单一 verdict（替代旧三连**串行调用模式**(子命令仍可用作降级/单点校验)，省 2 次进程启动 + 2 个 reasoning 回合/每次 dispatch）：
      - exit 0 → 全通过，正常 task dispatch。
@@ -105,7 +105,7 @@ can_handoff_to:
 10. **即停违规**：发现跳步/越界/信任传递立即标 `[PROCESS_VIOLATION]` 并暂停。
 11. **全局默认并行策略**：挂载点激活智能体 ≥2 且无 `after` 依赖时，conductor 必须在单条响应消息中并行发起多个 `task` 工具调用（官方支持的并发模式：`Launch multiple agents concurrently whenever possible`）。有 `after` 的按拓扑排序串行执行；无 `after` 的按 agent 文件名字典序组织为同一并行组，共享一个零输出硬门。视角隔离仍物理独立（每个 task 独立 context）。
 12. **task_context 强制初始化**：会话首个任务进入 INIT 前必须先 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" init <task_id>`。未初始化直接流转 → `[PROCESS_VIOLATION]`。
-13. **交付前流程合规审计（QUALITY→DELIVERING 边硬门）**：进入 DELIVERING 输出闭环确认前必须执行 `node "${KILO_CONFIG_DIR}/scripts/flow-audit.mjs <task_id>"`，校验 T1/T2 EXECUTION 任务是否走完 INIT→PLANNING→EXECUTING→QUALITY→DELIVERING 链路 + dispatch_log 含必经阶段 required_roles 派发。exit 1 = `[FLOW_AUDIT_FAIL]` → 不得输出闭环确认，必须回退补走缺失阶段。此门禁是铁律 #6（委派不亲为）与铁律 #3（流转必裁判）的交付前兜底——前两轮"conductor 亲为改文档、跳过 PLANNING/EXECUTING/QUALITY"违规即由此检出。`lifecycle-doctor --runtime` 的 `runtime.dispatch_provenance` 检测项与此同源，作为会话内主动校验冗余。
+13. **交付前流程合规审计（QUALITY→DELIVERING 边硬门）**：进入 DELIVERING 输出闭环确认前必须执行 `node "${KILO_CONFIG_DIR}/scripts/flow-audit.mjs <task_id>"`，校验 T1/T2 EXECUTION 任务是否走完 INIT→PLANNING→EXECUTING→QUALITY→DELIVERING 链路 + dispatch_log 含必经阶段 required_roles 派发。exit 1 = `[FLOW_AUDIT_FAIL]` → 不得输出闭环确认，必须回退补走缺失阶段。此门禁是铁律 #6（委派不亲为）与铁律 #3（流转必裁判）的交付前兜底——前两轮"conductor 亲为改文档、跳过 PLANNING/EXECUTING/QUALITY"违规即由此检出。`scripts/lifecycle-doctor/index.mjs --runtime` 的 `runtime.dispatch_provenance` 检测项与此同源，作为会话内主动校验冗余。
 
 ## 核心编排流程
 

@@ -3,6 +3,9 @@
 > **历史档案**：本文档已废弃。**当前架构请参考 `docs/ARCHITECTURE.md` + `docs/conductor-full-spec.md`**。本文仅作 v1→v2 迁移历史记录保留。
 > **保留原因**：v2.x 设计门产物；v3.x 后被 conductor-full-spec.md 取代，本文件归档保留。
 
+> ⚠️ **归档文档**：本文档为 v1 历史快照，脚本路径已迁移至 `scripts/lifecycle-doctor/index.mjs`。
+> 历史路径 `scripts/lifecycle-doctor.mjs` 已不存在（commit 0a119e5 删除）。
+
 ---
 
 # 多智能体协作生命周期架构（v2.x 原文）

@@ -182,7 +182,7 @@ isolation:
 }
 ```
 
-完成。运行 `node scripts/lifecycle-doctor.mjs` 验证。
+完成。运行 `node scripts/lifecycle-doctor/index.mjs` 验证。
 
 ### 4.2 调整执行顺序（相对依赖）
 
@@ -260,7 +260,7 @@ hooks:
 
 | 文件 | 用途 |
 |------|------|
-| `scripts/lifecycle-doctor.mjs` | 全量装配校验（51 项）：图/挂载/契约/配置/矩阵 |
+| `scripts/lifecycle-doctor/index.mjs` | 全量装配校验（51 项）：图/挂载/契约/配置/矩阵 |
 | `scripts/task-context.mjs` | task_context 读写 + 权限硬门 |
 | `scripts/transition-check.mjs` | 状态流转裁判 + 熔断判定 |
 
@@ -280,7 +280,7 @@ hooks:
 
 ```powershell
 # 全量装配校验（51 项）
-node scripts/lifecycle-doctor.mjs --verbose
+node scripts/lifecycle-doctor/index.mjs --verbose
 
 # 视角物理隔离校验（T2+）
 node scripts/trust-transfer-check.mjs <task_id> [--round N]
