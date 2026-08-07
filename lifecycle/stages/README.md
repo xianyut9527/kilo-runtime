@@ -108,7 +108,7 @@ mount:
 | 禁用智能体 | `config.yaml` `overrides.disabled_agents` 加名字（若使某 `required_roles` 角色无履行者 → `[ASSEMBLY_FAIL]`） |
 | 换模型 | 改 `kilo.json agent.<name>.model`（能力倾向参考 `docs/model-registry.md` 人工维护，无机械校验） |
 | 改定级差异化开关 | 改 `config.yaml` `tier_defaults` |
-| **装配自检** | `node scripts/lifecycle-doctor.mjs [--verbose]`——改完任何 lifecycle/agent 配置后跑一遍，全 PASS 才算完 |
+| **装配自检** | `node scripts/lifecycle-doctor/index.mjs [--verbose]`——改完任何 lifecycle/agent 配置后跑一遍，全 PASS 才算完 |
 
 ## 核心原则
 
@@ -119,7 +119,7 @@ mount:
 5. **挂载点派生零声明**：节点存在即挂载点存在（`pre:`/主/`post:` + `on:bootstrap`/`on:done`），graph 无需声明挂载点。
 6. **顺序自包含**：`after: [agent-name]` 在 agent .md frontmatter 自己的文件里，只引用前驱 agent 名——改顺序只动一个文件（类似 React hooks 声明顺序，非绝对编号）。
 7. **权限派生化**：task_context 写权限矩阵（WRITE_MATRIX）由 `scripts/task-context.mjs` 从 frontmatter 自动派生；安全硬门（verification 双字段仅 verifier、quality 双字段仅 hooks 写入、quality.round 仅 conductor）保留脚本硬编码——插拔自由与框架安全不变量分离。
-8. **装配可机检**：`scripts/lifecycle-doctor.mjs` 是 `[ASSEMBLY_FAIL]` 校验的可执行实现——配置健康有机械化守卫，不靠人工核对。
+8. **装配可机检**：`scripts/lifecycle-doctor/index.mjs` 是 `[ASSEMBLY_FAIL]` 校验的可执行实现——配置健康有机械化守卫，不靠人工核对。
 
 
 
