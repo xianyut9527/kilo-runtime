@@ -47,7 +47,7 @@ kilo_config/
 │   ├── configuration-guide.md             # ← 本文件
 │   ├── conductor-full-spec.md             # conductor 完整设计规范（多智能体架构历史）
 │   ├── model-registry.md                  # 模型能力倾向人类可读版（人工维护）
-└── lifecycle-doctor.mjs                    # 配置校验脚本（56 项检查）
+└── lifecycle-doctor/index.mjs             # 配置校验脚本（56 项检查）
 ```
 
 ### 信息归属表（单一真相原则）
@@ -218,7 +218,7 @@ T2:
     security_auditor: true      # ← 加这一行
 ```
 
-4. **运行校验**：`node scripts/lifecycle-doctor.mjs`
+4. **运行校验**：`node scripts/lifecycle-doctor/index.mjs`
 
 **不需要动**：`graph.yaml`（QUALITY 节点已存在，挂载点派生即可用）、其他 agent .md。
 
@@ -261,7 +261,7 @@ edges:
 
 3. **如果有新智能体**：按场景 A 创建 `agent/tester.md` + kilo.json 绑定
 
-4. **运行校验**：`node scripts/lifecycle-doctor.mjs`
+4. **运行校验**：`node scripts/lifecycle-doctor/index.mjs`
 
 ---
 
@@ -296,7 +296,7 @@ edges:
 }
 ```
 
-4. **运行校验**：`node scripts/lifecycle-doctor.mjs`
+4. **运行校验**：`node scripts/lifecycle-doctor/index.mjs`
 
 **不需要动**：`agent/coder.md`、`graph.yaml`、`config.yaml`。
 
@@ -484,7 +484,7 @@ nodes:
 ## 8. 校验脚本
 
 ```bash
-node scripts/lifecycle-doctor.mjs
+node scripts/lifecycle-doctor/index.mjs
 ```
 
 29 项检查覆盖：
@@ -505,7 +505,7 @@ node scripts/lifecycle-doctor.mjs
 
 | 错误码 | 含义 | 排查 |
 |--------|------|------|
-| `[ASSEMBLY_FAIL]` | 启动期装配失败 | 跑 `node scripts/lifecycle-doctor.mjs --verbose` 定位：agent frontmatter mount / stages required_roles 覆盖 / kilo.json 模型绑定 |
+| `[ASSEMBLY_FAIL]` | 启动期装配失败 | 跑 `node scripts/lifecycle-doctor/index.mjs --verbose` 定位：agent frontmatter mount / stages required_roles 覆盖 / kilo.json 模型绑定 |
 | `[PROCESS_VIOLATION]` | 流程违规（跳步/越权写） | 检查是否跳过必经阶段 / 是否越权写 execution.verification |
 | `[TRUST_TRANSFER]` | 信任传递 | 检查验证智能体是否引用了其他视角结论而非独立验证 |
 | `[SCOPE_CREEP]` | 越界修改 | 检查 coder/fixer 是否改了 forbidden_files 之外的文件 |
