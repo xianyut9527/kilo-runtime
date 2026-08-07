@@ -146,6 +146,15 @@ overrides:
   condition_overrides: {}
 
 # ============================================================
+# custom_overrides：默认自定义覆盖段（conductor 写入 task_context 的初始值）
+# 当前会话优先策略：保持上下文连贯，避免自动开新会话；
+# worktree 兜底仅在主会话 context 撑爆时作为防 abort 最后防线，不主动禁用
+# ============================================================
+custom_overrides:
+  # 当前会话优先策略：默认走当前会话，仅在主会话 context 撑爆时切 worktree 兜底
+  session_strategy: current_first
+
+# ============================================================
 # hooks：响应式 Hooks 级熔断（v2 新增）
 # QUALITY 阶段内部 hooks 自动循环的熔断阈值
 # ============================================================
@@ -157,9 +166,12 @@ hooks:
 # ============================================================
 # pre-dispatch 安全门阈值（conductor 委派前 size-check 依据）
 # 阈值语义：task_context 文件字符数 > 阈值 → [CONTEXT_UNSAFE] → 强制切 agent_manager worktree
+# 字符单位说明：当前是字符（char）workaround，非真实 token；中英混合场景下约 1.5 char/token
+# 安全系数：阈值已含 2x 缓冲（实测主会话 ~120k 字符仍可承载，250k 触发前有充足预警）
+# worktree 兜底保留：超过阈值 → 强制 worktree 而非主会话；该兜底防线不主动禁用
 # ============================================================
-size_check_threshold: 120000
-dispatch_prompt_threshold: 3000   # dispatch-prompt-check 阈值：单次 task prompt 字符数上限（小任务上限 ×1.5 安全系数，可调）
+size_check_threshold: 250000
+dispatch_prompt_threshold: 6000   # dispatch-prompt-check 阈值：单次 task prompt 字符数上限（小任务上限 ×1.5 安全系数，可调）
 max_files_per_task: 8             # 单次 task 委派涉及文件数上限（3→8：清理 lessons 时多文件 batch 编辑需求；超 8 应回流 PLANNING 拆单元）
 
 # ============================================================

@@ -9,7 +9,7 @@
 > - `agent/*.md` — 各智能体的详细工作说明书 + frontmatter 生命周期声明（v6 单源：mount/task_context/isolation/gate 等字段合入 frontmatter，manifest 与行为文件合二为一，bootstrap 扫 frontmatter 自动注册）。**不在此枚举智能体清单**——新增智能体 = 丢一个 `agent/<name>.md` + `kilo.json` 绑模型，零改框架。当前注册清单见 `node scripts/lifecycle-doctor.mjs` 输出
 > - `lifecycle/graph.yaml` + `lifecycle/stages/*.md` — 生命周期 DAG（纯图，语义 ID）+ 阶段执行逻辑（状态机主线索）
 > - `lifecycle/config.yaml` — 定级默认智能体组合 + 用户覆盖 + 熔断阈值（唯一真相）
-> - `docs/model-registry.md` — 模型能力倾向矩阵（人类可读，v6.1 唯一能力参考，无机器可读副本）
+> - `docs/model-registry.md` — 模型能力倾向矩阵（人类可读，v6.1 唯一能力参考，无机械可读副本）
 >
 > 仓库维护指南见 `CONFIG_CHANGE_CHECKLIST.md`。
 
@@ -32,3 +32,8 @@
 13. **工程化防 abort 门禁**（替代纯文字 prompt 约束，运行时机械强制）：**来源：`agent/conductor.md` 铁律 #9**。完整 step 0/1/2 + 并行安全边界见铁律 #9 本体，本文件不重复展开。
 14. **EXECUTING 逐单元派发**：EXECUTING 阶段 conductor 按 `plan.task_dag.units` 逐单元派发 task，每单元独立 goal / acceptance_criteria / forbidden_files / token_budget（完整委派包六条见 agent/conductor.md 铁律#6）；单元依赖按 DAG 拓扑排序，同层无依赖单元默认按铁律 #11 并行组规则并行 dispatch；禁止批量派发整个 EXECUTING 段（来源：`agent/conductor.md` §EXECUTING 逐单元派发）。
 15. **搜索四层阶梯纪律**（来源：workflow-core.md §Trace-First + §MCP 优先）：执行类任务信息检索必须按 L0 文档（先读 agent/*.md / instructions/*.md / lifecycle/*.md 锚点）→ L1 Glob（按文件名/路径模式精确定位）→ L2 窄搜（Grep 带 include 限定文件类型或路径前缀，目标 ≤3 文件）→ L3 广搜（Grep 全仓仅在前三阶梯无果、且明确知晓调用方后使用，**全仓 Grep 无 include 视为违规**——必须 include 限定目录/扩展名）→ L4 MCP 图谱/索引（业务仓库默认走 MCP 图谱/索引能力替代暴力文本搜索；Kilo 框架不绑定任何特定实现——具体工具由当前环境的 MCP 决定，未启用图谱的仓库回退 L3 广搜）阶梯递进；阶梯跳级（绕过 L2 直接全仓 Grep，或已索引仓库首选 Grep 而非图谱）标 [SEARCH_LADDER_VIOLATION]。
+16. **当前会话优先策略**：保持上下文连贯，避免自动开新会话。配套要求：
+    - 主动 compaction：上下文超过 8 万字符时主动 `/compact` / `<leader>c`，不等被动触发
+    - 严格委派包：单次 dispatch prompt ≤ 6000 字符（已配阈值的 80% 安全线）
+    - subagent 返回 ≤ 4000 字符：超限立即 `[RETURN_OVER_LIMIT]` 重派，不叠加主会话
+    - worktree 兜底保留：仅在主会话 context 撑爆时作为防 abort 最后防线，不主动禁用
