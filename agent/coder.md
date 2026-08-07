@@ -79,6 +79,39 @@ can_handoff_to:
 > 构建-测试-迭代循环思维：先复现后编码——无测试套件时先写最小复现再动手，禁止边写边猜。
 > 质量=测试证据密度，不是代码量。一切以测试证据为准，绝不盲目堆码。
 
+## Windows 路径陷阱(强制,013 U4 教训)
+
+> **反 012 U5 教训**:path.join(`a`,`b`) 在 Windows = `a\b`(反斜杠),EXCLUDES 必用 `/` + `replace(/\\/g, "/")` 规范化,否则 `full.includes(e)` 永 false → 自豁免静默失效。
+
+### 3 大陷阱
+
+1. **`path.join` 反斜杠**:`path.join(`scripts`,`decouple-check.mjs`)` Windows = `scripts\decouple-check.mjs`
+2. **EXCLUDES 正斜杠**:`[`scripts/decouple-check.mjs`]` Windows = `scripts/decouple-check.mjs`
+3. **`includes` 永不匹配**:`"scripts\decouple-check.mjs".includes("scripts/decouple-check.mjs")` = false
+
+### 解:`full.replace(/\\/g, "/").includes(e)`
+
+```js
+// 反模式(012 U5 教训):
+if (EXCLUDES.some(e => full.includes(e))) continue;
+
+// 正例(Windows 兼容):
+if (EXCLUDES.some(e => full.replace(/\\/g, "/").includes(e))) continue;
+```
+
+### 跨平台规范
+
+- **EXCLUDES 项必用 `/`**(统一正斜杠)
+- **扫的文件路径必 `replace(/\\/g, "/")` 规范化**
+- **path 断言必 `path.resolve()` 相对项目根**
+- **`scripts/` 子目录的检查文件必须带 `scripts/` 前缀**(012 教训)
+
+### 反 013 U5 自身豁免
+
+`path-normalize.mjs` 扫 scripts/*.mjs 时,自身路径 `scripts/lifecycle-doctor/checks/path-normalize.mjs` 必在 EXCLUDES 中(或用 self-exclude pattern)。
+
+
+
 ## 输入接口（从 task_context 注入）
 
 ```yaml

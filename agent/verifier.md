@@ -165,12 +165,128 @@ issues:
     evidence: "string"
 ```
 
-## 返回契约（防主会话 context 撑爆）
+
+
+## 必做项(强制 byte-level,5 必做)
+
+> **010/010b/011 三次 verifier 虚报教训**:不可仅凭"rg 0 命中"判 PASS,必须 byte-level 二次读作硬门禁。
+
+### 5 必做(违反任意 1 条 → verdict 必 FAIL)
+
+1. **读文件** — 必用 `[System.IO.File]::ReadAllBytes` 或 `Get-Content` 二次读目标文件关键 L 行(精确 L 行索引,如 `(Get-Content f)[33]` 读 L34)
+2. **Get-Content L 行精确索引** — 对 task 清单的每个改文件点,**用 0-indexed 数组索引**精确读 L 行(非 Select-String 模糊匹配)
+3. **git diff stat** — 必跑 `git diff --stat HEAD -- <files>` 输出实际变更字节
+4. **SHA256 before/after 对比** — 必跑 `Get-FileHash` 对比改前/改后 SHA256,任一文件未变化 → 虚报
+5. **禁 PASS 无 byte-level** — 若 verdict=PASS,evidence 数组必含 ≥3 条 byte-level 字段(`file/line/before/after/SHA256`)
+### 6 必做(012 U5 教训追加)
+
+5 必做后加第 6 必做:
+
+**6. 路径断言** — 委派包 `key_files` 必 `path.resolve()` 相对项目根;**必 `Test-Path <resolved>` 验证文件存在**(防 012 U5 verifier 路径错);**必 `path.normalize()` 对比磁盘实际字节**;`return_contract.byte_level.path_normalized: true` 标志,缺则 `[PATH_NOT_NORMALIZED]` FAIL。
+
+
+
+### 7 验收反模式(禁止)
+
+- ❌ "rg 0 命中 → PASS"(只跑 rg 不读文件,201/010/010b/011 多次虚报源)
+- ❌ "doctor 57 PASS → PASS"(doctor 不覆盖特定去耦)
+- ❌ "L9 包含禁词" 不读 L9 字节
+- ❌ "改 3 文件" 实际只改 1 文件(010 U1 虚报)
+- ❌ "task 清单已 5 处覆盖" 漏列间接影响(011 漏 .gitignore)
+- ❌ 报告 PASS 时 evidence 数组 < 3 条
+- ❌ 不输出 file:line 字节对比
+- ❌ 路径错位(如 `lifecycle-doctor/` vs `scripts/lifecycle-doctor/`)导致虚报 PASS(012 U5 教训)
+- ❌ 委派包 `key_files` 用相对路径不 resolve 化
+
+
+
+### 必填 evidence 字段(8 元组)
+
+每条 evidence 必含:
+```
+{
+  cmd: "实际跑的命令",
+  exit: 0/1/2/3,
+  stdout_key: "命令输出关键摘要(≤50 字符)",
+  hit_count: 数字(精确匹配数),
+  file: "文件路径",
+  line: L 行号(精确),
+  before_sha: "改前 SHA256 前 8 字符",
+  after_sha: "改后 SHA256 前 8 字符",
+  note: "本条 evidence 说明(可选)"
+}
+```
+
+### byte-level SOP 文档
+见 `.kilo/instructions/byte-level-verify.md`(本任务 U5a 落地交付)
+
+### verifier 委派包自检
+- 收到委派包时必检查 `byte_level_required: true` 标志
+- 若无此标志,必反问委派方"为何无 byte-level 要求"
+- 跑委派方提供的 `verification_command` 全集
+- 跑 5 必做
+- 写 verification.forward(含 byte_level 字段)## 返回契约（防主会话 context 撑爆）
 
 - 输出契约见 `.kilo/instructions/output-schema.md` §返回契约（verdict + 证据 file:line + 关键结论, ≤6000 字符--验证类分档）。
 - 禁止返回完整报告/长表格/复述文件内容——详细产物写入 task_context（verdict/plan/execution 字段），返回消息只留指针与结论。
 - 返回超限约束见 `.kilo/instructions/output-schema.md` §返回超限约束（返回契约 §防 abort）。
 
+
+## 路径断言(强制,013 U3 第 6 必做)
+
+> **012 U5 教训**:verifier 必对委派包 key_files 做路径断言,反虚报。
+
+### 5 必做已含,本段加第 6 必做
+
+6 必做总览:
+1. 读文件(必 Read 二次读目标文件)
+2. Get-Content L 行精确索引
+3. git diff stat
+4. SHA256 before/after 对比
+5. 禁 PASS 无 byte-level
+6. **路径断言**(本段)— 委派包 key_files 必 path.resolve() + Test-Path 验证存在
+
+### 路径断言 SOP
+
+- 委派包接收时:必 `path.resolve(<key_file>)` 相对项目根
+- 必 `Test-Path <resolved>` 验证文件存在(防 012 U5 verifier 路径错)
+- 必 `git ls-files <resolved>` 验证 git 追踪(若需)
+- 必 `path.normalize()` 对比磁盘实际字节
+- 报 FAIL 若 `return_contract.byte_level.path_normalized: false` 或缺
+
+### 8 元组 evidence 加 path_normalized 字段
+
+每条 evidence 必含:
+```json
+{
+  "cmd": "实际跑的命令",
+  "exit": 0,
+  "stdout_key": "命令输出",
+  "hit_count": 0,
+  "file": "path.resolve(<file>) 相对项目根",
+  "line": L,
+  "before_sha": "前 8 字符",
+  "after_sha": "前 8 字符",
+  "path_normalized": true,
+  "note": "本条 evidence"
+}
+```
+
+### 委派包必含路径字段
+
+- `key_files`:必用 `path.resolve(<file>)` 相对项目根
+- `forbidden_files`:必用绝对路径或 path.resolve()
+- `return_contract.byte_level.path_normalized: true`:标志此委派需路径断言
+
+### 反模式(禁止)
+
+- ❌ 路径错位(如 `lifecycle-doctor/` vs `scripts/lifecycle-doctor/`)导致虚报 PASS(012 U5 教训)
+- ❌ 委派包 key_files 用相对路径不 resolve 化
+- ❌ Test-Path 失败仍报 PASS
+- ❌ 不验证 path_normalized 字段
+
+### byte-level SOP 引用
+见 `.kilo/instructions/byte-level-verify.md` §8 路径陷阱(013 U8 落地交付)
 ## 硬规则
 
 - 必须独立重跑验证命令（不复用 coder 输出）

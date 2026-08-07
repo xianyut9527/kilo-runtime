@@ -2,6 +2,42 @@
 
 本文件记录 `kilo_config` 全局配置仓库的演进。遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
+## [Unreleased] scan-cleanup-010
+
+### Failed（subagent 报告虚报教训）
+- **U2 README.md**：报告 PASS 但 L12/L188-190/L235 实际未改，rg GitNexus 仍命中 4 处
+- **U4 workflow-core.md**：报告 PASS 但 L85/L96/L97/L99 实际未改
+- **U6 agent/verifier.md + planner.md**：报告 PASS 但 L132/L137 实际未改
+- **任务清单漏列**：agent/coder.md L108/L148、lifecycle/stages/executing.md L26-27
+- **subagent 报告虚报问题暴露**：必须用 byte-level 二次读（Get-Content 关键行 + git diff stat）作为通过证据，不可仅凭 subagent 报告
+
+## [Unreleased] scan-cleanup-010b
+
+### Decoupled 5 files 12 places
+- **README.md**（L12/L186/L188-190/L233 — 4 处）：扩展入口内置 → 扩展入口可选；删除 GitNexus/Context7/Playwright 具体名
+- **.kilo/instructions/workflow-core.md**（L85/L96/L97/L99 — 4 处，L92 §MCP 优先标题保留）：通用化 MCP 索引工具描述
+- **agent/verifier.md**（L132）：gitnexus_api_impact → 可选 MCP 索引工具
+- **agent/planner.md**（L137）：grep/glob/gitnexus → grep/glob/(可选 MCP 索引工具)
+- **agent/coder.md**（L108/L148 — 010 漏列）：优先 GitNexus → 可选 MCP 索引工具
+- **lifecycle/stages/executing.md**（L26-27 — 010 漏列）：检索优先级链通用化
+- **byte-level 验证**：6 文件 14 处二次读 + rg 0 命中 + git diff 6 文件 20+/20- + doctor 57 PASS + flow-audit ALL PASS
+- **教训**：subagent 报告虚报 → U2 verifier 报 FAIL 与客观 byte-level 证据冲突，最终以 byte-level 为准
+
+## [Unreleased] scan-cleanup-011
+
+### Decoupled 5 files +30/-32（scan-cleanup-011 任务）
+
+本任务(scan-cleanup-011)由 5 个 unit 组成:U1 kilo.json MCP 默认禁用 / U2 install 部署脚本去耦 / U3 CHANGELOG 决策 / U4 scan-encoding 静默退出修复 / U5 task 残留校验。
+- **kilo.json**(3 MCP `enabled: false` + `_comment` + `_usage`):context7 / gitnexus / playwright 全部默认禁用,框架零第三方耦合
+- **install.ps1**(L34 `.mcp-tmp` + L50-52 gitnexus PATH 预检段删除):排除目录通用化 + 删除第三方 CLI 强校验
+- **install.sh**(L47 `.mcp-tmp/`):与 install.ps1 同步
+- **CHANGELOG.md**(+20 行 010+010b 决策段):教训样本入库,避免重复
+- **scripts/scan-encoding.mjs**(L292-296 空 diff info 提示):fix silent failure,无 dirty 时输出 `info: "no changes, 0 files scanned"` 而非裸 `[]`
+- **M6 真实状况**:`$env:TEMP\kilo\task_context_*.json` 仅 2 文件(010b+011),非 50+ — 收敛为空操作校验
+- **教训**:U5 verifier 一次误判(把 L36-39 Write-Host 横幅当 gitnexus 块 + 漏看 L34 `.mcp-tmp` + 路径错 `lifecycle-doctor.mjs` 当文件),retry 后 7/8 PASS + 1 warning(预期偏差非实现缺陷)
+- **下一步**:012 5 清 3 防彻底闭环(subagent 虚报 + 任务漏列 + 缺 byte-level 门禁)
+
+
 ## 2026-08-04 Cleanup: 删 C 层 lessons + 处理 6 软铁律 + 8 agent frontmatter 去 coding-engineering 引用
 
 - **删 `scripts/lessons.mjs`（276 行）+ `docs/lessons/` 整目录**：C 层教训闭环从未被使用（registry.jsonl 空库 = 0 数据），过度工程化；B 层 `coding-engineering.md` playbook 已接管"工程能力沉淀"职责

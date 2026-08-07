@@ -167,3 +167,90 @@ SOP:
 
 **不适用情况**：
 - 子 agent 不可用 → 已在 deliver 阶段，无 fallback（类比 INIT 无 fallback）
+
+
+## 委派包 SOP(强制 byte-level)
+
+> **反 subagent 虚报(010/010b/011 三次根因教训)**:subagent 报告"基于自己意图",与磁盘实际状态可分离。**必须用 byte-level 客观证据作硬门禁**。
+
+### 委派包必含 4 字段(强制)
+
+每次 task 委派(coder/verifier/fixer/reviewer/reverse-auditor/plan-reviewer)必须含:
+
+1. **`byte_level_required: true`** — 标记此委派需 byte-level 验证
+2. **`forbidden_files`** 列表 — 边界外文件禁止触碰
+3. **`return_contract.byte_level`** — 委派方要求 subagent 必填的 byte-level 字段(file/line/SHA256/cmd/exit)
+4. **`verification_command`** — 至少 1 条客观命令(Get-Content L 行 / git diff stat / rg 严格匹配)
+
+### 委派包反模式(禁止)
+
+- ❌ "verifier 必验证 PASS/FAIL" — 没说 byte-level,verifier 可虚报
+- ❌ "代码要符合现有风格" — 空话,需枚举具体规范
+- ❌ "改完后跑 doctor 验证" — doctor 不覆盖所有改动,需 Get-Content L 行
+- ❌ "确保全部 PASS" — 无可验证条件
+
+### 委派包正例(强制)
+
+```
+goal: "5 文件 12 处真实解耦(byte-level 验证,避免 010 报告虚报)"
+byte_level_required: true
+forbidden_files: ["lifecycle/", "agent/(除 conductor/planner/verifier).md", "docs/"]
+return_contract.byte_level: {
+  files_modified: ["README.md", "workflow-core.md", ...],
+  critical_lines: [{"file": "README.md", "line": 12, "before": "...", "after": "..."}],
+  before_sha: {"README.md": "abc..."},
+  after_sha: {"README.md": "def..."}
+}
+verification_command: "rg 'GitNexus|gitnexus|context7' 6 files"
+```
+
+### byte-level SOP 文档
+见 `.kilo/instructions/byte-level-verify.md`(本任务 U5a 创建)
+## 路径规范(强制,012 U5 教训)
+
+> **反 012 U5 verifier 路径错 + 漏 sync 教训**:subagent 委派包必用 `path.resolve()` 相对项目根,禁止硬编码 `lifecycle-doctor/`(实际是 `scripts/lifecycle-doctor/`)。
+
+### 委派包必含路径字段
+
+- **`key_files`**:必用 `path.resolve(<file>)` 相对项目根(项目根 = `E:\AIgent\kilo_config`)
+- **`forbidden_files`**:必用绝对路径或 path.resolve()
+- **`return_contract.byte_level.path_normalized: true`**:标志此委派需路径断言
+
+### 路径反模式(禁止)
+
+- ❌ 硬编码 `lifecycle-doctor/`(实际 `scripts/lifecycle-doctor/`,差一级)
+- ❌ 路径不带 `scripts/` 前缀(012 U5 verifier 误报)
+- ❌ 用相对路径 `./check.mjs` 而非 `path.resolve()`
+- ❌ 不验证路径存在(Test-Path)就委派
+
+### 路径正例(强制)
+
+```
+key_files: [path.resolve('scripts/decouple-check.mjs')]
+forbidden_files: [path.resolve('lifecycle/'), path.resolve('agent/(除 conductor/planner/verifier/coder).md')]
+return_contract.byte_level: {path_normalized: true}
+verification_command: "Test-Path scripts/lifecycle-doctor/checks/decouple-audit.mjs"
+```
+
+### 6 必做 verifier 路径断言
+
+verifier 接收委派包后必:
+1. `path.resolve()` 规范化 key_files
+2. `Test-Path <resolved>` 验证文件存在
+3. `git ls-files <resolved>` 验证 git 追踪(若需)
+4. `path.normalize()` 对比磁盘实际字节
+5. 报 FAIL 若 `path_normalized: false`
+6. 禁止"信任 coder 报告"的路径声明
+
+### byte-level SOP 引用
+
+见 `.kilo/instructions/byte-level-verify.md` §8 路径陷阱(013 U8 落地交付)
+
+
+
+### WRITE_MATRIX 三角验证
+
+- **conductor**: 可写 [intent, sizing, status, convergence, quality.verdict, quality.max_rounds, config, current_stage, dispatch_log, overload_count, dispatch_pending]
+- **verifier**: 可写 [verification.forward, execution.verification] — verification.forward 必含 byte_level 字段
+- **fixer**: 可写 [fixing_history, execution.diffs] — fixing_history 必含 byte-level 证据
+- **coder**: 可写 [execution.*, plan, ...] — execution.changes 必含 byte-level 字段

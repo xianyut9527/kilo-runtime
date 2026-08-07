@@ -290,8 +290,8 @@ function main() {
   const filePaths = resolveFilePaths(args);
 
   if (filePaths.length === 0) {
-    // git diff 无输出（无修改）-> 视为通过
-    process.stdout.write('[]\n');
+    // git diff 无输出（无修改）-> 明确提示而非裸 [], 便于 consume 方区分“无变更”与“全 PASS”
+    console.log(JSON.stringify({ info: "no changes, 0 files scanned", files: [] }, null, 2));
     process.exit(0);
   }
 

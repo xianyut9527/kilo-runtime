@@ -1,4 +1,5 @@
 # kilo_config 仓库忽略规则
+
 # 运行时生成文件（个人数据，不应在团队间共享）
 **/.kilo/agent-manager.json
 
@@ -25,6 +26,12 @@ kilo.json.bak.*
 
 # skill 运行时产物（项目级 .kilo/skills/ 下生成，仓库不预置 skill 源；
 # 通用缓存已在上方 __pycache__/ 覆盖，项目级 skill 产物由各项目 .gitignore 自行管理）
+.kilo/skills/
+.kilo/skills/**
+
+# IDE 注入的 MCP 运行时产物
+.playwright-mcp/
+.playwright-mcp/**
 
 # 多模型审计临时产物
 .kilo_tmp/
@@ -32,11 +39,12 @@ kilo.json.bak.*
 # 多模型 worktree 隔离产物（T3 产物级聚合，见 multimodel-graph.yaml:33 路径模板）
 .worktrees/
 
-# MCP 运行时产物（playwright 等本地 MCP 生成的临时目录）
-.playwright-mcp/
+# MCP 运行时产物（本地 MCP 生成的临时目录,与 install 同步）
+.mcp-tmp/
 
-
-.kilo/skills
+# 临时目录（kilo 运行时）
+.tmp/
+.tmp/**
 
 # 测试残留目录防护（不应进入 git 或被 install 同步）
 _test_target_orig/

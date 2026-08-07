@@ -44,7 +44,7 @@ RECURSIVE_EXCLUDE=(
     ".pytest_cache"
     "__pycache__"
     ".kilo_tmp"
-    ".playwright-mcp"
+    ".mcp-tmp/"
 )
 
 COPIED_FILES=0

@@ -66,30 +66,10 @@
     "bash": "allow"
   },
   "mcp": {
-    "context7": {
-      "type": "remote",
-      "url": "https://mcp.context7.com/mcp",
-      "enabled": true,
-      "timeout": 6000
-    },
-    "gitnexus": {
-      "type": "local",
-      "command": [
-        "gitnexus",
-        "mcp"
-      ],
-      "enabled": true,
-      "timeout": 30000
-    },
-    "playwright": {
-      "type": "local",
-      "command": [
-        "npx",
-        "@playwright/mcp"
-      ],
-      "enabled": false,
-      "timeout": 120000
-    }
+    "_comment": "默认零耦合 — 所有 MCP 工具 disabled。Kilo 框架不绑定任何第三方工具,用户按需 enable 特定 MCP。脚本层（scripts/**/*.mjs）0 第三方 require,运行不依赖 MCP。",
+    "context7": { "type": "remote", "url": "https://mcp.context7.com/mcp", "enabled": false, "timeout": 6000, "_usage": "远程文档检索(可选)" },
+    "gitnexus": { "type": "local", "command": ["gitnexus", "mcp"], "enabled": false, "timeout": 30000, "_usage": "本地调用链/影响面分析(可选)" },
+    "playwright": { "type": "local", "command": ["npx", "@playwright/mcp"], "enabled": false, "timeout": 120000, "_usage": "浏览器自动化(可选)" }
   },
   "provider": {
     "hx": {

@@ -31,7 +31,7 @@ $RecursiveExclude = @(
     ".pytest_cache",
     "__pycache__",
     ".kilo_tmp",
-    ".playwright-mcp"
+    ".mcp-tmp"
 )
 
 Write-Host "========================================" -ForegroundColor Cyan
@@ -47,10 +47,8 @@ try {
     # then sync from source. Ensures the target is identical to the
     # source after each install, leaving no stale artifacts behind.
 
-    # gitnexus global PATH pre-check (warn-only; falls back to grep/glob if missing)
-    if (-not (Get-Command gitnexus -ErrorAction SilentlyContinue)) {
-        Write-Host "[WARN]   gitnexus not on PATH; call-chain analysis will fall back to grep/glob. Install: npm i -g gitnexus" -ForegroundColor Yellow
-    }
+    # MCP 工具已默认禁用(kilo.json mcp.*.enabled: false),无需 PATH 预检
+    # 用户按需启用时,框架不绑定任何特定 MCP,运行时由 IDE MCP 注入决定
 
     $HasBackup = $false
     if (Test-Path $Target) {

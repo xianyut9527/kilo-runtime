@@ -271,6 +271,78 @@ evidence:
 - `evidence[].exit` 缺失或非数字 → `[MISSING_EXIT]`
 - `evidence[].stdout_key` 缺失 → `[MISSING_STDOUT_KEY]`
 
+
+## §byte-level 验证字段(强制,012 新增)
+
+> **反 subagent 虚报(010/010b/011 三次根因教训)**:subagent 报告"基于自己意图",与磁盘实际状态可分离。**byte_level 字段是 verifier/fixer 委派包与 verification.forward 的强制字段**。
+
+### 字段定义(8 元组)
+
+每条 evidence 必含 8 元组(transition-check 校验):
+
+```json
+{
+  "cmd": "实际跑的命令字符串(完整可回放)",
+  "exit": 0,
+  "stdout_key": "命令输出关键摘要(≤50 字符)",
+  "hit_count": "数字(精确匹配数)",
+  "file": "文件路径(相对项目根)",
+  "line": "L行号(精确,从 1 开始)",
+  "before_sha": "改前 SHA256 前 8 字符",
+  "after_sha": "改后 SHA256 前 8 字符",
+  "note": "本条 evidence 说明(可选,≤100 字符)"
+}
+```
+
+### verifier verification.forward 必含 byte_level 对象
+
+```json
+{
+  "verdict": "PASS",
+  "byte_level": {
+    "files_modified": ["file1", "file2"],
+    "critical_lines": [
+      {"file": "file1", "line": 12, "before": "...", "after": "..."}
+    ],
+    "before_sha": {"file1": "abc12345"},
+    "after_sha": {"file1": "def67890"}
+  },
+  "evidence": [...8 元组 × n]
+}
+```
+
+### 委派包必含 byte_level_required
+
+每次 task 委派(coder/verifier/fixer)必含:
+- `byte_level_required: true`
+- `return_contract.byte_level` schema 必填
+
+### 5 必做(违反任 1 → verdict 必 FAIL)
+
+1. 必 Get-Content L 行精确索引
+2. 必 git diff --stat
+3. 必 SHA256 before/after 对比
+4. 必 rg 严格匹配
+5. 必 ≥3 条 evidence 8 元组
+
+### 7 反模式(禁)
+
+见 `.kilo/instructions/byte-level-verify.md` §3。
+
+### 与现有 §证据契约 关系
+
+- §证据契约 = 通用 evidence 字段(cmd/exit/stdout_key)
+- §byte-level = evidence 8 元组扩展(增加 file/line/SHA256 + byte_level 对象)
+- byte-level 是证据契约的**强化版**,用于 verifier/fixer 必须 byte-level 验证的强制场景
+
+### transition-check 校验
+
+`transition-check.mjs` 在 EXECUTING→QUALITY 边**新增校验**:
+- `verification.forward.byte_level` 必含
+- `verification.forward.byte_level.critical_lines.length >= 1`
+- 任一 evidence 必含 8 字段(cmd/exit/stdout_key/hit_count/file/line/before_sha/after_sha)
+- 缺则 `[MISSING_BYTE_LEVEL]` exit 1
+
 ## 返回超限约束（返回契约 §防 abort）
 
 ### 返回上限按角色分档
