@@ -2,6 +2,9 @@
 
 > Kilo 通过 `findUp` 自动发现本文件作为**唯一全局指令入口**。
 >
+> **路径解析语义**：本文件通过 `findUp` 自动发现，运行时位于全局配置根目录 ~/.config/kilo/（Windows: C:\Users\<用户名>\.config\kilo\）。本文件内所有被引用路径（agent/*.md、lifecycle/、.kilo/instructions/*.md、docs/）均以**全局配置根目录**为解析基准，不以当前项目工作目录为基准。
+>
+> **Overlay 规则**：项目级同名文件覆盖全局版（如项目根有 `agent/` 目录则优先用项目级）；项目级不存在的文件自动回落到全局配置根目录读取。
 > 通用规则由 Kilo 运行时自动注入 `core.md` + `workflow-core.md` + `reflection.md`。本文件作为**唯一全局指令入口**，只列锚点名称与规则来源；细则按需读取 `.kilo/instructions/*.md`、各 `agent/*.md`、`lifecycle/graph.yaml` + `lifecycle/stages/*.md`，不在此重复展开。
 > - `.kilo/instructions/core.md` — 通用基线、意图分类（咨询类/执行类）、安全约束、资源与生命周期管理
 > - `.kilo/instructions/skills-lifecycle.md` — skill 能力扩展治理（编写规范、回写触发、发现位置；按需引用，不自动注入）
@@ -12,6 +15,7 @@
 > - `docs/model-registry.md` — 模型能力倾向矩阵（人类可读，v6.1 唯一能力参考，无机械可读副本）
 >
 > 仓库维护指南见 `CONFIG_CHANGE_CHECKLIST.md`。
+> 以上路径如无特别说明，均从全局配置根目录 `~/.config/kilo/` 解析；项目级同名文件覆盖全局版（overlay 语义），项目级不存在时自动回落全局。
 
 ## 强制编排锚点（每个项目启动时自动加载）
 
@@ -37,3 +41,4 @@
     - 严格委派包：单次 dispatch prompt ≤ 6000 字符（已配阈值的 80% 安全线）
     - subagent 返回 ≤ 4000 字符：超限立即 `[RETURN_OVER_LIMIT]` 重派，不叠加主会话
     - worktree 兜底保留：仅在主会话 context 撑爆时作为防 abort 最后防线，不主动禁用
+

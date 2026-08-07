@@ -12,6 +12,7 @@
 | 模型、权限、MCP | `kilo.json` | `README.md` 只说明 |
 | 安装脚本 | `install.sh` / `install.ps1` | 双平台同步 |
 | 目录结构 | `README.md` | 必须与文件系统一致 |
+| 路径解析语义（全局根目录 vs 项目级 overlay） | `AGENTS.md`（全局指令入口声明） | `docs/configuration-guide.md` §0.5 只做引用 |
 
 ## 修改检查
 

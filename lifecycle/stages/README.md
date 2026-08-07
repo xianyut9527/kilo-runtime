@@ -2,6 +2,9 @@
 
 > **本目录只是执行逻辑文档，不是图结构**。流转关系（节点/边/条件/门禁）的单一真相来源是 `lifecycle/graph.yaml`。修改流转不要改本目录，改 graph.yaml。
 
+> **路径解析**：本文件及所引用的 `lifecycle/graph.yaml`、`lifecycle/config.yaml`、`agent/*.md` 等路径均从**全局配置根目录** `~/.config/kilo/` 解析。业务项目不含 `lifecycle/` 目录——该目录由全局配置统一提供。
+
+
 ## v2 响应式 Hooks 架构（当前版本）
 
 **核心变化**（v1 → v2）：

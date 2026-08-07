@@ -22,8 +22,20 @@
 
 ---
 
-## 1. 文件全景图
+## 0.5 全局 vs 项目级配置（路径解析）
 
+本仓库通过 install.ps1/install.sh 部署到全局配置根目录 ~/.config/kilo/。AGENTS.md 通过 findUp 从项目工作目录向上发现，所有被引用路径（agent/*.md、lifecycle/、.kilo/instructions/*.md、docs/）的**权威位置**在全局配置根目录。
+
+**Overlay 规则**：
+- kilo.json：Kilo 运行时原生支持全局→项目深合并，项目级 kilo.json 覆盖全局版。
+- AGENTS.md：findUp 发现——项目根有 AGENTS.md 则用项目级，否则回落到全局根目录的 AGENTS.md。
+- agent/、lifecycle/、.kilo/instructions/：**从全局配置根目录 ~/.config/kilo/ 读取**。项目级同名文件覆盖全局版同名文件；项目级不存在的文件回落全局。
+- docs/：人类参考文档，仅从全局配置根目录读取。
+
+**业务项目无需自建 agent/、lifecycle/、.kilo/instructions/ 目录**——这些由全局配置统一提供。项目级特化知识放在项目根的 AGENTS.md 和 .kilo/skills/ 中即可。
+
+## 1. 文件全景图
+> 以下目录树展示的是**全局配置根目录** ~/.config/kilo/ 的结构。业务项目不含这些目录——它们从全局配置根目录读取。
 ```
 kilo_config/
 ├── kilo.json                              # 模型绑定（agent.<name>.model）+ provider 模型清单
