@@ -3,7 +3,8 @@ description: 编码智能体。按方案实现代码、输出验收映射表+三
 mode: subagent
 hidden: true
 color: "#3B82F6"
-steps: 100
+steps: 120
+reasoning: false
 permission:
   bash: allow
   read: allow

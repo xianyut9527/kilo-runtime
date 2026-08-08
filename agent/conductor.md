@@ -3,7 +3,7 @@ description: 工作流编排者（conductor）。启动期装配 lifecycle/ 元�
 mode: primary
 hidden: false
 color: "#6366F1"
-steps: 120
+steps: 200
 permission:
   bash: allow
   read: allow

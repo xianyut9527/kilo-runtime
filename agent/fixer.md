@@ -3,7 +3,8 @@ description: 修复智能体。分析阻塞根因，实施最小修复。触发�
 mode: subagent
 hidden: true
 color: "#3B82F6"
-steps: 80
+steps: 120
+reasoning: false
 permission:
   bash: allow
   read: allow
