@@ -39,7 +39,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 - 陌生项目先看构建配置、入口目录、关键导出、测试/Lint 命令。
 - 优先使用项目级 `AGENTS.md`（项目特化规则）与项目级 skill（运行时由 `skill` 工具按需加载）。
 
-`gitnexus_*`：代码图谱（调用链/影响面）—— 由 `kilo.json` `mcp.gitnexus.enabled` 独立控制。
+`mcp_*`：可选 MCP 索引工具（调用链/影响面/文档查询）—— 由 `kilo.json` MCP 配置独立控制。
 
 ## 上下文摄取与过滤
 
@@ -100,9 +100,9 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 - 搜索历史同类问题
 - 对比历史修复方案
 
-**第二步：gitnexus 验证（影响面确认）**
+**第二步：可选 MCP 索引工具验证（影响面确认）**
 
-- `gitnexus_*` 验证修改影响面
+- `mcp_*_query` / `mcp_*_context` / `mcp_*_impact` 验证修改影响面
 
 **未执行 kilo_local_recall 查询 → `[MISSING_RECALL]`，不得进入修复阶段。**
 
@@ -161,23 +161,23 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 | 场景 | 强制工具 | 说明 |
 |------|----------|------|
-| 修改 ≥3 个文件 | `gitnexus_impact` | 影响面分析 |
-| 修改 API/Router/Handler | `gitnexus_route_map` 或 `gitnexus_api_impact` | 接口消费方检查 |
-| 修改核心工具/配置 | `gitnexus_query` | 架构约束检索 |
-| 同类实现模式 ≥2 处（UI 与非 UI 同等适用） | `grep` / `glob` / `gitnexus_query` | 全量扫描同类点，优先组件化/共享抽象修复 |
-| 使用陌生第三方库 ¹ | `context7_query-docs` | 文档查询 |
+| 修改 ≥3 个文件 | `mcp_*_impact` | 影响面分析 |
+| 修改 API/Router/Handler | `mcp_*_route_map` 或 `mcp_*_api_impact` | 接口消费方检查 |
+| 修改核心工具/配置 | `mcp_*_query` | 架构约束检索 |
+| 同类实现模式 ≥2 处（UI 与非 UI 同等适用） | `grep` / `glob` / `mcp_*_query` | 全量扫描同类点，优先组件化/共享抽象修复 |
+| 使用陌生第三方库 ¹ | `mcp_*_query-docs` | 文档查询 |
 | 修复失败/报错 | `kilo_local_recall` | 历史同类问题回溯 |
 
 未执行 → `[MISSING_CONTEXT_QUERY]`
 
-> ¹ **陌生第三方库**：本地无该包 `.d.ts`、无 LSP 类型定义、或包名首次出现。检索命中顺序：`grep`/`rg` node_modules 类型定义 → LSP 定义跳转 → `context7_query-docs`；前两者命中则不得调用 context7。
+> ¹ **陌生第三方库**：本地无该包 `.d.ts`、无 LSP 类型定义、或包名首次出现。检索命中顺序：`grep`/`rg` node_modules 类型定义 → LSP 定义跳转 → `mcp_*_query-docs`；前两者命中则不得调用 MCP 文档查询。
 
 ## 检索本地化规范
 
 1. **rg 用法模板**：全仓检索必须带 exclude：`rg -n -g '!node_modules' -g '!dist' -g '!.git'`，禁止无 exclude 的全仓 grep。
 2. **semantic_search 收紧**：仅在 rg/grep 未命中且影响面 ≥3 文件时使用；单文件定位禁用。
-3. **LSP / 本地 .d.ts 优先于 context7**：熟悉库禁用 context7；LSP 不可用时回退读本地 `.d.ts`。
-4. **与「Context Engine 自动查询规则」表衔接**：本规范约束表中「使用陌生第三方库 → context7_query-docs」行的触发与命中判定，不删改表中其他行。
+3. **LSP / 本地 .d.ts 优先于 MCP 文档查询**：熟悉库禁用 `mcp_*_query-docs`；LSP 不可用时回退读本地 `.d.ts`。
+4. **与「Context Engine 自动查询规则」表衔接**：本规范约束表中「使用陌生第三方库 → `mcp_*_query-docs`」行的触发与命中判定，不删改表中其他行。
 
 ## 编码前强制检查点
 
@@ -187,7 +187,7 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 2. **等级确认**：已确认任务等级（T0/T1/T2），非 T0 绝不跳过 verifier。
 3. **搜索确认**：已搜索现有实现和同类模式，确认可复用点。
 4. **Context 确认**：已按「Context Engine 自动查询规则」调用必要工具，确认影响面。
-5. **重复点/同类模式扫描确认**：已用 grep/glob/gitnexus 扫描同类实现，确认修复策略（共享组件 vs 单点例外）并记录理由。
+5. **重复点/同类模式扫描确认**：已用 grep/glob/MCP 索引工具扫描同类实现，确认修复策略（共享组件 vs 单点例外）并记录理由。
 6. **清理确认**：已确认临时文件存放位置（$env:TEMP / /tmp/）。
 
 未执行 → `[CHECKPOINT_MISSED]`，暂停编码。
