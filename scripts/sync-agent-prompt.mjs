@@ -12,9 +12,14 @@
 //   description 已包含足够信息让模型稳定进入角色，无需额外包装。
 //
 // 用法：
-//   node scripts/sync-agent-prompt.mjs [--check] [--verbose]
+//   node scripts/sync-agent-prompt.mjs [--check] [--force] [--verbose]
 //     --check   只检查 drift，不写 kilo.json（CI 用）；有 drift 返回 exit 1
+//     --force   显式强制覆盖所有 agent.prompt，使其与 description 完全同步
 //     --verbose 打印每个 agent 的同步详情
+//
+// 默认策略（防事故）：
+//   已有 prompt 一律保留，不覆盖；仅当 prompt 缺失时才从 description 派生写入。
+//   唯一允许覆盖现有 prompt 的途径是 --force。--check 只把"prompt 缺失"计为 drift。
 //
 // 退出码：0=同步成功/无 drift，1=有 drift（--check 模式）或同步失败
 
@@ -76,6 +81,7 @@ function agentNameFromFile(filename) {
 
 const args = process.argv.slice(2);
 const checkOnly = args.includes('--check');
+const force = args.includes('--force');
 const verbose = args.includes('--verbose');
 
 // 1. 扫描 agent/*.md，收集 description
@@ -117,9 +123,11 @@ if (!agents) {
 
 // 3. 对比 + 同步
 let updated = 0;
+let preserved = 0;
 let skipped = 0;
 let driftCount = 0;
 const drifts = [];
+const forceOverwrites = []; // --force 模式下将被覆盖的 agent 列表
 
 for (const [name, desc] of descriptions) {
   const agentEntry = agents[name];
@@ -130,27 +138,59 @@ for (const [name, desc] of descriptions) {
   }
 
   const currentPrompt = agentEntry.prompt || '';
-  // prompt = description 直接作为系统提示
-  // description 已包含角色定位+触发条件+核心流程+关键约束，足够稳定触发
-  const newPrompt = desc;
+  const hasPrompt = currentPrompt.length > 0;
 
-  // prompt 必须始终与 description 同步，不允许留空让扩展从 .md 派生。
-  // 扩展在创建 subagent 时从 .md 派生 prompt 可能对复杂 description 生成非法
-  // ModelMessage[] schema，导致 Tool execution aborted。因此强制写入 prompt。
-  if (currentPrompt === newPrompt) {
-    if (verbose) {
-      console.log(`[OK]   ${name}: 已同步 (len=${newPrompt.length})`);
+  // ===== 默认策略（防事故，新）=====
+  //   - 已有 prompt：一律保留，不覆盖（无论是否与 description 一致）。
+  //   - 缺失 prompt：从 description 派生写入（description 已包含角色定位+触发
+  //     条件+核心流程+关键约束，足够稳定触发）。
+  //   - 唯一允许覆盖现有 prompt 的途径是 --force（显式重置，与 description 完全同步）。
+  //   - --check 只把"prompt 缺失"计为 drift；已存在的 prompt 差异不视为 drift
+  //     （默认保留策略下差异是预期的，不是漂移）。
+  //
+  // 历史事故根因（必须保留此警示）：扩展在创建 subagent 时从 .md 派生 prompt，
+  // 可能对复杂 description 生成非法 ModelMessage[] schema，导致 Tool execution
+  // aborted。因此 prompt 缺失时必须由本脚本从 description 派生后写入 kilo.json，
+  // 不允许留空让扩展在运行时自行派生。
+
+  if (force) {
+    // --force：显式覆盖所有 agent 的 prompt，使其与 description 完全同步
+    if (currentPrompt === desc) {
+      if (verbose) {
+        console.log(`[OK]   ${name}: 已同步 (len=${desc.length})`);
+      }
+    } else {
+      driftCount++;
+      drifts.push(name);
+      if (checkOnly) {
+        console.log(`[FORCE-DRIFT] ${name}: description ≠ prompt (descLen=${desc.length} vs promptLen=${currentPrompt.length})`);
+      } else {
+        agentEntry.prompt = desc;
+        updated++;
+        forceOverwrites.push({ name, current: currentPrompt.length, next: desc.length });
+        if (verbose) {
+          console.log(`[FORCE] ${name}: prompt 将被覆盖 (len=${currentPrompt.length} → ${desc.length})`);
+        }
+      }
     }
   } else {
-    driftCount++;
-    drifts.push(name);
-    if (checkOnly) {
-      console.log(`[DRIFT] ${name}: description ≠ prompt (descLen=${desc.length} vs promptLen=${currentPrompt.length})`);
-    } else {
-      agentEntry.prompt = newPrompt;
-      updated++;
+    // 默认策略：已有 prompt 保留；缺失才派生
+    if (hasPrompt) {
+      preserved++;
       if (verbose) {
-        console.log(`[SYNC] ${name}: prompt 已更新 (len=${currentPrompt.length} → ${newPrompt.length})`);
+        console.log(`[KEEP]  ${name}: 已有 prompt，保留 (len=${currentPrompt.length})`);
+      }
+    } else {
+      if (checkOnly) {
+        driftCount++;
+        drifts.push(name);
+        console.log(`[DRIFT] ${name}: 缺 prompt，应从 description 派生 (descLen=${desc.length})`);
+      } else {
+        agentEntry.prompt = desc;
+        updated++;
+        if (verbose) {
+          console.log(`[DERIVE] ${name}: prompt 缺失，已从 description 派生 (len=0 → ${desc.length})`);
+        }
       }
     }
   }
@@ -166,12 +206,20 @@ if (!checkOnly && updated > 0) {
   console.log(`\n[OK]    所有 agent prompt 已是最新，无需写入`);
 }
 
+// 4.5 --force 覆盖清单打印（验收 4：将被覆盖的 agent 列表 + 当前/新 prompt 长度）
+if (!checkOnly && force && forceOverwrites.length > 0) {
+  console.log('\n[FORCE-OVERWRITE] 将被覆盖的 agent：');
+  for (const o of forceOverwrites) {
+    console.log(`  ${o.name}: prompt ${o.current} → ${o.next} (len)`);
+  }
+}
+
 // 5. 汇总
-console.log(`\n[SUMMARY] scanned=${descriptions.size} updated=${updated} drift=${driftCount} skipped=${skipped}`);
+console.log(`\n[SUMMARY] scanned=${descriptions.size} updated=${updated} preserved=${preserved} drift=${driftCount} skipped=${skipped}`);
 
 if (checkOnly && driftCount > 0) {
   console.log(`\n[FAIL] 检测到 ${driftCount} 个 drift: ${drifts.join(', ')}`);
-  console.log(`       运行 \`node scripts/sync-agent-prompt.mjs\` 同步`);
+  console.log(`       运行 \`node scripts/sync-agent-prompt.mjs\` 派生缺失 prompt`);
   process.exit(1);
 }
 
