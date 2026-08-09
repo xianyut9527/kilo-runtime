@@ -366,3 +366,19 @@ evidence:
   - overload_count ≥ 3：先提取核心摘要压缩 task_context，仍超限才切 agent_manager worktree
 
 详细 step 0/1/2 实现见 `agent/conductor.md` 铁律 #9。
+
+## 新增错误标签（v6 框架稳定化，2026-08-09）
+
+- **\`[ENCODING_DRIFT]\`**：文件被 GBK 重新编码 / 含 U+FFFD / BOM 污染，阻断 dispatch 或 coder 完工
+  - 来源：\`scripts/scan-encoding.mjs\` + \`lifecycle-doctor/checks/encoding-safety.mjs\`
+  - 处理：coder 重做，必须 \`Set-Content -Encoding UTF8\` 或 Node \`fs.writeFileSync\` 显式指定 encoding
+  - 验证：\`node scripts/scan-encoding.mjs <file>\` 期望 all pass
+
+- **\`[PS51_REGEX_RISK]\`**：bash 命令含 PowerShell 5.1 复杂 regex（\`-match/-notmatch\` 后 regex 含 \`(\` / \`[\` / \`{\` / \`(?\`）
+  - 来源：\`scripts/bash-guard.mjs\` PS5.1 模式
+  - 处理：改用 \`glob\` / \`grep\` / \`rg\`（见 \`workflow-core.md\` §搜索四层阶梯纪律）
+  - 验证：\`node scripts/bash-guard.mjs "<cmd>"\` 期望 exit 0
+
+- **\`[BASH_WRITE_BLOCKED]\`**：bash 命令含文件写入/修改意图（Set-Content / Add-Content / Out-File / git commit / rm -rf / npm publish 等）
+  - 来源：\`scripts/bash-guard.mjs\` WRITE_PATTERNS
+  - 处理：conductor edit:deny / write:deny，改用 \`task\` 委派 coder 或 \`glob\` / \`grep\` 只读工具

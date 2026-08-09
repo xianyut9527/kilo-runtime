@@ -210,7 +210,15 @@ function auditContext(taskId) {
   }
 
   // 只校验 EXECUTION 类 T1/T2（T0 极速通道、INQUIRY 豁免）
+  // 特殊：RUNNING + intent_type=undefined 不豁免 → FAIL（conductor 跳过 INIT 或 apply-tier 失败）
   if (intentType !== 'EXECUTION') {
+    if (intentType === undefined && status === 'RUNNING') {
+      // 强异常：活跃 RUNNING 任务竟然没有 intent_type，必须排查
+      const errors = [
+        `[FLOW_AUDIT_FAIL] task_id=${taskId} intent_type=undefined on RUNNING task（conductor 跳过了 INIT 阶段或 apply-tier 失败，必须排查）`,
+      ];
+      return { taskId, intentType, tier, status, required: [], errors };
+    }
     return { taskId, skipped: true, reason: `intent_type=${intentType}（非 EXECUTION，豁免）` };
   }
   if (tier !== 'T1' && tier !== 'T2') {

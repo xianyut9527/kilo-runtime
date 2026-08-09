@@ -163,6 +163,15 @@ else
     copy_source_tree "${SOURCE_DIR}" "${TARGET_DIR}" 0
 fi
 
+# Post-sync framework health self-check (mirrors install.ps1 L115-121)
+if command -v node >/dev/null 2>&1; then
+  if ! node "${SOURCE_DIR}/scripts/lifecycle-doctor/index.mjs" > "${TARGET_DIR}/.sync-doctor.log" 2>&1; then
+    echo "[SYNC] FAIL: post-sync lifecycle-doctor exited $?. See ${TARGET_DIR}/.sync-doctor.log" >&2
+    exit 1
+  fi
+  echo "[SYNC] OK: post-sync lifecycle-doctor passed"
+fi
+
 # Note: agents/ compat copy intentionally removed.
 # Having both agent/ and agents/ causes duplicate agent registration,
 # which makes agent routing unstable.
@@ -180,6 +189,9 @@ CRITICAL_FILES=(
     "lifecycle/graph.yaml"
     "lifecycle/config.yaml"
     "lifecycle/stages/README.md"
+    "scripts/lifecycle-doctor/checks/encoding-safety.mjs"
+    "scripts/scan-encoding.mjs"
+    "scripts/bash-guard.mjs"
 )
 
 MISSING=()

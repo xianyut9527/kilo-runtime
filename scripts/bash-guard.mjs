@@ -47,12 +47,21 @@ const WRITE_PATTERNS = [
   /\bcurl\b.*-o\s/i,
   /\bwget\b.*-O\s/i,
   /\bpython\b.*-c\b.*write/i,
+  // PS5.1 Regex Safety: complex PowerShell regex triggers ArgumentException storm
+  // source: workflow-core.md SS PS5.1-Regex-Safety
+  // detect -match/-notmatch with unescaped metachars ( [ {
+  /-?\b(?:not?)?match\s+['"][^'"]*[\[\(\{]/i,
+  /Where-Object\s*\{[^}]*-(?:not?)?match[^}]*[\[\(\{]/i,
 ];
 
 function analyze(cmd) {
   const hits = [];
   for (const pat of WRITE_PATTERNS) {
-    if (pat.test(cmd)) hits.push(pat.toString());
+    if (pat.test(cmd)) {
+      const tag = (pat.source.includes('(?:not?)?match') || pat.source.includes('Where-Object'))
+        ? '[PS51_REGEX_RISK] ' : '';
+      hits.push(tag + pat.toString());
+    }
   }
   return hits;
 }

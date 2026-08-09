@@ -52,6 +52,14 @@ QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
 
 **质量保证（不靠模型，靠工程）**：T1 质量由 acceptance-check（机器证明对）+ diff-boundary（机器证明在界）+ 正向验证（forward 逻辑/边界）+ coding-engineering.md playbook（注入工程能力）托底；反向验证/审查角色的机械可覆盖职责（SCOPE_CREEP/FORBIDDEN_TOUCH）已由脚本门接管，判断类职责（LOCAL_PATCH/FAKE_CONTEXT/设计质量）留 T2 升级。
 
+## 安全门禁（v6 框架稳定化，2026-08-09）
+
+QUALITY 阶段必跑以下安全 check（与 `agent/conductor.md` 铁律 #9 step 0c 配套）：
+
+- **encoding-safety check**：`lifecycle-doctor/checks/encoding-safety.mjs` 已在 doctor 静态模式自动跑（234+ 项 BOM/U+FFFD/GBK 检测），命中 FAIL → 阻断 QUALITY 进入 DELIVERING
+- **bash-guard pre-dispatch**：caller 传 `--bash-cmd` 时自动拦截 PS5.1 复杂 regex（`[PS51_REGEX_RISK]`）+ 写入意图（`[BASH_WRITE_BLOCKED]`），exit 2 阻断
+- **scan-encoding 执行单元自检**：本阶段执行单元完工前必跑 `node scripts/scan-encoding.mjs`（编码角色必跑项）
+- 反事故：culture-applet 2026-08 任务因 subagent 未跑以上检查导致 GBK 损坏 + PS5.1 死循环
 ## 输入
 
 > **视角物理隔离**：verify hooks 只读 `plan + execution.code + forbidden_files + acceptance_criteria`，**禁止读 `execution.quality / fixing_history`**。review hooks 只读 `execution.code + plan + acceptance_criteria + project_context`，**禁止读 `execution.quality` 的报告结论**。fix hooks 读取 `execution.quality.issues + fixing_history`。

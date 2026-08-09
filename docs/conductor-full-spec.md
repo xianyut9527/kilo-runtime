@@ -316,3 +316,27 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 4. **分支收尾协议**：git status 清理 / 单提交对应单定级单元 / 告知用户分支去向 / worktree 隔离清理
 
 > skill 能力扩展由运行时 `skill` 工具按需加载，不在 conductor 规范中预声明。
+
+## 工具门禁（v6 框架稳定化，2026-08-09）
+
+> 与 `agent/conductor.md` 铁律 #9 step 0c / `.kilo/instructions/workflow-core.md` §PS5.1-Regex-Safety 配套。
+
+### 三件套
+
+- `scripts/scan-encoding.mjs` — 编码健康度检测器（BOM / U+FFFD / GBK 残留）
+- `scripts/bash-guard.mjs` — bash 命令静态分析拦截器（含 PS5.1 复杂 regex 模式）
+- `scripts/lifecycle-doctor/checks/encoding-safety.mjs` — 框架静态装配检查，含 292 项编码安全 check
+
+### 集成位置
+
+- **conductor 铁律 #9 step 0c**：每次 bash dispatch 前必跑 bash-guard；coder 完工 / DELIVERING 前必跑 scan-encoding
+- **pre-dispatch `--bash-cmd` 钩子**：`node scripts/task-context.mjs pre-dispatch <id> --bash-cmd "<cmd>"` 一步合并 step 0 + step 0c
+- **lifecycle-doctor 静态装配**：每跑必含 encoding-safety check（默认 292 PASS）
+- **flow-audit 流程审计**：RUNNING + intent_type=undefined 改为 FAIL（非静默 SKIP）
+- **install.ps1 / install.sh**：CriticalFiles 含 3 件套 + post-sync `lifecycle-doctor` 自检
+
+### 反事故教训
+
+- 2026-08 culture-applet 任务：coder 未跑 scan-encoding → AGENTS.md 被 GBK 重新编码 → 6 处 mojibake
+- 2026-08 culture-applet 任务：coder 未跑 bash-guard → PS5.1 死循环 → 6000+ 行刷屏
+- 教训：把"软规则口头提醒"接进"机械门禁"——subagent 不跑则 framework 拒绝 dispatch

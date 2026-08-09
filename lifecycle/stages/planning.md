@@ -46,6 +46,13 @@ extension_points:
 forbidden_files: ["string"]
 ```
 
+## 安全门禁（v6 框架稳定化，2026-08-09）
+
+PLANNING 阶段需在 `plan.task_dag.units[]` 每单元加：
+
+- `safety_checks: ["scan-encoding", "bash-guard", "encoding-safety"]`（每个 unit 完工时必跑项）
+- 范围涉及编码/Shell/中文文件时，planner 必把 `scripts/scan-encoding.mjs` + `scripts/bash-guard.mjs` 写入 `unit.acceptance_criteria`
+- 反事故：subagent 不带 safety_checks 的 plan = planner 漏算，reflux 重做
 ## premise_audit（每个 unit 必填，写不出 = 不可 dispatch）
 
 > **目的**：把"我假设 X"提前到可证伪的形态，杜绝"想当然设计"。LLM 的"应该这样吧"在编码前必须落地为可机械回放的命令。

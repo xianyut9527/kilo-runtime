@@ -216,3 +216,13 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 ```
 
 恢复后立即输出当前进度快照（7 节点流程日志），标注 `[PROCESS_VIOLATION]`（若存在跳步）。
+
+## 框架级安全门禁（v6 稳定化，2026-08-09）
+
+Kilo 框架在任何项目跑任务时自动跑以下 3 件套（与 \`agent/conductor.md\` 铁律 #9 step 0c 配套）：
+
+- **\`scripts/scan-encoding.mjs\`** — 编码健康度检测器（扫 BOM / U+FFFD / GBK 残留），命中 → \`[ENCODING_DRIFT]\`
+- **\`scripts/bash-guard.mjs\`** — bash 命令静态分析拦截器（含 PS5.1 复杂 regex 检测），命中 → \`[PS51_REGEX_RISK]\` 或 \`[BASH_WRITE_BLOCKED]\`
+- **\`scripts/lifecycle-doctor/checks/encoding-safety.mjs\`** — lifecycle-doctor 静态装配 check 之一，292 项编码安全
+
+详见 \`docs/conductor-full-spec.md\` 工具门禁章节。

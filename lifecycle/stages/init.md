@@ -43,6 +43,13 @@ T2: 多模块影响 / 需架构决策 / 有需求扩散风险 / 需完整 DAG
 
 定级完成后，conductor 按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户覆盖（prompt 显式声明）写入 `task_context.config.agents` + `review_mode` + `custom_overrides`。
 
+### 安全门禁（v6 框架稳定化，2026-08-09）
+
+INIT 阶段必跑：
+
+- **bash-guard pre-dispatch 预检**：conductor 委派任何 task 前经 `pre-dispatch --bash-cmd` 钩子（如有 bash 命令），命中 → exit 2 阻断
+- **scan-encoding baseline**：若修改过文件，先扫 `node scripts/scan-encoding.mjs <files>` 确认起点编码干净
+- 详见 `agent/conductor.md` 铁律 #9 step 0c
 ### 3. INQUIRY 直通
 
 咨询类任务定级后直接进入 DELIVERING（交付分析结论），不经过 PLANNING/EXECUTING/QUALITY。

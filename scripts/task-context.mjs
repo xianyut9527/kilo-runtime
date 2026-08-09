@@ -47,7 +47,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import process from 'node:process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 import { readContext, writeContext, appendTransitionLog, contextPath, buildInitialContext,
          VALID_STATUSES, VERIFICATION_FIELDS, QUALITY_ROUND_FIELD, CURRENT_STAGE_FIELD,
@@ -887,7 +890,7 @@ function evalDispatchPrompt(ctx) {
 // size-check 超限时本命令仅返回 exit 2（阻断）；摘要压缩 + 切 worktree 仍由 conductor
 // 在收到 exit 2 后按铁律 #9 step 0a 流程处理（脚本不做副作用压缩）。
 // ============================================================
-function cmdPreDispatch(taskId, promptCharsArg, fileCountArg) {
+function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd) {
   assertValidTaskId(taskId);
   const promptChars = Number.parseInt(promptCharsArg, 10);
   if (!Number.isInteger(promptChars) || promptChars < 0) {
@@ -920,6 +923,19 @@ function cmdPreDispatch(taskId, promptCharsArg, fileCountArg) {
   } else {
     process.stdout.write(`FAIL pre-dispatch (combined) - 阻断 dispatch（见上 ${exitCode === 2 ? '超限' : '审计失败'} 项）\n`);
   }
+
+  // 4. bash-guard 子进程（可选 --bash-cmd；省略时整段跳过，零侵入旧调用方）
+  if (bashCmd) {
+    const bg = spawnSync('node', [path.resolve(SCRIPT_DIR, 'bash-guard.mjs'), bashCmd], { encoding: 'utf8' });
+    const bgExit = bg.status || 0;
+    if (bgExit === 2) {
+      process.stdout.write(`[pre-dispatch] bash-guard BLOCKED: ${(bg.stdout || '').trim()}\n`);
+      process.exit(2);
+    } else {
+      process.stdout.write(`[pre-dispatch] bash-guard: PASS (exit ${bgExit})\n`);
+    }
+  }
+
   process.exit(exitCode);
 }
 
@@ -1264,7 +1280,9 @@ function main() {
     }
     const promptChars = args[pcIdx + 1];
     const fileCount = fcIdx !== -1 && fcIdx + 1 < args.length ? args[fcIdx + 1] : undefined;
-    cmdPreDispatch(taskId, promptChars, fileCount);
+    const bgIdx = args.indexOf('--bash-cmd');
+    const bashCmd = bgIdx !== -1 && bgIdx + 1 < args.length ? args[bgIdx + 1] : undefined;
+    cmdPreDispatch(taskId, promptChars, fileCount, bashCmd);
   }
   if (sub === 'log-dispatch') {
     // log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>

@@ -112,6 +112,14 @@ try {
         Write-Host "[RESTORE] @kilocode/plugin deps restored from backup" -ForegroundColor Green
     }
 
+    # Post-sync 框架健康度自检
+    & node "$Source\scripts\lifecycle-doctor\index.mjs" 2>&1 | Tee-Object -FilePath "$Target\.sync-doctor.log" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[SYNC] FAIL: post-sync lifecycle-doctor exited $LASTEXITCODE. See $Target\.sync-doctor.log" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[SYNC] OK: post-sync lifecycle-doctor passed" -ForegroundColor Green
+
     # Note: agents/ compat copy intentionally removed.
     # Having both agent/ and agents/ causes duplicate agent registration,
     # which makes agent routing unstable.
@@ -128,7 +136,10 @@ try {
         "agent/verifier.md",
         "lifecycle/graph.yaml",
         "lifecycle/config.yaml",
-        "lifecycle/stages/README.md"
+        "lifecycle/stages/README.md",
+        "scripts/lifecycle-doctor/checks/encoding-safety.mjs",
+        "scripts/scan-encoding.mjs",
+        "scripts/bash-guard.mjs"
     )
 
     $Missing = @()

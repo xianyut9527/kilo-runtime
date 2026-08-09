@@ -36,7 +36,7 @@
 13. **工程化防 abort 门禁**（替代纯文字 prompt 约束，运行时机械强制）：**来源：`agent/conductor.md` 铁律 #9**。完整 step 0/1/2 + 并行安全边界见铁律 #9 本体，本文件不重复展开。
 14. **EXECUTING 逐单元派发**：EXECUTING 阶段 conductor 按 `plan.task_dag.units` 逐单元派发 task，每单元独立 goal / acceptance_criteria / forbidden_files / token_budget（完整委派包六条见 agent/conductor.md 铁律#6）；单元依赖按 DAG 拓扑排序，同层无依赖单元默认按铁律 #11 并行组规则并行 dispatch；禁止批量派发整个 EXECUTING 段（来源：`agent/conductor.md` §EXECUTING 逐单元派发）。
 15. **搜索四层阶梯纪律**（来源：workflow-core.md §Trace-First + §MCP 优先）：执行类任务信息检索必须按 L0 文档（先读 agent/*.md / instructions/*.md / lifecycle/*.md 锚点）→ L1 Glob（按文件名/路径模式精确定位）→ L2 窄搜（Grep 带 include 限定文件类型或路径前缀，目标 ≤3 文件）→ L3 广搜（Grep 全仓仅在前三阶梯无果、且明确知晓调用方后使用，**全仓 Grep 无 include 视为违规**——必须 include 限定目录/扩展名）→ L4 MCP 图谱/索引（业务仓库默认走 MCP 图谱/索引能力替代暴力文本搜索；Kilo 框架不绑定任何特定实现——具体工具由当前环境的 MCP 决定，未启用图谱的仓库回退 L3 广搜）阶梯递进；阶梯跳级（绕过 L2 直接全仓 Grep，或已索引仓库首选 Grep 而非图谱）标 [SEARCH_LADDER_VIOLATION]。
-16. **当前会话优先策略**：保持上下文连贯，避免自动开新会话。配套要求：
+ ;**PS5.1 regex safety**(来源:workflow-core.md §PS5.1-Regex-Safety):bash 工具中 `Where-Object { ... -match/-notmatch <含 ( [ { 或 (? 字符的 regex> }` 触发 PS5.1 解析器 ArgumentException 反复重投,导致 6000+ 行刷屏——必须改用 glob/grep/rg,标 [PS51_REGEX_RISK]。16. **当前会话优先策略**：保持上下文连贯，避免自动开新会话。配套要求：
     - 主动 compaction：上下文超过 8 万字符时主动 `/compact` / `<leader>c`，不等被动触发
     - 严格委派包：单次 dispatch prompt ≤ 6000 字符（已配阈值的 80% 安全线）
     - subagent 返回 ≤ 4000 字符：超限立即 `[RETURN_OVER_LIMIT]` 重派，不叠加主会话
