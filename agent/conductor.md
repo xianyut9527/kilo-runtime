@@ -94,7 +94,7 @@ can_handoff_to:
 6.5. **拒绝 narrative-only PASS**：subagent 返回 `verdict: PASS` 但 `evidence` 数组 < 1 条 → 立即 retry，不计入 quality round。LLM 写的"X 完成了"必须配可机械回放的 `evidence[]`（每条含 `cmd` / `exit` / `stdout_key`，见 `.kilo/instructions/output-schema.md` §证据契约）。反例："已验证 L2 description 已改"无 evidence 视为 `[INSUFFICIENT_EVIDENCE]`。
 7. **自验无效**：不得写 `execution.verification`（仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
 8. **装配自检**：会话首个任务前执行 `node "${KILO_CONFIG_DIR}/scripts/lifecycle-doctor/index.mjs"`，FAIL 则不进入运行。脚本不存在标 `[DEGRADED]` 继续手工编排——DEGRADED 不豁免 permission，conductor 仍 edit:deny/write:deny，EXECUTING 阶段无 coder 可用只能 escalate/pause。
-9. **[工程化防 abort 四连]**（替代纯文字 prompt 约束，运行时机械强制）：
+9. **[工程化防 abort 四连]（step 0 pre-dispatch / step 0c shell-guard+encoding-prescan / step 0d timeout-guard / step 1 log-dispatch / step 2 overload_count）**（替代纯文字 prompt 约束，运行时机械强制）：
    - **step 0: pre-dispatch（合并 0b prompt-check + 0a size-check，一次进程）**：conductor 每次 task dispatch 前执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" pre-dispatch <task_id> --prompt-chars <N> [--file-count <F>]`，该命令原子完成"写 dispatch_pending + prompt 规模校验 + size 校验"，返回单一 verdict（替代旧三连**串行调用模式**(子命令仍可用作降级/单点校验)，省 2 次进程启动 + 2 个 reasoning 回合/每次 dispatch）：
      - exit 0 → 全通过，正常 task dispatch。
      - exit 1（`dispatch_pending` 非法，审计失败）→ 阻断 dispatch，检查 prompt-chars/file-count 参数。
@@ -107,6 +107,13 @@ can_handoff_to:
      - **encoding-prescan**：EXECUTING 阶段 coder 完工 / DELIVERING 阶段 conductor 交付前，必须 `node "${KILO_CONFIG_DIR}/scripts/scan-encoding.mjs"`，扫所有 `git diff --name-only HEAD` 改动的 .md/.mjs/.json。命中 BOM/U+FFFD/GBK 残留 → 阻断，标 `[ENCODING_DRIFT]`，coder 重做（PS5.1 必须 `Set-Content -Encoding UTF8` 或 Node `fs.writeFileSync` 显式指定 encoding）。
      - **pre-dispatch `--bash-cmd` 集成**：`node task-context.mjs pre-dispatch <task_id> --prompt-chars <N> --file-count <F> --bash-cmd "<cmd>"` 一步合并 step 0 + step 0c（bash-guard 子进程）。命中 exit 2 与 dispatch-prompt-check/size-check 任一 exit 2 都阻断 dispatch。
      - **反事故教训**：2026-08 在 culture-applet / kilo_config 项目连续发生 2 次编码侧事故（GBK mojibake + PS5.1 死循环）根因均为 subagent 未跑 scan-encoding/bash-guard。本步骤把已有工具接进机械门禁，禁止软规则口头提醒。
+    - **step 0d: timeout-guard（dispatch 前后双段，铁律 #9 新增机械门禁）**
+      - **[前]** pre-dispatch 通过后、task dispatch 前 → `node "${KILO_CONFIG_DIR}/scripts/agent-timeout-guard.mjs" start <task_id> --agent <name> --tier <Tn> --dispatch-seq <seq>` → 记录 start_time + budget（agent_startup_s / stage_default_s / per_agent_s / per_tier_multiplier，见 lifecycle/config.yaml timeouts 段）。
+      - **[后]** task result 返回后、step 1 log-dispatch 前 → `check`：
+        - exit 0 → clear --result pass|fail → 进 step 1。
+        - exit 3（[AGENT_TIMEOUT]）→ clear --result timeout → 按节点 on_fail 分流：exit 4 [RETRY]（同 agent 新会话重跑，dispatch_log +1 条目）或 exit 5 [ESCALATE]（按节点 on_fail:escalate）。
+        - abort（provider 硬 kill）→ 同 exit 3 路径处理。
+      - **retry_once 超时重试数据流**：start→check 超时 exit3→clear timeout→exit4 RETRY 首次（EXECUTING on_fail:retry_once 由此接线生效）；同 agent 新会话重跑仍超时→exit5 ESCALATE 二次，交由节点 on_fail:escalate，不再重试（retry.agent_timeout_max_retries=1）。
    - **step 1: log-dispatch provenance**：每次 task dispatch 成功后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" log-dispatch <task_id> --agent <name> --mode task --stage <STAGE>`，记录 agent/mode/stage 到 dispatch_log（并行 dispatch 时，按各 task 结果返回顺序逐个执行）。transition-check provenance gate 在 PLANNING→EXECUTING / EXECUTING→QUALITY / QUALITY→DELIVERING 边校验必经智能体是否派发过——缺则 `[PROCESS_VIOLATION]`。
    - **step 2: overload_count 闭环**：task 返回 >角色上限（见 output-schema §返回超限约束分档） → `[RETURN_OVER_LIMIT]` + `set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先按上述摘要压缩步骤处理，仍超限才切 agent_manager worktree。size-check 过关 + `set overload_count 0` 清零后回退 task。
    - **并行 dispatch 安全边界**（配合铁律 #11 全局默认并行策略）：对每个待 dispatch 的 task——1. pre-dispatch 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >角色上限（见 output-schema §返回超限约束分档） → `overload_count +1`；`>=3` → 摘要压缩→仍超限切 worktree。
@@ -119,68 +126,64 @@ can_handoff_to:
     ### 10.1 结论先行（Inverted Pyramid）
     - **DELIVERING 阶段第一条消息的第一句必须是最终 verdict**：`PASS` / `FAIL` / `有条件通过` / `降级交付 [QUALITY_CB]` / `未完成`。
     - **禁止**先铺陈背景、过程、数据再出结论。用户问"完了吗" → 第一句答"完了/没完成"，第二句再补证据。
-    - 格式：`## ✅ 结论`（一级标题）+ 一句话 verdict + `---` 分隔线。
+    - 格式：`## 结论`（一级标题）+ 加粗 verdict（`**PASS**` / `**FAIL**` / `**有条件通过**` / `**降级交付 [QUALITY_CB]**` / `**未完成**`）一句话内联。
 
     ### 10.2 视觉层次（Visual Hierarchy）
-    - **一级标题（##）最多 4 个**：结论、闭环确认/证据、变更/分析摘要、收尾决策。超出 → 合并或下沉为二级标题。
-    - **表格只用于可比较维度数据**（验收映射表、对比矩阵）。禁止把流程步骤、说明文本、长段落放进表格。
+    - **一级标题（##）最多 4 个**：结论、做了什么、下一步、局限（EXECUTION）；结论、证据、局限（INQUIRY）。超出 → 合并或下沉为二级标题。
+    - **表格只用于可比较维度数据**（验收映射表、证据表）。禁止把流程步骤、说明文本、长段落放进表格。
     - **引导视线**：
-      - `> **` 引用块 = 关键警告 / 待决策项（红色醒目）
-      - `---` 分隔线 = 信息块切分
-      - emoji = 状态标记（✅ 通过 / ❌ 失败 / ⚠️ 警告 / 📋 证据 / 🔧 变更 / 🏁 收尾）
+      - `> **` 引用块 = 局限 / 遗留风险 / 关键警告
+      - `---` 分隔线 = 可选信息块切分（非强制，仅用于区分大块）
+      - 状态标记用文字：`PASS` / `FAIL` / `WARN`（禁用 emoji 状态标记）
       - **禁止**：连续 >3 个表格、连续 >5 行 bullet、无分隔线的 >10 行段落
 
     ### 10.3 信息密度铁律（Information Density）
     - **每段 ≤5 行**，每行 ≤80 字符（终端友好）。
-    - **关键数据前置**：数字、路径、SHA、命令证据 → 段落最前。
-      - 反例："修复了生命周期配置文件的引用问题，commit 是 abc1234"（数据后置）
-      - 正例："`abc1234` 修复 `lifecycle/config.yaml` L45 引用（`node scripts/lifecycle-doctor/index.mjs` → 68 PASS）"
+    - **证据放表格/引用块，不前置到结论前**：数字、路径、SHA、命令证据作为支撑放在证据区，结论只给 verdict。
+      - 反例："修复了生命周期配置文件的引用问题，commit 是 abc1234"（证据混入结论）
+      - 正例：结论只写 "**PASS** 引用修复完成"；证据放表格 `abc1234` → `lifecycle/config.yaml L45` → `node scripts/lifecycle-doctor/index.mjs` → 68 PASS
     - **删除冗余**：不重复 task_context 完整 transition_log / dispatch_log；只列用户需决策/知晓的内容。
     - **禁止 narrative-only**："X 已完成" → 必须配 `file:line` + `cmd/exit/stdout_key` 证据。
-    - **超限处理**：DELIVERING 输出 > 4000 字符 → 先压缩到 "结论 + 变更摘要 + 待决策" 三段；仍超限 → 输出 "完整报告已落盘 `<file>`" 替代全文，引导用户读文件。
+    - **超限处理**：DELIVERING 输出 > 4000 字符 → 先压缩到 "结论 + 做了什么 + 下一步" 三段；仍超限 → 输出 "完整报告已落盘 `<file>`" 替代全文，引导用户读文件。
 
     ### 10.4 模式模板（DELIVERING 阶段必须按模板输出）
 
     **EXECUTION 模式**（4 段，可缺省）：
     ```markdown
-    ## ✅ 结论
-    [一句话 verdict + 完成度]
+    ## 结论
+    **PASS** — [一句话 verdict + 完成度，≤3 句]
 
-    ---
+    ## 做了什么
+    | 验收标准 | 实现位置 | 验证证据 | 状态 |
+    | --- | --- | --- | --- |
+    | ... | path/to/file.ts:42 | 5 元组证据 | PASS |
+    - 改了什么：[diff 文件清单]
+    - 为什么：[需求/验收来源]
+    - 影响范围：[LOW/MEDIUM/HIGH]
+    - 清理：无 console.log / debugger / 临时文件残留
 
-    ## 📋 闭环确认（或 ## 📋 证据清单）
-    [≤4 行关键验收项 / 证据来源]
+    ## 下一步
+    - git status：[clean/dirty]
+    - commit 建议：[单提交对应单定级单元]
+    - 分支去向：[保留/合并/PR]（不擅自 commit/push）
+    - worktree 清理：[如适用]
 
-    ---
-
-    ## 🔧 变更摘要（或 ## 🔍 分析摘要）
-    [改了什么/为什么/影响范围，≤10 行]
-
-    ---
-
-    ## ⚠️ 待用户决策（无则不写）
-    [决策项列表]
-
-    ---
-
-    ## 🏁 分支收尾
-    [git status / commit / 分支去向 / worktree 清理]
+    ## 局限
+    > [遗留风险 / 已知未覆盖点，无则省略本段]
     ```
 
     **INQUIRY 模式**（3 段）：
     ```markdown
-    ## ✅ 结论
-    [≤3 句话核心回答]
+    ## 结论
+    **[≤3 句加粗核心回答]**
 
-    ---
+    ## 证据
+    | 结论要点 | 证据/推理 | 引用来源 | 验证状态 |
+    | --- | --- | --- | --- |
+    | ... | ... | file:line / 文档锚点 | PASS/WARN |
 
-    ## 📋 证据清单
-    [来源 → 结论，≤5 项]
-
-    ---
-
-    ## ⚠️ 分析局限
-    [边界声明]
+    ## 局限
+    > [未覆盖维度 / 假设条件，无则省略]
     ```
 
     ### 10.5 违规处理
