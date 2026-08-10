@@ -301,7 +301,7 @@ verification_command: "rg 'GitNexus|gitnexus|context7' 6 files"
 
 ### 委派包必含路径字段
 
-- **`key_files`**:必用 `path.resolve(<file>)` 相对项目根(项目根 = `E:\AIgent\kilo_config`)
+- **`key_files`**:必用 `path.resolve(<file>)` 相对项目根(即当前工作目录，path.resolve() 的解析基准)
 - **`forbidden_files`**:必用绝对路径或 path.resolve()
 - **`return_contract.byte_level.path_normalized: true`**:标志此委派需路径断言
 
