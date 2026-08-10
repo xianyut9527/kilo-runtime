@@ -67,9 +67,15 @@ function inferVision(model) {
   return input.includes('image');
 }
 
-function inferCode(modelId) {
-  const lower = String(modelId).toLowerCase();
-  return lower.includes('code') || lower.includes('coder');
+// Fix P0-2: 默认 code-capable（对齐 inferReasoning 的 `!== false` 保守语义）。
+// 旧逻辑按名字含 'code'/'coder' 判定 -> glm-5.2/deepseek 等被误判"缺 code"而触发
+// 不必要的升级到 kimi-k2.7-code，与 model-registry 人工评级（glm-5.2 编码 ★★★★☆）
+// 矛盾，且遮蔽 economy 降级路径。新逻辑：显式 model.capabilities.code === false
+// 才判非 code（纯视觉/纯对话模型），缺省 true。如需标记某模型非 code，在 kilo.json
+// provider.hx.models.<id> 加 `capabilities: { code: false }`（可选字段，不破坏现有结构）。
+function inferCode(model) {
+  if (model && model.capabilities && model.capabilities.code === false) return false;
+  return true;
 }
 
 function inferReasoning(model) {
@@ -139,7 +145,7 @@ export function getCapabilitiesFromMap(modelId, preloaded) {
   const models = matches.map((k) => preloaded[k]);
   return {
     vision: models.some(inferVision),
-    code: models.some((m) => inferCode(m._id)),
+    code: models.some((m) => inferCode(m)),
     reasoning: models.every(inferReasoning),
     long_context: models.some(inferLongContext),
   };
@@ -151,4 +157,15 @@ export function listVisionModelIdsFromMap(preloaded) {
 
 export function listAllModelIdsFromMap(preloaded) {
   return _idsOf(preloaded);
+}
+
+// Fix P0-1: 按 modelId 反查 provider alias 前缀（如 'glm-5.2' -> 'hx/'）。
+// 用于 model-selector 把 selected_model 拼回 kilo.json 期望的 '<alias>/<modelId>' 格式，
+// 避免 conductor 把裸 modelId 传给 task 工具的 model 参数无法解析 provider。
+// 多 provider 同 id 取首个 alias；未找到返回 ''（调用方原样返回，向后兼容）。
+export function getProviderPrefixForModelId(modelId, preloaded) {
+  const merged = preloaded || loadModels();
+  const keys = _findKeysById(merged, modelId);
+  if (keys.length === 0) return '';
+  return merged[keys[0]]._alias + '/';
 }

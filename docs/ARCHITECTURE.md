@@ -70,18 +70,21 @@ DELIVERING
 
 ---
 
-## 2. 智能体清单（5 个职能智能体 + conductor 编排者）
+## 2. 智能体清单（7 个职能智能体 + conductor 编排者）
 
 > 模型统一在 `kilo.json` `agent.<name>.model` 配置（单源真相），能力倾向参考 `docs/model-registry.md`。
 > 下表不硬编码模型，避免配置漂移。
 
-| 智能体 | 挂载点 / hook | after | trigger | when | 职责 |
+| 智能体 | 挂载点 / hook | after | trigger | tiers | 职责 |
 |--------|--------------|-------|---------|------|------|
 | **conductor** | —（内建） | — | — | — | 编排者：意图判定→定级→挂载调度→流转裁判 |
-| **planner** | `PLANNING` | — | — | — | 设计门、DAG、验收点 |
-| **coder** | `EXECUTING` | — | — | — | 编码实现、三件套 |
-| **reviewer** | `QUALITY hook:review` | — | — | — | 代码审查（四视角） |
-| **fixer** | `QUALITY hook:fix` | — | `onFail` | — | 定向修复（auto-trigger） |
+| **planner** | `PLANNING` | — | — | 恒定 | 设计门、DAG、验收点 |
+| **plan-reviewer** | `post:PLANNING` | ‒ | ‒ | `tiers:[T2]` | 方案审查（on_fail:abort，verdict=FAIL 回流 planner 重做） |
+| **coder** | `EXECUTING` | — | — | 恒定 | 编码实现、三件套 |
+| **verifier** | `QUALITY hook:verify` | ‒ | deps | 恒定 | 正向验证（L1-L3，5 元组证据，唯一可写 execution.verification） |
+| **reviewer** | `QUALITY hook:review` | — | deps | `tiers:[T2]` | 代码审查（安全/架构/简化/SCOPE_CREEP 四视角） |
+| **reverse-auditor** | `QUALITY hook:verify` | ‒ | deps | `tiers:[T2]` | 反向验证（diff 反向核对验收/设计门一致性） |
+| **fixer** | `QUALITY hook:fix` | — | `onFail` | 恒定 | 定向修复（auto-trigger，任一 verify/review FAIL 触发） |
 
 ---
 

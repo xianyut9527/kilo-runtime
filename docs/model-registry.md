@@ -17,15 +17,9 @@ models:
   "hx/kimi-k2.7-code":
     vendor: moonshot
     architecture: kimi-k2.7-code
-  "hx/kimi-k3":
-    vendor: moonshot
-    architecture: kimi-k3
   "hx/MiniMax-M3":
     vendor: minimax
     architecture: MiniMax-M3
-  "hx/MiniMax-M2.7-highspeed":
-    vendor: minimax
-    architecture: MiniMax-M2.7-highspeed
 ---
 
 # docs/model-registry
@@ -50,16 +44,14 @@ models:
 | `hx/deepseek-v4-pro` | deepseek | deepseek-v4-pro | ★★★★★ | ★★★★★ | 200K | ★★★★★ | 2 |
 | `hx/kimi-k2.6` | moonshot | kimi-k2.6 | ★★★★★ | ★★★★☆ | 200K | ★★★★☆ | 3 |
 | `hx/kimi-k2.7-code` | moonshot | kimi-k2.7-code | ★★★★☆ | ★★★★★ | 200K | ★★★★☆ | 4 |
-| `hx/kimi-k3` | moonshot | kimi-k3 | ★★★★★ | ★★★★★ | 200K | ★★★★★ | 待观察 |
 | `hx/MiniMax-M3` | minimax | MiniMax-M3 | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 5 |
-| `hx/MiniMax-M2.7-highspeed` | minimax | MiniMax-M2.7-highspeed | ★★★☆☆ | ★★★☆☆ | 200K | ★★★☆☆ | 6 |
-| `hx/deepseek-v4-flash` | deepseek | deepseek-v4-flash | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 7 |
+| `hx/deepseek-v4-flash` | deepseek | deepseek-v4-flash | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 6 |
 
 > **稳定性排序用途**：`kilo.json` 中关键路径模型优先选用稳定性排序靠前的模型，当前默认 `glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6`。
 
 ## 稳定性优先选模型指南
 
-当前稳定性排序（由稳定到不稳定）：`glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6` > `kimi-k2.7-code` > `MiniMax-M3` > `MiniMax-M2.7-highspeed` > `deepseek-v4-flash`。
+当前稳定性排序（由稳定到不稳定）：`glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6` > `kimi-k2.7-code` > `MiniMax-M3` > `deepseek-v4-flash`。
 
 ## 按智能体能力倾向矩阵
 
@@ -95,3 +87,20 @@ models:
 - ~~`model_calibration` 表记录每个模型在每个能力维度上的表现~~
 - ~~每次任务完成后更新：accuracy、latency、token_usage、helpful_rate~~
 - ~~当某模型在某维度连续 3 次低于阈值 → 自动降级推荐（更新 `kilo.json` 建议由用户审批，不自动改写）~~
+
+
+## 当前模型绑定决策记录（P1-1 固化，防回摆）
+
+> 历史曾出现 conductor/coder/fixer 在 MiniMax-M3 与 deepseek-v4-flash 间反复切换（2617f3a 切 MiniMax-M3 -> 后续回 deepseek-v4-flash）。本节固化当前决策理由，改绑前先评估以下依据。
+
+| 智能体 | 当前模型(kilo.json) | 决策理由 |
+|--------|---------------------|----------|
+| conductor(默认主) | hx/deepseek-v4-flash | reasoning + 低延迟编排判定；conductor edit:deny 不写代码，flash 档够用且省成本 |
+| coder | hx/deepseek-v4-flash | 编码 ★★★★☆ + 200K 上下文；flash 档兼顾速度与编码能力 |
+| fixer | hx/deepseek-v4-flash | 最小修复场景同 coder，复用绑定降低切换成本 |
+| planner/verifier | hx/glm-5.2 | 稳定性排序 1（最稳），规划/验证对稳定性要求高于编码专精 |
+| plan-reviewer/reviewer | hx/kimi-k2.6 | 多模态输入(image) + 强 reasoning，方案/代码审查需深度推理 |
+| reverse-auditor | hx/deepseek-v4-pro | 反向核对需最强推理，pro 档 reasoning ★★★★★ |
+| small_model | hx/MiniMax-M3 | economy 降级目标，轻量任务省成本 |
+
+**改绑检查**：改任一 agent 模型前，对照本表理由列评估是否仍成立；模型切换 commit 须在 message 说明新理由，避免无记录回摆。

@@ -20,7 +20,7 @@ pre_gate:
 
 ## Input
 
-- task_context.intent_type (EXECUTION / INQUIRY, determines delivery content)
+- task_context.intent_type (EXECUTION / INQUIRY, determines delivery content) - sole data source
 - EXECUTION: All completed unit change summaries + acceptance map + verification report
 - INQUIRY: Complete analysis conclusion + evidence list + citation + dimension coverage + limitation statement
 - Forward verification report + review report (T1+ unified full)
@@ -31,49 +31,44 @@ pre_gate:
 
 ### EXECUTION Mode Delivery
 
-#### 1. Closed-loop Confirmation (acceptance -> implementation location -> verification evidence -> status)
+## 结论
+**PASS** - [一句话 verdict + 完成度，≤3 句]
 
-`
-| Acceptance Criteria | Implementation Location | Verification Evidence | Status |
-|---------------------|------------------------|----------------------|--------|
-`
+## 做了什么
+| 验收标准 | 实现位置 | 验证证据 | 状态 |
+| --- | --- | --- | --- |
+| ... | path/to/file.ts:42 | 5 元组证据 | PASS |
+- 改了什么：[diff 文件清单]
+- 为什么：[需求/验收来源]
+- 影响范围：[LOW/MEDIUM/HIGH]
+- 清理：无 console.log / debugger / 临时文件残留
 
-#### 2. Change Summary (what / why / impact scope)
+## 下一步
+- git status：[clean/dirty]
+- commit 建议：[单提交对应单定级单元]
+- 分支去向：[保留/合并/PR]（不擅自 commit/push）
+- worktree 清理：[如适用]
 
-- File-level change list (with diff summary)
-- Architecture impact description
-- Rollback strategy (if needed)
-
-#### 3. Branch Wrap-up
-
-- git status (untracked files / modified files)
-- commit suggestion (single commit corresponds to single tiered unit)
-- branch destination (keep / merge / delete)
-
----
+## 局限
+> [遗留风险 / 已知未覆盖点，无则省略本段]
 
 ### INQUIRY Mode Delivery
 
-#### 1. Conclusion First
+## 结论
+**[≤3 句加粗核心回答]**
 
-- One-sentence core conclusion
-- Confidence statement (high / medium / low)
+## 证据
+| 结论要点 | 证据/推理 | 引用来源 | 验证状态 |
+| --- | --- | --- | --- |
+| ... | ... | file:line / 文档锚点 | PASS/WARN |
 
-#### 2. Evidence Support
-
-- Citation sources (docs / code / data)
-- Key findings list
-
-#### 3. Limitation Statement
-
-- Uncovered dimensions
-- Assumption conditions
-- Suggested follow-up actions
-
----
+## 局限
+> [未覆盖维度 / 假设条件，无则省略]
 
 ## Output Constraints
 
 - token_budget: 4000 (output limit, not input)
-- Format: Markdown, tables for comparable dimensions
+- Format: Markdown, tables for comparable dimensions only (acceptance map / evidence table); no emoji status markers, use PASS/FAIL/WARN
 - Forbidden: Omit verification evidence, omit negative findings, unverified assertions
+- evidence goes to tables / quote blocks, not前置 to conclusion; no narrative-only; compress over-limit to 结论 + 做了什么 + 下一步
+- acceptance map missing -> tag [MISSING_ACCEPTANCE_MAP]; quality_gate FAIL -> final status DONE_WITH_CONCERNS

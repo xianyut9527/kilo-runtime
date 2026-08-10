@@ -49,8 +49,7 @@ kilo_config/
 │   ├── graph.yaml                         # 主生命周期 DAG（节点 + 边 + 流转条件）
 │   ├── config.yaml                        # 定级默认组合 + 用户覆盖 + 熔断阈值（唯一真相）
 │   └── stages/                            # 阶段执行逻辑（一阶段一文件，文件名派生节点 ID）
-│       ├── intent.md                      #   意图判定 → INIT
-│       ├── sizing.md                      #   任务定级 → INIT
+│       ├── init.md                        #   意图判定 + 任务定级 -> INIT（v3 合并原 INTENT+SIZING）
 │       ├── planning.md                    #   设计门 → PLANNING
 │       ├── executing.md                   #   实现 → EXECUTING
 │       ├── quality.md                      #   响应式 Hooks → QUALITY（合并原 CHECKING+REVIEWING+FIXING）
@@ -59,7 +58,7 @@ kilo_config/
 │   ├── configuration-guide.md             # ← 本文件
 │   ├── conductor-full-spec.md             # conductor 完整设计规范（多智能体架构历史）
 │   ├── model-registry.md                  # 模型能力倾向人类可读版（人工维护）
-└── lifecycle-doctor/index.mjs             # 配置校验脚本（56 项检查）
+└── lifecycle-doctor/index.mjs             # 配置校验脚本（300+ 项检查）
 ```
 
 ### 信息归属表（单一真相原则）
@@ -369,7 +368,7 @@ nodes:
                                 #   （PLANNING → stages/planning.md），无需 stage 字段
   - id: PLANNING
     type: stage                # virtual | stage | subgraph | terminal
-    required: [planner]        # 主槽必配角色列表（结构层不变量）；无 agent 挂载该角色 → [ASSEMBLY_FAIL]
+    # required: [planner]    # v6.1 废弃：必配角色迁至 stages/<id>.md frontmatter required_roles（graph 节点不再声明 required）
     note: 人类可读说明         # 可选
 
 # 边字段
@@ -386,7 +385,7 @@ edges:
 |------|------|------------|-----------|
 | `virtual` | 占位（START） | 无 | 无 |
 | `stage` | 阶段节点 | 有（`stages/<id 小写>.md`，文件名派生） | 有（主槽 + pre/post） |
-| `subgraph` | 子图入口 | 无（子图有自己的 DAG） | 经 provider 路由 |
+| ~~`subgraph`~~ | ~~子图入口（v3 已废弃，T3 子图删除）~~ | - | - |
 | `terminal` | 终态（DONE） | 无 | 无 |
 
 ### executor vs mount
@@ -399,6 +398,7 @@ edges:
 ## 5. config.yaml 字段详解
 
 ```yaml
+# 注意：当前架构 agents 表为空 {}（恒定挂载由图拓扑限定，tier 差异化用 mount[].tiers）；以下仅展示字段结构
 # tier_defaults：按定级 T0/T1/T2 声明加载哪些智能体
 # conductor 在 INIT 阶段把对应 tier 的 agents 表写入 task_context.config.agents
 # agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值；定级挂载可用 mount[].tiers（如 plan-reviewer tiers:[T2]）替代 when 开关，按 sizing.tier 过滤
@@ -448,13 +448,6 @@ hooks:
 ```yaml
 
 nodes:
-    parallel: true                           # 并行执行（视角隔离）
-
-# 多样化硬规则（v6.1 从原 capabilities.yaml 迁移至此——仅本子图使用）
-  dimensions:
-    vendor: required         # 模型提供者两两不同
-    architecture: required   # 模型架构两两不同
-```
 
 
 
@@ -499,7 +492,7 @@ nodes:
 node scripts/lifecycle-doctor/index.mjs
 ```
 
-29 项检查覆盖：
+300+ 项检查覆盖：
 - graph.yaml 节点/边引用完整性
 - agent frontmatter 字段完整性 + mount 挂载点存在性
 - graph 节点 required 角色被 agent mount 覆盖

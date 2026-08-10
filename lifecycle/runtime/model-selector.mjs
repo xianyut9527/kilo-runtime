@@ -14,6 +14,7 @@ import {
   getCapabilitiesFromMap,
   listVisionModelIdsFromMap,
   listAllModelIdsFromMap,
+  getProviderPrefixForModelId,
 } from './capability-registry.mjs';
 
 const CODE_OPTIMIZED_MODEL = 'kimi-k2.7-code';
@@ -24,6 +25,16 @@ const DEFAULT_SMALL_MODEL = 'kimi-k2.6';
 function codeOfId(id) {
   const lower = String(id).toLowerCase();
   return lower.includes('code') || lower.includes('coder');
+}
+
+// Fix P0-1: 把裸 modelId 拼回 '<alias>/<modelId>' 格式（kilo.json agent.model 期望格式）。
+// conductor 铁律 6a 把 selected_model 传给 task 工具 model 参数，裸 modelId 无 provider
+// 上下文无法解析。未找到 alias -> 原样返回（向后兼容，passthrough 场景）。
+function withProviderPrefix(modelId, options) {
+  const prefix = hasPreloaded(options)
+    ? getProviderPrefixForModelId(modelId, options.models)
+    : getProviderPrefixForModelId(modelId);
+  return prefix ? prefix + modelId : modelId;
 }
 
 function hasPreloaded(options) {
@@ -48,7 +59,7 @@ export function selectModel(defaultModel, requiredCaps = {}, options = {}) {
   const knownModels = useMap ? listAllModelIdsFromMap(options.models) : listAllModels();
   if (!knownModels.includes(normalizedDefault)) {
     return {
-      selected_model: normalizedDefault,
+      selected_model: defaultModel,
       override_reason: "unknown-model: passthrough",
       upgraded: false,
       downgraded: false,
@@ -71,7 +82,7 @@ export function selectModel(defaultModel, requiredCaps = {}, options = {}) {
     });
     const target = sorted[0];
     return {
-      selected_model: target,
+      selected_model: withProviderPrefix(target, options),
       override_reason: "vision-required: " + defaultModel + " lacks vision",
       upgraded: true,
       downgraded: false,
@@ -80,7 +91,7 @@ export function selectModel(defaultModel, requiredCaps = {}, options = {}) {
 
   if (requiredCaps.code === true && defaultCaps.code !== true) {
     return {
-      selected_model: CODE_OPTIMIZED_MODEL,
+      selected_model: withProviderPrefix(CODE_OPTIMIZED_MODEL, options),
       override_reason: "code-required: " + defaultModel + " lacks code",
       upgraded: true,
       downgraded: false,
@@ -95,7 +106,7 @@ export function selectModel(defaultModel, requiredCaps = {}, options = {}) {
   ) {
     const smallModel = normalizedSmall ?? DEFAULT_SMALL_MODEL;
     return {
-      selected_model: smallModel,
+      selected_model: withProviderPrefix(smallModel, options),
       override_reason: "economy-mode: small task",
       upgraded: false,
       downgraded: true,
@@ -103,7 +114,7 @@ export function selectModel(defaultModel, requiredCaps = {}, options = {}) {
   }
 
   return {
-    selected_model: normalizedDefault,
+    selected_model: withProviderPrefix(normalizedDefault, options),
     override_reason: "no-change",
     upgraded: false,
     downgraded: false,

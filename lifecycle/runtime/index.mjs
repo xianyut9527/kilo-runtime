@@ -22,7 +22,7 @@ import { loadModelsFromCfg, getCapabilities, getCapabilitiesFromMap } from './ca
 
 // Re-export all submodule surface for downstream consumers that prefer
 // a single import root. (e.g. `import { getCapabilities } from './runtime/index.mjs'`)
-export { getCapabilities, listVisionModels, listAllModels } from './capability-registry.mjs';
+export { getCapabilities, listVisionModels, listAllModels, getProviderPrefixForModelId } from './capability-registry.mjs';
 export { detectCapabilities } from './capability-detector.mjs';
 export { selectModel } from './model-selector.mjs';
 export { detectEarlyExit, setSignals, getSignals, addSignals } from './early-exit.mjs';
