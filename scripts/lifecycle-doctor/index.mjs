@@ -31,6 +31,7 @@ import { run as runPathNormalize } from './checks/path-normalize.mjs';
 import { run as runEncodingSafety } from './checks/encoding-safety.mjs';
 import { runRuntimeMode } from './runtime.mjs';
 import { run as runSanitizeSelfTest } from './checks/sanitize-self-test.mjs';
+import { run as runAgentRuntime } from './checks/agent-runtime.mjs';
 
 import { buildInitialContext as _bootstrapBuildInitialContext } from '../task-context.mjs';
 
@@ -140,6 +141,7 @@ runDecoupleAudit(ctx);
 runPathNormalize(ctx);
 runEncodingSafety(ctx);
 runSanitizeSelfTest(ctx);
+runAgentRuntime(ctx);
 
 // 收尾：缓存 / 同步 prompt / 报告
 report(cf, VERBOSE, { fullMode: FULL_MODE, fastMode: FAST_MODE, syncPrompt: SYNC_PROMPT, scriptsDir: SCRIPTS_DIR, root: ROOT });

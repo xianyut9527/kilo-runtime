@@ -228,3 +228,17 @@ timeouts:
 #   节点级  on_fail ∈ {abort, retry_once, degrade, escalate, pause}  ← 主槽失败策略
 #   挂载点  mount[].on_fail ∈ {abort, warn, skip, degrade}           ← pre:/post:/on:/可选视角失败
 # ============================================================
+
+# ============================================================
+# runtime：AgentRuntime 横切层配置（v1 新增）
+# cost_priority: 模型选择的成本偏好
+#   balanced(默认) - 按能力匹配不主动降级
+#   quality       - 任务大时优先 kimi-k2.7-code / MiniMax-M3
+#   economy       - 小任务主动降级到 small_model
+# early_exit_signals: 早退信号词列表（覆盖 default）
+# capability_strict: 严格模式=能力缺失时拒绝 dispatch 并 escalate
+# ============================================================
+runtime:
+  cost_priority: balanced
+  early_exit_signals: []  # 空=用 early-exit.mjs 内置默认
+  capability_strict: false
