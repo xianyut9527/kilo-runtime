@@ -491,7 +491,7 @@ function cmdSetBatch(taskId, batchInput, agent) {
 // ============================================================
 // apply-tier: INIT 阶段机械应用 config.yaml tier_defaults
 // 消除"conductor 手工 set config.agents 容易漏写/写错"的根因。
-// 读 config.yaml tier_defaults[tier]（或 inquiry_tier_defaults[tier]），
+// 读 config.yaml tier_defaults[tier]，
 // 原子写入 config.agents + config.review_mode。
 // 覆盖 config.agents 整体（非增量），保证与 config.yaml 单一真相一致。
 // ============================================================

@@ -12,12 +12,12 @@ keywords: core, 意图判定, 安全约束, 检查点, 流程基线
 
 用户请求分为两类，**存疑时归为咨询，不动手**。
 
-- **咨询类**：提问、了解、分析、比较、建议、排障、解释。只给结论，**禁止改文件**。
+- **咨询类**：提问、了解、分析、比较、建议、排障、解释。主输出信息；tier 决定流程深度，可含脚本/方案/文档等辅助产物（不"禁止改文件"）。
 - **执行类**：明确要求创建、修改、删除、重构、修复、实现。
 
 ### 判定规则
 
-1. 无明确动作指令 → **咨询类**："为什么"/"怎么理解"/"看看这个" → 只分析不改。
+1. 无明确动作指令 → **咨询类**："为什么"/"怎么理解"/"看看这个" → 主输出信息，按 tier 走流程；如需写脚本/方案验证，可正常产出辅助文件。
 2. 有动作指令但模糊/矛盾/高风险 → **先澄清再动手**。
 3. 咨询类中用户确认"改吧"/"执行" → **转为执行类**，按确认范围执行。
 
@@ -226,3 +226,12 @@ Kilo 框架在任何项目跑任务时自动跑以下 3 件套（与 \`agent/con
 - **\`scripts/lifecycle-doctor/checks/encoding-safety.mjs\`** — lifecycle-doctor 静态装配 check 之一，292 项编码安全
 
 详见 \`docs/conductor-full-spec.md\` 工具门禁章节。
+
+
+### prompt 同步治本（v6.1，2026-08-10）
+
+- **`scripts/sanitize-agent-description.mjs`** — description 治本清洗器（`sync-agent-prompt.mjs` 的安全网）
+  - 写前清洗：去 C0/C1/DEL 控制字符 / 限长 ≤4096 / 未配对 XML warn-only / GBK 边界字符 warn-only
+  - 纯函数导出 + CLI 双模式，零 IO 副作用
+  - self-test 8/8 用例覆盖控制字符/超长/XML/全 ASCII/中英混合/空/纯空白/全控制符
+  - 使用：`node scripts/sanitize-agent-description.mjs agent/<name>.md` 或 import `sanitizeDescription`

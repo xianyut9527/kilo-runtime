@@ -144,7 +144,7 @@ function parseTierDefaults(text) {
 
     // top-level keys we care about
     if (/^tier_defaults\s*:/.test(line)) { flush(); section = 'execution'; curTier = null; inAgents = false; continue; }
-    if (/^(overrides|convergence|hooks|timeouts|inquiry_tier_defaults|tier_escalation)\s*:/.test(line)) { flush(); section = null; curTier = null; inAgents = false; continue; }
+    if (/^(overrides|convergence|hooks|timeouts|tier_escalation)\s*:/.test(line)) { flush(); section = null; curTier = null; inAgents = false; continue; }
 
     if (!section) continue;
 

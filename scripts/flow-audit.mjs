@@ -18,7 +18,7 @@
 //   2. dispatch_log 必须包含每个必经阶段的 required_roles 派发记录
 //      （从 lifecycle/stages/<id>.md frontmatter required_roles 读取）
 //   3. quality.verdict ∈ {PASS, CIRCUIT_BREAKER}（QUALITY 阶段必须有合法结论）
-//   4. 豁免：INQUIRY 类（直通 DELIVERING，无 PLANNING/EXECUTING/QUALITY）
+//   4. 豁免：T0 任务（T0 极速通道无 PLANNING/QUALITY），INQUIRY T1+ 不再豁免
 //
 // 用法：
 //   node scripts/flow-audit.mjs                    # 扫活跃 task_context（mtime 30min 内）
@@ -104,9 +104,8 @@ function listActiveContexts(allMode = false, activeThresholdMs = 30 * 60 * 1000)
 // 单 task_context 审计
 // ============================================================
 
-// 必经阶段序列（按 tier + intent_type）
+// 必经阶段序列（按 tier；intent_type 不参与路由，仅影响产物形态）
 function requiredStages(tier, intentType) {
-  if (intentType !== 'EXECUTION') return [];  // INQUIRY 直通 DELIVERING，豁免
   if (tier === 'T0') return ['INIT', 'EXECUTING', 'DELIVERING'];
   if (tier === 'T1' || tier === 'T2') return ['INIT', 'PLANNING', 'EXECUTING', 'QUALITY', 'DELIVERING'];
   return [];
@@ -181,7 +180,7 @@ function checkDispatchLog(ctx, required) {
 // 校验 quality.verdict 合法（T1/T2 必经 QUALITY）
 function checkQualityVerdict(ctx, required) {
   const errors = [];
-  if (!required.includes('QUALITY')) return errors;  // T0/INQUIRY 豁免
+  if (!required.includes('QUALITY')) return errors;  // T0 豁免（与 intent 无关）
   const verdict = ctx.quality?.verdict;
   if (verdict !== 'PASS' && verdict !== 'CIRCUIT_BREAKER') {
     errors.push(`quality.verdict="${verdict}" ∉ {PASS, CIRCUIT_BREAKER}（T1/T2 必须经 QUALITY 阶段）`);
@@ -209,20 +208,24 @@ function auditContext(taskId) {
     return { taskId, skipped: true, reason: `status=${status}（已结束）` };
   }
 
-  // 只校验 EXECUTION 类 T1/T2（T0 极速通道、INQUIRY 豁免）
+  // 只校验 T1/T2 任务（T0 极速通道豁免；INQUIRY/EXECUTION 不再是豁免维度）
   // 特殊：RUNNING + intent_type=undefined 不豁免 → FAIL（conductor 跳过 INIT 或 apply-tier 失败）
-  if (intentType !== 'EXECUTION') {
-    if (intentType === undefined && status === 'RUNNING') {
-      // 强异常：活跃 RUNNING 任务竟然没有 intent_type，必须排查
-      const errors = [
-        `[FLOW_AUDIT_FAIL] task_id=${taskId} intent_type=undefined on RUNNING task（conductor 跳过了 INIT 阶段或 apply-tier 失败，必须排查）`,
-      ];
-      return { taskId, intentType, tier, status, required: [], errors };
-    }
-    return { taskId, skipped: true, reason: `intent_type=${intentType}（非 EXECUTION，豁免）` };
-  }
   if (tier !== 'T1' && tier !== 'T2') {
     return { taskId, skipped: true, reason: `tier=${tier}（非 T1/T2，豁免）` };
+  }
+  if (intentType === undefined && status === 'RUNNING') {
+    // 强异常：活跃 RUNNING 任务竟然没有 intent_type，必须排查
+    const errors = [
+      `[FLOW_AUDIT_FAIL] task_id=${taskId} intent_type=undefined on RUNNING task（conductor 跳过了 INIT 阶段或 apply-tier 失败，必须排查）`,
+    ];
+    return { taskId, intentType, tier, status, required: [], errors };
+  }
+  if (intentType !== 'INQUIRY' && intentType !== 'EXECUTION') {
+    // T1/T2 必须有合法 intent_type（INQUIRY 或 EXECUTION）
+    const errors = [
+      `[FLOW_AUDIT_FAIL] task_id=${taskId} invalid intent_type=${JSON.stringify(intentType)} on T1/T2 task（必须是 INQUIRY 或 EXECUTION）`,
+    ];
+    return { taskId, intentType, tier, status, required: [], errors };
   }
 
   const required = requiredStages(tier, intentType);
@@ -267,7 +270,7 @@ function cleanStale() {
 
     const intentType = ctx.intent?.intent_type;
     const tier = ctx.sizing?.tier;
-    if (intentType !== 'EXECUTION' || (tier !== 'T1' && tier !== 'T2')) { kept++; continue; }
+    if (tier !== 'T1' && tier !== 'T2') { kept++; continue; }
 
     const required = requiredStages(tier, intentType);
     const errors = [

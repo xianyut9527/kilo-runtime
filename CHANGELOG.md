@@ -2,13 +2,52 @@
 
 本文件记录 `kilo_config` 全局配置仓库的演进。遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
+
+## [Unreleased] tier-routing-unify-001（v3.x 重构）
+
+### 路由开关统一为 tier
+
+INQUIRY 任务不再直通 INIT→DELIVERING，与 EXECUTION 共用同一套 tier-based 路由。
+任何任务（咨询/编码/写方案/需写脚本验证的咨询/审查）都按 tier 走流程：
+
+- **T0**：INIT → EXECUTING → DELIVERING（无设计门/验证/审查）
+- **T1/T2**：INIT → PLANNING → EXECUTING → QUALITY → DELIVERING
+
+### 关键变更（5 类文件 + 1 类历史）
+
+| 类别 | 文件 | 变更 |
+|---|---|---|
+| 图 | `lifecycle/graph.yaml` | 删 `INIT→DELIVERING when intent_type=='INQUIRY'` 边；4 条边 when 去 intent 条件 |
+| 脚本 | `scripts/flow-audit.mjs` | `requiredStages` 去 intent 维度；INQUIRY 豁免→tier 豁免 |
+| 脚本 | `scripts/transition-check.mjs` | `isExempt` 改 `!isT1orT2`（去 INQUIRY 豁免） |
+| 脚本 | `scripts/lifecycle-doctor/runtime.mjs` | dispatch_provenance 豁免改 tier-based |
+| 文档 | `lifecycle/stages/init.md` | 咨询类重定义；删 INQUIRY 直通段；任务定级改 INQUIRY 默认 T1 |
+| 文档 | `agent/conductor.md` | 铁律#1 + 核心流程图改 tier 唯一路由 |
+| 文档 | `.kilo/instructions/core.md` | 咨询类去"禁止改文件"硬约束 |
+| 文档 | `AGENTS.md` | 锚点#1 改 tier 决定流程深度 |
+| 文档 | `.kilo/instructions/workflow-detail.md` | Step 1 咨询类分支去"只分析"（**本轮补漏**） |
+| 文档 | `docs/ARCHITECTURE.md` | 1.1 主图 L18 补 intent≠路由说明（**本轮补漏**） |
+| 历史 | `CHANGELOG.md` L224 段 | **保留原文**——历史 changelog 不可改；v3 段（L224）记录的"INQUIRY 直通"已被本段 v3.x 替代 |
+| 锚点 | `CHANGELOG.md` L224 段 | **本段 v3.x 重构自身内容定位**——INQUIRY 直通→tier-based 路由改造完整记录 |
+
+### 兼容性
+
+- INQUIRY T1+ 现需走完整委派（planner → coder → verifier）；flow-audit 不再对 INQUIRY skip
+- T0 INQUIRY 极速通道保留（INIT→EXECUTING→DELIVERING）
+- intent 仅作产物形态标记，决定 DELIVERING 输出模板（INQUIRY 模式 3 段 / EXECUTION 模式 4 段）
+- 8 文件项目级 + 全局级 hash 同步；deploy 状态等效于 install.ps1 跑过
+
+### 关联
+
+- 上游 task: `kilo-config-tier-expand-001`（T1 EXECUTION，已 DONE）
+- 本 task: `kilo-config-tier-audit-002`（查漏补缺，3 文档同步）
 ## [Unreleased] scan-cleanup-010
 
 ### Failed（subagent 报告虚报教训）
 - **U2 README.md**：报告 PASS 但 L12/L188-190/L235 实际未改，rg GitNexus 仍命中 4 处
 - **U4 workflow-core.md**：报告 PASS 但 L85/L96/L97/L99 实际未改
 - **U6 agent/verifier.md + planner.md**：报告 PASS 但 L132/L137 实际未改
-- **任务清单漏列**：agent/coder.md L108/L148、lifecycle/stages/executing.md L26-27
+- **任务清单漏列**：agent/coder.md L108 与 148 行、lifecycle/stages/executing.md L26-27
 - **subagent 报告虚报问题暴露**：必须用 byte-level 二次读（Get-Content 关键行 + git diff stat）作为通过证据，不可仅凭 subagent 报告
 
 ## [Unreleased] scan-cleanup-010b
@@ -18,7 +57,7 @@
 - **.kilo/instructions/workflow-core.md**（L85/L96/L97/L99 — 4 处，L92 §MCP 优先标题保留）：通用化 MCP 索引工具描述
 - **agent/verifier.md**（L132）：gitnexus_api_impact → 可选 MCP 索引工具
 - **agent/planner.md**（L137）：grep/glob/gitnexus → grep/glob/(可选 MCP 索引工具)
-- **agent/coder.md**（L108/L148 — 010 漏列）：优先 GitNexus → 可选 MCP 索引工具
+- **agent/coder.md**（L108 与 148 行 — 010 漏列）：优先 GitNexus → 可选 MCP 索引工具
 - **lifecycle/stages/executing.md**（L26-27 — 010 漏列）：检索优先级链通用化
 - **byte-level 验证**：6 文件 14 处二次读 + rg 0 命中 + git diff 6 文件 20+/20- + doctor 57 PASS + flow-audit ALL PASS
 - **教训**：subagent 报告虚报 → U2 verifier 报 FAIL 与客观 byte-level 证据冲突，最终以 byte-level 为准

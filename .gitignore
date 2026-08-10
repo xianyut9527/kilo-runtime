@@ -29,6 +29,11 @@ kilo.json.bak.*
 .kilo/skills/
 .kilo/skills/**
 
+
+# task_context 运行时产物（conductor 写 task_context_*.json 到 .kilo/task_context/，与 .kilo/skills/ 同类运行时产物，不入版本库；已 tracked 历史文件需 git rm --cached）
+.kilo/task_context/
+.kilo/task_context/**
+
 # IDE 注入的 MCP 运行时产物
 .playwright-mcp/
 .playwright-mcp/**

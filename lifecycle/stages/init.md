@@ -21,12 +21,12 @@ token_budget: 6000
 ### 1. 意图判定
 
 按 `core.md` §意图分类执行：
-- **咨询类**（`INQUIRY`）：只分析、不改文件、不调用修改性工具。输出分析结论即可。
+- **咨询类**（`INQUIRY`）：主输出信息（方案/分析/脚本验证结论）；tier 决定流程深度，**可能含脚本/方案/文档等辅助产物**。
 - **执行类**（`EXECUTION`）：涉及文件修改、代码生成、配置变更。进入定级。
 
 显式输出判定结论：必须在输出顶部显式标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
 
-### 2. 任务定级（仅 EXECUTION）
+### 2. 任务定级（INQUIRY 默认 T1，EXECUTION 按 T0/T1/T2）
 
 按 `workflow-core.md` 决策树执行：
 
@@ -50,9 +50,6 @@ INIT 阶段必跑：
 - **bash-guard pre-dispatch 预检**：conductor 委派任何 task 前经 `pre-dispatch --bash-cmd` 钩子（如有 bash 命令），命中 → exit 2 阻断
 - **scan-encoding baseline**：若修改过文件，先扫 `node scripts/scan-encoding.mjs <files>` 确认起点编码干净
 - 详见 `agent/conductor.md` 铁律 #9 step 0c
-### 3. INQUIRY 直通
-
-咨询类任务定级后直接进入 DELIVERING（交付分析结论），不经过 PLANNING/EXECUTING/QUALITY。
 
 ## 输出信号
 
@@ -70,9 +67,8 @@ quality_gate:
 
 ## 路由规则（边定义见 graph.yaml）
 
-- `INQUIRY` → `DELIVERING`（直通交付）
-- `EXECUTION T0` → `EXECUTING`（极速通道，无设计门/验证/审查）
-- `EXECUTION T1/T2` → `PLANNING`（设计门）
+- `T0`（任何 intent） → `EXECUTING`（极速通道，无设计门/验证/审查）
+- `T1/T2`（任何 intent） → `PLANNING`（设计门）
 
 ## 硬规则
 

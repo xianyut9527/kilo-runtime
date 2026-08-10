@@ -29,6 +29,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { PROMPT_MAX_LEN } from './sanitize-agent-description.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const ROOT = path.resolve(path.dirname(__filename), '..');
@@ -37,7 +38,7 @@ const ROOT = path.resolve(path.dirname(__filename), '..');
 // 配置
 // ============================================================
 // prompt 字符串长度上限：与 config.yaml dispatch_prompt_threshold 留 1.5x 余量
-const PROMPT_MAX_LEN = 4096;
+// PROMPT_MAX_LEN 改从 ./sanitize-agent-description.mjs 共享导入，避免重复定义
 
 // 需配对的 XML 标签名（仅检测我们关心的标签；不穷举所有 XML 标签）
 const XML_TAGS = ['tool', 'dispatch', 'agent'];

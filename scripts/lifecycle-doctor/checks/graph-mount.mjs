@@ -141,12 +141,11 @@ export function run(ctx) {
   // B4. when/tiers 挂载校验（tiers 字段替代 config.agents.<key> 开关挂载）：
   //   - when 与 tiers 互斥（同时存在 → FAIL，二选一）
   //   - tiers 值非空且每项 ⊆ {T0,T1,T2}（定级挂载合法性）
-  //   - when 引用的 config.agents.<key> 至少在任一 tier_defaults / inquiry_tier_defaults 声明（防孤儿开关）
+  //   - when 引用的 config.agents.<key> 至少在任一 tier_defaults 声明（防孤儿开关）
   {
     const allTierKeys = new Set();
     if (cfg) {
       for (const keys of cfg.tierAgents.values()) for (const k of keys) allTierKeys.add(k);
-      for (const keys of cfg.inquiryTierAgents.values()) for (const k of keys) allTierKeys.add(k);
     }
     let tieredMounts = 0;
     for (const [name, a] of agents) {

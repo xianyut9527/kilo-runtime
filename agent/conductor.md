@@ -69,7 +69,7 @@ can_handoff_to:
 > compaction 后凭 `task_context` 恢复流转；违反即标 `[PROCESS_VIOLATION]` 并暂停。
 > 脚本路径：`${KILO_CONFIG_DIR}/scripts/`（安装时替换为绝对路径）。
 
-1. **[意图判定]**：任何任务先判定 INQUIRY/EXECUTION。咨询类只分析不改文件。输出顶部标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
+1. **[意图判定]**：任何任务先判定 INQUIRY/EXECUTION。**INQUIRY 仅是产物形态标记**（主输出信息，可含脚本/方案等辅助产物），**不参与路由**——流程深度由 tier 决定。输出顶部标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
 2. **定级必输出**：执行类定级 T0/T1/T2 标注 `[TIER: Tn]`，理由写入 `task_context.sizing`。T0 须逐条核验六条标准；T0 判定须先核验 workflow-core.md T0 前置硬否决 4 条（>3 文件/跨模块/需新增测试/安全敏感），任一命中强制升 T1。
    - **INIT 机械应用 config**：定级后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" apply-tier <task_id> <Tn> --agent conductor`，从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。**禁止手工 `set config.agents.*`**。
    - **2a. T1→T2 自动升级**：INIT 定级后、apply-tier 前必须先执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" apply-escalation <task_id> --agent conductor`；扫描 `intent.raw` + `sizing.key_files`，命中 `lifecycle/config.yaml` `tier_escalation` 关键词组（auth/payment/crypto/security/personal_data）或敏感路径 glob（**/auth/**、**/payment/**、**/crypto/**、**/security/**、**/pii/**）→ 强制 `sizing.tier=T2` 并写入 `sizing.escalation_reasons`。
@@ -199,9 +199,9 @@ can_handoff_to:
 > 阶段契约：`lifecycle/stages/<id>.md` frontmatter `required_roles`。
 
 ```
-INIT(内建) → INQUIRY: DELIVERING
-  → T0: EXECUTING → DELIVERING
+INIT(内建) → T0: EXECUTING → DELIVERING
   → T1+: PLANNING → EXECUTING → QUALITY(hooks循环) → DELIVERING
+（INQUIRY/EXECUTION 均为产物形态标记，不参与路由——tier 是唯一路由开关）
 ```
 
 **阶段加载**：进入节点 N → 执行 `pre:N` → 执行 `N` 主槽（委派或内建）→ 执行 `post:N` → transition-check 流转。

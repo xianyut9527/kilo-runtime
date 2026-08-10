@@ -192,6 +192,9 @@ CRITICAL_FILES=(
     "scripts/lifecycle-doctor/checks/encoding-safety.mjs"
     "scripts/scan-encoding.mjs"
     "scripts/bash-guard.mjs"
+    "scripts/sanitize-agent-description.mjs"
+    "scripts/sync-agent-prompt.mjs"
+    "scripts/validate-agent-prompt.mjs"
 )
 
 MISSING=()

@@ -404,15 +404,15 @@ function main() {
   }
 
   // ============================================================
-  // provenance gate（edge-conditioned，仅 T1/T2 EXECUTION 边）
+  // provenance gate（edge-conditioned，仅 T1/T2 边）
   // 校验 dispatch_log 中是否包含对应阶段的必配角色（防跳步绕过委派）
-  // 豁免：T0 边、INQUIRY 边、CIRCUIT_BREAKER 出口
+  // 豁免：T0 边、CIRCUIT_BREAKER 出口（INQUIRY T1+ 不再豁免，需走完整委派）
   // ============================================================
   const tier = vars.tier;
   const intentType = vars.intent_type;
   const dispatchLog = Array.isArray(ctx.dispatch_log) ? ctx.dispatch_log : [];
   const isT1orT2 = tier === 'T1' || tier === 'T2';
-  const isExempt = intentType !== 'EXECUTION' || !isT1orT2;
+  const isExempt = !isT1orT2;  // 去除 INQUIRY 豁免：INQUIRY T1+ 必须经 planner/coder/verifier 委派
   const isCircuitBreakerExit = FROM === 'QUALITY' && TO === 'DELIVERING' && vars.quality_verdict === 'CIRCUIT_BREAKER';
 
   if (!isExempt && !isCircuitBreakerExit) {

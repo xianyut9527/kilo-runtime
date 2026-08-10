@@ -159,15 +159,10 @@ function rtCheckVerification(ctx, env, rtCheck) {
 }
 
 function rtCheckDispatchProvenance(ctx, env, rtCheck) {
-  const intentType = ctx.intent && ctx.intent.intent_type;
   const tier = ctx.sizing && ctx.sizing.tier;
   const stage = ctx.current_stage;
-  if (intentType !== 'EXECUTION') {
-    rtCheck('PASS', 'runtime.dispatch_provenance', `intent_type=${intentType}（非 EXECUTION，豁免）`);
-    return;
-  }
   if (tier !== 'T1' && tier !== 'T2') {
-    rtCheck('PASS', 'runtime.dispatch_provenance', `tier=${tier}（非 T1/T2，豁免）`);
+    rtCheck('PASS', 'runtime.dispatch_provenance', `tier=${tier}（非 T1/T2，豁免；与 intent 无关）`);
     return;
   }
   const requiredStages = ['PLANNING', 'EXECUTING', 'QUALITY'];

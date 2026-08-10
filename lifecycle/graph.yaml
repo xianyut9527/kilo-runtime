@@ -60,7 +60,7 @@ nodes:
   - id: START
     type: virtual
 
-  # 意图判定 + 任务定级（合并原 INTENT + SIZING）：区分 INQUIRY/EXECUTION + 定级 T0/T1/T2
+  # 意图判定 + 任务定级（合并原 INTENT + SIZING）：intent=INQUIRY/EXECUTION（产物形态标记，不参与路由） + tier=T0/T1/T2（路由唯一开关）
   - id: INIT
     type: stage
     executor: conductor        # conductor 内建执行，不经 task 启动
@@ -106,17 +106,16 @@ edges:
   # INIT → PLANNING（执行类 T1/T2）
   - from: INIT
     to: PLANNING
-    when: "intent_type == 'EXECUTION' and tier in ['T1','T2']"
+    when: "tier in ['T1','T2']"
 
   # INIT → EXECUTING（执行类 T0，极速通道：无设计门/验证/审查）
   - from: INIT
     to: EXECUTING
-    when: "intent_type == 'EXECUTION' and tier == 'T0'"
+    when: "tier == 'T0'"
 
-  # INIT → DELIVERING（咨询类 INQUIRY，直通交付）
-  - from: INIT
-    to: DELIVERING
-    when: "intent_type == 'INQUIRY'"
+  # INQUIRY 不再直通 DELIVERING——与 EXECUTION 共用 tier-based 路由（v3.x 重构）
+  # 任何 intent + tier==T0 走 EXECUTING；tier in [T1,T2] 走 PLANNING→EXECUTING→QUALITY
+  # intent 仅作为产物形态标记（INQUIRY=信息/分析；EXECUTION=文件修改），不参与路由
 
   # 设计门完成 → 进入编码
   - { from: PLANNING, to: EXECUTING }
@@ -124,12 +123,12 @@ edges:
   # T0 执行类编码完成 → 直接交付（无验证/审查）
   - from: EXECUTING
     to: DELIVERING
-    when: "intent_type == 'EXECUTION' and tier == 'T0'"
+    when: "tier == 'T0'"
 
   # T1/T2 执行类编码完成 → 进入质量保障
   - from: EXECUTING
     to: QUALITY
-    when: "intent_type == 'EXECUTION' and tier in ['T1','T2']"
+    when: "tier in ['T1','T2']"
 
   # QUALITY 通过 → 进入交付
   - from: QUALITY

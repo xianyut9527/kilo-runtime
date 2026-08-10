@@ -15,7 +15,7 @@
 START
   │
   ▼
-INIT（conductor 内建）→ 区分 INQUIRY / EXECUTION
+INIT（conductor 内建）→ 区分 INQUIRY / EXECUTION（产物形态标记，**不参与路由**——tier 是唯一路由开关）
   │
   ▼
 INIT（conductor 内建）→ 定级 T0–T2，写入 config.agents

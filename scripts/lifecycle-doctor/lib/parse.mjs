@@ -214,7 +214,6 @@ export function parseStageFrontmatter(fm) {
 export function parseConfig(text) {
   const cfg = {
     tierAgents: new Map(),
-    inquiryTierAgents: new Map(),
     disabledAgents: [],
     perAgentKeys: [],
     multiplierEntries: [],
@@ -230,8 +229,8 @@ export function parseConfig(text) {
       l1 = m ? m[1] : null; l2 = null; l3 = null;
       continue;
     }
-    if (l1 === 'tier_defaults' || l1 === 'inquiry_tier_defaults') {
-      const targetMap = l1 === 'tier_defaults' ? cfg.tierAgents : cfg.inquiryTierAgents;
+    if (l1 === 'tier_defaults') {
+      const targetMap = cfg.tierAgents;
       if (indent === 2) {
         const m = line.match(/^\s+(\w+)\s*:/);
         l2 = m ? m[1] : null; l3 = null;
