@@ -35,8 +35,6 @@ import { run as runAgentRuntime } from './checks/agent-runtime.mjs';
 import { run as runGuardWiring } from './checks/guard-wiring.mjs';
 import { run as runI18nCoverage } from './checks/i18n-coverage.mjs';
 
-import { buildInitialContext as _bootstrapBuildInitialContext } from '../task-context.mjs';
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..', '..');
 const SCRIPTS_DIR = path.join(ROOT, 'scripts');
@@ -61,7 +59,7 @@ const TIERS = new Set(['T0', 'T1', 'T2']);
 // ============================================================
 
 if (RUNTIME) {
-  runRuntimeMode({ ROOT, SCRIPTS_DIR, GRAPH_PATH, STAGES_DIR, _bootstrapBuildInitialContext });
+  runRuntimeMode({ ROOT, SCRIPTS_DIR, GRAPH_PATH, STAGES_DIR });
   process.exit(0);
 }
 

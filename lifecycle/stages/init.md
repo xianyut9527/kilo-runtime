@@ -68,8 +68,8 @@ quality_gate:
 
 ## 路由规则（边定义见 graph.yaml）
 
-- INQUIRY + T0 → `DELIVERING`（M1 直通：纯问答极速，省 implementation/QUALITY）
-- INQUIRY + T1/T2 → `PLANNING` → `DELIVERING`（M1：plan-role 出分析方案后直通）
+- INQUIRY + T0 → `DELIVERING`（M1 直通：纯问答极速，省编码角色/QUALITY）
+- INQUIRY + T1/T2 → `PLANNING` → `DELIVERING`（M1：设计门角色出分析方案后直通）
 - EXECUTION + T0 → `EXECUTING`（极速通道，无设计门/验证/审查）
 - EXECUTION + T1/T2 → `PLANNING`（设计门）
 

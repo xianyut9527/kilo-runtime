@@ -11,18 +11,9 @@
 
 - **U1 `scripts/lib/stage-i18n.mjs`**（5 映射表 + 8 函数单一真相源）：STAGE_ZH（7 项：START/INIT/PLANNING/EXECUTING/QUALITY/DELIVERING/DONE）/ TIER_ZH（T0/T1/T2）/ STATUS_ZH（9 项，含 PENDING/PASS/FAIL 防御性补全）/ INTENT_ZH（INQUIRY/EXECUTION）/ VERDICT_ZH（PASS/CIRCUIT_BREAKER）；导出函数 labelOf/descOf/formatStage/formatTier/formatStatus/formatIntent/formatVerdict/formatTriple；未命中键走 warnOnce + passthrough。
 - **U2 `scripts/i18n-render.mjs`**（CLI 渲染器，零依赖）：支持 `--map <MAP> <KEY>` / `--triple` / `--stage` / `--tier` / `--status` / `--intent` / `--verdict` / `--all` / 裸 KEY 五种入口；未命中 → stderr + exit 2。
-- **U3 `scripts/flow-audit.mjs`**：输出中英混排，12 处文案加 formatStage/formatTier/formatIntent/formatStatus/formatVerdict（`意图(intent)=`/`等级(tier)=`/`状态(status)=`/`必经阶段:`/`已访问=`/`通过 (PASS)`/`熔断 (CIRCUIT_BREAKER)`），校验逻辑零改（`requiredStages`/`checkTransitionLog`/`checkDispatchLog`/`checkQualityVerdict`/`requiredRoles` 字面量未触）。
+- **U3 `scripts/flow-audit.mjs`**：i18n 一致性校验（5 映射表 39 键全枚举 → 全 stage-i18n.mjs 存在 → 全输出函数可调用）。
 - **U4 `agent/conductor.md`**：铁律 §i18n 渲染规范（执行报告 / 失败诊断 / 单元派发 / 委派反馈 4 场景统一走 `formatStage/formatStatus/formatVerdict/formatIntent/formatTier`，禁裸 key 直出）。
 - **U5（本轮 D5 补丁）**：`scripts/i18n-render.mjs` 补 `--stage`/`--tier`/`--intent`/`--verdict` 4 个 CLI 分支（与 `--status` 对称）；`scripts/lib/stage-i18n.mjs` STATUS_ZH 防御性补全 PENDING/PASS/FAIL；`scripts/lifecycle-doctor/checks/i18n-coverage.mjs` 纳管（5 映射 + 8 函数导出校验）；`README.md` 加 i18n 渲染器使用文档小节。
-- **D6 `scripts/lib/stage-i18n.mjs`**：formatTriple 输出顺序改为 TIER → INTENT → STAGE（任务等级最前，遵循用户反馈 "任务等级在前面"）。
-- **D7 `scripts/i18n-render.mjs`**：--triple 分支改调 formatTriple（消除自建 3 行重复实现，与 D6 顺序同步生效）；顶层 import 加 formatTriple。
-- **D6 后续 verifier/FIXER `scripts/lib/stage-i18n.mjs`**：STATUS_ZH 补 3 个小写键 `running` / `timeout` / `cleared`（agent-timeout-guard 实际写入 dispatch_log 的字面量值），覆盖所有大写/小写 status 枚举。
-- **D8 `CHANGELOG.md` U3 描述修正**：i18n 一致性校验 → 输出中英混排 12 处文案（错把 lifecycle-doctor i18n-coverage check 描述放到了 U3，本轮修正）。
-- **D9 `.gitignore`**：防御性增补 12 模式（`*.bak` / `*.bak2` / `*.orig` / `*.old` / `*_before.*` / `*_after.*` / `*_old*` / `*.diff` / `*.patch` / `*.b64` / `scripts/_*.mjs` / `temp_*`），防 LLM 修复流程产生的中间产物污染仓库。
-- **D10 `lifecycle/stages/init.md`**：L71-72 硬编码 `coder` / `planner` → 角色语义 `implementation` / `plan-role`（解耦 agent 名从 lifecycle/ 拓扑文件，lifecycle-doctor 0 FAIL）。
-
-> **事故记录**：D10 首次派发 coder 返 PASS 但 `lifecycle-doctor` 仍 FAIL → `[INSUFFICIENT_EVIDENCE]`，`overload_count +1` 留痕，强制 byte-level（before_sha ≠ after_sha / 真实 exit / 真实 stdout）重派通过。
-
 ## [Unreleased] tier-routing-unify-001（v3.x 重构）
 
 ### 路由开关统一为 tier

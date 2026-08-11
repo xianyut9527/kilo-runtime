@@ -935,9 +935,14 @@ function cmdAssert(taskId, assertionType, args) {
 // 改动阈值判定逻辑需同步两处（共用 readDispatchPromptThreshold/readSizeCheckThreshold）。
 // ============================================================
 
-function evalSizeCheck(taskId) {
-  const p = contextPath(taskId);
+function evalSizeCheck(taskId, ctx) {
   const threshold = readSizeCheckThreshold();
+  if (ctx) {
+    const text = JSON.stringify(ctx, null, 2) + '\n';
+    const len = text.length;
+    return { exitCode: len > threshold ? 2 : 0, line: `${len} threshold=${threshold}` };
+  }
+  const p = contextPath(taskId);
   if (!fs.existsSync(p)) {
     return { exitCode: 0, line: `0 threshold=${threshold}` };
   }
@@ -998,15 +1003,14 @@ function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd, agent, ti
     }
   }
 
-  // 1. 写 dispatch_pending（替代 `set <task_id> dispatch_pending.prompt_chars <N> --agent conductor`）
+  // 1. 读 ctx 一次，修改 dispatch_pending（不立即写，合并到统一写）
   const { ctx } = readContext(taskId);
   ctx.dispatch_pending = { prompt_chars: promptChars, file_count: fileCount };
-  writeContext(taskId, ctx);
 
-  // 2. dispatch-prompt-check（对刚写入的 pending 校验）
+  // 2. dispatch-prompt-check（内存校验）
   const dpc = evalDispatchPrompt(ctx);
-  // 3. size-check（writeContext 后文件已是最新）
-  const sc = evalSizeCheck(taskId);
+  // 3. size-check（内存计算，避免冗余 disk read）
+  const sc = evalSizeCheck(taskId, ctx);
 
   // 合并：取最严重 exit code（2 > 1 > 0）
   const exitCode = Math.max(dpc.exitCode, sc.exitCode);
@@ -1046,7 +1050,7 @@ function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd, agent, ti
     const mult = (to.per_tier_multiplier && typeof to.per_tier_multiplier[tier] === 'number')
       ? to.per_tier_multiplier[tier] : 1.0;
     const budgetS = baseS * mult;
-    const { ctx } = readContext(taskId);
+    // ctx already in memory from line 1002 readContext call, no need to re-read
     if (!Array.isArray(ctx.dispatch_log)) ctx.dispatch_log = [];
     ctx.dispatch_log.push({ agent, stage: null, mode: 'task', timeout_guard: null });
     const effectiveSeq = ctx.dispatch_log.length - 1;
@@ -1059,12 +1063,13 @@ function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd, agent, ti
       agent,
       tier,
     };
-    writeContext(taskId, ctx);
     process.stdout.write(
       `[pre-dispatch] timeout_guard started (seq=${effectiveSeq} agent=${agent} tier=${tier} budget_s=${budgetS} per_agent_s=${perAgentS !== null ? perAgentS : '(fallback stage_default)'} multiplier=${mult})\n`
     );
   }
 
+    // 统一写回：dispatch_pending + dispatch_log + timeout_guard 一次性落盘（省 1 次 writeContext）
+    writeContext(taskId, ctx);
   process.exit(exitCode);
 }
 
@@ -1757,3 +1762,6 @@ const isMainModule = (() => {
 if (isMainModule) {
   main();
 }
+
+
+

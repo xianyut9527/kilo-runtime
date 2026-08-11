@@ -309,7 +309,7 @@ export function resolveVars(ctx) {
   const fwd = ver.forward || {};
   const review = ver.review || {};
   return {
-    intent_type: pick(intent.intent_type, intent.transition_context && intent.transition_context.intent_type),
+    intent_type: pick(intent.intent_type),
     tier: pick(sizing.tier),
     quality_verdict: pick(ctx.quality && ctx.quality.verdict),
     forward_result: pick(fwd.forward_result, fwd.verdict),

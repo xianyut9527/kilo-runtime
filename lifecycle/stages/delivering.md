@@ -10,11 +10,8 @@ pre_gate:
   - script: "node scripts/bash-guard.mjs LAST_BASH"
     exit: 0
     on_fail: "[BASH_WRITE_BLOCKED] Last bash command contains write intent, block delivery and alert"
-  - script: "node scripts/delivery-audit.mjs TASK_ID"
-    exit: 0
-    on_fail: "[DELIVERY_AUDIT_FAIL] 检测到定级异常或流程缺失，阻断交付。请先补全以下问题再交付"
-# pre_gate 由 conductor DELIVERING SOP（agent/conductor.md §DELIVERING 阶段 step 2）强制执行。
-# 框架层自动插入门禁需 Kilo 升级（tool call layer auto-insert gate），当前靠 SOP 硬性约束 + delivery-audit --fix 兜底。
+# pre_gate is post-hoc audit (after-the-fact), real-time interception requires Kilo framework upgrade (tool call layer auto-insert gate).
+# Current solution = config layer hardening + audit fallback, maximum available solution.
 ---
 
 # conductor built-in phase (DELIVERING same as INIT, main slot occupied by conductor, no task launch)

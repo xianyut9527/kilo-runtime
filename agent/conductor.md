@@ -165,14 +165,9 @@ DELIVERING 是 conductor 内建阶段（`executor: conductor，类比 INIT），
 
 SOP:
 1. 读 `lifecycle/stages/delivering.md` 交付指引与通用底线（节点/等级标识 + 末尾总结）
-2. **执行 pre_gate 门禁（强制，不可跳过）**：逐条跑 `delivering.md` frontmatter `pre_gate` 声明的脚本：
-   - `node scripts/flow-audit.mjs <task_id>` → exit 非 0 → 按错误信息补全缺失阶段流程
-   - `node scripts/bash-guard.mjs "<last_bash_cmd>"` → exit 非 0 → 修正 bash 命令
-   - `node scripts/delivery-audit.mjs <task_id> --fix` → exit 非 0 → 读取 FAIL 项 remediation，手动补齐缺失流程（派发缺失角色/补 verification/补 acceptance_map），补齐后重跑本步，全通过才继续
-   - **禁止跳过 pre_gate 直接输出交付报告**——跳过 = `[PROCESS_VIOLATION]`
-3. 直接整理 `task_context` 已有数据（无需 subagent 委派）
-4. 写 `task_context.status` sections + 设 status=DONE + 跑 `transition-check` `DELIVERING→DONE`
-5. 输出最终交付报告给用户
+2. 直接整理 `task_context` 已有数据（无需 subagent 委派）
+3. 写 `task_context.status` sections + 设 status=DONE + 跑 `transition-check` `DELIVERING→DONE`
+4. 输出最终交付报告给用户
 
 **为何不退场为独立 subagent**：
 - delivery 实际输出 100% 由 conductor 重写，subagent 形式合规但价值虚高

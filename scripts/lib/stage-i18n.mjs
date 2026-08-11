@@ -94,8 +94,8 @@ export function formatVerdict(v)  { return _format(VERDICT_ZH, v,  'stage-i18n')
 export function formatTriple(o) {
   o = o || {};
   const lines = [];
-  if (o.tier   !== undefined) lines.push('[TIER: '   + formatTier(o.tier)   + ']');
   if (o.intent !== undefined) lines.push('[INTENT: ' + formatIntent(o.intent) + ']');
+  if (o.tier   !== undefined) lines.push('[TIER: '   + formatTier(o.tier)   + ']');
   if (o.stage  !== undefined) lines.push('[STAGE: '  + formatStage(o.stage)  + ']');
   return lines.join('\n');
 }

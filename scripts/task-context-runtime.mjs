@@ -338,11 +338,13 @@ function parseTimeouts(text) {
 }
 
 // 读取 config.yaml timeouts；文件缺失或缺少 timeouts 段 -> null。
-// 复用 readConfigText（已 mtime 缓存），跨 start/check/pre-dispatch/post-dispatch 命中缓存。
+// 复用 readConfigText（已 mtime 缓存）+ cachedDerive 跨 start/check/pre-dispatch/post-dispatch 命中缓存。
 function readTimeouts() {
-  const text = readConfigText();
-  if (!text || !/^\s*timeouts\s*:/m.test(text)) return null;
-  return parseTimeouts(text);
+  return cachedDerive('timeouts', [CONVERGENCE_SOURCE], () => {
+    const text = readConfigText();
+    if (!text || !/^\s*timeouts\s*:/m.test(text)) return null;
+    return parseTimeouts(text);
+  });
 }
 
 // 初始 task_context 结构（按 conductor.md §task_context 结构摘要）

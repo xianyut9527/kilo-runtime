@@ -30,8 +30,13 @@ const CACHE_VERSION = 1;
 let _cacheMem; // undefined=未读, null=读失败, object=已读
 let _dirty = false;
 
+function ensureCacheDir() {
+  try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch { /* 已存在或权限不足，由 flushCache 重试 */ }
+}
+
 function readCache() {
   if (_cacheMem !== undefined) return _cacheMem;
+  ensureCacheDir();
   try {
     _cacheMem = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
   } catch {

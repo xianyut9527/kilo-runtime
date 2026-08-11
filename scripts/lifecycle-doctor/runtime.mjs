@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
-import { VALID_STATUSES } from '../task-context-runtime.mjs';
+import { VALID_STATUSES, buildInitialContext } from '../task-context-runtime.mjs';
 import { isConditionalRole } from '../lib/stage-roles.mjs';
 import { readText, parseGraphFile, parseStageFrontmatter } from './lib/parse.mjs';
 
@@ -245,7 +245,7 @@ function runRuntimeChecksForTask(filePath, taskId, graph, stagesDir) {
 }
 
 function runDryRunApplyTierAuto(ctx) {
-  const { ROOT, SCRIPTS_DIR, _bootstrapBuildInitialContext } = ctx;
+  const { ROOT, SCRIPTS_DIR } = ctx;
   const SCENARIOS = [
     { id: 1, label: "场景 1: 命中关键词（intent=权限管理, 无 key_files）", build: () => ({ intent: { raw: '权限管理' }, sizing: { tier: 'T0', key_files: [] } }), expect: { tier: 'T2', reasonMin: 1, hasPath: false } },
     { id: 2, label: "场景 2: 不命中（intent=重构Button组件, key_files=[src/components/Button.tsx]）", build: () => ({ intent: { raw: '重构Button组件' }, sizing: { tier: 'T0', key_files: ['src/components/Button.tsx'] } }), expect: { tier: 'T0', reasonEq: 0, hasPath: false } },
@@ -260,7 +260,7 @@ function runDryRunApplyTierAuto(ctx) {
   for (const sc of SCENARIOS) {
     const taskId = `dryrun_s${sc.id}_${Date.now()}`;
     const ctxPath = path.join(tmpDir, `task_context_${taskId}.json`);
-    const ctx0 = _bootstrapBuildInitialContext(taskId);
+    const ctx0 = buildInitialContext(taskId);
     const seed = sc.build();
     if (seed.intent) ctx0.intent = Object.assign({}, ctx0.intent, seed.intent);
     if (seed.sizing) ctx0.sizing = Object.assign({}, ctx0.sizing, seed.sizing);
