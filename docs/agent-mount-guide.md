@@ -217,7 +217,7 @@ tier_defaults:
     review_mode: none
   T1:
     agents: {}                    # 无可选视角
-    review_mode: full
+    review_mode: fast
   T2:
     agents:
       my_auditor: true            # 用户自建可选视角示例

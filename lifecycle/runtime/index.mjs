@@ -15,6 +15,7 @@
 // 消除 readSmallModelFromKiloJson 与 selectModel 内部 loadModels 的重复 read。
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { cachedDerive } from '../../scripts/lib/derived-cache.mjs';
 import { detectCapabilities } from './capability-detector.mjs';
 import { selectModel } from './model-selector.mjs';
 import { detectEarlyExit, setSignals, getSignals } from './early-exit.mjs';
@@ -174,11 +175,14 @@ export function select(snapshot) {
  * @param {{costPriority?: 'balanced'|'quality'|'economy', userMessage?: string, smallModel?: string, models?: object}} [options]
  */
 export function selectForDispatch(defaultModel, intentRaw, attachedFiles = [], options = {}) {
-  // 单次 read：同时拿 smallModel + 预解析 models（用 cfg 复用 loadModelsFromCfg）
+  // kilo.json 读取经 cachedDerive mtime 缓存（装配后静态，跨 dispatch 命中）；
+  // 同时拿 smallModel + 预解析 models（用 cfg 复用 loadModelsFromCfg）
   let { smallModel, models } = options;
   if (smallModel === undefined || models === undefined) {
-    const raw = readFileSync(KILO_JSON_PATH, 'utf8');
-    const cfg = JSON.parse(raw);
+    const cfg = cachedDerive('kiloCfg', [KILO_JSON_PATH], () => {
+      const raw = readFileSync(KILO_JSON_PATH, 'utf8');
+      return JSON.parse(raw);
+    });
     if (smallModel === undefined) smallModel = cfg?.small_model;
     if (models === undefined) models = loadModelsFromCfg(cfg);
   }

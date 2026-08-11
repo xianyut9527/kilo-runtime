@@ -142,8 +142,10 @@ quality:
 6. **修复后回溯**：确认相关验收标准和调用方无回归。
 7. **运行全部可用验证**：变差时回滚 `[ROLLBACK]`。
 
-## 输出接口（写入 task_context.fixing_history + execution.diffs）
+## 输出接口（完工即写 task_context.fixing_history + execution.diffs）
 
+> **完工即写硬门**：完工返回前必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> --batch - --agent fixer` 写入 `fixing_history`（含 `fix_strategy`/`results`/`root_cause_layer` + `execution.diffs`）；byte-level 修复证据必须随 `results.fixed` 写入（`file`/`line`/`description`）；未写即返回 → conductor 标 `[WRITE_MISSING]` 重派；返回消息只留指针与结论。
+>
 > **写入边界**：fixer 只写入 `fixing_history` + `execution.diffs`，**不写入 `execution.verification`**——修复后自验声明会污染下一轮 verifier 的独立重跑。fixer 自验结果只保留在智能体本地输出供 conductor 参考，不进入 task_context。
 
 ```yaml

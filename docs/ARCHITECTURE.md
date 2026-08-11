@@ -180,7 +180,7 @@ isolation:
 ```json
 "my_agent": {
   "mode": "subagent",
-  "model": "hx/kimi-k2.6",
+  "model": "hx/deepseek-v4-flash",
   "prompt": "你是 my-agent..."
 }
 ```
@@ -212,7 +212,7 @@ tier_defaults:
   T1:
     agents:
       my_agent: true        # ← 加这一行
-    review_mode: full
+    review_mode: fast
 ```
 
 ### 4.4 改熔断阈值

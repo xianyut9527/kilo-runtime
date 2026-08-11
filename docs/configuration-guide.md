@@ -406,7 +406,7 @@ tier_defaults:
   T0:
     agents:
       coder: true              # 布尔开关
-    review_mode: none          # none | full
+    review_mode: none          # none | fast | full
   T1:
     agents:
       planner: true
@@ -414,7 +414,7 @@ tier_defaults:
       verifier: true
       reviewer: true
       fixer: true
-    review_mode: full
+    review_mode: fast
   T2:
     agents:
       coder: true
@@ -427,7 +427,7 @@ tier_defaults:
 overrides:
   disabled_agents: []          # 全局禁用的智能体名列表
   model_overrides: {}          # 覆盖 kilo.json 模型绑定
-  condition_overrides: {}      # 强制覆盖 config.agents 开关
+  condition_overrides: {}      # 覆盖 config.agents 布尔值（挂载由 tiers 决定）
 
 # hooks.quality：响应式 Hooks 熔断阈值（v2 唯一真相）
 hooks:

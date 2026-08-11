@@ -1,5 +1,5 @@
 // capability-registry.mjs — Kilo runtime capability index
-// Reads kilo.json on every call (no cache) to build a model capability lookup
+// Reads kilo.json via cachedDerive mtime cache (static after install) to build a model capability lookup
 // from `provider.<alias>.models`. Exposes vision/code/reasoning/long_context
 // flags derived from model `modalities`, id heuristics, and `limit.context`.
 // Used by lifecycle routing decisions (e.g. vision-aware model selection).
@@ -12,6 +12,7 @@
 // 用于 Fix #4 去重 readFileSync（callers 拿到 parsed cfg 后可一次性复用）。
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { cachedDerive } from '../../scripts/lib/derived-cache.mjs';
 
 const KILO_JSON_PATH = resolve(process.cwd(), 'kilo.json');
 
@@ -49,16 +50,20 @@ function _mergeProviderModels(providers) {
 }
 
 function loadModels() {
-  try {
-    const raw = readFileSync(KILO_JSON_PATH, 'utf8');
-    const cfg = JSON.parse(raw);
-    return _mergeProviderModels(cfg?.provider ?? {});
-  } catch (err) {
-    // 防御：kilo.json 缺失 / 损坏时返回空对象，不向上抛
-    // 下游 getCapabilities / listVisionModels / listAllModels 会基于空集合走 safe defaults
-    console.warn(`[capability-registry] failed to load ${KILO_JSON_PATH}: ${err?.message ?? err}`);
-    return {};
-  }
+  // mtime 失效缓存（对齐 transition-check / task-context 既有模式）；
+  // kilo.json 装配后静态，跨 dispatch 命中缓存（<10ms），改 kilo.json 自动失效。
+  return cachedDerive('kiloModels', [KILO_JSON_PATH], () => {
+    try {
+      const raw = readFileSync(KILO_JSON_PATH, 'utf8');
+      const cfg = JSON.parse(raw);
+      return _mergeProviderModels(cfg?.provider ?? {});
+    } catch (err) {
+      // 防御：kilo.json 缺失 / 损坏时返回空对象，不向上抛
+      // 下游 getCapabilities / listVisionModels / listAllModels 会基于空集合走 safe defaults
+      console.warn(`[capability-registry] failed to load ${KILO_JSON_PATH}: ${err?.message ?? err}`);
+      return {};
+    }
+  });
 }
 
 function inferVision(model) {

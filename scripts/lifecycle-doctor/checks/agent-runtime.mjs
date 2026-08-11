@@ -12,19 +12,19 @@
  *
  * 任一 fail → 整体 check FAIL, 但不抛异常(用 try/catch 包裹每个子检查).
  *
- * 同步调度: 使用 createRequire(import.meta.url) 同步加载 runtime ESM, 避免与现有 run(ctx) 同步契约冲突.
+ * 同步调度: Node 14 不支持同步 require ESM，改用 execFileSync 子进程 dynamic import
+ * 预取运行时行为（固定参数），保持 run(ctx) 同步契约。详见 loadRuntime()。
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const RUNTIME_DIR = path.join(ROOT, 'lifecycle', 'runtime');
 const KILO_JSON_PATH = path.join(ROOT, 'kilo.json');
 const RUNTIME_INDEX_PATH = path.join(RUNTIME_DIR, 'index.mjs');
-const _req = createRequire(import.meta.url);
 
 const CHECK_NAME = 'agent-runtime';
 
@@ -33,8 +33,50 @@ function safe(fn) {
   catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
 }
 
+// Node 14 不支持同步 require() 加载 ESM(.mjs)；改用 execFileSync 启子进程
+// dynamic import runtime，预取 check 2-7 所需的全部固定参数运行时行为，
+// 构造伪模块对象回填——保持 run(ctx) 同步契约，2-7 调用代码不变。
+// runtime 装配后静态，单次探测 <50ms；失败回退 safe() 的 ok:false 分支。
+const _PROBE_EARLY_CASES = ['好不好？', '对不起', '好看', '对比', '好'];
 function loadRuntime() {
-  return safe(function () { return _req(RUNTIME_INDEX_PATH); });
+  return safe(function () {
+    const url = JSON.stringify(pathToFileURL(RUNTIME_INDEX_PATH).href);
+    const script = [
+      'import * as mod from ' + url + ';',
+      'const out = {};',
+      'out.selectFn = typeof mod.select;',
+      'out.selectForDispatchFn = typeof mod.selectForDispatch;',
+      'try { out.listVision = mod.listVisionModels(); } catch(e){ out.visionErr = e.message; }',
+      'try { out.detectCapsEmpty = mod.detectCapabilities("", []); } catch(e){ out.detectCapsEmptyErr = e.message; }',
+      'try { out.selectModelPass = mod.selectModel("unknown-xyz", {vision:false,code:false,reasoning:true,long_context:false}); } catch(e){ out.selectModelPassErr = e.message; }',
+      'try { out.earlyExit = ' + JSON.stringify(_PROBE_EARLY_CASES) + '.map(function(c){ return mod.detectEarlyExit(c); }); } catch(e){ out.earlyExitErr = e.message; }',
+      'process.stdout.write(JSON.stringify(out));',
+    ].join('\n');
+    const raw = execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', cwd: ROOT });
+    const data = JSON.parse(raw);
+    return {
+      listVisionModels: function () {
+        if (data.visionErr) throw new Error(data.visionErr);
+        return data.listVision;
+      },
+      select: data.selectFn === 'function' ? function () {} : undefined,
+      selectForDispatch: data.selectForDispatchFn === 'function' ? function () {} : undefined,
+      detectCapabilities: function () {
+        if (data.detectCapsEmptyErr) throw new Error(data.detectCapsEmptyErr);
+        return data.detectCapsEmpty;
+      },
+      selectModel: function () {
+        if (data.selectModelPassErr) throw new Error(data.selectModelPassErr);
+        return data.selectModelPass;
+      },
+      detectEarlyExit: function (input) {
+        if (data.earlyExitErr) throw new Error(data.earlyExitErr);
+        const idx = _PROBE_EARLY_CASES.indexOf(input);
+        if (idx === -1) return { early_exit: false, signal_matched: null };
+        return data.earlyExit[idx];
+      },
+    };
+  });
 }
 
 function readKilo() {

@@ -156,7 +156,9 @@ verification_commands: [{ cmd, expected_exit_code }]
 | stdout 摘要 | 关键行截取 ≤ 5 行 | "看着 OK" |
 | stderr 摘要 | 错误行（无错则 "无 stderr"） | 漏读 / 截断 |
 
-## 输出接口（写入 task_context.verification.forward）
+## 输出接口（完工即写 task_context.verification.forward）
+
+> **完工即写硬门**：完工返回前必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> --batch - --agent verifier` 写入 verification.forward（含 verdict/l1/l2/l3/evidence/issues + execution.verification）；byte_level 证据必须随 evidence 数组写入（file/line/before/after/SHA256）；未写即返回 → conductor 标 [WRITE_MISSING] 重派；返回消息只留指针与结论
 
 ```yaml
 status_signal: "PASS" | "FAIL" | "VERIFY_PENDING"

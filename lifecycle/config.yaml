@@ -25,7 +25,7 @@
 #   路径B「tiers 定级挂载」（同阶段按 tier 差异化）：
 #       - 智能体 frontmatter 声明 tiers: [T1,T2] —— 按当前 sizing.tier 求值，
 #         命中才加载；不依赖 config.agents 开关（与路径A互斥，不得同时声明）
-#   review_mode：none（无审查）/ full（正向+审查）
+#   review_mode：none（无验证/审查角色）/ fast（机械门+正向验证，T1）/ full（正向+反向+审查全并行，T2）
 #
 # tier_escalation：定级自动升级触发器（任务内容/路径命中敏感域 → 强制升 T2）
 #   - 触发模式 mode：any（缺省）= 任一关键词组内任一关键词命中 或 任一路径 glob 命中即升级
@@ -56,7 +56,7 @@ tier_defaults:
   # 恒定挂载：planner/coder/verifier/reviewer/fixer（拓扑可达即加载）
   T1:
     agents: {}
-    review_mode: full
+    review_mode: fast
 
   # T2 全视角验证：正向+审查全开
   # 适合复杂任务：架构变更、跨多文件重构、安全敏感改动
@@ -141,18 +141,17 @@ overrides:
   # 键 = agent 名，值 = 模型 ID（能力倾向参考 docs/model-registry.md 人工维护，无机械校验）
   model_overrides: {}
 
-  # condition_overrides：强制覆盖 config.agents 开关
+  # condition_overrides：强制覆盖 task_context.config.agents 布尔值
+  # 注：config.agents 现仅为 lifecycle-doctor 一致性校验对象，挂载由 mount[].tiers 决定；
+  # 此覆盖写字段值供 doctor 校验一致性，不再产生运行时挂载效果。
   # 键 = "config.agents.<key>"，值 = true/false
   condition_overrides: {}
 
 # ============================================================
 # custom_overrides：默认自定义覆盖段（conductor 写入 task_context 的初始值）
-# 当前会话优先策略：保持上下文连贯，避免自动开新会话；
-# worktree 兜底仅在主会话 context 撑爆时作为防 abort 最后防线，不主动禁用
+# 预留扩展点；用户在 prompt 显式声明的覆盖项由 conductor 写入此段。
 # ============================================================
-custom_overrides:
-  # 当前会话优先策略：默认走当前会话，仅在主会话 context 撑爆时切 worktree 兜底
-  session_strategy: current_first
+custom_overrides: {}
 
 # ============================================================
 # hooks：响应式 Hooks 级熔断（v2 新增）

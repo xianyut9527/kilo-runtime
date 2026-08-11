@@ -109,7 +109,7 @@ INIT（conductor 内建）→ INIT（conductor 内建）
   "config": {
     "agents": {
     },
-    "review_mode": "none" | "full",
+    "review_mode": "none" | "fast" | "full",
     "custom_overrides": {}
   },
   "plan": {...},

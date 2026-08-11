@@ -149,7 +149,9 @@ plan:                                   # planner 输出
 5. **运行验证**：测试、构建、类型检查、Lint、编码扫描。
 6. **输出**：变更摘要、验收映射表、验证结果、遗留风险。
 
-## 输出接口（写入 task_context.execution）
+## 输出接口（完工即写 task_context.execution）
+
+> **完工即写硬门**：完工返回前必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> --batch - --agent coder` 写入 `execution.diffs/changes/acceptance_map/risks/encoding_scan`；未写即返回 → conductor 标 `[WRITE_MISSING]` 重派；返回消息只留指针与结论。
 
 > **写入边界**：coder 只写入 `execution.diffs/changes/acceptance_map/risks/encoding_scan`，**不写入 `execution.verification`**——自验声明会污染 verifier 的独立重跑。coder 自验结果只保留在智能体本地输出供 conductor 参考，不进入 task_context。
 

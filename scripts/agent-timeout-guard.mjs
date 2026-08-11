@@ -38,6 +38,7 @@ import { fileURLToPath } from 'node:url';
 import {
   contextPath, readContext, writeContext, assertValidTaskId, die,
 } from './task-context-runtime.mjs';
+import { cachedDerive } from './lib/derived-cache.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_SOURCE = path.resolve(__dirname, '..', 'lifecycle', 'config.yaml');
@@ -159,14 +160,18 @@ function parseTimeouts(text) {
 
 // 读取 config.yaml timeouts；文件缺失或缺少 timeouts 段 → null。
 function readTimeouts() {
-  let text;
-  try {
-    text = fs.readFileSync(CONFIG_SOURCE, 'utf8');
-  } catch {
-    return null;
-  }
-  if (!/^\s*timeouts\s*:/m.test(text)) return null;
-  return parseTimeouts(text);
+  // config.yaml 读取经 cachedDerive mtime 缓存（装配后静态，对齐 task-context-runtime 模式）；
+  // timeouts 段解析结果跨 start/check 调用命中缓存，改 config.yaml 自动失效。
+  return cachedDerive('configTimeouts', [CONFIG_SOURCE], () => {
+    let text;
+    try {
+      text = fs.readFileSync(CONFIG_SOURCE, 'utf8');
+    } catch {
+      return null;
+    }
+    if (!/^\s*timeouts\s*:/m.test(text)) return null;
+    return parseTimeouts(text);
+  });
 }
 
 // ============================================================
