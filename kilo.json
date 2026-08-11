@@ -56,6 +56,7 @@
       "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     }
   },
+  "instructions": [".kilo/instructions/coding-engineering.md"],
   "skills": {
     "paths": ["~/.config/kilo/.kilo/skills", "~/.agents/skills"]
   },

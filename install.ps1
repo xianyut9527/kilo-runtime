@@ -31,6 +31,9 @@ $RecursiveExclude = @(
     ".pytest_cache",
     "__pycache__",
     ".kilo_tmp",
+    ".claude",
+    ".playwright-mcp",
+    "_test_target_orig",
     ".mcp-tmp"
 )
 

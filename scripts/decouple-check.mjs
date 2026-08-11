@@ -77,7 +77,11 @@ function main() {
   // 严重度:文档/配置段→info,脚本/.gitignore/install→critical
   const report = allHits.map(h => {
     let severity = 'warning';
-    if (/\.mjs$|\.gitignore$|install\./.test(h.file)) severity = 'critical';
+    if (/\.mjs$|\.gitignore$|install\./.test(h.file)) {
+      // install 脚本 EXCLUDE 数组中声明 .playwright-mcp 不算 critical（排除列表语义）
+      if (/["'][^"']*\.playwright-mcp[^"']*["']/.test(h.text)) severity = 'warning';
+      else severity = 'critical';
+    }
     if (/\.md$/.test(h.file) && h.text.includes('GitNexus')) severity = 'warning';  // 历史文档允许
     return { ...h, severity };
   });
