@@ -31,13 +31,14 @@ token_budget: 6000
 按 `workflow-core.md` 决策树执行：
 
 ```
-T0: 无逻辑性更改（文案/注释/小样式） / 单一文件 / 无跨模块影响 / 无测试/类型检查需求
+T0: 仅无逻辑性修改（文案/注释/小样式/格式/命名/删除） / 单文件 / 无跨模块影响 / 无测试/类型检查需求
+     → 第一硬门：涉及任何逻辑性修改 → 立即禁止 T0，最低 T1
      → 直达执行，无设计门，无审查
 
-T1: 多文件但单一目标 / 有测试需求 / 需简单验证
-     → 短设计门（1-3 句）→ 设计门角色 → 编码角色 → 验证角色 → 审查角色(full)
+T1: 1-5 文件 / 单模块 / 有明确验收标准 / 无扩散触发词 — 普通任务默认档
+     → 短设计门（1-3 句）→ 设计门角色 → 编码角色 → 验证角色
 
-T2: 多模块影响 / 需架构决策 / 有需求扩散风险 / 需完整 DAG
+T2: 跨模块 / 5+ 文件 / 规则扩散 / 安全敏感词 / 机制·契约变更 — 任一命中即升 T2
      → 完整设计门 → 单元 DAG → 设计门角色 → 编码角色 → 验证角色 → 审查角色(full)
 ```
 
@@ -67,8 +68,10 @@ quality_gate:
 
 ## 路由规则（边定义见 graph.yaml）
 
-- `T0`（任何 intent） → `EXECUTING`（极速通道，无设计门/验证/审查）
-- `T1/T2`（任何 intent） → `PLANNING`（设计门）
+- INQUIRY + T0 → `DELIVERING`（M1 直通：纯问答极速，省 implementation/QUALITY）
+- INQUIRY + T1/T2 → `PLANNING` → `DELIVERING`（M1：plan-role 出分析方案后直通）
+- EXECUTION + T0 → `EXECUTING`（极速通道，无设计门/验证/审查）
+- EXECUTION + T1/T2 → `PLANNING`（设计门）
 
 ## 硬规则
 
@@ -76,7 +79,7 @@ quality_gate:
 2. **流转必裁判**：INIT → 下一节点前必须执行 `node scripts/transition-check.mjs <task_id> --from INIT --to <NEXT>`，exit 0 才允许流转。
 3. **显式输出判定结论**：输出顶部必须标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
 4. **强制写入 intent_type + tier**：判定完成后必须执行 `node scripts/task-context.mjs set <task_id> intent.intent_type '<INQUIRY|EXECUTION>' --agent conductor` 和 `node scripts/task-context.mjs set <task_id> sizing.tier '<T0|T1|T2>' --agent conductor`。未写入合法值时，transition-check.mjs 将拒绝流转。
-5. **SIZING 机械应用 config**：定级后必须执行 `node scripts/task-context.mjs apply-tier <task_id> <Tn> --agent conductor`，从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。禁止手工 `set config.agents.*`。
+5. **SIZING 机械应用 config**：定级后必须执行 `node scripts/task-context.mjs apply-tier-auto <task_id> <Tn> --agent conductor`，从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。禁止手工 `set config.agents.*`。
 
 ## 降级处理
 

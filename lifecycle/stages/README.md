@@ -36,7 +36,7 @@ lifecycle/
 | 阶段 ID | 文件 | 必配角色（stages frontmatter `required_roles`） | `on_fail`（graph.yaml） | 质量门禁 |
 |---------|------|-----------------------------------|------------------------|----------|
 | INIT | `init.md` | conductor 内建 | `pause` | 意图类型明确 + T0-T2 准确 + 写入 `config.agents` |
-| PLANNING | `planning.md` | `planner` | `escalate` | 方案含验收标准（post:PLANNING 挂载点可由用户挂方案审查，`on_fail: abort` 中止流转） |
+| PLANNING | `planning.md` | `planner` | `retry_once` | 方案含验收标准；主槽 planner 偶发超时重跑 1 次（post:PLANNING 挂载点可由用户挂方案审查，`on_fail: abort` 中止流转） |
 | EXECUTING | `executing.md` | `coder` | `retry_once` | 验收映射表 + 三件套 |
 | **QUALITY** | `quality.md` | `verifier` + `reviewer` + `fixer`（hooks 自动挂载） | `escalate` | hooks 全 PASS |
 | DELIVERING | `delivering.md` | conductor 内建（无 mount） | `pause` | 闭环确认输出 |

@@ -174,6 +174,17 @@ dispatch_prompt_threshold: 6000   # dispatch-prompt-check 阈值：单次 task p
 max_files_per_task: 8             # 单次 task 委派涉及文件数上限（3→8：清理 lessons 时多文件 batch 编辑需求；超 8 应回流 PLANNING 拆单元）
 
 # ============================================================
+# recovery：自愈/重试引擎阈值（v1 新增，T20260811-001-recovery-engineering）
+# max_write_retry     — agent 返回未落盘 execution 时，conductor 自动触发重写的最大次数
+# overload_threshold  — 单任务触发 CONTEXT_UNSAFE 次数上限；超 → escalate（避免无限 worktree 切分）
+# circuit_breaker_overload — 全局 overload 累计阈值；超 → 整体熔断（与 hooks.quality 联动）
+# ============================================================
+recovery:
+  max_write_retry: 1
+  overload_threshold: 3
+  circuit_breaker_overload: 5
+
+# ============================================================
 # timeouts：阶段/智能体级时间预算（唯一真相来源）
 # conductor 启动智能体时记录 start_time；超时 → [AGENT_TIMEOUT]
 # 按 graph.yaml 节点 on_fail 字段路由（未声明按默认值规则）

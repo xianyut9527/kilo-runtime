@@ -77,6 +77,23 @@ export const ERROR_CODES = {
     msg: '熔断：quality.round >= max_total_cycles',
     see: 'lifecycle/config.yaml',
   },
+
+  // === recovery 引擎错误码（U6 新增，T20260811-001-recovery-engineering）===
+  CONTEXT_UNSAFE: {
+    code: 'CONTEXT_UNSAFE',
+    msg: '主会话 context 超过 size_check_threshold，强制切 worktree',
+    see: 'lifecycle/config.yaml §size_check_threshold',
+  },
+  WRITE_MISSING: {
+    code: 'WRITE_MISSING',
+    msg: 'agent 返回时未落盘 task_context.execution（diffs/changes/acceptance_map/risks/encoding_scan 全空）',
+    see: 'agent/coder.md §完工即写硬门',
+  },
+  RECOVERY_RETRY_EXHAUSTED: {
+    code: 'RECOVERY_RETRY_EXHAUSTED',
+    msg: 'recovery 重试配额耗尽（max_write_retry 内仍失败），升级 conductor escalate',
+    see: 'lifecycle/config.yaml §recovery',
+  },
 };
 
 // helper：构造带 [CODE] 前缀的错误消息

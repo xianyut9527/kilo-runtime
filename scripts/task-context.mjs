@@ -21,6 +21,7 @@
 //   node scripts/task-context.mjs assert <task_id> <assertion-type> [args...]
 //   node scripts/task-context.mjs size-check <task_id>          pre-dispatch 安全门：task_context 字符数 > 阈值 → exit 2
 //   node scripts/task-context.mjs log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>
+//   node scripts/task-context.mjs recover <task_id> --type <context-unsafe|write-missing|process-violation> [--agent <name>] [--action <a>] [--violation-type <t>] [--from <NODE>] [--expected <NODE>] [--fields <a,b,c>]
 //   node scripts/task-context.mjs delete <task_id> [--force]
 //   node scripts/task-context.mjs --help
 //
@@ -56,7 +57,7 @@ import { readContext, writeContext, appendTransitionLog, contextPath, buildIniti
          VALID_STATUSES, VERIFICATION_FIELDS, QUALITY_ROUND_FIELD, CURRENT_STAGE_FIELD,
          TOTAL_ROUNDS_FIELD, readHooksFromConfig, readConvergenceFromConfig, readTierDefaults,
          readTierEscalation,
-         readSizeCheckThreshold, readDispatchPromptThreshold, readMaxFilesPerTask,
+         readSizeCheckThreshold, readDispatchPromptThreshold, readMaxFilesPerTask, readTimeouts,
          assertValidTaskId, getByPath, setByPath, pathAllowedBy, pathPrefix, parseValue,
          extractFrontmatter, die } from './task-context-runtime.mjs';
 import { discoverPostPreConstantMountsByAgent, discoverPostPreTieredMounts } from './lib/post-pre-mounts.mjs';
@@ -178,13 +179,15 @@ function usage() {
     "  node scripts/task-context.mjs set <task_id> <dot.path> <json-value> --agent <name>",
     "  node scripts/task-context.mjs set <task_id> --batch '<json-object>' --agent <name>",
     '  node scripts/task-context.mjs apply-tier <task_id> <T0|T1|T2> --agent conductor',
+    '  node scripts/task-context.mjs apply-tier-auto <task_id> <T0|T1|T2> --agent conductor',
     '  node scripts/task-context.mjs apply-escalation <task_id> --agent conductor',
     '  node scripts/task-context.mjs validate <task_id>',
     '  node scripts/task-context.mjs assert <task_id> <type> [args...]',
     '  node scripts/task-context.mjs size-check <task_id>',
     '  node scripts/task-context.mjs dispatch-prompt-check <task_id>',
-    '  node scripts/task-context.mjs pre-dispatch <task_id> --prompt-chars <N> [--file-count <F>]',
+    '  node scripts/task-context.mjs pre-dispatch <task_id> --agent <name> --tier <T0|T1|T2> --prompt-chars <N> [--file-count <F>] [--bash-cmd "<cmd>"]',
     "  node scripts/task-context.mjs log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>",
+    '  node scripts/task-context.mjs post-dispatch <task_id> --dispatch-seq <N> --result <pass|fail|timeout> --agent <name> --mode <task|agent_manager> --stage <STAGE>',
     "  node scripts/task-context.mjs delete <task_id> [--force]",
     '',
     'Assert types:',
@@ -201,12 +204,15 @@ function usage() {
     '  get         Print value at dot.path (JSON).',
     '  set         Write JSON value to dot.path. Enforces write matrix.',
     '  apply-tier  Apply config.yaml tier_defaults to config.agents + review_mode (INIT helper).',
+    '  apply-tier-auto Merged apply-escalation + apply-tier (one process, one read/write). exit=0/1/2.',
     '  apply-escalation Scan intent.raw + sizing.key_files against config.yaml tier_escalation; auto-upgrade to T2 if matched (INIT helper).',
     '  validate    Check required top-level fields, quality integers, and convergence mm_fusion integers.',
     '  size-check  Print task_context file character count (pre-dispatch safety gate vs config.size_check_threshold; exit=2 if exceeded).',
     "  dispatch-prompt-check Read dispatch_pending.prompt_chars/file_count written by conductor pre-dispatch; exit=1 if pending info missing, exit=2 if prompt_chars>dispatch_prompt_threshold or file_count>max_files_per_task. PASS otherwise.",
-    "  pre-dispatch    Combined gate: writes dispatch_pending then runs dispatch-prompt-check + size-check in one process. Replaces the 3-call `set` + `dispatch-prompt-check` + `size-check` sequence. exit=0 pass / 1 audit fail / 2 over-limit (same semantics).",
+    "  pre-dispatch    Combined gate: writes dispatch_pending + dispatch-prompt-check + size-check + bash-guard + timeout_guard start (when --agent --tier given). Replaces the 4-call `set` + `dispatch-prompt-check` + `size-check` + `agent-timeout-guard start` sequence. exit=0 pass / 1 audit fail / 2 over-limit.",
     "  log-dispatch Append {agent, mode, stage, timestamp} to dispatch_log[] (provenance gate). --agent must be in write-matrix agent set; --stage must be a graph.yaml node. Whitelist-enforced.",
+    "  post-dispatch   Merged agent-timeout-guard check + clear + log-dispatch (one process). exit=0 cleared+provenance / 4 [RETRY] (timeout, count<=max) / 5 [ESCALATE] (timeout, count>max) / 1,2 error. Timeout verdict overrides --result.",
+    "  recover      Unified entry: dispatch one of the recover-*.mjs sub-scripts by --type, capture stdout+exit, append to recovery_log[]. --type in {context-unsafe, write-missing, process-violation}. Atomic write via validateSingleWrite (conductor-only). exit=0 success / 1 recoverable / 2 usage / 3 circuit-breaker.",
     "  delete       Remove task_context_<task_id>.json. Default: only DONE/FAILED statuses may be deleted; --force skips the status check.",
     '',
     'Agents in write matrix: ' + Object.keys(WRITE_MATRIX).join(', '),
@@ -656,6 +662,94 @@ function cmdApplyEscalation(taskId, agent, opts) {
   process.exit(0);
 }
 
+function cmdApplyTierAuto(taskId, declaredTier, agent, opts) {
+  assertValidTaskId(taskId);
+  if (!['T0', 'T1', 'T2'].includes(declaredTier)) {
+    die(2, `Error: apply-tier-auto requires <T0|T1|T2>, got "${declaredTier}"`);
+  }
+  if (agent !== 'conductor') {
+    die(1, `[PROCESS_VIOLATION] apply-tier-auto is conductor-only (got --agent "${agent}")`);
+  }
+
+  const { ctx } = readContext(taskId);
+  ctx.sizing = ctx.sizing || {};
+
+  // 阶段1：apply-escalation 逻辑内联（避免 cmdApplyEscalation 的 process.exit 阻断合并）
+  let upgraded = false;
+  if (Array.isArray(ctx.sizing.escalation_reasons) && ctx.sizing.escalation_reasons.length > 0) {
+    // 幂等：已应用过。若 reasons 标记 skipped（用户覆盖）则不算升级
+    upgraded = ctx.sizing.tier === 'T2' && !String(ctx.sizing.escalation_reasons[0]).startsWith('skipped:');
+  } else {
+    const keyFiles = Array.isArray(ctx.sizing.key_files) ? ctx.sizing.key_files : [];
+    const esc = readTierEscalation();
+    const reasons = [];
+    const matchedGroups = new Set();
+    const matchedGlobs = new Set();
+
+    let rawIntent = '';
+    if (typeof ctx.intent === 'string') rawIntent = ctx.intent;
+    else if (ctx.intent && typeof ctx.intent === 'object' && typeof ctx.intent.raw === 'string') rawIntent = ctx.intent.raw;
+    const lowerIntent = rawIntent.toLowerCase();
+    for (const [group, kws] of Object.entries(esc.keyword_groups || {})) {
+      for (const kw of kws) {
+        if (lowerIntent.includes(String(kw).toLowerCase())) { matchedGroups.add(group); reasons.push(`keyword:${group}:${kw}`); break; }
+      }
+    }
+    for (const glob of esc.sensitive_path_globs || []) {
+      let re; try { re = globToRegex(glob); } catch { continue; }
+      for (const f of keyFiles) {
+        const fNorm = String(f).replace(/\\/g, '/');
+        if (re.test(fNorm)) { matchedGlobs.add(glob); reasons.push(`path:${glob}:${f}`); break; }
+      }
+    }
+    const mode = String(esc.mode || 'any').toLowerCase();
+    if (mode === 'all') {
+      const groups = Object.keys(esc.keyword_groups || {});
+      const allGroupsHit = groups.length > 0 && groups.every(g => matchedGroups.has(g));
+      upgraded = allGroupsHit && matchedGlobs.size > 0;
+    } else {
+      upgraded = matchedGroups.size > 0 || matchedGlobs.size > 0;
+    }
+    const customTier = ctx.config && ctx.config.custom_overrides && ctx.config.custom_overrides.tier;
+    if (upgraded) {
+      if (customTier) {
+        ctx.sizing.escalation_reasons = [`skipped: custom_overrides.tier=${customTier} present`];
+        upgraded = false;
+      } else {
+        ctx.sizing.tier = 'T2';
+        ctx.sizing.escalation_reasons = reasons;
+      }
+    } else {
+      ctx.sizing.escalation_reasons = [];
+    }
+  }
+
+  // final tier：escalation 升 T2 则 T2，否则 declaredTier
+  const finalTier = upgraded ? 'T2' : declaredTier;
+
+  // 阶段2：apply-tier defaults（内联）
+  const allTiers = readTierDefaults();
+  const tierMap = allTiers.execution;
+  if (!tierMap || !tierMap[finalTier]) {
+    die(1, `Error: config.yaml tier_defaults missing tier "${finalTier}"`);
+  }
+  const entry = tierMap[finalTier];
+  const agentsValue = entry.agents || {};
+  const reviewMode = entry.review_mode || 'none';
+  const agentsCheck = validateSingleWrite(agent, 'config.agents', agentsValue);
+  if (!agentsCheck.allowed) die(agentsCheck.code, `apply-tier-auto: ${agentsCheck.message}`);
+  const rmCheck = validateSingleWrite(agent, 'config.review_mode', reviewMode);
+  if (!rmCheck.allowed) die(rmCheck.code, `apply-tier-auto: ${rmCheck.message}`);
+  ctx.config = ctx.config || {};
+  ctx.config.agents = agentsValue;
+  ctx.config.review_mode = reviewMode;
+  if (ctx.sizing.tier !== finalTier) ctx.sizing.tier = finalTier;
+
+  writeContext(taskId, ctx);
+  process.stdout.write(`ok: apply-tier-auto declared=${declaredTier} final=${finalTier} upgraded=${upgraded} config.agents=${JSON.stringify(agentsValue)} review_mode=${reviewMode} escalation_reasons=${JSON.stringify(ctx.sizing.escalation_reasons)}\n`);
+  process.exit(0);
+}
+
 function cmdValidate(taskId) {
   assertValidTaskId(taskId);
   const { ctx, path: p } = readContext(taskId);
@@ -890,7 +984,7 @@ function evalDispatchPrompt(ctx) {
 // size-check 超限时本命令仅返回 exit 2（阻断）；摘要压缩 + 切 worktree 仍由 conductor
 // 在收到 exit 2 后按铁律 #9 step 0a 流程处理（脚本不做副作用压缩）。
 // ============================================================
-function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd) {
+function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd, agent, tier) {
   assertValidTaskId(taskId);
   const promptChars = Number.parseInt(promptCharsArg, 10);
   if (!Number.isInteger(promptChars) || promptChars < 0) {
@@ -934,6 +1028,41 @@ function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd) {
     } else {
       process.stdout.write(`[pre-dispatch] bash-guard: PASS (exit ${bgExit})\n`);
     }
+  }
+
+  // 吸收 agent-timeout-guard start：全部门禁通过后，原子追加 dispatch_log[N] + 写
+  // timeout_guard（仅当传 --agent --tier）。替代独立的 `agent-timeout-guard start` 进程。
+  // 返回 effectiveSeq 供后续 post-dispatch --dispatch-seq 使用。
+  if (exitCode === 0 && agent && tier) {
+    if (!['T0', 'T1', 'T2'].includes(tier)) {
+      die(2, 'Error: pre-dispatch --tier must be T0|T1|T2');
+    }
+    const to = readTimeouts();
+    if (!to) die(2, 'Error: lifecycle/config.yaml missing "timeouts" section');
+    const perAgentS = (to.per_agent_s && typeof to.per_agent_s[agent] === 'number')
+      ? to.per_agent_s[agent] : null;
+    const stageDefault = (typeof to.stage_default_s === 'number') ? to.stage_default_s : 600;
+    const baseS = (perAgentS !== null) ? perAgentS : stageDefault;
+    const mult = (to.per_tier_multiplier && typeof to.per_tier_multiplier[tier] === 'number')
+      ? to.per_tier_multiplier[tier] : 1.0;
+    const budgetS = baseS * mult;
+    const { ctx } = readContext(taskId);
+    if (!Array.isArray(ctx.dispatch_log)) ctx.dispatch_log = [];
+    ctx.dispatch_log.push({ agent, stage: null, mode: 'task', timeout_guard: null });
+    const effectiveSeq = ctx.dispatch_log.length - 1;
+    const now = Date.now();
+    ctx.dispatch_log[effectiveSeq].timeout_guard = {
+      start_time_ms: now,
+      budget_s: budgetS,
+      deadline_ms: now + Math.round(budgetS * 1000),
+      status: 'running',
+      agent,
+      tier,
+    };
+    writeContext(taskId, ctx);
+    process.stdout.write(
+      `[pre-dispatch] timeout_guard started (seq=${effectiveSeq} agent=${agent} tier=${tier} budget_s=${budgetS} per_agent_s=${perAgentS !== null ? perAgentS : '(fallback stage_default)'} multiplier=${mult})\n`
+    );
   }
 
   process.exit(exitCode);
@@ -1151,6 +1280,247 @@ function cmdLogDispatch(taskId, agent, mode, stage) {
 }
 
 // ============================================================
+// post-dispatch 子命令：合并 agent-timeout-guard check + clear + log-dispatch
+// 一次进程完成：超时判定 -> 清理/重试决策 -> provenance 记录。
+// 替代 task 返回后的 `agent-timeout-guard check` + `clear` + `log-dispatch` 三连串行，
+// 省 2 次 node 进程启动 + 2 个 conductor reasoning 回合 / 每次 dispatch。
+// 与三连语义等价（单次 readContext/writeContext）：
+//   exit 0 = pass/fail 已清 + provenance 已记
+//   exit 4 = [RETRY]（timeout 且计数 ≤ agent_timeout_max_retries）
+//   exit 5 = [ESCALATE]（timeout 且计数 > agent_timeout_max_retries）
+//   exit 1/2 = 参数/权限错
+// 超时判定优先于 conductor 传的 --result：实际超时则强制按 timeout 处理。
+// ============================================================
+function cmdPostDispatch(taskId, seq, result, agent, mode, stage) {
+  assertValidTaskId(taskId);
+  if (!Number.isInteger(seq) || seq < 0) {
+    die(2, 'Error: post-dispatch requires --dispatch-seq <non-negative integer>');
+  }
+  if (!['pass', 'fail', 'timeout'].includes(result)) {
+    die(2, 'Error: post-dispatch requires --result <pass|fail|timeout>');
+  }
+
+  const { ctx } = readContext(taskId);
+  if (!Array.isArray(ctx.dispatch_log)) {
+    die(1, `Error: dispatch_log empty for task_id=${taskId}`);
+  }
+  const entry = ctx.dispatch_log[seq];
+  if (!entry) die(1, `Error: dispatch_log[${seq}] not found for task_id=${taskId}`);
+  const g = entry.timeout_guard;
+  if (!g || typeof g !== 'object') {
+    die(1, `Error: timeout_guard not started for dispatch_log[${seq}]. Run pre-dispatch --agent --tier first.`);
+  }
+
+  // 1. 超时判定：实际超时或已标 timeout -> 强制 timeout 语义（无视 conductor --result）
+  const startMs = (typeof g.start_time_ms === 'number') ? g.start_time_ms : Date.now();
+  const budgetS = (typeof g.budget_s === 'number') ? g.budget_s : 0;
+  const elapsed = Date.now() - startMs;
+  const alreadyTimeout = g.status === 'timeout';
+  const isOver = elapsed > budgetS * 1000;
+  const effectiveTimeout = alreadyTimeout || isOver || result === 'timeout';
+
+  // 2. log-dispatch provenance 校验 + 规范化（内联，与 cmdLogDispatch 语义一致）
+  if (!agent) die(2, 'Error: post-dispatch requires --agent <name>');
+  if (!mode) die(2, 'Error: post-dispatch requires --mode <task|agent_manager>');
+  if (!stage) die(2, 'Error: post-dispatch requires --stage <STAGE>');
+  const validModes = ['task', 'agent_manager'];
+  if (!validModes.includes(mode)) {
+    die(2, `Error: --mode must be one of: ${validModes.join(', ')}`);
+  }
+  if (!WRITE_MATRIX[agent] && agent !== 'conductor') {
+    die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 dispatch 白名单（${[...Object.keys(WRITE_MATRIX), 'conductor'].sort().join(', ')}）。防任意伪造 dispatch 记录。`);
+  }
+  const nodeIds = readGraphNodeIds();
+  if (!nodeIds.includes(stage)) {
+    die(2, `[PROCESS_VIOLATION] --stage "${stage}" 不在 graph.yaml 节点集合（${nodeIds.join(', ')}）。`);
+  }
+  const executor = readNodeExecutor(stage);
+  const requiredRoles = getStageRequiredRoles(stage);
+  const agentNorm = agent.replace(/-/g, '_');
+  let allowed = false;
+  if (executor === 'conductor' && agent === 'conductor') {
+    allowed = true;
+  } else if (requiredRoles && requiredRoles.length > 0) {
+    const rolesNorm = requiredRoles.map((r) => r.replace(/-/g, '_'));
+    if (rolesNorm.includes(agentNorm)) allowed = true;
+  } else {
+    allowed = true;
+  }
+  if (!allowed) {
+    const postPreMap = discoverPostPreConstantMountsByAgent();
+    const stages = postPreMap.get(agent);
+    if (stages && stages.has(stage)) allowed = true;
+  }
+  if (!allowed) {
+    const tier = ctx.sizing && ctx.sizing.tier;
+    if (tier) {
+      const tieredMounts = discoverPostPreTieredMounts();
+      const hit = tieredMounts.some(
+        (m) => m.name === agent && m.stage === stage && Array.isArray(m.tiers) && m.tiers.includes(tier)
+      );
+      if (hit) allowed = true;
+    }
+  }
+  if (!allowed) {
+    die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 stage "${stage}" 的 required_roles（${requiredRoles ? requiredRoles.join(', ') : '(无)'}），亦无 post:${stage}/pre:${stage} 恒定/定级挂载。防跨阶段乱派发。`);
+  }
+
+  // 3. 追加 provenance 条目（无论 pass/fail/timeout 都记录派发事实）
+  ctx.dispatch_log.push({ agent: agentNorm, mode, stage, timestamp: Date.now() });
+
+  if (effectiveTimeout) {
+    // 4a. 标 timeout + RETRY/ESCALATE 决策
+    if (g.status !== 'timeout') {
+      g.status = 'timeout';
+      g.timed_out_at_ms = g.timed_out_at_ms || Date.now();
+    }
+    writeContext(taskId, ctx);
+    const to = readTimeouts();
+    if (!to) die(2, 'Error: lifecycle/config.yaml missing "timeouts" section');
+    const maxRetries = (typeof to.agent_timeout_max_retries === 'number')
+      ? to.agent_timeout_max_retries : 1;
+    const tAgent = g.agent;
+    let timeoutCount = 0;
+    for (const e of ctx.dispatch_log) {
+      if (e && e.timeout_guard && e.timeout_guard.status === 'timeout'
+          && e.timeout_guard.agent === tAgent) {
+        timeoutCount++;
+      }
+    }
+    if (timeoutCount <= maxRetries) {
+      process.stdout.write(`[RETRY] seq=${seq} agent=${tAgent} timeout_count=${timeoutCount} max_retries=${maxRetries} -> 允许重跑\n`);
+      process.exit(4);
+    }
+    process.stdout.write(`[ESCALATE] seq=${seq} agent=${tAgent} timeout_count=${timeoutCount} > max_retries=${maxRetries} -> 升级处理\n`);
+    process.exit(5);
+  }
+
+  // 4b. pass/fail：clear + provenance 已记
+  g.status = 'cleared';
+  g.actual_duration_s = Math.round(elapsed / 1000);
+  g.clear_result = result;
+  writeContext(taskId, ctx);
+  process.stdout.write(
+    `ok: post-dispatch seq=${seq} cleared result=${result} actual_duration_s=${g.actual_duration_s} (dispatch_log appended agent=${agent} mode=${mode} stage=${stage})\n`
+  );
+  process.exit(0);
+}
+
+// ============================================================
+// recover 子命令（U4）：统一入口 wrapper，spawnSync 调度三个
+// recover-*.mjs 子脚本（U1=recover-context-unsafe / U2=recover-write-missing /
+// U3=recover-process-violation），捕获 stdout JSON + exit code，
+// 原子追加到 task_context.recovery_log[] 数组。
+//
+// 设计原则：
+//   1. 纯分发+日志，不重复各子脚本内部的检测逻辑（DRY）
+//   2. 写 recovery_log 走 RECOVER_INTERNAL_ALLOWLIST 内部硬编码白名单
+//      （intentional bypass: 不依赖 conductor.md frontmatter 的 write 列表，
+//      避免 forbidden_files=agent/*.md 被牵连；与 cmdSet/cmdSetBatch 的
+//      validateSingleWrite 矩阵闸门是两条独立路径，仅本子命令 + recovery_log 字段例外）
+//   3. 退出码透传子脚本：0=success / 1=recoverable / 2=usage / 3=circuit-breaker
+//   4. 不修改 U1/U2/U3 产物（forbidden_files）
+// 用法：
+//   node scripts/task-context.mjs recover <task_id> --type <context-unsafe|write-missing|process-violation> [--agent <name>] [--action <a>] [--violation-type <t>] [--from <NODE>] [--expected <NODE>] [--fields <a,b,c>]
+// --type ↔ 子脚本映射：
+//   context-unsafe      → scripts/recover-context-unsafe.mjs   （需 --action，缺省 check）
+//   write-missing       → scripts/recover-write-missing.mjs    （需 --agent）
+//   process-violation   → scripts/recover-process-violation.mjs（需 --violation-type；可选 --from/--expected）
+// ============================================================
+
+const RECOVER_SCRIPT_MAP = Object.freeze({
+  'context-unsafe': 'recover-context-unsafe.mjs',
+  'write-missing': 'recover-write-missing.mjs',
+  'process-violation': 'recover-process-violation.mjs',
+});
+
+// recover 子命令内部硬编码写白名单（intentional bypass WRITE_MATRIX 矩阵）。
+// 设计动机：U4 SCOPE_CREEP 修复要求 recover 不修改 agent/conductor.md frontmatter，
+// 因此本子命令使用自身白名单 + 直写 writeContext，跳过 cmdSet 的 validateSingleWrite 闸门。
+// 此白名单只在本子命令 + recovery_log 字段生效；任何其他路径仍走 WRITE_MATRIX 硬门。
+// 修改本白名单 = 等价于修改 forbid_files 范围，须升级到 PLANNING 重审。
+const RECOVER_INTERNAL_ALLOWLIST = Object.freeze(new Set(['recovery_log']));
+
+function extractFlag(args, name) {
+  const i = args.indexOf(name);
+  return i !== -1 && i + 1 < args.length ? args[i + 1] : null;
+}
+
+function cmdRecover(taskId, args) {
+  assertValidTaskId(taskId);
+  const type = extractFlag(args, '--type');
+  if (!type) {
+    die(2, 'Error: recover requires --type <context-unsafe|write-missing|process-violation>');
+  }
+  const scriptName = RECOVER_SCRIPT_MAP[type];
+  if (!scriptName) {
+    const B = String.fromCharCode(96);
+    const allowed = Object.keys(RECOVER_SCRIPT_MAP).join(', ');
+    const msg = B + 'Error: invalid --type "' + type + '". Allowed: ' + allowed + B;
+    die(2, msg);
+  }
+  // 透传标志：先放 task_id，再追加各 --flag value（--type 自身不传，避免子脚本误判）
+  const subArgs = [taskId];
+  const PASSTHROUGH_FLAGS = ['--agent', '--action', '--violation-type', '--from', '--expected', '--fields'];
+  for (const f of PASSTHROUGH_FLAGS) {
+    const v = extractFlag(args, f);
+    if (v !== null) {
+      subArgs.push(f, v);
+    }
+  }
+  // spawnSync
+  const scriptPath = path.resolve(SCRIPT_DIR, scriptName);
+  const r = spawnSync('node', [scriptPath, ...subArgs], { encoding: 'utf8' });
+  const exitCode = r.status === null ? 1 : r.status;
+  const stdoutRaw = (r.stdout || '').trim();
+  let scriptOutput = null;
+  let recommended = null;
+  if (stdoutRaw) {
+    try {
+      scriptOutput = JSON.parse(stdoutRaw);
+      // 各子脚本推荐字段名差异：context-unsafe/write-missing → recommended_action；process-violation → recommended
+      recommended = scriptOutput.recommended_action || scriptOutput.recommended || null;
+    } catch {
+      // 子脚本 stdout 非 JSON → 保留原始字符串便于诊断
+      scriptOutput = { _parse_error: 'not JSON', _raw: stdoutRaw.slice(0, 2000) };
+    }
+  }
+  // recommended → entry.action 推导：用户显式 --action/--violation-type 优先；缺省按 recommended 回退
+  const userAction = extractFlag(args, '--action') || extractFlag(args, '--violation-type') || null;
+  let entryAction = userAction;
+  if (!entryAction && recommended) {
+    if (recommended === 'retry' || recommended === 'retried') entryAction = 'retry';
+    else if (recommended === 'escalate' || recommended === 'escalated') entryAction = 'escalate';
+    else entryAction = recommended;
+  }
+  // 原子追加 recovery_log[]：走 RECOVER_INTERNAL_ALLOWLIST 内部硬编码白名单闸门（不依赖 frontmatter write 列表），
+  // 再 readContext → push → writeContext
+  const entry = {
+    type,
+    action: entryAction,
+    timestamp: Date.now(),
+    script_output: scriptOutput,
+    recommended_action: recommended,
+  };
+  // 预校验：内部硬编码白名单（intentional bypass：不依赖 agent/conductor.md frontmatter 矩阵），
+  // 与 cmdSet/cmdSetBatch 的 validateSingleWrite 矩阵闸门并行存在，互不耦合。
+  // 此白名单只允许 recover 子命令写 recovery_log 字段，拒绝其他路径，防漂移。
+  if (!RECOVER_INTERNAL_ALLOWLIST.has('recovery_log')) {
+    die(1, '[INTERNAL_BUG] RECOVER_INTERNAL_ALLOWLIST must contain recovery_log');
+  }
+  // readContext → push → writeContext（原子写回）
+  const { ctx } = readContext(taskId);
+  if (!Array.isArray(ctx.recovery_log)) ctx.recovery_log = [];
+  ctx.recovery_log.push(entry);
+  writeContext(taskId, ctx);
+  const logLen = readContext(taskId).ctx.recovery_log.length;
+  process.stdout.write('ok: recover type=' + type + ' sub_exit=' + exitCode + ' recovery_log_length=' + logLen + ' recommended_action=' + (recommended || '(none)') + '\n');
+  // 退出码透传子脚本（0=success / 1=recoverable / 2=usage / 3=circuit-breaker）
+  const finalExit = (exitCode === 0 || exitCode === 1 || exitCode === 2 || exitCode === 3) ? exitCode : 1;
+  process.exit(finalExit);
+}
+
+// ============================================================
 // delete 子命令：清理 task_context JSON（默认仅 DONE/FAILED 状态可删，--force 跳过）
 // 用于 5 次 scan-cleanup + V8 模拟测试产生的临时 task_context 清理。
 // 路径：os.tmpdir()/kilo/task_context_<task_id>.json（复用 contextPath helper）
@@ -1240,6 +1610,20 @@ function main() {
     }
     cmdApplyTier(positional[0], positional[1], agent, {});
   }
+  if (sub === 'apply-tier-auto') {
+    // apply-tier-auto <task_id> <T0|T1|T2> --agent conductor
+    // H3 合并：一次进程跑 escalation（得 final tier）+ apply defaults，省 1 进程 + 1 次 read/write
+    const agentIdx = args.indexOf('--agent');
+    if (agentIdx === -1 || agentIdx + 1 >= args.length) {
+      die(2, 'Error: apply-tier-auto requires --agent <name>');
+    }
+    const agent = args[agentIdx + 1];
+    const positional = args.slice(1, agentIdx).concat(args.slice(agentIdx + 2));
+    if (positional.length !== 2) {
+      die(2, 'Error: apply-tier-auto requires <task_id> <T0|T1|T2> --agent conductor');
+    }
+    cmdApplyTierAuto(positional[0], positional[1], agent, {});
+  }
   if (sub === 'apply-escalation') {
     // apply-escalation <task_id> --agent conductor
     const agentIdx = args.indexOf('--agent');
@@ -1282,7 +1666,14 @@ function main() {
     const fileCount = fcIdx !== -1 && fcIdx + 1 < args.length ? args[fcIdx + 1] : undefined;
     const bgIdx = args.indexOf('--bash-cmd');
     const bashCmd = bgIdx !== -1 && bgIdx + 1 < args.length ? args[bgIdx + 1] : undefined;
-    cmdPreDispatch(taskId, promptChars, fileCount, bashCmd);
+    const aIdx = args.indexOf('--agent');
+    const tIdx = args.indexOf('--tier');
+    const agent = aIdx !== -1 && aIdx + 1 < args.length ? args[aIdx + 1] : undefined;
+    const tier = tIdx !== -1 && tIdx + 1 < args.length ? args[tIdx + 1] : undefined;
+    if ((agent && !tier) || (tier && !agent)) {
+      die(2, 'Error: pre-dispatch --agent and --tier must be both present or both absent');
+    }
+    cmdPreDispatch(taskId, promptChars, fileCount, bashCmd, agent, tier);
   }
   if (sub === 'log-dispatch') {
     // log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>
@@ -1293,6 +1684,27 @@ function main() {
     if (modeIdx === -1 || modeIdx + 1 >= args.length) die(2, 'Error: log-dispatch requires --mode <task|agent_manager>');
     if (stageIdx === -1 || stageIdx + 1 >= args.length) die(2, 'Error: log-dispatch requires --stage <STAGE>');
     cmdLogDispatch(args[1], args[agentIdx + 1], args[modeIdx + 1], args[stageIdx + 1]);
+  }
+  if (sub === 'post-dispatch') {
+    // post-dispatch <task_id> --dispatch-seq <N> --result <pass|fail|timeout> --agent <name> --mode <task|agent_manager> --stage <STAGE>
+    // 合并 agent-timeout-guard check + clear + log-dispatch（一次进程）
+    const seqIdx = args.indexOf('--dispatch-seq');
+    const rIdx = args.indexOf('--result');
+    const aIdx = args.indexOf('--agent');
+    const mIdx = args.indexOf('--mode');
+    const sIdx = args.indexOf('--stage');
+    if (seqIdx === -1 || seqIdx + 1 >= args.length) die(2, 'Error: post-dispatch requires --dispatch-seq <N>');
+    if (rIdx === -1 || rIdx + 1 >= args.length) die(2, 'Error: post-dispatch requires --result <pass|fail|timeout>');
+    if (aIdx === -1 || aIdx + 1 >= args.length) die(2, 'Error: post-dispatch requires --agent <name>');
+    if (mIdx === -1 || mIdx + 1 >= args.length) die(2, 'Error: post-dispatch requires --mode <task|agent_manager>');
+    if (sIdx === -1 || sIdx + 1 >= args.length) die(2, 'Error: post-dispatch requires --stage <STAGE>');
+    const seq = Number.parseInt(args[seqIdx + 1], 10);
+    cmdPostDispatch(args[1], seq, args[rIdx + 1], args[aIdx + 1], args[mIdx + 1], args[sIdx + 1]);
+  }
+  if (sub === 'recover') {
+    // recover <task_id> --type <t> [passthrough flags...]
+    if (args.length < 4) die(2, 'Error: recover requires <task_id> --type <context-unsafe|write-missing|process-violation>');
+    cmdRecover(args[1], args);
   }
   if (sub === 'delete') {
     // delete <task_id> [--force]  — 清理 task_context JSON（默认仅 DONE/FAILED 可删）

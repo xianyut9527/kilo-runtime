@@ -18,7 +18,7 @@
 //   2. dispatch_log 必须包含每个必经阶段的 required_roles 派发记录
 //      （从 lifecycle/stages/<id>.md frontmatter required_roles 读取）
 //   3. quality.verdict ∈ {PASS, CIRCUIT_BREAKER}（QUALITY 阶段必须有合法结论）
-//   4. 豁免：T0 任务（T0 极速通道无 PLANNING/QUALITY），INQUIRY T1+ 不再豁免
+//   4. 豁免：T0 任务（T0 极速通道无 PLANNING/QUALITY）；INQUIRY 直通按 requiredStages intent 分流
 //
 // 用法：
 //   node scripts/flow-audit.mjs                    # 扫活跃 task_context（mtime 30min 内）
@@ -45,6 +45,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { readContext, writeContext } from './task-context-runtime.mjs';
 import { getStageRequiredRoles, isConditionalRole, hasCoverageMatrix, validateCoverageMatrix, hasSpreadTrigger } from './lib/stage-roles.mjs';
+import { formatStage, formatTier, formatIntent, formatStatus, formatVerdict } from './lib/stage-i18n.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONTEXT_DIR = path.join(os.tmpdir(), 'kilo');
@@ -104,8 +105,11 @@ function listActiveContexts(allMode = false, activeThresholdMs = 30 * 60 * 1000)
 // 单 task_context 审计
 // ============================================================
 
-// 必经阶段序列（按 tier；intent_type 不参与路由，仅影响产物形态）
+// 必经阶段序列（按 tier + intent_type：M1 起 intent 参与，INQUIRY 直通跳过 EXECUTING/QUALITY）
 function requiredStages(tier, intentType) {
+  // M1 INQUIRY 直通分流
+  if (intentType === 'INQUIRY' && tier === 'T0') return ['INIT', 'DELIVERING'];
+  if (intentType === 'INQUIRY' && (tier === 'T1' || tier === 'T2')) return ['INIT', 'PLANNING', 'DELIVERING'];
   if (tier === 'T0') return ['INIT', 'EXECUTING', 'DELIVERING'];
   if (tier === 'T1' || tier === 'T2') return ['INIT', 'PLANNING', 'EXECUTING', 'QUALITY', 'DELIVERING'];
   return [];
@@ -119,7 +123,7 @@ function checkTransitionLog(ctx, required) {
   if (required.length === 0) return errors;  // 豁免
 
   if (log.length === 0) {
-    errors.push(`transition_log 为空（required=${required.join('→')}）`);
+    errors.push(`transition_log 为空（必经阶段=${required.map(formatStage).join('→')}）`);
     return errors;
   }
 
@@ -138,9 +142,9 @@ function checkTransitionLog(ctx, required) {
   for (const stage of required) {
     const idx = visited.indexOf(stage);
     if (idx === -1) {
-      errors.push(`transition_log 缺少阶段 ${stage}（required=${required.join('→')}, visited=${visited.join('→')}）`);
+      errors.push(`transition_log 缺少阶段 ${formatStage(stage)}（必经阶段=${required.map(formatStage).join('→')}, 已访问=${visited.map(formatStage).join('→')}）`);
     } else if (idx < lastIdx) {
-      errors.push(`transition_log 阶段 ${stage} 顺序错位（required=${required.join('→')}, visited=${visited.join('→')}）`);
+      errors.push(`transition_log 阶段 ${formatStage(stage)} 顺序错位（必经阶段=${required.map(formatStage).join('→')}, 已访问=${visited.map(formatStage).join('→')}）`);
     } else {
       lastIdx = idx;
     }
@@ -169,7 +173,7 @@ function checkDispatchLog(ctx, required) {
     for (const role of rolesToCheck) {
       const roleNorm = role.replace(/-/g, '_');
       if (!dispatchedAgents.has(roleNorm)) {
-        errors.push(`dispatch_log 缺少 ${stage} 阶段必配角色 ${role}（已派发: ${[...dispatchedAgents].join(',') || '(空)'}）`);
+        errors.push(`dispatch_log 缺少 ${formatStage(stage)} 阶段必配角色 ${role}（已派发: ${[...dispatchedAgents].join(',') || '(空)'}）`);
       }
     }
   }
@@ -183,7 +187,7 @@ function checkQualityVerdict(ctx, required) {
   if (!required.includes('QUALITY')) return errors;  // T0 豁免（与 intent 无关）
   const verdict = ctx.quality?.verdict;
   if (verdict !== 'PASS' && verdict !== 'CIRCUIT_BREAKER') {
-    errors.push(`quality.verdict="${verdict}" ∉ {PASS, CIRCUIT_BREAKER}（T1/T2 必须经 QUALITY 阶段）`);
+    errors.push(`quality.verdict="${formatVerdict(verdict)}" ∉ {${formatVerdict('PASS')}, ${formatVerdict('CIRCUIT_BREAKER')}}（T1/T2 必须经 ${formatStage('QUALITY')} 阶段）`);
   }
   return errors;
 }
@@ -205,25 +209,25 @@ function auditContext(taskId) {
   // 只校验活跃 task_context（DONE/FAILED 已结束）
   const ACTIVE = ['initialized', 'RUNNING', 'PAUSED', 'DEGRADED'];
   if (!ACTIVE.includes(status)) {
-    return { taskId, skipped: true, reason: `status=${status}（已结束）` };
+    return { taskId, skipped: true, reason: `状态(status)=${formatStatus(status)}（已结束）` };
   }
 
   // 只校验 T1/T2 任务（T0 极速通道豁免；INQUIRY/EXECUTION 不再是豁免维度）
   // 特殊：RUNNING + intent_type=undefined 不豁免 → FAIL（conductor 跳过 INIT 或 apply-tier 失败）
   if (tier !== 'T1' && tier !== 'T2') {
-    return { taskId, skipped: true, reason: `tier=${tier}（非 T1/T2，豁免）` };
+    return { taskId, skipped: true, reason: `等级(tier)=${formatTier(tier)}（非 T1/T2，豁免）` };
   }
   if (intentType === undefined && status === 'RUNNING') {
     // 强异常：活跃 RUNNING 任务竟然没有 intent_type，必须排查
     const errors = [
-      `[FLOW_AUDIT_FAIL] task_id=${taskId} intent_type=undefined on RUNNING task（conductor 跳过了 INIT 阶段或 apply-tier 失败，必须排查）`,
+      `[FLOW_AUDIT_FAIL] task_id=${taskId} 意图(intent)=undefined on RUNNING task（conductor 跳过了 INIT 阶段或 apply-tier 失败，必须排查）`,
     ];
     return { taskId, intentType, tier, status, required: [], errors };
   }
   if (intentType !== 'INQUIRY' && intentType !== 'EXECUTION') {
     // T1/T2 必须有合法 intent_type（INQUIRY 或 EXECUTION）
     const errors = [
-      `[FLOW_AUDIT_FAIL] task_id=${taskId} invalid intent_type=${JSON.stringify(intentType)} on T1/T2 task（必须是 INQUIRY 或 EXECUTION）`,
+      `[FLOW_AUDIT_FAIL] task_id=${taskId} 意图(intent)=invalid(${JSON.stringify(intentType)}) on T1/T2 task（必须是 INQUIRY 或 EXECUTION）`,
     ];
     return { taskId, intentType, tier, status, required: [], errors };
   }
@@ -327,13 +331,13 @@ function main() {
     }
     if (r.errors.length > 0) {
       hasFail = true;
-      process.stdout.write(`\n[FLOW_AUDIT_FAIL] task_id=${r.taskId} intent=${r.intentType} tier=${r.tier} status=${r.status}\n`);
-      process.stdout.write(`  required chain: ${r.required.join('→')}\n`);
+      process.stdout.write(`\n[FLOW_AUDIT_FAIL] task_id=${r.taskId} 意图(intent)=${formatIntent(r.intentType)} 等级(tier)=${formatTier(r.tier)} 状态(status)=${formatStatus(r.status)}\n`);
+      process.stdout.write(`  必经阶段: ${r.required.map(formatStage).join('→')}\n`);
       for (const e of r.errors) {
         process.stdout.write(`  - ${e}\n`);
       }
     } else {
-      process.stdout.write(`flow-audit: PASS ${r.taskId} (intent=${r.intentType} tier=${r.tier} chain=${r.required.join('→')})\n`);
+      process.stdout.write(`flow-audit: PASS ${r.taskId} (意图(intent)=${formatIntent(r.intentType)} 等级(tier)=${formatTier(r.tier)} 链=${r.required.map(formatStage).join('→')})\n`);
     }
   }
 

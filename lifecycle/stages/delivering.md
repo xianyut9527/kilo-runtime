@@ -23,7 +23,7 @@ pre_gate:
 - task_context.intent_type (EXECUTION / INQUIRY, determines delivery content) - sole data source
 - EXECUTION: All completed unit change summaries + acceptance map + verification report
 - INQUIRY: Complete analysis conclusion + evidence list + citation + dimension coverage + limitation statement
-- Forward verification report + review report (T1+ unified full)
+- Forward verification report + review report (T1+ EXECUTION unified full; INQUIRY 直通无 verification/review)
 - Mandatory flow log (complete lifecycle nodes)
 - task_context.json (complete task context)
 

@@ -33,6 +33,7 @@ import { runRuntimeMode } from './runtime.mjs';
 import { run as runSanitizeSelfTest } from './checks/sanitize-self-test.mjs';
 import { run as runAgentRuntime } from './checks/agent-runtime.mjs';
 import { run as runGuardWiring } from './checks/guard-wiring.mjs';
+import { run as runI18nCoverage } from './checks/i18n-coverage.mjs';
 
 import { buildInitialContext as _bootstrapBuildInitialContext } from '../task-context.mjs';
 
@@ -78,6 +79,7 @@ if (SYNC_PROMPT && FAST_MODE && checkFingerprint(ROOT).match) {
   process.stdout.write('CACHE_HIT but --sync requested; running full checks + prompt sync\n');
 }
 
+(async () => {
 // 完整静态检查：构建 ctx + 调度各 check 模块 + report
 const cf = createCheckFn();
 
@@ -145,5 +147,10 @@ runSanitizeSelfTest(ctx);
 runAgentRuntime(ctx);
 runGuardWiring(ctx);
 
+// i18n-coverage is async; await before final report.
+await runI18nCoverage(ctx);
+
 // 收尾：缓存 / 同步 prompt / 报告
 report(cf, VERBOSE, { fullMode: FULL_MODE, fastMode: FAST_MODE, syncPrompt: SYNC_PROMPT, scriptsDir: SCRIPTS_DIR, root: ROOT });
+
+})().catch((e) => { console.error('[LIFECYCLE_DOCTOR_FATAL]', e); process.exit(2); });

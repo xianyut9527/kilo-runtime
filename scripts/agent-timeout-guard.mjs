@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // agent-timeout-guard.mjs
-// 智能体超时守卫 CLI — 将 lifecycle/config.yaml timeouts 段从死配置变为可执行。
+// 智能体超时守卫 CLI - 将 lifecycle/config.yaml timeouts 段从死配置变为可执行。
 // 经 task 工具启动的外部智能体（coder/verifier/reviewer/planner/fixer）在派发前
 // 记录超时预算，派发后由 conductor 定时 check；超时写 status:'timeout'，
 // clear 时按 retry.agent_timeout_max_retries 决策 RETRY / ESCALATE。
@@ -27,21 +27,15 @@
 //
 // 文件位置：os.tmpdir()/kilo/task_context_<task_id>.json（与 task-context.mjs 一致，
 // 复用 task-context-runtime.mjs 的 contextPath / readContext / writeContext）。
-// config.yaml 解析沿用仓库惯例（手写 yaml 子集解析，非第三方库）。
+// config.yaml timeouts 解析已迁移至 task-context-runtime.mjs（统一 configText 缓存，
+// 消除双份解析）；本文件经 import { readTimeouts } 复用。
 //
 // 仅使用 Node 内置模块；跨平台：Windows PowerShell 5.1 + Linux bash 兼容。
 
-import fs from 'node:fs';
-import path from 'node:path';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
 import {
-  contextPath, readContext, writeContext, assertValidTaskId, die,
+  contextPath, readContext, writeContext, assertValidTaskId, die, readTimeouts,
 } from './task-context-runtime.mjs';
-import { cachedDerive } from './lib/derived-cache.mjs';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_SOURCE = path.resolve(__dirname, '..', 'lifecycle', 'config.yaml');
 
 const VALID_TIERS = ['T0', 'T1', 'T2'];
 const VALID_RESULTS = ['pass', 'fail', 'timeout'];
@@ -87,94 +81,6 @@ function stripNamed(args) {
 }
 
 // ============================================================
-// config.yaml timeouts 段解析（手写 yaml 子集，仓库惯例）
-// 返回：
-//   { agent_startup_s, stage_default_s, per_agent_s, per_tier_multiplier,
-//     agent_timeout_max_retries }
-// 无 timeouts 顶层段 → 返回 null（调用方按 exit 2 处理）。
-// ============================================================
-function parseTimeouts(text) {
-  const lines = text.split(/\r?\n/);
-  let inTimeouts = false;
-  let inPerAgent = false;
-  let inPerTier = false;
-  let inRetry = false;
-  const t = {
-    agent_startup_s: null,
-    stage_default_s: null,
-    per_agent_s: {},
-    per_tier_multiplier: {},
-    agent_timeout_max_retries: null,
-  };
-
-  for (const raw of lines) {
-    // strip inline comment（保留值内 #，timeouts 段无引号值）
-    const hashIdx = raw.search(/\s#/);
-    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
-    if (!line.trim()) continue;
-
-    // 顶层键切换
-    if (/^timeouts\s*:/.test(line)) { inTimeouts = true; inPerAgent = false; inPerTier = false; inRetry = false; continue; }
-    if (/^[a-z_]+\s*:/.test(line) && !/^\s/.test(line)) {
-      inTimeouts = false; inPerAgent = false; inPerTier = false; inRetry = false;
-      continue;
-    }
-    if (!inTimeouts) continue;
-
-    // 2-space keys under timeouts
-    const sub = line.match(/^  ([a-z_]+)\s*:\s*(.*)$/);
-    if (sub) {
-      const key = sub[1];
-      const val = sub[2].trim();
-      if (key === 'per_agent_s') { inPerAgent = true; inPerTier = false; inRetry = false; continue; }
-      if (key === 'per_tier_multiplier') { inPerTier = true; inPerAgent = false; inRetry = false; continue; }
-      if (key === 'retry') { inRetry = true; inPerAgent = false; inPerTier = false; continue; }
-      inPerAgent = false; inPerTier = false; inRetry = false;
-      if (key === 'agent_startup_s' && /^\d+$/.test(val)) t.agent_startup_s = parseInt(val, 10);
-      if (key === 'stage_default_s' && /^\d+$/.test(val)) t.stage_default_s = parseInt(val, 10);
-      continue;
-    }
-
-    // per_agent_s: 4-space indent key -> integer
-    if (inPerAgent) {
-      const m = line.match(/^    ([a-z_]+)\s*:\s*(\d+)\s*$/);
-      if (m) { t.per_agent_s[m[1]] = parseInt(m[2], 10); continue; }
-      if (/^\S/.test(line) || !/^\s{4}/.test(line)) { inPerAgent = false; }
-    }
-    // per_tier_multiplier: 4-space indent T0/T1/T2 -> float
-    if (inPerTier) {
-      const m = line.match(/^    (T[0-3])\s*:\s*([\d.]+)\s*$/);
-      if (m) { t.per_tier_multiplier[m[1]] = parseFloat(m[2]); continue; }
-      if (/^\S/.test(line) || !/^\s{4}/.test(line)) { inPerTier = false; }
-    }
-    // retry.agent_timeout_max_retries: 4-space indent
-    if (inRetry) {
-      const m = line.match(/^    agent_timeout_max_retries\s*:\s*(\d+)\s*$/);
-      if (m) { t.agent_timeout_max_retries = parseInt(m[1], 10); continue; }
-      if (/^\S/.test(line) || !/^\s{4}/.test(line)) { inRetry = false; }
-    }
-  }
-
-  return t;
-}
-
-// 读取 config.yaml timeouts；文件缺失或缺少 timeouts 段 → null。
-function readTimeouts() {
-  // config.yaml 读取经 cachedDerive mtime 缓存（装配后静态，对齐 task-context-runtime 模式）；
-  // timeouts 段解析结果跨 start/check 调用命中缓存，改 config.yaml 自动失效。
-  return cachedDerive('configTimeouts', [CONFIG_SOURCE], () => {
-    let text;
-    try {
-      text = fs.readFileSync(CONFIG_SOURCE, 'utf8');
-    } catch {
-      return null;
-    }
-    if (!/^\s*timeouts\s*:/m.test(text)) return null;
-    return parseTimeouts(text);
-  });
-}
-
-// ============================================================
 // guard 读写辅助（独立读写 dispatch_log[N].timeout_guard，不改 task-context.mjs）
 // ============================================================
 
@@ -182,7 +88,7 @@ function getDispatchLog(ctx) {
   return Array.isArray(ctx.dispatch_log) ? ctx.dispatch_log : null;
 }
 
-// 取 dispatch_log[N]（N 为数组索引）。越界 → 返回 null。
+// 取 dispatch_log[N]（N 为数组索引）。越界 -> 返回 null。
 function getLogEntry(ctx, seq) {
   const log = getDispatchLog(ctx);
   if (!log || !Number.isInteger(seq) || seq < 0 || seq >= log.length) return null;
@@ -324,10 +230,10 @@ function cmdClear(taskId, seq, result) {
   writeContext(taskId, ctx);
 
   if (timeoutCount <= maxRetries) {
-    process.stdout.write(`[RETRY] seq=${seq} agent=${agent} timeout_count=${timeoutCount} max_retries=${maxRetries} → 允许重跑\n`);
+    process.stdout.write(`[RETRY] seq=${seq} agent=${agent} timeout_count=${timeoutCount} max_retries=${maxRetries} -> 允许重跑\n`);
     process.exit(4);
   }
-  process.stdout.write(`[ESCALATE] seq=${seq} agent=${agent} timeout_count=${timeoutCount} > max_retries=${maxRetries} → 升级处理\n`);
+  process.stdout.write(`[ESCALATE] seq=${seq} agent=${agent} timeout_count=${timeoutCount} > max_retries=${maxRetries} -> 升级处理\n`);
   process.exit(5);
 }
 

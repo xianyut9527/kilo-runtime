@@ -255,7 +255,7 @@ mount:
 - id: PLANNING
   type: stage
   executor: default
-  on_fail: escalate          # planner 整体失败 → 升级处理
+  on_fail: retry_once        # planner 偶发超时重跑 1 次，再失败 escalate
 ```
 
 | 取值 | 行为 |

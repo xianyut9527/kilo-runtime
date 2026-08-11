@@ -45,6 +45,7 @@ import { readContext, writeContext, appendTransitionLog, readHooksFromConfig as 
 import { discoverPostPreConstantMounts, discoverPostPreTieredMounts } from './lib/post-pre-mounts.mjs';
 import { getStageRequiredRoles, isConditionalRole, hasRequirementSpread, hasSpreadTrigger, validateRequirementSpread } from './lib/stage-roles.mjs';
 import { cachedDerive } from './lib/derived-cache.mjs';
+import { verifyField } from './lib/byte-verify.mjs';
 import { ERROR_CODES, codeMsg } from './error-codes.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -164,7 +165,7 @@ function parseGraphFile(text) {
 
 // graph.yaml 走 mtime 缓存（静态拓扑运行期不变）。parseGraphFile 返回 Map（不可
 // JSON 序列化），缓存层存 plain object，取出后还原 Map，调用方 API 不变。
-function loadGraphCached() {
+export function loadGraphCached() {
   const data = cachedDerive('graphFile', [GRAPH_PATH], () => {
     let text;
     try {
@@ -301,7 +302,7 @@ function pick() {
   return undefined;
 }
 
-function resolveVars(ctx) {
+export function resolveVars(ctx) {
   const intent = ctx.intent || {};
   const sizing = ctx.sizing || {};
   const ver = ctx.verification || {};
@@ -314,6 +315,43 @@ function resolveVars(ctx) {
     forward_result: pick(fwd.forward_result, fwd.verdict),
     review_result: pick(review.review_result, review.verdict),
   };
+}
+
+// ============================================================
+// recovery_pending hook (U5)
+// ============================================================
+// ============================================================
+// recovery_pending hook (U5, QUALITY->DELIVERING 专用)
+//   若 recovery_log 最后一条是 retry+write-missing 且 timestamp 早于当前 transition,
+//   用 byte-verify 复查 entry 标记的未补写字段; 任一仍缺失 -> 返回缺失数组.
+//   返回 null = 无需检查 (无 log / 非 retry / 时间戳未来 / 无未补写字段).
+//   双源 schema: byte_verification[] (U7) + missing_fields[] (U1/U2 兼容).
+// ============================================================
+function checkRecoveryPending(ctx) {
+  const log = Array.isArray(ctx.recovery_log) ? ctx.recovery_log : null;
+  if (!log || log.length === 0) return null;
+  const last = log[log.length - 1];
+  if (!last || typeof last !== 'object') return null;
+  if (last.action !== 'retry' || last.type !== 'write-missing') return null;
+  const ts = Number(last.timestamp);
+  if (!Number.isFinite(ts) || ts >= Date.now()) return null;
+  const so = (last.script_output && typeof last.script_output === 'object') ? last.script_output : {};
+  const missing = [];
+  if (Array.isArray(so.byte_verification)) {
+    for (const r of so.byte_verification) {
+      if (r && typeof r.field === 'string' && r.present === false && !missing.includes(r.field)) {
+        missing.push(r.field);
+      }
+    }
+  }
+  if (Array.isArray(so.missing_fields)) {
+    for (const f of so.missing_fields) {
+      if (typeof f === 'string' && !missing.includes(f)) missing.push(f);
+    }
+  }
+  if (missing.length === 0) return [];
+  const stillMissing = missing.filter((f) => !verifyField(ctx, f).present);
+  return stillMissing;
 }
 
 // ============================================================
@@ -406,16 +444,31 @@ function main() {
   // ============================================================
   // provenance gate（edge-conditioned，仅 T1/T2 边）
   // 校验 dispatch_log 中是否包含对应阶段的必配角色（防跳步绕过委派）
-  // 豁免：T0 边、CIRCUIT_BREAKER 出口（INQUIRY T1+ 不再豁免，需走完整委派）
+  // 豁免：T0 边、CIRCUIT_BREAKER 出口；INQUIRY 直通见下方 M1 分支（仅校验 PLANNING roles + post:PLANNING 恒定挂载）
   // ============================================================
   const tier = vars.tier;
   const intentType = vars.intent_type;
   const dispatchLog = Array.isArray(ctx.dispatch_log) ? ctx.dispatch_log : [];
   const isT1orT2 = tier === 'T1' || tier === 'T2';
-  const isExempt = !isT1orT2;  // 去除 INQUIRY 豁免：INQUIRY T1+ 必须经 planner/coder/verifier 委派
+  const isExempt = !isT1orT2;  // T0 边豁免；T1/T2 走 provenance gate；INQUIRY 直通见 M1 分支
   const isCircuitBreakerExit = FROM === 'QUALITY' && TO === 'DELIVERING' && vars.quality_verdict === 'CIRCUIT_BREAKER';
 
-  if (!isExempt && !isCircuitBreakerExit) {
+  if (FROM === 'PLANNING' && TO === 'DELIVERING' && intentType === 'INQUIRY') {
+    // M1 INQUIRY 直通：仅校验 PLANNING 必配角色 + post:PLANNING 恒定挂载，跳过 EXECUTING/QUALITY roles 与 review tiered mounts
+    const provenanceRequired = [...getStageRequiredRoles('PLANNING')];
+    const postPreMountsLocal = discoverPostPreConstantMounts();
+    for (const m of postPreMountsLocal) {
+      if (m.kind === 'post' && m.stage === 'PLANNING') provenanceRequired.push(m.name);
+    }
+    if (provenanceRequired.length > 0) {
+      const dispatchedAgents = new Set(dispatchLog.map((e) => e.agent.replace(/-/g, '_')));
+      const requiredNorm = provenanceRequired.map((a) => a.replace(/-/g, '_'));
+      const missing = requiredNorm.filter((a) => !dispatchedAgents.has(a));
+      if (missing.length > 0) {
+        die(1, `[PROCESS_VIOLATION] missing dispatch provenance for ${FROM} -> ${TO}: required agents ${JSON.stringify(provenanceRequired)}, missing ${JSON.stringify(missing)}. dispatch_log agents: ${JSON.stringify([...dispatchedAgents])}`);
+      }
+    }
+  } else if (!isExempt && !isCircuitBreakerExit) {
     const provenanceRequired = [];
     if (FROM === 'PLANNING' && TO === 'EXECUTING') {
       provenanceRequired.push(...getStageRequiredRoles('PLANNING'));
@@ -511,6 +564,14 @@ function main() {
       }
     }
   }
+  // recovery_pending hook (U5): QUALITY->DELIVERING - 上一次 retry 仍未补全 -> 阻断
+  // CB 出口豁免 (与 verification.forward 校验同: CB 是用户决策的降级路径)
+  if (FROM === 'QUALITY' && TO === 'DELIVERING' && !isCircuitBreakerExit) {
+    const stillMissing = checkRecoveryPending(ctx);
+    if (Array.isArray(stillMissing) && stillMissing.length > 0) {
+      die(1, `[RECOVERY_RETRY_EXHAUSTED] QUALITY -> DELIVERING: recovery_log 最后一条 retry (type=write-missing) 标记的字段在 task_context 中仍未补写: ${JSON.stringify(stillMissing)}。请先补写这些字段并重新触发 recovery,否则禁止流转到 DELIVERING。`);
+    }
+  }
 
   // premise_audit 必填校验（U1+U2 配套，U3 实现）：T1+ plan 流转 PLANNING->EXECUTING 时
   // 每个 unit 必须带 premise_audit 段（含 existence_cmd + ≥2 alternatives），
@@ -590,6 +651,49 @@ function main() {
   process.exit(0);
 }
 
+// ============================================================
+// 自检 (U5 AC7: scan-encoding + bash-guard)
+// ============================================================
+async function runSelfCheck() {
+  const eq = (a, b) => { if (a === b) return true; try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; } };
+  const assertEq = (label, got, want) => {
+    if (!eq(got, want)) {
+      console.error('FAIL ' + label + ': got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
+      process.exitCode = 1;
+    } else {
+      console.log('PASS ' + label);
+    }
+  };
+
+  assertEq('no recovery_log', checkRecoveryPending({}), null);
+  assertEq('empty log', checkRecoveryPending({ recovery_log: [] }), null);
+  assertEq('non-retry action', checkRecoveryPending({ recovery_log: [{ type: 'write-missing', action: 'noop', timestamp: 1, script_output: {} }] }), null);
+  assertEq('non-write-missing type', checkRecoveryPending({ recovery_log: [{ type: 'other', action: 'retry', timestamp: 1, script_output: { byte_verification: [{ field: 'a', present: false }] } }] }), null);
+  assertEq('future timestamp', checkRecoveryPending({ recovery_log: [{ type: 'write-missing', action: 'retry', timestamp: Date.now() + 1e9, script_output: { byte_verification: [{ field: 'a', present: false }] } }] }), null);
+  assertEq('non-numeric timestamp', checkRecoveryPending({ recovery_log: [{ type: 'write-missing', action: 'retry', timestamp: 'xxx', script_output: { byte_verification: [{ field: 'a', present: false }] } }] }), null);
+  const r4 = checkRecoveryPending({ recovery_log: [{ type: 'write-missing', action: 'retry', timestamp: 1, script_output: { byte_verification: [{ field: 'x', present: false }] } }] });
+  assertEq('still missing -> [x]', Array.isArray(r4) && r4.length === 1 && r4[0] === 'x', true);
+  assertEq('originally present=true -> []', checkRecoveryPending({ recovery_log: [{ type: 'write-missing', action: 'retry', timestamp: 1, script_output: { byte_verification: [{ field: 'x', present: true }] } }] }), []);
+  assertEq('ctx now populated -> []', checkRecoveryPending({ recovery_log: [{ type: 'write-missing', action: 'retry', timestamp: 1, script_output: { byte_verification: [{ field: 'a', present: false }] } }], a: 'v' }), []);
+  const r7 = checkRecoveryPending({ recovery_log: [{ type: 'write-missing', action: 'retry', timestamp: 1, script_output: { missing_fields: ['x'] } }] });
+  assertEq('missing_fields compat', Array.isArray(r7) && r7.length === 1 && r7[0] === 'x', true);
+  const r8 = checkRecoveryPending({ recovery_log: [{ type: 'write-missing', action: 'retry', timestamp: 1, script_output: { byte_verification: [{ field: 'a', present: false }], missing_fields: ['a', 'b'] } }] });
+  assertEq('dedup a,b', Array.isArray(r8) && r8.length === 2 && r8.includes('a') && r8.includes('b'), true);
+  const r9 = checkRecoveryPending({ recovery_log: [{ type: 'write-missing', action: 'retry', timestamp: 1, script_output: { byte_verification: [{ present: false }, { field: 'z', present: false }] } }] });
+  assertEq('skip entry without field', Array.isArray(r9) && r9.length === 1 && r9[0] === 'z', true);
+  assertEq('no fields tracked -> []', checkRecoveryPending({ recovery_log: [{ type: 'write-missing', action: 'retry', timestamp: 1, script_output: {} }] }), []);
+
+  const { execSync } = await import('node:child_process');
+  const scanOut = execSync('node scripts/scan-encoding.mjs scripts/transition-check.mjs', { encoding: 'utf8' });
+  const scanJson = JSON.parse(scanOut);
+  const scanFail = scanJson.some((f) => f.checks.some((c) => !c.pass));
+  assertEq('scan-encoding self', scanFail, false);
+
+  const guardOut = execSync('node scripts/bash-guard.mjs ""', { encoding: 'utf8' });
+  assertEq('bash-guard self', guardOut.includes('PASS'), true);
+
+  console.log(process.exitCode ? 'SELF-CHECK FAILED' : 'ALL SELF-CHECK PASS');
+}
 const __filename = fileURLToPath(import.meta.url);
 const isMainModule = (() => {
   if (!process.argv[1]) return false;
@@ -601,6 +705,10 @@ const isMainModule = (() => {
 })();
 
 if (isMainModule) {
-  main();
+  if (process.argv.includes('--self-check')) {
+    runSelfCheck();
+  } else {
+    main();
+  }
 }
 

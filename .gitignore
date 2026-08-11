@@ -21,6 +21,20 @@ Thumbs.db
 *.swo
 __pycache__/
 
+# 通用备份/临时/对比文件（防 LLM 修复流程产生的中间产物污染仓库）
+*.bak
+*.bak2
+*.orig
+*.old
+*_before.*
+*_after.*
+*_old*
+*.diff
+*.patch
+*.b64
+scripts/_*.mjs
+temp_*
+
 # kilo.json 备份文件（install 脚本修改前自动生成，不应提交）
 kilo.json.bak.*
 

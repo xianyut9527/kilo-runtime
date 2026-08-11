@@ -227,6 +227,20 @@ diff -rq . ~/.config/kilo \
 
 项目配置优先级高于全局配置，遵循深合并规则。项目级 `AGENTS.md` 和 skills 比单纯覆盖模型更有效。
 
+
+
+## i18n 渲染器使用
+
+`scripts/i18n-render.mjs` 是 stage-i18n 单一真相源（`scripts/lib/stage-i18n.mjs`）的 CLI 入口，零依赖，支持裸 KEY 查找 / `--map <MAP> <KEY>` 显式指定 / `--triple <INTENT> <TIER> <STAGE>` 三段拼接 / 5 个 `--<kind> <KEY>` 快捷分支。未知 key → stderr + exit 2。
+
+```bash
+node scripts/i18n-render.mjs --stage PLANNING    # 设计门 (PLANNING)
+node scripts/i18n-render.mjs --status PENDING    # 待处理 (PENDING)
+node scripts/i18n-render.mjs --verdict PASS      # 通过 (PASS)
+node scripts/i18n-render.mjs --all               # 5 个映射表全量 dump
+```
+
+5 个映射表名（大小写不敏感）：`STAGE` / `TIER` / `STATUS` / `INTENT` / `VERDICT`。库形式 `import { formatStage, formatStatus, ... } from './lib/stage-i18n.mjs'` 供 agent 与脚本内部消费；纳管校验在 `scripts/lifecycle-doctor/checks/i18n-coverage.mjs`。
 ## 注意事项
 
 - 本仓库 **不** 包含 API Key、Token 等敏感信息；敏感配置请通过环境变量管理。

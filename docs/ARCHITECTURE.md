@@ -15,7 +15,7 @@
 START
   │
   ▼
-INIT（conductor 内建）→ 区分 INQUIRY / EXECUTION（产物形态标记，**不参与路由**——tier 是唯一路由开关）
+INIT（conductor 内建）→ 区分 INQUIRY / EXECUTION（**M1 起参与路由**：INQUIRY 直通 T0→DELIVERING / T1+→PLANNING→DELIVERING，省 coder/verifier/reviewer；EXECUTION 走 tier-based 全流程）；同时仍是产物形态标记，决定 DELIVERING 输出组织。
   │
   ▼
 INIT（conductor 内建）→ 定级 T0–T2，写入 config.agents
@@ -78,7 +78,7 @@ DELIVERING
 | 智能体 | 挂载点 / hook | after | trigger | tiers | 职责 |
 |--------|--------------|-------|---------|------|------|
 | **conductor** | —（内建） | — | — | — | 编排者：意图判定→定级→挂载调度→流转裁判 |
-| **planner** | `PLANNING` | — | — | 恒定 | 设计门、DAG、验收点 |
+| **planner** | `PLANNING` | — | — | 恒定 | 设计门、DAG、验收点、全网旧措辞扫描 |
 | **plan-reviewer** | `post:PLANNING` | ‒ | ‒ | `tiers:[T2]` | 方案审查（on_fail:abort，verdict=FAIL 回流 planner 重做） |
 | **coder** | `EXECUTING` | — | — | 恒定 | 编码实现、三件套 |
 | **verifier** | `QUALITY hook:verify` | ‒ | deps | 恒定 | 正向验证（L1-L3，5 元组证据，唯一可写 execution.verification） |
@@ -253,7 +253,7 @@ hooks:
 
 | 文件 | 职责 |
 |------|------|
-| `agent/planner.md` | 设计门、DAG、验收点 |
+| `agent/planner.md` | 设计门、DAG、验收点、全网旧措辞扫描 |
 | `agent/coder.md` | 编码实现、三件套 |
 | `agent/verifier.md` | 正向验证（L1/L2/L3） |
 | `agent/reviewer.md` | 代码审查（四视角） |

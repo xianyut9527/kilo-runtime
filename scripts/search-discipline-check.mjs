@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // search-discipline-check.mjs
-// 搜索纪律机械门（A 层，模型无关）-- 防 agent 无脑全仓 Grep / pattern 爆炸 / 未优先图谱。
+// 搜索纪律机械门（A 层，模型无关）—— 防 agent 无脑全仓 Grep / pattern 爆炸 / 未优先图谱。
 //
 // 4 类违规检测（函数式注册，方便 U4 扩展）：
 //   1. detectNoInclude           — Grep 无 include 限定（dispatch 缺文件范围）
@@ -9,17 +9,23 @@
 //   4. detectUnsupportedRegex    — pattern 含 ripgrep 默认引擎不支持的 PCRE 特性
 //                                  （lookaround (?=)(?!)(?<=)(?<!)/\K/原子组/反向引用）
 //
-// 用法：node scripts/search-discipline-check.mjs <task_id>
+// 用法（CLI）：
+//   node scripts/search-discipline-check.mjs <task_id>
 // 退出码：
 //   0 = 全部通过（PASS）
 //   1 = 无 task_context / 无可检测项（usage / 回退 LLM）
 //   2 = 任一违规（FAIL，列出违规类型）
+//
+// 也可被 import（H2 quality-gate 合并三门时复用）：
+//   import { checkSearchDiscipline } from './search-discipline-check.mjs';
+//   const r = checkSearchDiscipline(taskId); // {exit, violations, results}
 //
 // 仅使用 Node 内置模块；Windows PowerShell + Linux bash 兼容。
 
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 function contextPath(taskId) {
   return path.join(os.tmpdir(), 'kilo', `task_context_${taskId}.json`);
@@ -179,8 +185,36 @@ const checks = [
 ];
 
 // ============================================================
-// CLI
+// 可导入核心：checkSearchDiscipline(taskId) -> {exit, violations, results}
+// CLI 与 import 共用：写逐项 [PASS]/[FAIL] 行到 stdout，返回结构化结果给 caller 聚合。
 // ============================================================
+export function checkSearchDiscipline(taskId) {
+  const ctx = readCtx(taskId);
+  if (ctx === null) {
+    process.stdout.write(`search-discipline-check: task_context 不存在 task_id=${taskId}\n`);
+    return { exit: 1, violations: [], results: [] };
+  }
+
+  const violations = [];
+  const results = [];
+  for (const c of checks) {
+    let res;
+    try { res = c.run(ctx); }
+    catch (e) { res = { violated: false, detail: `exception: ${e.message}` }; }
+    const tag = res.violated ? 'FAIL' : 'PASS';
+    process.stdout.write(`  [${tag}] ${c.name}: ${res.detail}\n`);
+    results.push({ name: c.name, violated: res.violated, detail: res.detail });
+    if (res.violated) violations.push(c.name);
+  }
+
+  if (violations.length > 0) {
+    process.stdout.write(`\nFAIL search-discipline-check (违规类型=${violations.join('|')})\n`);
+    return { exit: 2, violations, results };
+  }
+  process.stdout.write('\nPASS search-discipline-check\n');
+  return { exit: 0, violations: [], results };
+}
+
 function main() {
   const args = process.argv.slice(2);
   if (args.length !== 1 || args[0] === '--help' || args[0] === '-h') {
@@ -188,29 +222,11 @@ function main() {
     process.stdout.write('Exit: 0=all pass, 1=no task_context / nothing to check (fall back to LLM), 2=any violation\n');
     process.exit(args.length !== 1 ? 1 : 0);
   }
-  const taskId = args[0];
-  const ctx = readCtx(taskId);
-  if (ctx === null) {
-    process.stdout.write(`search-discipline-check: task_context 不存在 task_id=${taskId}\n`);
-    process.exit(1);
-  }
-
-  const violations = [];
-  for (const c of checks) {
-    let res;
-    try { res = c.run(ctx); }
-    catch (e) { res = { violated: false, detail: `exception: ${e.message}` }; }
-    const tag = res.violated ? 'FAIL' : 'PASS';
-    process.stdout.write(`  [${tag}] ${c.name}: ${res.detail}\n`);
-    if (res.violated) violations.push(c.name);
-  }
-
-  if (violations.length > 0) {
-    process.stdout.write(`\nFAIL search-discipline-check (违规类型=${violations.join('|')})\n`);
-    process.exit(2);
-  }
-  process.stdout.write('\nPASS search-discipline-check\n');
-  process.exit(0);
+  const r = checkSearchDiscipline(args[0]);
+  process.exit(r.exit);
 }
 
-main();
+// CLI guard：仅当直接作为入口运行时执行 main()，import 时不触发（避免 process.exit）。
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main();
+}

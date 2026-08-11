@@ -128,7 +128,7 @@ function rtCheckTier(ctx, env, rtCheck) {
       }
     }
     if (mismatches.length > 0) {
-      rtCheck('FAIL', 'runtime.tier', `tier=${tier} config.agents 与 tier_defaults 不一致: ${mismatches.join('; ')}。应执行: task-context.mjs apply-tier <task_id> ${tier} --agent conductor`);
+      rtCheck('FAIL', 'runtime.tier', `tier=${tier} config.agents 与 tier_defaults 不一致: ${mismatches.join('; ')}。应执行: task-context.mjs apply-tier-auto <task_id> ${tier} --agent conductor`);
       return;
     }
   }
@@ -244,7 +244,7 @@ function runRuntimeChecksForTask(filePath, taskId, graph, stagesDir) {
   return runtimeResults;
 }
 
-function runDryRunEscalation(ctx) {
+function runDryRunApplyTierAuto(ctx) {
   const { ROOT, SCRIPTS_DIR, _bootstrapBuildInitialContext } = ctx;
   const SCENARIOS = [
     { id: 1, label: "场景 1: 命中关键词（intent=权限管理, 无 key_files）", build: () => ({ intent: { raw: '权限管理' }, sizing: { tier: 'T0', key_files: [] } }), expect: { tier: 'T2', reasonMin: 1, hasPath: false } },
@@ -271,13 +271,14 @@ function runDryRunEscalation(ctx) {
       process.stdout.write(`[FAIL] ${sc.label}\n  写 task_context 失败: ${e.message}\n`);
       failCount++; failDetails.push(sc.id); continue;
     }
+    const declaredTier = (seed.sizing && seed.sizing.tier) || 'T1';
     const r = spawnSync(
       process.execPath,
-      [path.join(SCRIPTS_DIR, 'task-context.mjs'), 'apply-escalation', taskId, '--agent', 'conductor'],
+      [path.join(SCRIPTS_DIR, 'task-context.mjs'), 'apply-tier-auto', taskId, declaredTier, '--agent', 'conductor'],
       { cwd: ROOT, encoding: 'utf8', timeout: 15000 }
     );
     if (r.status !== 0) {
-      process.stdout.write(`[FAIL] ${sc.label}\n  apply-escalation 退出码=${r.status} stderr=${(r.stderr || "").trim().split("\n")[0] || "(empty)"}\n`);
+      process.stdout.write(`[FAIL] ${sc.label}\n  apply-tier-auto 退出码=${r.status} stderr=${(r.stderr || "").trim().split("\n")[0] || "(empty)"}\n`);
       failCount++; failDetails.push(sc.id);
       try { fs.unlinkSync(ctxPath); } catch {}
       continue;
@@ -327,7 +328,7 @@ function runDryRunEscalation(ctx) {
 function runRuntimeMode(ctx) {
   const { ROOT, GRAPH_PATH, STAGES_DIR } = ctx;
   if (process.argv.includes('--dry-run')) {
-    runDryRunEscalation(ctx);
+    runDryRunApplyTierAuto(ctx);
     return;
   }
   const tmpDir = path.join(os.tmpdir(), 'kilo');

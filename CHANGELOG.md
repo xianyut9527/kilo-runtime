@@ -3,6 +3,26 @@
 本文件记录 `kilo_config` 全局配置仓库的演进。遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
 
+
+
+## [Unreleased] i18n-render-design（中文 i18n 渲染器 4 unit 完工）
+
+### Added
+
+- **U1 `scripts/lib/stage-i18n.mjs`**（5 映射表 + 8 函数单一真相源）：STAGE_ZH（7 项：START/INIT/PLANNING/EXECUTING/QUALITY/DELIVERING/DONE）/ TIER_ZH（T0/T1/T2）/ STATUS_ZH（9 项，含 PENDING/PASS/FAIL 防御性补全）/ INTENT_ZH（INQUIRY/EXECUTION）/ VERDICT_ZH（PASS/CIRCUIT_BREAKER）；导出函数 labelOf/descOf/formatStage/formatTier/formatStatus/formatIntent/formatVerdict/formatTriple；未命中键走 warnOnce + passthrough。
+- **U2 `scripts/i18n-render.mjs`**（CLI 渲染器，零依赖）：支持 `--map <MAP> <KEY>` / `--triple` / `--stage` / `--tier` / `--status` / `--intent` / `--verdict` / `--all` / 裸 KEY 五种入口；未命中 → stderr + exit 2。
+- **U3 `scripts/flow-audit.mjs`**：输出中英混排，12 处文案加 formatStage/formatTier/formatIntent/formatStatus/formatVerdict（`意图(intent)=`/`等级(tier)=`/`状态(status)=`/`必经阶段:`/`已访问=`/`通过 (PASS)`/`熔断 (CIRCUIT_BREAKER)`），校验逻辑零改（`requiredStages`/`checkTransitionLog`/`checkDispatchLog`/`checkQualityVerdict`/`requiredRoles` 字面量未触）。
+- **U4 `agent/conductor.md`**：铁律 §i18n 渲染规范（执行报告 / 失败诊断 / 单元派发 / 委派反馈 4 场景统一走 `formatStage/formatStatus/formatVerdict/formatIntent/formatTier`，禁裸 key 直出）。
+- **U5（本轮 D5 补丁）**：`scripts/i18n-render.mjs` 补 `--stage`/`--tier`/`--intent`/`--verdict` 4 个 CLI 分支（与 `--status` 对称）；`scripts/lib/stage-i18n.mjs` STATUS_ZH 防御性补全 PENDING/PASS/FAIL；`scripts/lifecycle-doctor/checks/i18n-coverage.mjs` 纳管（5 映射 + 8 函数导出校验）；`README.md` 加 i18n 渲染器使用文档小节。
+- **D6 `scripts/lib/stage-i18n.mjs`**：formatTriple 输出顺序改为 TIER → INTENT → STAGE（任务等级最前，遵循用户反馈 "任务等级在前面"）。
+- **D7 `scripts/i18n-render.mjs`**：--triple 分支改调 formatTriple（消除自建 3 行重复实现，与 D6 顺序同步生效）；顶层 import 加 formatTriple。
+- **D6 后续 verifier/FIXER `scripts/lib/stage-i18n.mjs`**：STATUS_ZH 补 3 个小写键 `running` / `timeout` / `cleared`（agent-timeout-guard 实际写入 dispatch_log 的字面量值），覆盖所有大写/小写 status 枚举。
+- **D8 `CHANGELOG.md` U3 描述修正**：i18n 一致性校验 → 输出中英混排 12 处文案（错把 lifecycle-doctor i18n-coverage check 描述放到了 U3，本轮修正）。
+- **D9 `.gitignore`**：防御性增补 12 模式（`*.bak` / `*.bak2` / `*.orig` / `*.old` / `*_before.*` / `*_after.*` / `*_old*` / `*.diff` / `*.patch` / `*.b64` / `scripts/_*.mjs` / `temp_*`），防 LLM 修复流程产生的中间产物污染仓库。
+- **D10 `lifecycle/stages/init.md`**：L71-72 硬编码 `coder` / `planner` → 角色语义 `implementation` / `plan-role`（解耦 agent 名从 lifecycle/ 拓扑文件，lifecycle-doctor 0 FAIL）。
+
+> **事故记录**：D10 首次派发 coder 返 PASS 但 `lifecycle-doctor` 仍 FAIL → `[INSUFFICIENT_EVIDENCE]`，`overload_count +1` 留痕，强制 byte-level（before_sha ≠ after_sha / 真实 exit / 真实 stdout）重派通过。
+
 ## [Unreleased] tier-routing-unify-001（v3.x 重构）
 
 ### 路由开关统一为 tier
@@ -41,6 +61,52 @@ INQUIRY 任务不再直通 INIT→DELIVERING，与 EXECUTION 共用同一套 tie
 
 - 上游 task: `kilo-config-tier-expand-001`（T1 EXECUTION，已 DONE）
 - 本 task: `kilo-config-tier-audit-002`（查漏补缺，3 文档同步）
+
+## [Unreleased] tier-routing-M1-reset-003（M1 INQUIRY 直通回归 + script-merge 工程化）
+
+### M1 INQUIRY 直通回归
+v3.x 把 INQUIRY 直通取消（tier-based 路由统一）后，实测 INQUIRY T0（纯问答）与 T1+（信息方案类）被强制走 coder/verifier/reviewer 全链路是过度工程化——INQUIRY 不写代码，没必要跑 coder/verifier/reviewer。M1 重新引入 INQUIRY 直通分流，但保留 EXECUTION tier-based 全流程：
+
+- **INQUIRY + T0**：`INIT → DELIVERING`（纯问答极速，无 planner/coder/verifier/reviewer）
+- **INQUIRY + T1/T2**：`INIT → PLANNING → DELIVERING`（planner 输出"分析方案 + 检索维度"后直送 DELIVERING）
+- **EXECUTION + T0**：`INIT → EXECUTING → DELIVERING`（极速通道，无设计门/验证/审查）
+- **EXECUTION + T1/T2**：`INIT → PLANNING → EXECUTING → QUALITY → DELIVERING`（完整链路）
+
+intent 在 M1 后**参与路由**（INQUIRY 跳过 EXECUTING/QUALITY）+ **仍是产物形态标记**（决定 DELIVERING 内容组织：INQUIRY = 分析结论 + 证据表 + 维度覆盖；EXECUTION = 验收映射 + 变更摘要）。
+
+### 关键变更（10 类文件）
+
+| 类别 | 文件 | 变更 |
+|---|---|---|
+| 图 | `lifecycle/graph.yaml` | 新增 `INIT→DELIVERING when intent_type=='INQUIRY' and tier=='T0'` + `PLANNING→DELIVERING when intent_type=='INQUIRY'` 两条边；EXECUTION 边加 intent 守卫（防 INQUIRY 误入 EXECUTION 路径） |
+| 脚本 | `scripts/flow-audit.mjs` | `requiredStages(tier, intentType)` INQUIRY 分流（INQUIRY T0→[INIT,DELIVERING]；INQUIRY T1/T2→[INIT,PLANNING,DELIVERING]）；顶层豁免注释 + 函数注释改写 |
+| 脚本 | `scripts/transition-check.mjs` | provenance gate 新增 INQUIRY PLANNING→DELIVERING 直通分支（仅校验 PLANNING 必配角色 + post:PLANNING 恒定挂载，跳过 EXECUTING/QUALITY roles + review tiered mounts）；`isExempt` 注释更新 |
+| 脚本 | `scripts/lifecycle-doctor/runtime.mjs` | dryrun SCENARIOS `apply-escalation` → `apply-tier-auto <task_id> <declaredTier> --agent conductor`；FAIL 提示文案同步 |
+| 文档 | `lifecycle/stages/init.md` | §路由规则 M1 化（INQUIRY T0 直达 / INQUIRY T1/T2 经 PLANNING 直达 / EXECUTION tier-based）；§硬规则 #5 改用 `apply-tier-auto` |
+| 文档 | `lifecycle/stages/delivering.md` | "Forward verification report + review report" 标注 "T1+ EXECUTION unified full; INQUIRY 直通无 verification/review" |
+| 文档 | `agent/planner.md` | §分级输出 新增 `### INQUIRY 分析方案（M1 直通，≤500 tokens）` 段（核心结论 + 证据/来源 + 检索维度清单 + 维度覆盖矩阵 + 限制声明 + 风险对立假设；不输出 task_dag / acceptance_criteria / forbidden_files） |
+| 文档 | `agent/conductor.md` | 铁律 #1 INQUIRY 参与路由（取消"不参与路由"）；铁律 #2 INIT 机械应用 config 改用 `apply-tier-auto`（单进程合并升级扫描 + defaults 应用）；step 0d retry_once 末尾补 ESCALATE 终止于 `retry.agent_timeout_max_retries=1` |
+| 文档 | `AGENTS.md` | 锚点 #1 "意图只标注产物形态，不参与路由" → INQUIRY 参与路由分流描述 |
+| 文档 | `docs/ARCHITECTURE.md` | §1.1 主图 L18 "产物形态标记，不参与路由" → "M1 起参与路由" |
+
+### script-merge 工程化（本轮 H 段合并）
+
+| 段 | 改动 | 收益 |
+|---|---|---|
+| **H1a** | pre-dispatch 吸收 timeout-guard start，新增 `--agent --tier` 参数 | dispatch 前单进程搞定 prompt 规模 + size + bash-guard + timeout_guard start |
+| **H1b** | post-dispatch 合并 check+clear+log-dispatch 单进程 | 一次进程完成 timeout check → clear → provenance log（替代旧三连串行） |
+| **H1c** | conductor.md step 0d 末尾加 ESCALATE 终止条件（retry.agent_timeout_max_retries=1，同节点不再二次 RETRY） | 文字铁律 vs 节点 on_fail 行为对齐 |
+| **H2** | 新增 `scripts/quality-gate.mjs`（合并 acceptance-check + diff-boundary-check + search-discipline-check 三脚本单进程 sequential）；`lifecycle/stages/quality.md` §处理流程 5 步 → 1 个 quality-gate 调用 + 3 脚本 fallback 列表 | QUALITY 阶段前置机械门 fail-fast 单进程，省 2 次 node 启动 |
+| **H3** | 新增 `task-context.mjs apply-tier-auto <task_id> <T0\|T1\|T2> --agent conductor` 子命令（单进程合并 apply-escalation 扫描升级 + apply-tier defaults 应用，one read/one write） | INIT 阶段省 2 次 node 启动 + 避免升级扫描与 defaults 应用之间数据漂移；旧 `apply-tier` / `apply-escalation` 子命令保留为单点降级路径 |
+| 附带 | `task-context-runtime.mjs` `readTierDefaults` / `readTierEscalation` 包 `cachedDerive('tierDefaults' / 'tierEscalation', [CONVERGENCE_SOURCE], () => ...)` | 复用 mtime 缓存层，避免每次 dispatch 都全读全解析 config.yaml（高频脚本 ~ms 级命中缓存） |
+
+### 兼容性 / 验证（待 Bash 恢复后跑）
+
+- `node --check` 全部修改脚本（零语法错误）
+- `node scripts/lifecycle-doctor/index.mjs` 全 PASS
+- `node scripts/agents-smoke-test.mjs` 回归 PASS
+- INQUIRY 3 类型手测（T0 直达 / T1 直通 / T2 直通）+ `flow-audit.mjs <task_id>` PASS
+
 ## [Unreleased] scan-cleanup-010
 
 ### Failed（subagent 报告虚报教训）

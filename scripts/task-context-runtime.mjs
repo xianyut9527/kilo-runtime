@@ -207,9 +207,11 @@ function parseTierDefaults(text) {
 }
 
 function readTierDefaults() {
-  const text = readConfigText();
-  if (!text) return { execution: {} };
-  return parseTierDefaults(text);
+  return cachedDerive('tierDefaults', [CONVERGENCE_SOURCE], () => {
+    const text = readConfigText();
+    if (!text) return { execution: {} };
+    return parseTierDefaults(text);
+  });
 }
 
 // 从 lifecycle/config.yaml 读取 size-check 阈值（conductor pre-dispatch 硬门依据）
@@ -237,6 +239,110 @@ function readMaxFilesPerTask() {
   if (!text) return null;
   const m = text.match(/max_files_per_task:\s*(\d+)/);
   return m ? parseInt(m[1], 10) : null;
+}
+
+// 从 lifecycle/config.yaml 读取 recovery 引擎阈值（U6 新增）
+// 缺省回退与 config.yaml 中显式值一致；任意字段缺失时该字段回退到缺省
+// max_write_retry=1, overload_threshold=3, circuit_breaker_overload=5
+function readRecoveryConfig() {
+  const defaults = {
+    max_write_retry: 1,
+    overload_threshold: 3,
+    circuit_breaker_overload: 5,
+  };
+  const text = readConfigText();
+  if (!text) return defaults;
+  const mw = text.match(/max_write_retry:\s*(\d+)/);
+  const ot = text.match(/overload_threshold:\s*(\d+)/);
+  const cb = text.match(/circuit_breaker_overload:\s*(\d+)/);
+  return {
+    max_write_retry: mw ? parseInt(mw[1], 10) : defaults.max_write_retry,
+    overload_threshold: ot ? parseInt(ot[1], 10) : defaults.overload_threshold,
+    circuit_breaker_overload: cb ? parseInt(cb[1], 10) : defaults.circuit_breaker_overload,
+  };
+}
+
+// ============================================================
+// 从 lifecycle/config.yaml 解析 timeouts 段
+// 返回：
+//   { agent_startup_s, stage_default_s, per_agent_s, per_tier_multiplier,
+//     agent_timeout_max_retries }
+// 无 timeouts 顶层段 -> 返回 null（调用方按 exit 2 处理）。
+// 迁移自 agent-timeout-guard.mjs，统一到 configText 缓存（消除双份解析）；
+// agent-timeout-guard.mjs 与 task-context.mjs（pre-dispatch/post-dispatch 合并）
+// 共用本实现。
+// ============================================================
+function parseTimeouts(text) {
+  const lines = text.split(/\r?\n/);
+  let inTimeouts = false;
+  let inPerAgent = false;
+  let inPerTier = false;
+  let inRetry = false;
+  const t = {
+    agent_startup_s: null,
+    stage_default_s: null,
+    per_agent_s: {},
+    per_tier_multiplier: {},
+    agent_timeout_max_retries: null,
+  };
+
+  for (const raw of lines) {
+    // strip inline comment（保留值内 #，timeouts 段无引号值）
+    const hashIdx = raw.search(/\s#/);
+    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
+    if (!line.trim()) continue;
+
+    // 顶层键切换
+    if (/^timeouts\s*:/.test(line)) { inTimeouts = true; inPerAgent = false; inPerTier = false; inRetry = false; continue; }
+    if (/^[a-z_]+\s*:/.test(line) && !/^\s/.test(line)) {
+      inTimeouts = false; inPerAgent = false; inPerTier = false; inRetry = false;
+      continue;
+    }
+    if (!inTimeouts) continue;
+
+    // 2-space keys under timeouts
+    const sub = line.match(/^  ([a-z_]+)\s*:\s*(.*)$/);
+    if (sub) {
+      const key = sub[1];
+      const val = sub[2].trim();
+      if (key === 'per_agent_s') { inPerAgent = true; inPerTier = false; inRetry = false; continue; }
+      if (key === 'per_tier_multiplier') { inPerTier = true; inPerAgent = false; inRetry = false; continue; }
+      if (key === 'retry') { inRetry = true; inPerAgent = false; inPerTier = false; continue; }
+      inPerAgent = false; inPerTier = false; inRetry = false;
+      if (key === 'agent_startup_s' && /^\d+$/.test(val)) t.agent_startup_s = parseInt(val, 10);
+      if (key === 'stage_default_s' && /^\d+$/.test(val)) t.stage_default_s = parseInt(val, 10);
+      continue;
+    }
+
+    // per_agent_s: 4-space indent key -> integer
+    if (inPerAgent) {
+      const m = line.match(/^    ([a-z_]+)\s*:\s*(\d+)\s*$/);
+      if (m) { t.per_agent_s[m[1]] = parseInt(m[2], 10); continue; }
+      if (/^\S/.test(line) || !/^\s{4}/.test(line)) { inPerAgent = false; }
+    }
+    // per_tier_multiplier: 4-space indent T0/T1/T2 -> float
+    if (inPerTier) {
+      const m = line.match(/^    (T[0-3])\s*:\s*([\d.]+)\s*$/);
+      if (m) { t.per_tier_multiplier[m[1]] = parseFloat(m[2]); continue; }
+      if (/^\S/.test(line) || !/^\s{4}/.test(line)) { inPerTier = false; }
+    }
+    // retry.agent_timeout_max_retries: 4-space indent
+    if (inRetry) {
+      const m = line.match(/^    agent_timeout_max_retries\s*:\s*(\d+)\s*$/);
+      if (m) { t.agent_timeout_max_retries = parseInt(m[1], 10); continue; }
+      if (/^\S/.test(line) || !/^\s{4}/.test(line)) { inRetry = false; }
+    }
+  }
+
+  return t;
+}
+
+// 读取 config.yaml timeouts；文件缺失或缺少 timeouts 段 -> null。
+// 复用 readConfigText（已 mtime 缓存），跨 start/check/pre-dispatch/post-dispatch 命中缓存。
+function readTimeouts() {
+  const text = readConfigText();
+  if (!text || !/^\s*timeouts\s*:/m.test(text)) return null;
+  return parseTimeouts(text);
 }
 
 // 初始 task_context 结构（按 conductor.md §task_context 结构摘要）
@@ -524,9 +630,11 @@ function parseTierEscalation(text) {
 }
 
 function readTierEscalation() {
-  const text = readConfigText();
-  if (!text) return { mode: 'any', keyword_groups: {}, sensitive_path_globs: [] };
-  return parseTierEscalation(text);
+  return cachedDerive('tierEscalation', [CONVERGENCE_SOURCE], () => {
+    const text = readConfigText();
+    if (!text) return { mode: 'any', keyword_groups: {}, sensitive_path_globs: [] };
+    return parseTierEscalation(text);
+  });
 }
 // 模块导出
 // ============================================================
@@ -548,6 +656,9 @@ export {
   readSizeCheckThreshold,
   readDispatchPromptThreshold,
   readMaxFilesPerTask,
+  readRecoveryConfig,
+  readTimeouts,
+  parseTimeouts,
   buildInitialContext,
   die,
   readContext,

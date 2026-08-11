@@ -9,6 +9,7 @@
 > - `.kilo/instructions/core.md` — 通用基线、意图分类（咨询类/执行类）、安全约束、资源与生命周期管理
 > - `.kilo/instructions/skills-lifecycle.md` — skill 能力扩展治理（编写规范、回写触发、发现位置；按需引用，不自动注入）
 > - `.kilo/instructions/reflection.md` — 反思与错误恢复规则
+> - `.kilo/instructions/coding-engineering.md` — 编码工程化标准（设计模式决策、组件化硬规则、优雅编码硬标准、反模式检测、落地流程；按需引用，不自动注入）
 > - `agent/*.md` — 各智能体的详细工作说明书 + frontmatter 生命周期声明（v6 单源：mount/task_context/isolation/gate 等字段合入 frontmatter，manifest 与行为文件合二为一，bootstrap 扫 frontmatter 自动注册）。**不在此枚举智能体清单**——新增智能体 = 丢一个 `agent/<name>.md` + `kilo.json` 绑模型，零改框架。当前注册清单见 `node scripts/lifecycle-doctor/index.mjs` 输出
 > - `lifecycle/graph.yaml` + `lifecycle/stages/*.md` — 生命周期 DAG（纯图，语义 ID）+ 阶段执行逻辑（状态机主线索）
 > - `lifecycle/config.yaml` — 定级默认智能体组合 + 用户覆盖 + 熔断阈值（唯一真相）
@@ -21,7 +22,7 @@
 
 本文件只列锚点名称与规则来源，细则不重复写入。所有智能体必须遵守：
 
-1. **意图判定优先**：任何任务先按 `core.md` 判定「咨询类 / 执行类」。咨询类以信息为主输出，tier 决定流程深度（可含脚本/方案等辅助产物）；执行类以文件修改为主输出。意图只标注产物形态，**不参与路由**。
+1. **意图判定优先**：任何任务先按 `core.md` 判定「咨询类 / 执行类」。咨询类以信息为主输出（tier 决定流程深度，可含脚本/方案等辅助产物，M1 起 INQUIRY 直通：T0 跳过 EXECUTING/QUALITY，T1+ 经 PLANNING 后直通）；执行类以文件修改为主输出（tier-based 全流程）。intent 同时参与路由（M1 后）与产物形态标记（决定 DELIVERING 内容组织）。
 2. **执行类两阶段定级**：阶段 A 预估（决策树估 T0-T2）→ planner 设计门 → 阶段 B 校准（实际 unit DAG 复核）→ 强制流程日志（T0 = 2 节点(INIT→EXECUTING)；T1+ = 5 阶段(INIT→PLANNING→EXECUTING→QUALITY→DELIVERING)；T1=fast / T2=full）→ 修改性工具（来源：`workflow-core.md`）。
 3. ~~定级两阶段化~~：已并入锚点 2。
 4. **单元闭环**：T1+ 任务拆为可验证小单元，每单元独立引入 implementation 能力 → verification 能力 → repair 能力闭环（来源：`workflow-core.md`）。
@@ -41,4 +42,3 @@
     - 严格委派包：单次 dispatch prompt ≤ 6000 字符（已配阈值的 80% 安全线）
     - subagent 返回 ≤ 4000 字符：超限立即 `[RETURN_OVER_LIMIT]` 重派，不叠加主会话
     - worktree 兜底保留：仅在主会话 context 撑爆时作为防 abort 最后防线，不主动禁用
-

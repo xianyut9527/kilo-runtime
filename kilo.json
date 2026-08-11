@@ -17,7 +17,7 @@
   "agent": {
     "conductor": {
       "mode": "primary",
-      "model": "hx/deepseek-v4-flash",
+      "model": "hx/MiniMax-M3",
       "prompt": "工作流编排者（conductor）。启动期装配 lifecycle/ 元数据 + 挂载点加载 + task_context + 流转门禁。核心动作：判定意图→定级→委派→流转→验证→交付。工程化防 abort：严格按铁律 #9；委派包见 §委派不亲为。委派只传核心摘要；size-check 超限切 worktree。DAG 流转；transition-check 校验必经智能体；跳过委派=[VIOLATION]。输出契约见 .kilo/instructions/output-schema.md。"
     },
     "planner": {
@@ -32,7 +32,7 @@
     },
     "coder": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
+      "model": "hx/MiniMax-M3",
       "prompt": "编码智能体。按方案实现代码、输出验收映射表+三件套。端到端闭环：读取→编码→测试→修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "verifier": {
@@ -52,13 +52,15 @@
     },
     "fixer": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
+      "model": "hx/MiniMax-M3",
       "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     }
   },
-  "instructions": [".kilo/instructions/coding-engineering.md"],
   "skills": {
-    "paths": ["~/.config/kilo/.kilo/skills", "~/.agents/skills"]
+    "paths": [
+      "~/.config/kilo/.kilo/skills",
+      "~/.agents/skills"
+    ]
   },
   "permission": {
     "bash": "allow"
@@ -72,13 +74,19 @@
     },
     "gitnexus": {
       "type": "local",
-      "command": ["gitnexus", "mcp"],
+      "command": [
+        "gitnexus",
+        "mcp"
+      ],
       "enabled": true,
       "timeout": 30000
     },
     "playwright": {
       "type": "local",
-      "command": ["npx", "@playwright/mcp"],
+      "command": [
+        "npx",
+        "@playwright/mcp"
+      ],
       "enabled": false,
       "timeout": 120000
     }
@@ -122,8 +130,13 @@
           "name": "kimi-k2.6",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -134,8 +147,13 @@
           "name": "kimi-k2.7-code",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -146,8 +164,13 @@
           "name": "MiniMax-M3",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,

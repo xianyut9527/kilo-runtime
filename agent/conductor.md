@@ -69,14 +69,14 @@ can_handoff_to:
 > compaction 后凭 `task_context` 恢复流转；违反即标 `[PROCESS_VIOLATION]` 并暂停。
 > 脚本路径：`${KILO_CONFIG_DIR}/scripts/`（安装时替换为绝对路径）。
 
-1. **[意图判定]**：任何任务先判定 INQUIRY/EXECUTION。**INQUIRY 仅是产物形态标记**（主输出信息，可含脚本/方案等辅助产物），**不参与路由**——流程深度由 tier 决定。输出顶部标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
+1. **[意图判定]**：任何任务先判定 INQUIRY/EXECUTION。**M1 起 intent 参与路由**（INQUIRY 直通路径：T0 → `DELIVERING`；T1/T2 → `PLANNING → DELIVERING`，省 coder/verifier/reviewer；EXECUTION 仍走 tier-based 全流程）。intent 同时仍是产物形态标记，决定 `DELIVERING` 内容组织（INQUIRY = 分析结论 + 证据表 + 维度覆盖；EXECUTION = 验收映射 + 变更摘要）。具体边定义见 `lifecycle/graph.yaml`，路由规则见 `lifecycle/stages/init.md` §路由规则。输出顶部标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
 2. **定级必输出**：执行类定级 T0/T1/T2 标注 `[TIER: Tn]`，理由写入 `task_context.sizing`。T0 须逐条核验六条标准；T0 判定须先核验 workflow-core.md T0 前置硬否决 4 条（>3 文件/跨模块/需新增测试/安全敏感），任一命中强制升 T1。
-   - **INIT 机械应用 config**：定级后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" apply-tier <task_id> <Tn> --agent conductor`，从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。**禁止手工 `set config.agents.*`**。
-   - **2a. T1→T2 自动升级**：INIT 定级后、apply-tier 前必须先执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" apply-escalation <task_id> --agent conductor`；扫描 `intent.raw` + `sizing.key_files`，命中 `lifecycle/config.yaml` `tier_escalation` 关键词组（auth/payment/crypto/security/personal_data）或敏感路径 glob（**/auth/**、**/payment/**、**/crypto/**、**/security/**、**/pii/**）→ 强制 `sizing.tier=T2` 并写入 `sizing.escalation_reasons`。
+   - **INIT 机械应用 config + 升级扫描（合并为单次进程 apply-tier-auto）**：定级后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" apply-tier-auto <task_id> <Tn> --agent conductor`，该命令原子完成"扫描 `lifecycle/config.yaml` `tier_escalation` 升级触发 → 升级 `sizing.tier` + 写 `escalation_reasons` → 按最终 tier 机械写 `config.agents` + `review_mode` + `custom_overrides`"。`apply-tier` / `apply-escalation` 子命令保留为单点降级路径，conductor 默认走 apply-tier-auto。从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。**禁止手工 `set config.agents.*`**。
+   - **2a. T1→T2 自动升级（apply-tier-auto 内含）**：扫描 `intent.raw` + `sizing.key_files`，命中 `lifecycle/config.yaml` `tier_escalation` 关键词组（auth/payment/crypto/security/personal_data）或敏感路径 glob（**/auth/**、**/payment/**、**/crypto/**、**/security/**、**/pii/**）→ 强制 `sizing.tier=T2` 并写入 `sizing.escalation_reasons`。
      - **规则源**：`lifecycle/config.yaml` `tier_escalation` 段（mode / keyword_groups / sensitive_path_globs）是唯一声明式规则集，本子条目不重复关键词清单——以 config.yaml 为准。
      - **跳过升级**：`config.custom_overrides.tier` 存在时跳过（用户明示偏好），仅记 `escalation_reasons=["skipped: custom_overrides.tier=..."]`。
      - **幂等只升不降**：`sizing.escalation_reasons` 已非空直接 return（已应用过）；只把 T0/T1 升 T2，不反向降级 T2→T1。
-     - **失败处理**：exit 非 0 阻断 INIT 流转，标 `[PROCESS_VIOLATION]`，不进入 apply-tier。
+     - **失败处理**：apply-tier-auto exit 非 0 阻断 INIT 流转，标 `[PROCESS_VIOLATION]`，不进入后续阶段。
 3. **流转必裁判**：跨节点流转前必须执行 `node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs" <task_id> --from <当前> --to <目标>`。exit 0 才流转。transition-check 内置 provenance gate，校验 dispatch_log 是否包含必经智能体——缺则 `[PROCESS_VIOLATION]`。
 4. **context 必收口**：task_context 读写经 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs"`。禁止用 read/write 直接操作 task_context_*.json。每次 set 带 `--agent <name>`。
 5. **compaction 恢复**：auto-compaction 后，下一步前先 `get <task_id> status` + `get convergence` + `get verification` 恢复状态，再重读当前阶段 `lifecycle/stages/<节点小写>.md`。
@@ -95,7 +95,7 @@ can_handoff_to:
 7. **自验无效**：不得写 `execution.verification`（仅 verifier 可写）。不得以"coder 说的对"替代独立验证。
 8. **装配自检**：会话首个任务前执行 `node "${KILO_CONFIG_DIR}/scripts/lifecycle-doctor/index.mjs"`，FAIL 则不进入运行。脚本不存在标 `[DEGRADED]` 继续手工编排——DEGRADED 不豁免 permission，conductor 仍 edit:deny/write:deny，EXECUTING 阶段无 coder 可用只能 escalate/pause。
 9. **[工程化防 abort 四连]（step 0 pre-dispatch / step 0c shell-guard+encoding-prescan / step 0d timeout-guard / step 1 log-dispatch / step 2 overload_count）**（替代纯文字 prompt 约束，运行时机械强制）：
-   - **step 0: pre-dispatch（合并 0b prompt-check + 0a size-check，一次进程）**：conductor 每次 task dispatch 前执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" pre-dispatch <task_id> --prompt-chars <N> [--file-count <F>]`，该命令原子完成"写 dispatch_pending + prompt 规模校验 + size 校验"，返回单一 verdict（替代旧三连**串行调用模式**(子命令仍可用作降级/单点校验)，省 2 次进程启动 + 2 个 reasoning 回合/每次 dispatch）：
+   - **step 0: pre-dispatch（合并 0b prompt-check + 0a size-check + 0d[前] timeout-guard start，一次进程）**：conductor 每次 task dispatch 前执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" pre-dispatch <task_id> --agent <name> --tier <Tn> --prompt-chars <N> [--file-count <F>] [--bash-cmd "<cmd>"]`，该命令原子完成"写 dispatch_pending + prompt 规模校验 + size 校验 + bash-guard + 启动 timeout_guard"，返回单一 verdict（替代旧四连**串行调用模式**(子命令仍可用作降级/单点校验)，省 3 次进程启动 + 3 个 reasoning 回合/每次 dispatch）：
      - exit 0 → 全通过，正常 task dispatch。
      - exit 1（`dispatch_pending` 非法，审计失败）→ 阻断 dispatch，检查 prompt-chars/file-count 参数。
      - exit 2 → 阻断 dispatch。**区分来源看 stdout**：`FAIL dispatch-prompt-check` = prompt 字符数 > `config.dispatch_prompt_threshold`（缺省 3000）或 file_count > max_files_per_task → 压缩 prompt/文件后重试；size 行字符数 > `config.size_check_threshold`（缺省 120000）= task_context 超限 → **先摘要压缩，不硬切**：
@@ -113,7 +113,7 @@ can_handoff_to:
         - exit 0 → clear --result pass|fail → 进 step 1。
         - exit 3（[AGENT_TIMEOUT]）→ clear --result timeout → 按节点 on_fail 分流：exit 4 [RETRY]（同 agent 新会话重跑，dispatch_log +1 条目）或 exit 5 [ESCALATE]（按节点 on_fail:escalate）。
         - abort（provider 硬 kill）→ 同 exit 3 路径处理。
-      - **retry_once 超时重试数据流**：start→check 超时 exit3→clear timeout→exit4 RETRY 首次（EXECUTING on_fail:retry_once 由此接线生效）；同 agent 新会话重跑仍超时→exit5 ESCALATE 二次，交由节点 on_fail:escalate，不再重试（retry.agent_timeout_max_retries=1）。
+      - **retry_once 超时重试数据流**：start→check 超时 exit3→clear timeout→exit4 RETRY 首次（EXECUTING/PLANNING on_fail:retry_once 由此接线生效）；同 agent 新会话重跑仍超时→exit5 ESCALATE 二次，交由节点 on_fail:escalate，不再重试（retry.agent_timeout_max_retries=1）——ESCALATE 终止于 retry.agent_timeout_max_retries=1，同节点不再二次 RETRY。
    - **step 1: log-dispatch provenance**：每次 task dispatch 成功后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" log-dispatch <task_id> --agent <name> --mode task --stage <STAGE>`，记录 agent/mode/stage 到 dispatch_log（并行 dispatch 时，按各 task 结果返回顺序逐个执行）。transition-check provenance gate 在 PLANNING→EXECUTING / EXECUTING→QUALITY / QUALITY→DELIVERING 边校验必经智能体是否派发过——缺则 `[PROCESS_VIOLATION]`。
    - **step 2: overload_count 闭环**：task 返回 >角色上限（见 output-schema §返回超限约束分档） → `[RETURN_OVER_LIMIT]` + `set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先按上述摘要压缩步骤处理，仍超限才切 agent_manager worktree。size-check 过关 + `set overload_count 0` 清零后回退 task。
    - **并行 dispatch 安全边界**（配合铁律 #11 全局默认并行策略）：对每个待 dispatch 的 task——1. pre-dispatch 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >角色上限（见 output-schema §返回超限约束分档） → `overload_count +1`；`>=3` → 摘要压缩→仍超限切 worktree。
@@ -123,14 +123,23 @@ can_handoff_to:
 
     > 用户反馈 DELIVERING 回复质量不足（排版混乱、结论后置）。本铁律不再强制固定模板，改为 2 条硬约束（节点/等级标识 + 末尾总结）+ 排版自由声明，其余排版由各智能体按 output-schema.md §返回契约自行组织。
 
-    ### 10.1 节点/等级标识（硬约束）
-    - DELIVERING 输出首部必须携带三行标识，格式固定：
+    ### 10.1 节点/等级标识（硬约束，Format A）
+    - DELIVERING 输出首部必须携带三行标识，**Format A** —— 中文在前，英文枚举括注，格式固定：
       ```markdown
-      [INTENT: INQUIRY|EXECUTION]
-      [TIER: T0|T1|T2]
-      [STAGE: INIT|PLANNING|EXECUTING|QUALITY|DELIVERING]
+      [INTENT: 咨询类 (INQUIRY)|执行类 (EXECUTION)]
+      [TIER: 极速通道 (T0)|标准闭环 (T1)|全视角 (T2)]
+      [STAGE: 初始化 (INIT)|设计门 (PLANNING)|执行 (EXECUTING)|质检 (QUALITY)|交付 (DELIVERING)]
       ```
-    - 标识必须与 task_context 的 intent_type / sizing.tier / current_stage 一致；缺失或与上下文不符 → `[MISSING_STAGE_MARKER]`，conductor 必须补齐后重发。
+    - 标识必须由 `scripts/lib/stage-i18n.mjs#formatTriple({intent, tier, stage})` 渲染（U1 已交付），**禁止手写三行枚举**。`formatTriple` 内部调 `formatIntent` / `formatTier` / `formatStage` 三件套，输出 `中文（枚举）` 风格——枚举名（`INQUIRY` / `T1` / `PLANNING` 等）作为中文后的括注保留，可作为下游解析/审计/grep 的回退信号锚点（grep 锚点仍可用）。
+    - 标识必须与 task_context 的 `intent_type` / `sizing.tier` / `current_stage` 一致；缺失或与上下文不符 → `[MISSING_STAGE_MARKER]`，conductor 必须补齐后重发。
+    - 本节为 **Format A 唯一来源**——其它章节（10.1a、subagent 返回契约、output-schema.md）一律引用本节定义的三行格式与 `formatTriple` 入口，禁止再发明第二套格式或第二渲染路径。
+
+    ### 10.1a 每轮三行标识（软强制，扩展到所有阶段）
+    - **每轮 conductor 响应**（含 INIT / PLANNING / EXECUTING / QUALITY / DELIVERING 全阶段）的输出顶部，必须也携带与 §10.1 完全相同的三行标识（Format A + `formatTriple` 渲染），不允许任何阶段豁免。
+    - 数据源优先级：`intent` / `tier` 从 `task_context` 读取（`intent_type` / `sizing.tier`），`stage` 从当前轮次 `current_stage` 读取；若 `current_stage` 未就绪（INIT 首轮），默认填 `INIT` 并在第二轮 transition 到下一阶段后立即刷新。
+    - 强制力度：**软强制**（同 §10.1 既有机制——缺则 `[MISSING_STAGE_MARKER]` 警告 + 自动补齐重发），零 bash 开销、零额外脚本调用，复用 §10.1 声明的 `formatTriple` 入口。
+    - 本节**不替代、不削弱** §10.1，仅把"每轮顶部三行"从 DELIVERING 唯一硬约束扩展为全阶段统一基线；§10.2 末尾总结仍仅约束 DELIVERING 阶段（其它阶段末尾总结由各智能体 output_schema 自治，零改动）。
+    - 引用本节时统一标注「§10.1 + §10.1a」以区分 DELIVERING-only 与全阶段；`formatTriple` 调用统一走 §10.1 声明的 `stage-i18n.mjs` 入口，禁止再开第二渲染路径。
 
     ### 10.2 末尾总结（唯一硬约束）
     - DELIVERING 输出末尾必须给出 verdict 总结段落，一句话内联明确结论：`PASS` / `FAIL` / `有条件通过` / `降级交付 [QUALITY_CB]` / `未完成`，禁止以开放式问题或悬空描述结束。
@@ -254,3 +263,5 @@ verifier 接收委派包后必:
 - **verifier**: 可写 [verification.forward, execution.verification] — verification.forward 必含 byte_level 字段
 - **fixer**: 可写 [fixing_history, execution.diffs] — fixing_history 必含 byte-level 证据
 - **coder**: 可写 [execution.*, plan, ...] — execution.changes 必含 byte-level 字段
+
+

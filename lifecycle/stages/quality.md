@@ -35,11 +35,13 @@ QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
 > v3 起：机械门先行 fail-fast + verify/review 同轮并行 + T1/T2 分档。下方"设计理念/伪代码"中的 verify -> review afterPass 串行语义被本节覆盖。
 
 **机械前置门（LLM hooks 之前，模型无关，fail-fast）**：
-1. `acceptance-check.mjs <task_id>` -> 机械跑 `acceptance_map[].verify_command`，exit code 硬门。
-2. `diff-boundary-check.mjs <task_id>` -> 机械防 SCOPE_CREEP/FORBIDDEN_TOUCH。
-3. `search-discipline-check.mjs <task_id>` -> 搜索纪律违规检测（Grep 无 include / pattern alternation>3 / 单次 Grep 命中>3KB / 业务仓库未优先图谱）。
-4. 任一 exit 2 -> 直接送修复角色（含 search-discipline，机械信号清晰，跳过本轮 LLM verify）-> 修复后重跑机械门。
-5. 全 exit 0（或 exit 1 无机械项回退 LLM）-> 进入 LLM hooks。
+1. **合并命令（H2，省 2 进程）**：`quality-gate.mjs <task_id>` 单进程顺序跑三门并聚合 exit（任一 FAIL exit 2，否则 exit 0；原 exit 1"建议性回退 LLM"合并为通过）。输出 `[quality-gate] === <name> ===` 段 + 末尾 SUMMARY 标明哪门 FAIL。
+2. 三门职责（quality-gate 内部 import 调用，单进程内串行；原脚本保留作单点降级/调试）：
+   - `acceptance-check.mjs <task_id>` -> 机械跑 `acceptance_map[].verify_command`，exit code 硬门。
+   - `diff-boundary-check.mjs <task_id>` -> 机械防 SCOPE_CREEP/FORBIDDEN_TOUCH。
+   - `search-discipline-check.mjs <task_id>` -> 搜索纪律违规检测（Grep 无 include / pattern alternation>3 / 单次 Grep 命中>3KB / 业务仓库未优先图谱）。
+3. 任一 exit 2 -> 直接送修复角色（含 search-discipline，机械信号清晰，跳过本轮 LLM verify）-> 修复后重跑质量门。
+4. 全 exit 0（或 exit 1 无机械项回退 LLM，由 quality-gate 合并为 exit 0）-> 进入 LLM hooks。
 
 **LLM hooks 并行（1 轮，非 verify->review 两轮串行）**：
 - verify hooks（正向验证角色；T2 加反向验证角色）+ review hooks（T2 审查角色）**同消息并行启动**，共享零输出硬门。视角隔离不变。
