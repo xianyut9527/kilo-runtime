@@ -111,7 +111,7 @@ can_handoff_to:
      - **pre-dispatch `--bash-cmd` 集成**：`node task-context.mjs pre-dispatch <task_id> --prompt-chars <N> --file-count <F> --bash-cmd "<cmd>"` 一步合并 step 0 + step 0c（bash-guard 子进程）。命中 exit 2 与 dispatch-prompt-check/size-check 任一 exit 2 都阻断 dispatch。
      - **反事故教训**：2026-08 在 culture-applet / kilo_config 项目连续发生 2 次编码侧事故（GBK mojibake + PS5.1 死循环）根因均为 subagent 未跑 scan-encoding/bash-guard。本步骤把已有工具接进机械门禁，禁止软规则口头提醒。
     - **step 0d: timeout-guard（dispatch 前后双段，铁律 #9 新增机械门禁）**
-      - **[前]** pre-dispatch 通过后、task dispatch 前 → `node "${KILO_CONFIG_DIR}/scripts/agent-timeout-guard.mjs" start <task_id> --agent <name> --tier <Tn> --dispatch-seq <seq>` → 记录 start_time + budget（agent_startup_s / stage_default_s / per_agent_s / per_tier_multiplier，见 lifecycle/config.yaml timeouts 段）。
+      - **[前]** timeout_guard start 已合并进 pre-dispatch（`--agent --tier` 触发，返回 effectiveSeq）；不再独立调 `agent-timeout-guard.mjs start`。
       - **[后] post-dispatch（合并 step 0d[后] check+clear + step 1 log-dispatch + step 2 overload_count 判定，一次进程）**：task 返回后执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" post-dispatch <task_id> --dispatch-seq <N> --result pass|fail|timeout --agent <name> --mode task --stage <STAGE>`，该命令原子完成"timeout_guard check + clear + log-dispatch provenance"。
         - exit 0 → 全通过（pass/fail 已清 + provenance 已记），正常继续。
         - exit 4 → `[RETRY]`（timeout 且计数 ≤ agent_timeout_max_retries，同 agent 新会话重跑，dispatch_log +1 条目）。

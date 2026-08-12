@@ -111,7 +111,7 @@ can_handoff_to:
 1. **diff ↔ 验收标准反向核对**：逐条反向扫描 diff 改动，凡无法映射到任一验收标准/plan.scheme_summary 的改动 → `[UNCOVERED_CHANGE]`
 2. **diff ↔ 设计门 DAG 反向映射**：diff 改动与 plan.task_dag 单元反向映射，超出 DAG 边/单元范围的改动 → `[SCOPE_CREEP]`
 3. **调试残留扫描**：console.log/debugger/print/TODO 临时逻辑/注释掉的代码等调试残留 → `[DEBUG_LEFTOVER]`
-4. **重复实现/局部补丁**：grep/glob 扫描本次改动模式在代码库的同类实现（UI 与非 UI 同等适用，不限于样式/布局/交互），命中 → `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]`
+4. **重复实现/局部补丁**：grep/glob 扫描本次改动模式在代码库的同类实现（UI 与非 UI 同等适用，不限于样式/布局/交互），命中 → `[LOCAL_PATCH]` / `[COPY_PASTE_FIX]`。对照 `coding-engineering.md` §反模式检测表逐项查（God object/散弹手术/深嵌套/长参数列/基本类型偏执/注释代偿/死代码/重复实现）
 5. **FAKE_CONTEXT 检测**：验收映射表/已读取文件清单等自验声明与 diff 实际改动不匹配（如声称验证但无对应文件改动/测试）→ `[FAKE_CONTEXT]`
 6. **forbidden_files 越界**：diff 触及 forbidden_files 列出的文件 → `[FORBIDDEN_TOUCH]`
 7. **流程合规**：强制流程日志完整性、状态信号合规（`DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`）
