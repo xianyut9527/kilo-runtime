@@ -23,9 +23,9 @@
 本文件只列锚点名称与规则来源，细则不重复写入。所有智能体必须遵守：
 
 1. **意图判定优先**：任何任务先按 `core.md` 判定「咨询类 / 执行类」。咨询类以信息为主输出（tier 决定流程深度，可含脚本/方案等辅助产物，M1 起 INQUIRY 直通：T0 跳过 EXECUTING/QUALITY，T1+ 经 PLANNING 后直通）；执行类以文件修改为主输出（tier-based 全流程）。intent 同时参与路由（M1 后）与产物形态标记（决定 DELIVERING 内容组织）。
-2. **执行类两阶段定级**：阶段 A 预估（决策树估 T0-T2）→ planner 设计门 → 阶段 B 校准（实际 unit DAG 复核）→ 强制流程日志（T0 = 2 节点(INIT→EXECUTING)；T1+ = 5 阶段(INIT→PLANNING→EXECUTING→QUALITY→DELIVERING)；T1=fast / T2=full）→ 修改性工具（来源：`workflow-core.md`）。
+2. **执行类两阶段定级**：阶段 A 预估（决策树估 T0-T2）→ planner 设计门 → 阶段 B 校准（实际 unit DAG 复核）→ 强制流程日志（T0 = 2 节点(INIT→EXECUTING)；T1+ = 5 阶段(INIT→PLANNING→EXECUTING→QUALITY→DELIVERING)；T1=fast / T2=full）→ 修改性工具（来源：`workflow-detail.md §A`）。
 3. ~~定级两阶段化~~：已并入锚点 2。
-4. **单元闭环**：T1+ 任务拆为可验证小单元，每单元独立引入 implementation 能力 → verification 能力 → repair 能力闭环（来源：`workflow-core.md`）。
+4. **单元闭环**：T1+ 任务拆为可验证小单元，每单元独立引入 implementation 能力 → verification 能力 → repair 能力闭环（来源：`workflow-detail.md §A`）。
 5. **验收必附映射表 + 已读取文件清单**：缺则 `[MISSING_ACCEPTANCE_MAP]` / `[FAKE_CONTEXT]` FAIL。
 6. **SCOPE_CREEP**：verification 能力 L2 反向核对 diff，命中即 FAIL。
 7. **自验无效**：智能体不得以自身验证替代 verifier 客观验证。
