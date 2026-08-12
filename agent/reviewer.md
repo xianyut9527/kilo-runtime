@@ -176,6 +176,7 @@ project_context:
 ```yaml
 status_signal: "PASS" | "CONDITIONAL_PASS" | "FAIL"
 verdict: "通过" | "有条件通过" | "不通过"
+review_result: "PASS" | "CONDITIONAL_PASS" | "FAIL"
 risk: "LOW" | "MEDIUM" | "HIGH"
 perspectives:
   security: "通过" | "问题" | "未涉及"

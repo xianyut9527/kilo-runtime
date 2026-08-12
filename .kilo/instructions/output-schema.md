@@ -278,7 +278,7 @@ evidence:
 
 ### 字段定义(8 元组)
 
-每条 evidence 必含 8 元组(transition-check 校验):
+每条 evidence 必含 3 必填字段(transition-check 机械门禁校验: cmd/exit/stdout_key)，byte_level 8 元组为扩展字段(可选增强，不替代 3 必填):
 
 ```json
 {

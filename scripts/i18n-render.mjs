@@ -11,7 +11,7 @@ const MAPS = { STAGE: STAGE_ZH, TIER: TIER_ZH, STATUS: STATUS_ZH, INTENT: INTENT
 
 const USAGE = `Usage: i18n-render <KEY>
        i18n-render --map <MAP> <KEY>
-       i18n-render --triple <INTENT> <TIER> <STAGE>
+       i18n-render --triple <TIER> <STAGE> [STATUS]
        i18n-render --stage <STAGE>
        i18n-render --tier <TIER>
        i18n-render --status <STATUS>
@@ -44,9 +44,9 @@ if (args[0] === '--all') {
 }
 
 if (args[0] === '--triple') {
-  const [i, t, s] = args.slice(1);
-  if (!i || !t || !s) die('--triple requires <INTENT> <TIER> <STAGE>');
-  process.stdout.write(formatTriple({ tier: t, intent: i, stage: s }) + '\n');
+  const [t, s, st] = args.slice(1);
+  if (!t || !s) die('--triple requires <TIER> <STAGE> [STATUS]');
+  process.stdout.write(formatTriple({ tier: t, stage: s, status: st }) + '\n');
   process.exit(0);
 }
 

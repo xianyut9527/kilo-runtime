@@ -32,7 +32,7 @@
     },
     "coder": {
       "mode": "subagent",
-      "model": "hx/minimax-m3",
+      "model": "hx/deepseek-v4-flash",
       "prompt": "编码智能体。按方案实现代码、输出验收映射表+三件套。端到端闭环：读取→编码→测试→修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "verifier": {
@@ -52,7 +52,7 @@
     },
     "fixer": {
       "mode": "subagent",
-      "model": "hx/minimax-m3",
+      "model": "hx/deepseek-v4-flash",
       "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     }
   },

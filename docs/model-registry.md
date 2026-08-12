@@ -101,6 +101,17 @@ models:
 | planner/verifier | hx/glm-5.2 | 稳定性排序 1（最稳），规划/验证对稳定性要求高于编码专精 |
 | plan-reviewer/reviewer | hx/kimi-k2.6 | 多模态输入(image) + 强 reasoning，方案/代码审查需深度推理 |
 | reverse-auditor | hx/deepseek-v4-pro | 反向核对需最强推理，pro 档 reasoning ★★★★★ |
-| small_model | hx/MiniMax-M3 | economy 降级目标，轻量任务省成本 |
+| small_model | hx/deepseek-v4-flash-noreason | economy 降级目标，轻量任务省成本 |
+## Tier 级模型覆盖（model_overrides）
+
+> lifecycle/config.yaml 	ier_defaults[Tn].model_overrides 字段，由 pply-tier-auto 机械写入 	ask_context.config.model_overrides。conductor dispatch 时若该字段存在，覆盖 kilo.json 的 agent 模型绑定。优先级：config.model_overrides.<agent> > runtime_decision > kilo.json agent.<name>.model。
+
+| Tier | Agent | 覆盖模型 | 理由 |
+|------|-------|----------|------|
+| T1 | verifier | hx/deepseek-v4-flash | 保留 reasoning，比 glm-5.2 轻量；机械门托底 L2 风险 |
+| T2 | (无覆盖) | — | 保留 glm-5.2 全视角验证 |
+
+> 设计约束：T2 不覆盖（保留最稳定模型）；方案 B 用 deepseek-v4-flash（保留 reasoning），不用 flash-noreason（SCOPE_CREEP 漏报风险）。
+
 
 **改绑检查**：改任一 agent 模型前，对照本表理由列评估是否仍成立；模型切换 commit 须在 message 说明新理由，避免无记录回摆。

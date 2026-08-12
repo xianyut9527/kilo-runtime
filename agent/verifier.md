@@ -158,7 +158,7 @@ verification_commands: [{ cmd, expected_exit_code }]
 
 ## 输出接口（完工即写 task_context.verification.forward）
 
-> **完工即写硬门**：完工返回前必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> --batch - --agent verifier` 写入 verification.forward（含 verdict/l1/l2/l3/evidence/issues + execution.verification）；byte_level 证据必须随 evidence 数组写入（file/line/before/after/SHA256）；未写即返回 → conductor 标 [WRITE_MISSING] 重派；返回消息只留指针与结论
+> **完工即写硬门**：完工返回前必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> --batch - --agent verifier` 写入 verification.forward（含 verdict/l1/l2/l3/evidence/issues + execution.verification）；evidence 数组每条必含 cmd/exit/stdout_key（transition-check 机械门禁校验），byte_level 8 元组作为扩展字段（可选增强）；未写即返回 → conductor 标 [WRITE_MISSING] 重派；返回消息只留指针与结论
 
 ```yaml
 status_signal: "PASS" | "FAIL" | "VERIFY_PENDING"
@@ -167,10 +167,9 @@ l1_result: { pass: bool, details: "string" }
 l2_result: { pass: bool, details: "string" }
 l3_result: { pass: bool, details: "string" }
 evidence:
-  - command: "string"
-    exit_code: int
-    stdout_snippet: "string"
-    stderr_snippet: "string"
+  - cmd: "string"
+    exit: int
+    stdout_key: "string"
 issues:
   - severity: "blocker" | "warning"
     tag: "MISSING" | "UNVERIFIED" | "PARTIAL_IMPLEMENTATION" | "REGRESSION" | "SCOPE_CREEP" | "ENCODING_VIOLATION" | "PLAN_REVIEW_MISS" | "PROCESS_VIOLATION" | "LOCAL_PATCH" | "COPY_PASTE_FIX" | "TRUST_TRANSFER"

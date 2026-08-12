@@ -90,7 +90,8 @@ function effectiveIntentType(ctx) {
 // ============================================================
 
 // 1. T0_ELIGIBILITY（WARN）：T0 任务意图是否暗示业务逻辑
-function checkT0Eligibility(ctx) {
+// 导出供 transition-check.mjs 复用（INIT 出口 T0 定级合理性校验）
+export function checkT0Eligibility(ctx) {
   const tier = ctx.sizing?.tier;
   if (tier !== 'T0') {
     return { check: 'T0_ELIGIBILITY', status: 'PASS', detail: `tier=${tier || '(空)'}，跳过`, remediation: '(无)' };

@@ -70,3 +70,5 @@ _test_target_orig/
 
 # pytest 缓存
 .pytest_cache/
+# 编译时预生成静态派生数据（build-derivations.mjs 产物，不入版本库；缺失时 task-context.mjs 透明回退 cachedDerive）
+scripts/lib/.generated/

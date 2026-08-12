@@ -86,7 +86,7 @@ export const ERROR_CODES = {
   },
   WRITE_MISSING: {
     code: 'WRITE_MISSING',
-    msg: 'agent 返回时未落盘 task_context.execution（diffs/changes/acceptance_map/risks/encoding_scan 全空）',
+    msg: 'agent 返回时未落盘 task_context 产物（execution.diffs/changes/acceptance_map 或 verification.forward 等，按角色 write 契约）',
     see: 'agent/coder.md §完工即写硬门',
   },
   RECOVERY_RETRY_EXHAUSTED: {

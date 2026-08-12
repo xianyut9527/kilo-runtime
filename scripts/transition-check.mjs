@@ -47,6 +47,7 @@ import { getStageRequiredRoles, isConditionalRole, hasRequirementSpread, hasSpre
 import { cachedDerive } from './lib/derived-cache.mjs';
 import { verifyField } from './lib/byte-verify.mjs';
 import { ERROR_CODES, codeMsg } from './error-codes.mjs';
+import { checkT0Eligibility } from './delivery-audit.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
@@ -405,6 +406,11 @@ function main() {
     die(1, `[PROCESS_VIOLATION] stage mismatch: transition claims ${FROM} -> ${TO}, but task_context.current_stage="${actualCurrentStage}"。必须先经 transition-check 逐步流转，不得跳跃。`);
   }
 
+  // INIT 只能从 START 进入：current_stage 已非 START（已流转过）→ 拒绝重复 INIT 空转直通
+  if (FROM === 'INIT' && actualCurrentStage && actualCurrentStage !== 'START') {
+    die(1, `[PROCESS_VIOLATION] INIT 只能从 START 进入，但 current_stage="${actualCurrentStage}"（已流转过）。禁止重复 INIT 空转直通。`);
+  }
+
   // 关键字段缺失硬门（在求值 when 之前拒绝，给出明确错误）
   if (FROM === 'INIT') {
     if (vars.intent_type !== 'INQUIRY' && vars.intent_type !== 'EXECUTION') {
@@ -412,6 +418,16 @@ function main() {
     }
     if (!['T0', 'T1', 'T2'].includes(vars.tier)) {
       die(1, `[PROCESS_VIOLATION] INIT 阶段未写入合法 tier（当前=${JSON.stringify(vars.tier)}）。必须执行 task-context.mjs set <task_id> sizing.tier '<T0|T1|T2>' --agent conductor`);
+    }
+  }
+  // T0 定级合理性校验：INIT 出口 tier=T0 时，intent.raw 命中逻辑指示词且无 custom_overrides.tier 覆盖 → 拒绝 T0 直通
+  if (FROM === 'INIT' && vars.tier === 'T0') {
+    const t0 = checkT0Eligibility(ctx);
+    if (t0.status === 'WARN') {
+      const override = ctx.custom_overrides?.tier;
+      if (override !== 'T0') {
+        die(1, `[PROCESS_VIOLATION] T0 定级不合理：${t0.detail}。建议升 T1 或显式声明 custom_overrides.tier=T0 覆盖。`);
+      }
     }
   }
   if (FROM === 'QUALITY') {
@@ -533,6 +549,32 @@ function main() {
     const exec = ctx.execution || {};
     if (!exec.diffs && !exec.changes && !exec.acceptance_map) {
       die(1, codeMsg('MISSING_EXECUTION_PRODUCT', `${FROM} -> ${TO}: execution 产物全空（coder 未产出 diffs/changes/acceptance_map，禁止空转流转）`));
+    }
+  }
+  // INIT→DELIVERING 直通边产物门禁：
+  //   INQUIRY 直通豁免——conductor 内建纯问答，分析结论直接输出给用户，不写
+  //   execution/plan/verification 产物字段（WRITE_MATRIX 限制 conductor 不能写这些字段）。
+  //   防伪造已由上方 T0_ELIGIBILITY 逻辑词检测覆盖（含逻辑词的 intent.raw 被拒），产物门禁多余且有害。
+  //   EXECUTION 直通保留产物门禁——T0 极速通道 conductor 会委派 coder 产出 execution 产物，
+  //   无产物即空转，必须拒绝。
+  if (FROM === 'INIT' && TO === 'DELIVERING' && vars.intent_type === 'EXECUTION') {
+    const exec = ctx.execution || {};
+    const hasExec = !!(exec.diffs || exec.changes || exec.acceptance_map);
+    // 对象有非空 key（排除值为 null/undefined 的 key），数组非空
+    const hasNonEmptyKey = (o) => o && typeof o === 'object' && !Array.isArray(o)
+      && Object.keys(o).some((k) => o[k] != null);
+    const hasPlan = hasNonEmptyKey(ctx.plan);
+    // verification 初始为 {"forward":null}，Object.keys().length>0 会误判为有产物；
+    // 必须校验 verification.forward 本身非空（对象有非空 key 或数组非空）
+    const hasVer = (() => {
+      const f = ctx.verification && ctx.verification.forward;
+      if (f == null) return false;
+      if (Array.isArray(f)) return f.length > 0;
+      if (typeof f === 'object') return Object.keys(f).some((k) => f[k] != null);
+      return true;
+    })();
+    if (!hasExec && !hasPlan && !hasVer) {
+      die(1, codeMsg('MISSING_EXECUTION_PRODUCT', `INIT -> DELIVERING: EXECUTION 直通无可交付产物（execution/plan/verification 全空）。EXECUTION T0 极速通道必须由 coder 产出 execution 产物，禁止空转。`));
     }
   }
   // plan / verification.forward 校验：T1/T2 非 CB 出口
