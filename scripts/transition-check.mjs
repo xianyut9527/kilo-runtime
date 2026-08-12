@@ -407,7 +407,7 @@ function main() {
   }
 
   // INIT 只能从 START 进入：current_stage 已非 START（已流转过）→ 拒绝重复 INIT 空转直通
-  if (FROM === 'INIT' && actualCurrentStage && actualCurrentStage !== 'START') {
+  if (TO === 'INIT' && actualCurrentStage && actualCurrentStage !== 'START') {
     die(1, `[PROCESS_VIOLATION] INIT 只能从 START 进入，但 current_stage="${actualCurrentStage}"（已流转过）。禁止重复 INIT 空转直通。`);
   }
 
@@ -423,7 +423,7 @@ function main() {
   // T0 定级合理性校验：INIT 出口 tier=T0 时，intent.raw 命中逻辑指示词且无 custom_overrides.tier 覆盖 → 拒绝 T0 直通
   if (FROM === 'INIT' && vars.tier === 'T0') {
     const t0 = checkT0Eligibility(ctx);
-    if (t0.status === 'WARN') {
+    if (t0.ok === false || t0.status === 'WARN') {
       const override = ctx.custom_overrides?.tier;
       if (override !== 'T0') {
         die(1, `[PROCESS_VIOLATION] T0 定级不合理：${t0.detail}。建议升 T1 或显式声明 custom_overrides.tier=T0 覆盖。`);

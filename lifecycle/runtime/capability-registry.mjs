@@ -11,10 +11,13 @@
 // `listVisionModelIdsFromMap` / `listAllModelIdsFromMap` / `getLoadedModels`
 // 用于 Fix #4 去重 readFileSync（callers 拿到 parsed cfg 后可一次性复用）。
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { cachedDerive } from '../../scripts/lib/derived-cache.mjs';
 
-const KILO_JSON_PATH = resolve(process.cwd(), 'kilo.json');
+// Fix: use __dirname (kilo_config repo root) instead of process.cwd() (business project)
+const _CR_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'); // lifecycle/runtime/ -> repo root
+const KILO_JSON_PATH = resolve(_CR_DIR, 'kilo.json');
 
 /**
  * 加载模型表（自带 readFileSync）。内部 key = `<alias>/<modelId>`，

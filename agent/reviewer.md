@@ -156,6 +156,23 @@ project_context:
 - **Important**：架构违背、回归风险、安全编码模式缺失 → 交付前修复
 - **Minor**：命名风格、注释、格式、非阻塞优化 → 记录备忘
 
+## 判定准则（理论风险 vs 可复现 bug）
+
+> 区分"理论可能但实际不触发"与"确定 bug"——避免把不触发的竞态/边界当 REQUEST_CHANGES 触发无价值 fixer 往返。
+
+- **PASS**：改动正确实现需求，无确定 bug，无理论风险。
+- **CONDITIONAL_PASS**：改动正确，存在理论风险但**实际场景不触发**（需给出不触发论证：如单选 + 人机节流 + 网络往返下的竞态不会发生）。记录风险到 findings（severity: Minor），**不触发 fixer**，approval=APPROVE。
+- **REQUEST_CHANGES（FAIL）**：改动有**确定 bug**——能给出触发场景 + 复现步骤；或**安全问题**；或 Critical/Important 反馈分级命中项。approval=REQUEST_CHANGES，触发 fixer。
+
+### 判定原则
+
+- 理论风险 + 实际不触发 = CONDITIONAL_PASS（写风险列表，不触发 fixer）
+- 理论风险 + 可复现 = REQUEST_CHANGES（触发 fixer）
+- 无风险 + 正确 = PASS
+
+> 反例：reviewer 提出"异步竞态"但单选 + 人机节流（≥200ms）+ 网络往返（<100ms）下不发生 → CONDITIONAL_PASS，不是 REQUEST_CHANGES。
+> 正例：reviewer 提出"find 可能返回 undefined 导致 data[0] 抛错"且能给出空数组复现步骤 → REQUEST_CHANGES。
+
 ## 两阶段审查（T1+ 统一 full）
 
 **第一阶段：spec 合规审查**
@@ -191,6 +208,11 @@ findings:
     suggestion: "string"
     evidence: "string"
 approval: "APPROVE" | "REQUEST_CHANGES"
+
+# 约束（判定准则 §强制）：
+#   PASS / CONDITIONAL_PASS → approval 必须 APPROVE（不触发 fixer）
+#   FAIL                  → approval 必须 REQUEST_CHANGES（触发 fixer）
+#   矛盾组合（CONDITIONAL_PASS + REQUEST_CHANGES）= schema 违规，禁止输出
 ```
 
 ## 返回契约（防主会话 context 撑爆）

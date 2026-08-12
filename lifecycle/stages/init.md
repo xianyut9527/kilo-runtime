@@ -28,11 +28,12 @@ token_budget: 6000
 
 ### 2. 任务定级（INQUIRY 默认 T1，EXECUTION 按 T0/T1/T2）
 
-按 `workflow-core.md` 决策树执行：
+按 `workflow-detail.md §A.4` 决策树执行：
 
 ```
 T0: 仅无逻辑性修改（文案/注释/小样式/格式/命名/删除） / 单文件 / 无跨模块影响 / 无测试/类型检查需求
      → 第一硬门：涉及任何逻辑性修改 → 立即禁止 T0，最低 T1
+     → 机械兜底：scripts/delivery-audit.mjs#checkT0Eligibility 扫描 intent.raw 逻辑指示词 + sizing.key_files 逻辑路径 glob，命中即 WARN 阻断 T0 直通（transition-check.mjs INIT 出口校验）
      → 直达执行，无设计门，无审查
 
 T1: 1-5 文件 / 单模块 / 有明确验收标准 / 无扩散触发词 — 普通任务默认档
@@ -78,7 +79,7 @@ quality_gate:
 1. **task_context 强制初始化**：进入 INIT 前必须先执行 `node scripts/task-context.mjs init <task_id>`。未初始化直接流转 → `[PROCESS_VIOLATION]`。
 2. **流转必裁判**：INIT → 下一节点前必须执行 `node scripts/transition-check.mjs <task_id> --from INIT --to <NEXT>`，exit 0 才允许流转。
 3. **显式输出判定结论**：输出顶部必须标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
-4. **强制写入 intent_type + tier**：判定完成后必须执行 `node scripts/task-context.mjs set <task_id> intent.intent_type '<INQUIRY|EXECUTION>' --agent conductor` 和 `node scripts/task-context.mjs set <task_id> sizing.tier '<T0|T1|T2>' --agent conductor`。未写入合法值时，transition-check.mjs 将拒绝流转。
+4. **强制写入 intent_type + tier**：判定完成后必须执行 `node scripts/task-context.mjs set <task_id> intent.intent_type '<INQUIRY|EXECUTION>' --agent conductor` 和 `node scripts/task-context.mjs set <task_id> sizing.tier '<T0|T1|T2>' --agent conductor`。未写入合法值时，transition-check.mjs 将拒绝流转；intent.raw 为空时 checkT0Eligibility 机械门无法判定逻辑性修改，T0 直通将被阻断。
 5. **SIZING 机械应用 config**：定级后必须执行 `node scripts/task-context.mjs apply-tier-auto <task_id> <Tn> --agent conductor`，从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。禁止手工 `set config.agents.*`。
 
 ## 降级处理

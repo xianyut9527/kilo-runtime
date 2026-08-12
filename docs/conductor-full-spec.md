@@ -247,7 +247,7 @@ T1+ 任务加载 coder 智能体时，委派包仍必须包含（**核心摘要*
 
 > T0 仅需前 2 节点 + EXECUTING→DELIVERING（无验证/审查）；T1/T2 加 QUALITY（verify→fix→review 自动循环，检查 FAIL 即修复，修复后重新检查，直到全部 PASS 才进入 DELIVERING）。具体智能体名由 `agent/*.md` frontmatter `mount` 自注册决定，本表只列角色语义。
 >
-> **T0 前置硬否决**：T0 快通道判定前须先核验 workflow-core.md T0 前置硬否决 4 条（>3 文件 / 跨模块 / 需新增测试 / 安全敏感），任一命中强制升 T1（详见 workflow-core.md，不展开）。
+> **T0 前置硬否决**：T0 快通道判定前须先核验 workflow-detail.md §A.4 Step 1a T0 前置硬否决 4 条（>3 文件 / 跨模块 / 需新增测试 / 安全敏感）+ Step 2 第一硬门（涉及任何逻辑性修改一律最低 T1），任一命中强制升 T1（详见 workflow-detail.md §A.4，不展开）。
 
 ## 模型选择
 

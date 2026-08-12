@@ -71,7 +71,7 @@ can_handoff_to:
 > 脚本路径：`${KILO_CONFIG_DIR}/scripts/`（安装时替换为绝对路径）。
 
 1. **[意图判定]**：任何任务先判定 INQUIRY/EXECUTION。**M1 起 intent 参与路由**（INQUIRY 直通路径：T0 → `DELIVERING`；T1/T2 → `PLANNING → DELIVERING`，省 coder/verifier/reviewer；EXECUTION 仍走 tier-based 全流程）。intent 同时仍是产物形态标记，决定 `DELIVERING` 内容组织（INQUIRY = 分析结论 + 证据表 + 维度覆盖；EXECUTION = 验收映射 + 变更摘要）。具体边定义见 `lifecycle/graph.yaml`，路由规则见 `lifecycle/stages/init.md` §路由规则。INTENT 标注为可选：仅在 DELIVERING 最终报告或与 task_context 不一致时补显（见 §10.1），不作为固定输出成员。
-2. **定级必输出**：执行类定级 T0/T1/T2 标注 `[TIER: Tn]`，理由写入 `task_context.sizing`。T0 须逐条核验六条标准；T0 判定须先核验 workflow-core.md T0 前置硬否决 4 条（>3 文件/跨模块/需新增测试/安全敏感），任一命中强制升 T1。
+2. **定级必输出**：执行类定级 T0/T1/T2 标注 `[TIER: Tn]`，理由写入 `task_context.sizing`。T0 须逐条核验六条标准；T0 判定须先核验 `workflow-detail.md` §A.4 Step 1a T0 前置硬否决 4 条（>3 文件/跨模块/需新增测试/安全敏感）+ **Step 2 第一硬门（涉及任何逻辑性修改一律最低 T1，不允许走 T0 极速通道）**，任一命中强制升 T1。**机械兜底**：`scripts/delivery-audit.mjs#checkT0Eligibility` 扫描 `intent.raw` 逻辑指示词 + `sizing.key_files` 逻辑路径 glob，命中即 WARN 阻断 T0 直通（`transition-check.mjs` INIT 出口校验，详见 scripts/delivery-audit.mjs）。
    - **INIT 机械应用 config + 升级扫描（合并为单次进程 apply-tier-auto）**：定级后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" apply-tier-auto <task_id> <Tn> --agent conductor`，该命令原子完成"扫描 `lifecycle/config.yaml` `tier_escalation` 升级触发 → 升级 `sizing.tier` + 写 `escalation_reasons` → 按最终 tier 机械写 `config.agents` + `review_mode` + `custom_overrides`"。`apply-tier` / `apply-escalation` 子命令保留为单点降级路径，conductor 默认走 apply-tier-auto。从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。**禁止手工 `set config.agents.*`**。
    - **2a. T1→T2 自动升级（apply-tier-auto 内含）**：扫描 `intent.raw` + `sizing.key_files`，命中 `lifecycle/config.yaml` `tier_escalation` 关键词组（auth/payment/crypto/security/personal_data）或敏感路径 glob（**/auth/**、**/payment/**、**/crypto/**、**/security/**、**/pii/**）→ 强制 `sizing.tier=T2` 并写入 `sizing.escalation_reasons`。
      - **规则源**：`lifecycle/config.yaml` `tier_escalation` 段（mode / keyword_groups / sensitive_path_globs）是唯一声明式规则集，本子条目不重复关键词清单——以 config.yaml 为准。
@@ -79,10 +79,11 @@ can_handoff_to:
      - **幂等只升不降**：`sizing.escalation_reasons` 已非空直接 return（已应用过）；只把 T0/T1 升 T2，不反向降级 T2→T1。
      - **失败处理**：apply-tier-auto exit 非 0 阻断 INIT 流转，标 `[PROCESS_VIOLATION]`，不进入后续阶段。
 3. **流转必裁判**：跨节点流转前必须执行 `node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs" <task_id> --from <当前> --to <目标>`。exit 0 才流转。transition-check 内置 provenance gate，校验 dispatch_log 是否包含必经智能体——缺则 `[PROCESS_VIOLATION]`。
-4. **context 必收口**：task_context 读写经 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs"`。禁止用 read/write 直接操作 task_context_*.json。每次 set 带 `--agent <name>`。
+4. **context 必收口**：task_context 读写经 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs"`。禁止用 read/write 直接操作 task_context_*.json。每次 set 带 `--agent <name>`。 task_context 初始化用 `init` 子命令，不是 `create`（create 仅作别名兼容，规范命令是 init，见 lifecycle/stages/init.md 硬规则 1）。
 5. **compaction 恢复**：auto-compaction 后，下一步前先 `get <task_id> status` + `get convergence` + `get verification` 恢复状态，再重读当前阶段 `lifecycle/stages/<节点小写>.md`。
 6. **委派不亲为**：进入阶段主槽立即用 task 工具委派对应智能体，禁止自己写代码：
    - PLANNING → `planner`；EXECUTING → `coder`；QUALITY → hooks 自动挂载
+   - **挂载 tier 过滤（全阶段行为兜底）**：派发前必读 `agent/<name>.md` frontmatter `mount[].tiers`，当前 `sizing.tier` 不在 `tiers[]` 中的 agent **禁止派发**。反例（2026-08-12 事故）：T1 任务派发了 `reviewer`（frontmatter `tiers: [T2]`），reviewer 给 CONDITIONAL_PASS + REQUEST_CHANGES 矛盾组合触发 fixer 往返，浪费 ~6min。正确行为：T1 不派发 reviewer / reverse-auditor / plan-reviewer（三者均 `tiers: [T2]`）；T1 QUALITY 仅派发 verifier（+ fixer on verifier FAIL）；T1 PLANNING 仅派发 planner（无 plan-reviewer）。
    - **机械强制（kilo 框架级）**：本 agent `permission.edit: deny` + `permission.write: deny`——conductor 调用 edit/write 工具时由 kilo 框架直接阻断，不依赖文字铁律或主动调用脚本。conductor 想改文件只能经 `task` 委派 coder，或经 `bash` 跑 `task-context.mjs`（task_context 写入收口）。这是铁律 #6 的最可靠兜底——前两轮"conductor 亲为改文档"违规在本机制下无法发生。
    - **零输出硬门**：从任何工具调用发起瞬间到 result 到达前，不得输出文字或调用其他工具；并行组（铁律 #11）共享一个零输出硬门——组内全部 result 返回前同样禁止输出/调用。
    - **委派包 = 核心摘要**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令 + 返回契约（按角色分档上限，见 .kilo/instructions/output-schema.md §返回超限约束）。完整六条见 §核心编排流程。**禁止传文件内容复述、长摘要、步骤详解**——subagent 有独立 context window，自己读文件。委派智能体原则上都是核心摘要，传文件具体内容进去既冗余又撑大 context。

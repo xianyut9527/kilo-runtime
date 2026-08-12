@@ -38,8 +38,11 @@ if (!agent) {
   process.exit(3);
 }
 
-// ---- 阶段1：lifecycle-doctor（--quiet 只输出 FAIL 项）----
-const doctor = spawnSync(process.execPath, [DOCTOR, '--quiet'], {
+// ---- 阶段1：lifecycle-doctor（--quiet --fast：指纹缓存命中跳过全量检查，~75ms vs ~2200ms）----
+//   --fast 模式：缓存命中 → CACHE_HIT exit 0；缓存未命中（文件变更）→ 跑全量检查 + 写新指纹 + exit 0/1
+//   首次运行无缓存 → 全量检查（~2.2s）+ 写缓存；后续运行缓存命中 → ~75ms
+//   文件变更（agent/*.md / lifecycle/* / scripts/* / kilo.json）自动失效，重跑全量
+const doctor = spawnSync(process.execPath, [DOCTOR, '--quiet', '--fast'], {
   cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000,
 });
 if (doctor.error) {

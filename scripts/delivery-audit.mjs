@@ -30,14 +30,38 @@ import { fileURLToPath } from 'node:url';
 // ============================================================
 
 // 逻辑指示词：T0 任务应只处理机械/单文件改动；命中以下词 → 暗示业务逻辑，疑应升 T1
-const LOGIC_INDICATORS_ZH = [
+export const LOGIC_INDICATORS_ZH = [
   '如果', '当', '条件', '回显', '联动', '判断', '逻辑', '处理', '计算',
   '匹配', '校验', '验证', '转换', '映射', '调用', '请求', '接口', '方法', '函数',
+  '修改', '改', '增加', '删除', '新增', '实现', '重构', '优化', '修复', '调整',
+  '替换', '重写', '迁移', '对接', '接入', '配置', '参数', '状态', '流程', '规则',
+  '算法', '排序', '分页', '缓存', '路由', '事件', '监听', '触发', '异步', '事务',
+  '回滚', '异常', '错误', '分支', '循环', '递归', '遍历', '解析', '渲染', '提交',
+  '保存', '更新', '查询', '搜索', '过滤', '分组', '聚合', '统计', '导出', '导入',
+  '上传', '下载', '登录', '授权', '认证', '加密', '解密', '签名', '回调', '通知',
+  '推送', '消息', '队列', '调度', '定时', '任务', '限流', '重试', '幂等', '降级',
+  '熔断', '开关', '补丁', '热更新', '灰度',
 ];
-const LOGIC_INDICATORS_EN = [
+export const LOGIC_INDICATORS_EN = [
   'change', 'handler', 'method', 'function', 'if', 'when', 'condition',
   'compute', 'filter', 'match', 'validate', 'transform', 'request',
+  'modify', 'add', 'delete', 'create', 'implement', 'refactor', 'optimize', 'fix',
+  'adjust', 'replace', 'rewrite', 'migrate', 'integrate', 'config', 'param', 'state',
+  'flow', 'rule', 'algorithm', 'sort', 'paginate', 'cache', 'route', 'event',
+  'listen', 'trigger', 'async', 'await', 'transaction', 'rollback', 'exception', 'error',
+  'branch', 'loop', 'recursion', 'parse', 'render', 'submit', 'save', 'update',
+  'query', 'search', 'group', 'aggregate', 'auth', 'encrypt', 'decrypt', 'sign',
+  'callback', 'notify', 'push', 'queue', 'schedule', 'timer', 'task', 'retry',
+  'idempotent', 'degrade', 'circuit', 'switch',
 ];
+// key_files 路径启发：命中以下路径模式 → 暗示业务逻辑层，疑应升 T1
+export const LOGIC_PATH_GLOBS = [
+  '**/service/**', '**/controller/**', '**/handler/**', '**/logic/**', '**/biz/**',
+  '**/domain/**', '**/mapper/**', '**/dao/**', '**/repository/**', '**/middleware/**',
+  '**/interceptor/**', '**/filter/**', '**/listener/**', '**/scheduler/**', '**/job/**',
+  '**/task/**', '**/hook/**',
+];
+
 
 // 各 tier 必经派发角色（T0=极速，T1=fast，T2=full；取自 lifecycle/config.yaml 默认组合）
 const REQUIRED_DISPATCH_ROLES = {
@@ -94,11 +118,11 @@ function effectiveIntentType(ctx) {
 export function checkT0Eligibility(ctx) {
   const tier = ctx.sizing?.tier;
   if (tier !== 'T0') {
-    return { check: 'T0_ELIGIBILITY', status: 'PASS', detail: `tier=${tier || '(空)'}，跳过`, remediation: '(无)' };
+    return { check: 'T0_ELIGIBILITY', status: 'PASS', ok: true, detail: 'tier=' + (tier || '(空)') + '，跳过', remediation: '(无)' };
   }
   const raw = typeof ctx.intent?.raw === 'string' ? ctx.intent.raw : '';
   if (!raw) {
-    return { check: 'T0_ELIGIBILITY', status: 'PASS', detail: 'intent.raw 为空，跳过', remediation: '(无)' };
+    return { check: 'T0_ELIGIBILITY', status: 'WARN', ok: false, detail: 'intent.raw 为空，无法证明无逻辑性修改', remediation: '写入 intent.raw 或直接升 T1' };
   }
   const rawLower = raw.toLowerCase();
   const hits = [];
@@ -108,16 +132,67 @@ export function checkT0Eligibility(ctx) {
   for (const w of LOGIC_INDICATORS_EN) {
     if (rawLower.includes(w)) hits.push(w);
   }
+  // U2: key_files 路径启发——路径反斜杠规范化后测 glob，任一命中即 WARN
+  const keyFiles = Array.isArray(ctx.sizing?.key_files) ? ctx.sizing.key_files : [];
+  for (const f of keyFiles) {
+    if (typeof f !== 'string' || !f) continue;
+    const norm = f.replace(/\\/g, '/');
+    for (const g of LOGIC_PATH_GLOBS) {
+      if (globMatch(norm, g)) {
+        hits.push('path:' + g + ':' + f);
+      }
+    }
+  }
   if (hits.length >= 1) {
     return {
       check: 'T0_ELIGIBILITY',
       status: 'WARN',
-      detail: `intent.raw 命中逻辑指示词: [${hits.join(', ')}]`,
+      ok: false,
+      detail: 'intent.raw 命中逻辑指示词: [' + hits.join(', ') + ']',
       remediation: '建议升 T1 或显式声明 custom_overrides.tier=T0 覆盖',
     };
   }
-  return { check: 'T0_ELIGIBILITY', status: 'PASS', detail: 'intent.raw 未命中逻辑指示词', remediation: '(无)' };
+  return { check: 'T0_ELIGIBILITY', status: 'PASS', ok: true, detail: 'intent.raw 未命中逻辑指示词', remediation: '(无)' };
 }
+
+// 极简 glob 匹配：支持 ** 跨目录、* 单段、? 单字符；路径已规范化为正斜杠
+function globMatch(file, pattern) {
+  const f = file.replace(/\\/g, '/');
+  const p = pattern.replace(/\\/g, '/');
+  return matchSegs(f.split('/'), p.split('/'));
+}
+function matchSegs(fSegs, pSegs) {
+  if (pSegs.length === 0) return fSegs.length === 0;
+  const head = pSegs[0];
+  if (head === '**') {
+    for (let i = 0; i <= fSegs.length; i++) {
+      if (matchSegs(fSegs.slice(i), pSegs.slice(1))) return true;
+    }
+    return false;
+  }
+  if (fSegs.length === 0) return false;
+  if (!matchSeg(fSegs[0], head)) return false;
+  return matchSegs(fSegs.slice(1), pSegs.slice(1));
+}
+function matchSeg(seg, pat) {
+  let si = 0, pi = 0, star = -1, mark = 0;
+  while (si < seg.length) {
+    if (pi < pat.length && (pat[pi] === '?' || pat[pi] === seg[si])) {
+      si++; pi++;
+    } else if (pi < pat.length && pat[pi] === '*') {
+      star = pi++;
+      mark = si;
+    } else if (star !== -1) {
+      pi = star + 1;
+      si = ++mark;
+    } else {
+      return false;
+    }
+  }
+  while (pi < pat.length && pat[pi] === '*') pi++;
+  return pi === pat.length;
+}
+
 
 // 2. INTENT_FIELD_CONSISTENCY（FAIL/WARN）：intent.type vs intent.intent_type 字段一致性
 function checkIntentFieldConsistency(ctx) {
