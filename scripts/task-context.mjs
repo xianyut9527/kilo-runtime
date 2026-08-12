@@ -148,8 +148,27 @@ function deriveWriteMatrix() {
   return Object.freeze(matrix);
 }
 
-// 静态派生（agent/*.md frontmatter 运行期不变）走 mtime 缓存，避免每次脚本启动全量扫描
-const WRITE_MATRIX = cachedDerive('writeMatrix', listMdFiles(AGENT_DIR), deriveWriteMatrix);
+// 静态派生（agent/*.md frontmatter 运行期不变）走 mtime 缓存，避免每次脚本启动全量扫描。
+// 编译时预生成优化：优先 fs.readFileSync 探测 scripts/lib/.generated/derivations.json
+// （build-derivations.mjs 编译期生成），JSON.parse 取 writeMatrix；失败/缺失/损坏 →
+// 透明回退 cachedDerive 路径（fail-closed 语义不破坏）。禁止 ESM 顶层 import 加载静态
+// JSON——顶层 import 缺失即 MODULE_NOT_FOUND 不可回退。
+const GENERATED_DERIVATIONS_PATH = path.resolve(__dirname, 'lib', '.generated', 'derivations.json');
+function loadWriteMatrixFromGenerated() {
+  try {
+    const raw = fs.readFileSync(GENERATED_DERIVATIONS_PATH, 'utf8');
+    const data = JSON.parse(raw);
+    if (data && typeof data === 'object' && data.writeMatrix && typeof data.writeMatrix === 'object') {
+      return Object.freeze(data.writeMatrix);
+    }
+    return null;
+  } catch {
+    process.stderr.write(`[DERIVATIONS_FALLBACK] ${GENERATED_DERIVATIONS_PATH} 缺失/损坏，回退 cachedDerive 路径\n`);
+    return null;
+  }
+}
+const WRITE_MATRIX = loadWriteMatrixFromGenerated()
+  || cachedDerive('writeMatrix', listMdFiles(AGENT_DIR), deriveWriteMatrix);
 
 // 编译期校验：派生矩阵中 conductor 必须包含关键字段；如 frontmatter 被破坏则启动即报错，fail-closed
 const REQUIRED_CONDUCTOR_FIELDS = [
@@ -299,7 +318,7 @@ function cmdGet(taskId, dotPath) {
   process.exit(0);
 }
 
-function validateSingleWrite(agent, dotPath, value) {
+function validateSingleWrite(agent, dotPath, value, ctx) {
   // 硬门 3：--agent 必须存在且在矩阵名单
   if (!agent) {
     return { allowed: false, code: 2, message: 'Error: --agent <name> is required for set' };
@@ -334,7 +353,7 @@ function validateSingleWrite(agent, dotPath, value) {
     }
   }
 
-  // 枚举硬门：sizing.tier 必须合法，intent.intent_type 必须合法，current_stage 必须非空字符串
+  // 枚举硬门：sizing.tier 必须合法，intent.intent_type 必须合法，current_stage 禁止手工 set（只能 transition-check 自动写）
   if (dotPath === 'sizing.tier') {
     const validTiers = ['T0', 'T1', 'T2'];
     if (!validTiers.includes(value)) {
@@ -356,11 +375,40 @@ function validateSingleWrite(agent, dotPath, value) {
     }
   }
   if (dotPath === 'current_stage') {
-    if (typeof value !== 'string' || value.length === 0) {
+    // 根治"非法跳过阶段"漏洞：current_stage 只能由 transition-check 自动写（writeContext 直写），
+    // 禁止任何 set 命令（含 conductor）手工写，防止绕过 transition-check 的 provenance gate。
+    // init 子命令走 buildInitialContext + writeContext 直写 current_stage='START'，不经本硬门，不受影响。
+    return {
+      allowed: false,
+      code: 1,
+      message: `[PROCESS_VIOLATION] current_stage 只能由 transition-check 自动写入，禁止手工 set`,
+    };
+  }
+
+  // 硬门 4：dispatch_log 禁止 set 命令直接写（同 current_stage 模式）
+  // 根治"伪造 dispatch 记录绕过 provenance gate"漏洞：dispatch_log 只能经
+  // log-dispatch / post-dispatch / pre-dispatch 子命令写入（writeContext 直写，不经本硬门），
+  // 禁止任何 set 命令（含 conductor）手工写数组伪造派发记录。
+  if (pathAllowedBy(dotPath, 'dispatch_log')) {
+    return {
+      allowed: false,
+      code: 1,
+      message: '[PROCESS_VIOLATION] dispatch_log 只能经 log-dispatch/post-dispatch 子命令写入，禁止手工 set',
+    };
+  }
+
+  // 硬门 5：quality.verdict 流转校验 — 只能在 QUALITY 阶段（或 DELIVERING 收尾）写入
+  // 保留 conductor 可写（transition-check 正常 PASS 路径由 conductor set，
+  // CIRCUIT_BREAKER 由 transition-check 直写 writeContext 不经本硬门）。
+  // 但 set quality.verdict 时若 current_stage 非 QUALITY/DELIVERING 则拒绝，
+  // 防止伪造 QUALITY 通过。
+  if (pathAllowedBy(dotPath, 'quality.verdict')) {
+    const stage = ctx && ctx.current_stage;
+    if (stage !== 'QUALITY' && stage !== 'DELIVERING') {
       return {
         allowed: false,
         code: 1,
-        message: `[PROCESS_VIOLATION] invalid current_stage "${value}". current_stage must be a non-empty string`,
+        message: '[PROCESS_VIOLATION] quality.verdict 只能在 QUALITY 阶段写入（当前 current_stage=' + JSON.stringify(stage) + '）',
       };
     }
   }
@@ -433,11 +481,11 @@ function validateSingleWrite(agent, dotPath, value) {
 function cmdSet(taskId, dotPath, rawValue, agent) {
   assertValidTaskId(taskId);
   const value = parseValue(rawValue);
-  const result = validateSingleWrite(agent, dotPath, value);
+  const { ctx } = readContext(taskId);
+  const result = validateSingleWrite(agent, dotPath, value, ctx);
   if (!result.allowed) {
     die(result.code, result.message);
   }
-  const { ctx } = readContext(taskId);
   setByPath(ctx, dotPath, value);
   writeContext(taskId, ctx);
   process.stdout.write(`ok: set ${dotPath}\n`);
@@ -477,15 +525,16 @@ function cmdSetBatch(taskId, batchInput, agent) {
   const entries = Object.entries(batch);
 
   // 第一阶段：预校验所有路径，任一失败则整体拒绝（fail-closed，无部分写入）
+  // 单次读取 ctx 供流转校验（quality.verdict 需读 current_stage）
+  const { ctx } = readContext(taskId);
   for (const [dotPath, value] of entries) {
-    const result = validateSingleWrite(agent, dotPath, value);
+    const result = validateSingleWrite(agent, dotPath, value, ctx);
     if (!result.allowed) {
       die(result.code, `Batch rejected at "${dotPath}": ${result.message}`);
     }
   }
 
-  // 第二阶段：单次读取，全部写入内存，原子写回
-  const { ctx } = readContext(taskId);
+  // 第二阶段：全部写入内存，原子写回
   for (const [dotPath, value] of entries) {
     setByPath(ctx, dotPath, value);
   }
@@ -743,6 +792,8 @@ function cmdApplyTierAuto(taskId, declaredTier, agent, opts) {
   ctx.config = ctx.config || {};
   ctx.config.agents = agentsValue;
   ctx.config.review_mode = reviewMode;
+  // U3: 读 tier_defaults[Tn].model_overrides 写入 config.model_overrides（conductor dispatch 时按 agent 覆盖 model）
+  ctx.config.model_overrides = entry.model_overrides || {};
   if (ctx.sizing.tier !== finalTier) ctx.sizing.tier = finalTier;
 
   writeContext(taskId, ctx);

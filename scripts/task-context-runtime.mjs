@@ -123,16 +123,19 @@ function parseTierDefaults(text) {
   let curAgents = null;
   let curReviewMode = null;
   let curProvider = null;
+  let curModelOverrides = null;
 
   function flush() {
     if (curTier && section) {
       const entry = { agents: curAgents || {}, review_mode: curReviewMode || 'none' };
       if (curProvider) entry.provider = curProvider;
+      if (curModelOverrides) entry.model_overrides = curModelOverrides;
       result[section][curTier] = entry;
     }
     curAgents = null;
     curReviewMode = null;
     curProvider = null;
+    curModelOverrides = null;
   }
 
   for (let i = 0; i < lines.length; i++) {
@@ -154,6 +157,7 @@ function parseTierDefaults(text) {
       flush();
       curTier = tierM[1];
       inAgents = false;
+      curModelOverrides = null;
       continue;
     }
 
@@ -193,6 +197,21 @@ function parseTierDefaults(text) {
       inAgents = false;
       curReviewMode = rmM[1];
       continue;
+    }
+
+    // model_overrides (4-space indent, sibling of review_mode)
+    const moStart = line.match(/^    model_overrides\s*:\s*$/);
+    if (moStart) {
+      inAgents = false;
+      curModelOverrides = {};
+      continue;
+    }
+    if (curModelOverrides) {
+      // entry: "      verifier: \"hx/deepseek-v4-flash\"" (6-space indent)
+      const moM = line.match(/^      ([a-z_]+)\s*:\s*["']?([^"']+)["']?\s*$/);
+      if (moM) { curModelOverrides[moM[1]] = moM[2]; continue; }
+      // leaving model_overrides block (indent < 6)
+      if (!/^ {6,}/.test(line) && line.trim()) { curModelOverrides = null; }
     }
 
     // provider (T3 only, 4-space indent)

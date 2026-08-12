@@ -25,11 +25,13 @@ export function createCheckFn() {
 // 报告
 // ============================================================
 export function report(cf, verbose, opts) { finalizeStaticRun(cf, opts);
+  const quiet = opts && opts.quiet;
   let nPass = 0, nFail = 0, nWarn = 0;
   for (const r of cf.getResults()) {
     if (r.level === 'PASS') { nPass++; if (!verbose && r.detail === '') continue; }
     if (r.level === 'FAIL') nFail++;
     if (r.level === 'WARN') nWarn++;
+    if (quiet && r.level !== 'FAIL') continue;
     if (r.level === 'PASS' && !verbose) continue;
     process.stdout.write(`${r.level} ${r.name}${r.detail ? ' — ' + r.detail : ''}\n`);
   }

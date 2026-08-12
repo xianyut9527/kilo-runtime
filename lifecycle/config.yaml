@@ -54,9 +54,12 @@ tier_defaults:
 
   # T1 标准闭环
   # 恒定挂载：planner/coder/verifier/reviewer/fixer（拓扑可达即加载）
+  # model_overrides：T1 快通道 verifier 降级到 deepseek-v4-flash（保留 reasoning，不用 flash-noreason）
   T1:
     agents: {}
     review_mode: fast
+    model_overrides:
+      verifier: "hx/deepseek-v4-flash"
 
   # T2 全视角验证：正向+审查全开
   # 适合复杂任务：架构变更、跨多文件重构、安全敏感改动

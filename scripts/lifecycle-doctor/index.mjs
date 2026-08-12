@@ -45,6 +45,7 @@ const AGENT_DIR = path.join(ROOT, 'agent');
 const KILO_JSON_PATH = path.join(ROOT, 'kilo.json');
 
 const VERBOSE = process.argv.includes('--verbose');
+const QUIET = process.argv.includes('--quiet');
 const RUNTIME = process.argv.includes('--runtime');
 const SYNC_PROMPT = process.argv.includes('--sync');
 const FAST_MODE = process.argv.includes('--fast');
@@ -85,7 +86,7 @@ const cf = createCheckFn();
 const graphText = readText(GRAPH_PATH);
 if (!graphText) {
   cf.fail('input.graph', `无法读取 ${GRAPH_PATH}`);
-  report(cf, VERBOSE, { fullMode: FULL_MODE, fastMode: FAST_MODE, syncPrompt: SYNC_PROMPT, scriptsDir: SCRIPTS_DIR, root: ROOT });
+  report(cf, VERBOSE, { fullMode: FULL_MODE, fastMode: FAST_MODE, syncPrompt: SYNC_PROMPT, scriptsDir: SCRIPTS_DIR, root: ROOT, quiet: QUIET });
 }
 const graph = parseGraphFile(graphText);
 cf.pass('input.graph', `${graph.nodes.size} nodes / ${graph.edges.length} edges`);
@@ -117,6 +118,7 @@ const ctx = {
   cfgText,
   agents,
   VERBOSE,
+  QUIET,
   RUNTIME,
   SYNC_PROMPT,
   FAST_MODE,
@@ -149,6 +151,6 @@ runGuardWiring(ctx);
 await runI18nCoverage(ctx);
 
 // 收尾：缓存 / 同步 prompt / 报告
-report(cf, VERBOSE, { fullMode: FULL_MODE, fastMode: FAST_MODE, syncPrompt: SYNC_PROMPT, scriptsDir: SCRIPTS_DIR, root: ROOT });
+report(cf, VERBOSE, { fullMode: FULL_MODE, fastMode: FAST_MODE, syncPrompt: SYNC_PROMPT, scriptsDir: SCRIPTS_DIR, root: ROOT, quiet: QUIET });
 
 })().catch((e) => { console.error('[LIFECYCLE_DOCTOR_FATAL]', e); process.exit(2); });
