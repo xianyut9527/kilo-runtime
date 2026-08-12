@@ -257,7 +257,7 @@ agent 返回后、进入下游流程前，conductor 必须按以下规则自检�
 
 ```yaml
 evidence:
-  - cmd: "rg -n 'X 风格' agent/coding-engineering.md"
+  - cmd: "grep -n 'X 风格' agent/coding-engineering.md"
     exit: 1
     stdout_key: "" # 空输出 = 0 命中
   - cmd: "node scripts/lifecycle-doctor.mjs"
@@ -322,7 +322,7 @@ evidence:
 1. 必 Get-Content L 行精确索引
 2. 必 git diff --stat
 3. 必 SHA256 before/after 对比
-4. 必 rg 严格匹配
+4. 必 grep 严格匹配
 5. 必 ≥3 条 evidence 8 元组
 
 ### 7 反模式(禁)
@@ -376,7 +376,7 @@ evidence:
 
 - **\`[PS51_REGEX_RISK]\`**：bash 命令含 PowerShell 5.1 复杂 regex（\`-match/-notmatch\` 后 regex 含 \`(\` / \`[\` / \`{\` / \`(?\`）
   - 来源：\`scripts/bash-guard.mjs\` PS5.1 模式
-  - 处理：改用 \`glob\` / \`grep\` / \`rg\`（见 \`workflow-core.md\` §搜索四层阶梯纪律）
+  - 处理：改用 \`glob\` / \`grep\`（见 \`workflow-core.md\` §搜索四层阶梯纪律）
   - 验证：\`node scripts/bash-guard.mjs "<cmd>"\` 期望 exit 0
 
 - **\`[BASH_WRITE_BLOCKED]\`**：bash 命令含文件写入/修改意图（Set-Content / Add-Content / Out-File / git commit / rm -rf / npm publish 等）

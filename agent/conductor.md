@@ -106,7 +106,7 @@ can_handoff_to:
        2. 重测 pre-dispatch。exit 0 → 压缩成功，继续 task dispatch。
        3. 仍 exit 2 → `[CONTEXT_UNSAFE]` → 强制切 agent_manager worktree（独立 context，不占主会话）。
    - **step 0c: shell-guard + encoding-prescan（铁律 #9 新增机械门禁，2026-08-09 框架稳定化）**
-     - **shell-guard**：conductor 每次通过 `bash` 工具委派 subagent / 执行写操作命令时，必须先 `node "${KILO_CONFIG_DIR}/scripts/bash-guard.mjs" "<bash_cmd>"` 静态分析。命中（exit 2 + `[BASH_WRITE_BLOCKED]` 或 `[PS51_REGEX_RISK]`）→ 阻断，改用 `glob`/`grep`/`rg`/`Edit` 工具或 `task` 委派 coder（conductor 自身 `edit:deny`/`write:deny`）。
+     - **shell-guard**：conductor 每次通过 `bash` 工具委派 subagent / 执行写操作命令时，必须先 `node "${KILO_CONFIG_DIR}/scripts/bash-guard.mjs" "<bash_cmd>"` 静态分析。命中（exit 2 + `[BASH_WRITE_BLOCKED]` 或 `[PS51_REGEX_RISK]`）→ 阻断，改用 `glob`/`grep` 只读工具或 `task` 委派 coder（conductor 自身 `edit:deny`/`write:deny`）。
      - **encoding-prescan**：EXECUTING 阶段 coder 完工 / DELIVERING 阶段 conductor 交付前，必须 `node "${KILO_CONFIG_DIR}/scripts/scan-encoding.mjs"`，扫所有 `git diff --name-only HEAD` 改动的 .md/.mjs/.json。命中 BOM/U+FFFD/GBK 残留 → 阻断，标 `[ENCODING_DRIFT]`，coder 重做（PS5.1 必须 `Set-Content -Encoding UTF8` 或 Node `fs.writeFileSync` 显式指定 encoding）。
      - **pre-dispatch `--bash-cmd` 集成**：`node task-context.mjs pre-dispatch <task_id> --prompt-chars <N> --file-count <F> --bash-cmd "<cmd>"` 一步合并 step 0 + step 0c（bash-guard 子进程）。命中 exit 2 与 dispatch-prompt-check/size-check 任一 exit 2 都阻断 dispatch。
      - **反事故教训**：2026-08 在 culture-applet / kilo_config 项目连续发生 2 次编码侧事故（GBK mojibake + PS5.1 死循环）根因均为 subagent 未跑 scan-encoding/bash-guard。本步骤把已有工具接进机械门禁，禁止软规则口头提醒。
@@ -200,7 +200,7 @@ SOP:
 1. **`byte_level_required: true`** — 标记此委派需 byte-level 验证
 2. **`forbidden_files`** 列表 — 边界外文件禁止触碰
 3. **`return_contract.byte_level`** — 委派方要求 subagent 必填的 byte-level 字段(file/line/SHA256/cmd/exit)
-4. **verification_command** — 至少 1 条客观命令(Get-Content L 行 / git diff stat / rg 严格匹配)
+4. **verification_command** — 至少 1 条客观命令(Get-Content L 行 / git diff stat / grep 严格匹配)
 
 ### 委派包按角色差异化传递上下文
 
@@ -231,7 +231,7 @@ return_contract.byte_level: {
   before_sha: {"README.md": "abc..."},
   after_sha: {"README.md": "def..."}
 }
-verification_command: "rg 'GitNexus|gitnexus|context7' 6 files"
+verification_command: "grep -n 'GitNexus|gitnexus|context7' <files>"
 ```
 
 ### byte-level SOP 文档

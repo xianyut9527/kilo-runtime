@@ -18,11 +18,11 @@ description: byte-level 验证 SOP — 反 subagent 虚报(010/010b/011 三次�
 1. **Get-Content L 行精确索引**:对每个修改点,`(Get-Content f)[line-1]` 必返回预期内容
 2. **git diff stat**:`git diff --stat HEAD -- <files>` 显示实际变更字节
 3. **SHA256 对比**:改前/改后 `Get-FileHash` SHA256 必变化
-4. **rg 严格匹配**:`rg "关键词" <files>` 命中数与预期一致(0 命中/≥n 命中)
+4. **grep 严格匹配**:`grep -n "关键词" <files>` 命中数与预期一致(0 命中/≥n 命中)
 5. **二次读确认**:改后再读 L 行,确保实际落盘非缓存
 
 ## §3 反模式(禁止)
-- ❌ "rg 0 命中 → PASS"
+- ❌ "grep 0 命中 → PASS"
 - ❌ "doctor 57 PASS → PASS"
 - ❌ "verifier 已确认" 无 byte-level 证据
 - ❌ "改 3 文件" 实际未改(010 U1 虚报)
@@ -64,8 +64,8 @@ $after = (Get-FileHash <file>).Hash
 (Get-Content <file>)[<line-1>]
 # 5. git diff stat
 git diff --stat HEAD -- <file>
-# 6. rg 严格匹配
-rg "<keyword>" <file>
+# 6. grep 严格匹配
+grep -n "<keyword>" <file>
 ```
 
 ## §7 历史教训

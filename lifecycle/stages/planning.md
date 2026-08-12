@@ -61,7 +61,7 @@ PLANNING 阶段需在 `plan.task_dag.units[]` 每单元加：
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `existence_cmd` | string | L3 广搜命令字面量（rg / glob），用于验证"项目里是否已有同类" |
+| `existence_cmd` | string | L3 广搜命令字面量（`grep` / `glob`），用于验证"项目里是否已有同类" |
 | `existence_result` | object | **新增** — 记录 `existence_cmd` 实际跑过的结果，绝结 LLM 写假命令字面量。必含 3 子字段：`cmd`（实际跑的命令）、`stdout_key`（≤200 字关键输出）、`hit_count`（命中数） |
 | `falsifiable_test` | string | 关键前提 + 验证方法（< 30s 可证伪） |
 | `user_hints` | string[] | 用户 prompt 中含的常识暗示（grep "应该有/不是有/对吧"）；允许 `["(none)"]` 显式声明无 |
@@ -91,9 +91,9 @@ PLANNING 阶段需在 `plan.task_dag.units[]` 每单元加：
   "goal": "无权限时跳独立页面",
   "key_files": ["src/router/guards.ts"],
   "premise_audit": {
-    "existence_cmd": "rg -n 403 src/views --type vue",
+    "existence_cmd": "grep -rn 403 src/views/*.vue",
     "existence_result": {
-      "cmd": "rg -n 403 src/views --type vue",
+      "cmd": "grep -rn 403 src/views/*.vue",
       "stdout_key": "src/views/403/index.vue:1: <template>...</template>",
       "hit_count": 1
     },
