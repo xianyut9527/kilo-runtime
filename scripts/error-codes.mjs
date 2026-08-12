@@ -77,6 +77,11 @@ export const ERROR_CODES = {
     msg: '熔断：quality.round >= max_total_cycles',
     see: 'lifecycle/config.yaml',
   },
+  PLAN_REVIEW_CB: {
+    code: 'PLAN_REVIEW_CB',
+    msg: '熔断：plan_review.round >= max_rounds 仍 FAIL（方案审查熔断，应 ESCALATE 而非回流）',
+    see: 'agent/plan-reviewer.md §熔断约定',
+  },
 
   // === recovery 引擎错误码（U6 新增，T20260811-001-recovery-engineering）===
   CONTEXT_UNSAFE: {

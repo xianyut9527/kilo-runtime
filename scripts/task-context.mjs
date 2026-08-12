@@ -1101,27 +1101,23 @@ function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd, agent, ti
     const mult = (to.per_tier_multiplier && typeof to.per_tier_multiplier[tier] === 'number')
       ? to.per_tier_multiplier[tier] : 1.0;
     const budgetS = baseS * mult;
-    // ctx already in memory from line 1002 readContext call, no need to re-read
-    if (!Array.isArray(ctx.dispatch_log)) ctx.dispatch_log = [];
-    ctx.dispatch_log.push({ agent, stage: null, mode: 'task', timeout_guard: null });
-    const effectiveSeq = ctx.dispatch_log.length - 1;
+    // timeout_guard 存独立数组，不污染 dispatch_log（provenance 只存正式条目）
+    if (!Array.isArray(ctx.timeout_guards)) ctx.timeout_guards = [];
     const now = Date.now();
-    ctx.dispatch_log[effectiveSeq].timeout_guard = {
+    ctx.timeout_guards.push({
       start_time_ms: now,
       budget_s: budgetS,
       deadline_ms: now + Math.round(budgetS * 1000),
       status: 'running',
       agent,
       tier,
-    };
+    });
+    const effectiveSeq = ctx.timeout_guards.length - 1;
     process.stdout.write(
-      `[pre-dispatch] timeout_guard started (seq=${effectiveSeq} agent=${agent} tier=${tier} budget_s=${budgetS} per_agent_s=${perAgentS !== null ? perAgentS : '(fallback stage_default)'} multiplier=${mult})\n`
+      '[pre-dispatch] timeout_guard started (seq=' + effectiveSeq + ' agent=' + agent + ' tier=' + tier + ' budget_s=' + budgetS + ' per_agent_s=' + (perAgentS !== null ? perAgentS : '(fallback stage_default)') + ' multiplier=' + mult + ')\n'
     );
-  }
-
-    // 统一写回：dispatch_pending + dispatch_log + timeout_guard 一次性落盘（省 1 次 writeContext）
     writeContext(taskId, ctx);
-  process.exit(exitCode);
+  }
 }
 
 function cmdSizeCheck(taskId) {
@@ -1360,12 +1356,12 @@ function cmdPostDispatch(taskId, seq, result, agent, mode, stage) {
   if (!Array.isArray(ctx.dispatch_log)) {
     die(1, `Error: dispatch_log empty for task_id=${taskId}`);
   }
-  const entry = ctx.dispatch_log[seq];
-  if (!entry) die(1, `Error: dispatch_log[${seq}] not found for task_id=${taskId}`);
-  const g = entry.timeout_guard;
+  const g = (Array.isArray(ctx.timeout_guards) && ctx.timeout_guards[seq]) || null;
   if (!g || typeof g !== 'object') {
-    die(1, `Error: timeout_guard not started for dispatch_log[${seq}]. Run pre-dispatch --agent --tier first.`);
+    die(1, `Error: timeout_guard not started for seq=[${seq}]. Run pre-dispatch --agent --tier first.`);
   }
+
+
 
   // 1. 超时判定：实际超时或已标 timeout -> 强制 timeout 语义（无视 conductor --result）
   const startMs = (typeof g.start_time_ms === 'number') ? g.start_time_ms : Date.now();
@@ -1437,10 +1433,9 @@ function cmdPostDispatch(taskId, seq, result, agent, mode, stage) {
       ? to.agent_timeout_max_retries : 1;
     const tAgent = g.agent;
     let timeoutCount = 0;
-    for (const e of ctx.dispatch_log) {
-      if (e && e.timeout_guard && e.timeout_guard.status === 'timeout'
-          && e.timeout_guard.agent === tAgent) {
-        timeoutCount++;
+    if (Array.isArray(ctx.timeout_guards)) {
+      for (const g2 of ctx.timeout_guards) {
+        if (g2 && g2.status === 'timeout' && g2.agent === tAgent) timeoutCount++;
       }
     }
     if (timeoutCount <= maxRetries) {
@@ -1450,6 +1445,7 @@ function cmdPostDispatch(taskId, seq, result, agent, mode, stage) {
     process.stdout.write(`[ESCALATE] seq=${seq} agent=${tAgent} timeout_count=${timeoutCount} > max_retries=${maxRetries} -> 升级处理\n`);
     process.exit(5);
   }
+
 
   // 4b. pass/fail：clear + provenance 已记
   g.status = 'cleared';

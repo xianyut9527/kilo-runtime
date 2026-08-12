@@ -21,7 +21,7 @@
 //          / 5=[ESCALATE]（timeout 且计数 > agent_timeout_max_retries）
 //          / 1=参数或权限错 / 2=config.yaml 缺 timeouts 段
 //
-// guard 记录写入 task_context.dispatch_log[N].timeout_guard：
+// agent-timeout-guard.mjs（降级独立调用）
 //   { start_time_ms, budget_s, deadline_ms, status:'running'|'timeout'|'cleared',
 //     agent, tier, timed_out_at_ms?, actual_duration_s? }
 //
@@ -81,18 +81,18 @@ function stripNamed(args) {
 }
 
 // ============================================================
-// guard 读写辅助（独立读写 dispatch_log[N].timeout_guard，不改 task-context.mjs）
+// guard 读写辅助（独立读写 timeout_guards[seq]，不改 task-context.mjs）
 // ============================================================
 
-function getDispatchLog(ctx) {
-  return Array.isArray(ctx.dispatch_log) ? ctx.dispatch_log : null;
+function getTimeoutGuards(ctx) {
+  return Array.isArray(ctx.timeout_guards) ? ctx.timeout_guards : null;
 }
 
 // 取 dispatch_log[N]（N 为数组索引）。越界 -> 返回 null。
-function getLogEntry(ctx, seq) {
-  const log = getDispatchLog(ctx);
-  if (!log || !Number.isInteger(seq) || seq < 0 || seq >= log.length) return null;
-  return log[seq];
+function getGuardEntry(ctx, seq) {
+  const guards = getTimeoutGuards(ctx);
+  if (!guards || !Number.isInteger(seq) || seq < 0 || seq >= guards.length) return null;
+  return guards[seq];
 }
 
 // ============================================================
@@ -117,22 +117,22 @@ function cmdStart(taskId, agent, tier, seq) {
   const budgetS = baseS * mult;
 
   const { ctx } = readContext(taskId);
-  let entry = getLogEntry(ctx, seq);
+  let entry = getGuardEntry(ctx, seq);
   let effectiveSeq = seq;
   if (!entry) {
     // 真实接线时序：conductor 在 task dispatch 前调用 start，此时 dispatch_log 尚为空
     // （log-dispatch 是 task 返回后才追加条目）。dispatch_log 缺失或 seq 越界时
     // 追加一条新条目到末尾，实际 seq = dispatch_log.length-1。
-    if (!Array.isArray(ctx.dispatch_log)) ctx.dispatch_log = [];
-    ctx.dispatch_log.push({ agent, stage: null, mode: 'task', timeout_guard: null });
-    effectiveSeq = ctx.dispatch_log.length - 1;
-    entry = ctx.dispatch_log[effectiveSeq];
+    if (!Array.isArray(ctx.timeout_guards)) ctx.timeout_guards = [];
+    ctx.timeout_guards.push(null);
+    effectiveSeq = ctx.timeout_guards.length - 1;
+    entry = ctx.timeout_guards[effectiveSeq] = {};
   }
-  if (!entry.timeout_guard || typeof entry.timeout_guard !== 'object') {
-    entry.timeout_guard = {};
+  if (!entry || typeof entry !== 'object') {
+    entry = ctx.timeout_guards[effectiveSeq] = {};
   }
   const now = Date.now();
-  entry.timeout_guard = {
+  ctx.timeout_guards[effectiveSeq] = {
     start_time_ms: now,
     budget_s: budgetS,
     deadline_ms: now + Math.round(budgetS * 1000),
@@ -141,7 +141,7 @@ function cmdStart(taskId, agent, tier, seq) {
     tier,
   };
   writeContext(taskId, ctx);
-  const appendedNote = effectiveSeq !== seq ? ` (appended dispatch_log[${effectiveSeq}])` : '';
+  const appendedNote = effectiveSeq !== seq ? ` (appended timeout_guards[${effectiveSeq}])` : '';
   process.stdout.write(
     `ok: timeout_guard started (agent=${agent} tier=${tier} seq=${effectiveSeq} budget_s=${budgetS} ` +
     `per_agent_s=${perAgentS !== null ? perAgentS : '(fallback stage_default)'} multiplier=${mult}${appendedNote})\n`
@@ -155,10 +155,10 @@ function cmdStart(taskId, agent, tier, seq) {
 function cmdCheck(taskId, seq) {
   if (!Number.isInteger(seq) || seq < 0) die(1, 'Error: check requires --dispatch-seq <non-negative integer>');
   const { ctx } = readContext(taskId);
-  const entry = getLogEntry(ctx, seq);
-  if (!entry) die(1, `Error: dispatch_log[${seq}] not found for task_id=${taskId}`);
-  const g = entry.timeout_guard;
-  if (!g || typeof g !== 'object') die(1, `Error: timeout_guard not started for dispatch_log[${seq}]. Run start first.`);
+  const g = getGuardEntry(ctx, seq);
+
+
+
 
   const elapsed = Date.now() - (typeof g.start_time_ms === 'number' ? g.start_time_ms : Date.now());
   const budgetS = (typeof g.budget_s === 'number') ? g.budget_s : 0;
@@ -189,10 +189,10 @@ function cmdClear(taskId, seq, result) {
   }
   if (!Number.isInteger(seq) || seq < 0) die(1, 'Error: clear requires --dispatch-seq <non-negative integer>');
   const { ctx } = readContext(taskId);
-  const entry = getLogEntry(ctx, seq);
-  if (!entry) die(1, `Error: dispatch_log[${seq}] not found for task_id=${taskId}`);
-  const g = entry.timeout_guard;
-  if (!g || typeof g !== 'object') die(1, `Error: timeout_guard not started for dispatch_log[${seq}]. Run start first.`);
+  const entry = getGuardEntry(ctx, seq);
+
+  const g = entry;
+
 
   const startMs = (typeof g.start_time_ms === 'number') ? g.start_time_ms : Date.now();
   const actualS = Math.round((Date.now() - startMs) / 1000);
@@ -215,9 +215,9 @@ function cmdClear(taskId, seq, result) {
 
   // 统计 dispatch_log 中同 agent 的 timeout_guard.status==='timeout' 次数
   let timeoutCount = 0;
-  for (const e of getDispatchLog(ctx) || []) {
-    if (e && e.timeout_guard && e.timeout_guard.status === 'timeout'
-        && e.timeout_guard.agent === agent) {
+  for (const g2 of getTimeoutGuards(ctx) || []) {
+    if (g2 && g2.status === 'timeout'
+        && g2.agent === agent) {
       timeoutCount++;
     }
   }

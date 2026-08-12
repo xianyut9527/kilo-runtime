@@ -83,7 +83,7 @@ can_handoff_to:
 5. **compaction 恢复**：auto-compaction 后，下一步前先 `get <task_id> status` + `get convergence` + `get verification` 恢复状态，再重读当前阶段 `lifecycle/stages/<节点小写>.md`。
 6. **委派不亲为**：进入阶段主槽立即用 task 工具委派对应智能体，禁止自己写代码：
    - PLANNING → `planner`；EXECUTING → `coder`；QUALITY → hooks 自动挂载
-   - **挂载 tier 过滤（全阶段行为兜底）**：派发前必读 `agent/<name>.md` frontmatter `mount[].tiers`，当前 `sizing.tier` 不在 `tiers[]` 中的 agent **禁止派发**。反例（2026-08-12 事故）：T1 任务派发了 `reviewer`（frontmatter `tiers: [T2]`），reviewer 给 CONDITIONAL_PASS + REQUEST_CHANGES 矛盾组合触发 fixer 往返，浪费 ~6min。正确行为：T1 不派发 reviewer / reverse-auditor / plan-reviewer（三者均 `tiers: [T2]`）；T1 QUALITY 仅派发 verifier（+ fixer on verifier FAIL）；T1 PLANNING 仅派发 planner（无 plan-reviewer）。
+   - **挂载 tier 过滤**：派发前必读 `agent/<name>.md` frontmatter `mount[].tiers`，当前 `sizing.tier` 不在 `tiers[]` 中的 agent 禁止派发。
    - **机械强制（kilo 框架级）**：本 agent `permission.edit: deny` + `permission.write: deny`——conductor 调用 edit/write 工具时由 kilo 框架直接阻断，不依赖文字铁律或主动调用脚本。conductor 想改文件只能经 `task` 委派 coder，或经 `bash` 跑 `task-context.mjs`（task_context 写入收口）。这是铁律 #6 的最可靠兜底——前两轮"conductor 亲为改文档"违规在本机制下无法发生。
    - **零输出硬门**：从任何工具调用发起瞬间到 result 到达前，不得输出文字或调用其他工具；并行组（铁律 #11）共享一个零输出硬门——组内全部 result 返回前同样禁止输出/调用。
    - **委派包 = 核心摘要**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令 + 返回契约（按角色分档上限，见 .kilo/instructions/output-schema.md §返回超限约束）。完整六条见 §核心编排流程。**禁止传文件内容复述、长摘要、步骤详解**——subagent 有独立 context window，自己读文件。委派智能体原则上都是核心摘要，传文件具体内容进去既冗余又撑大 context。

@@ -583,6 +583,17 @@ function main() {
       if (!ctx.plan || typeof ctx.plan !== 'object' || Object.keys(ctx.plan).length === 0) {
         die(1, codeMsg('MISSING_PLAN_PRODUCT', `PLANNING -> EXECUTING: plan 为空（planner 未产出方案，禁止空转流转）`));
       }
+      // T2 plan_review 熔断：round >= max_rounds 仍 FAIL → 阻断回流，强制 ESCALATE
+      const tier = ctx.sizing && ctx.sizing.tier;
+      if (tier === 'T2' && ctx.plan_review) {
+        const pr = ctx.plan_review;
+        const maxR = (typeof pr.max_rounds === 'number') ? pr.max_rounds : 3;
+        if (pr.verdict === 'ESCALATE') {
+          // ESCALATE = plan-reviewer 判定方案不可修复，允许流转（带降级标记）
+        } else if (typeof pr.round === 'number' && pr.round >= maxR && pr.verdict !== 'PASS') {
+          die(1, codeMsg('PLAN_REVIEW_CB', `PLANNING -> EXECUTING: plan_review.round=${pr.round} >= max_rounds=${maxR} 且 verdict=${pr.verdict}（方案审查熔断，应 ESCALATE 而非回流）`));
+        }
+      }
     }
     if (FROM === 'QUALITY' && TO === 'DELIVERING') {
       if (!ctx.verification || !ctx.verification.forward) {

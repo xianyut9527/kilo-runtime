@@ -15,9 +15,8 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cachedDerive } from '../../scripts/lib/derived-cache.mjs';
 
-// Fix: use __dirname (kilo_config repo root) instead of process.cwd() (business project)
-const _CR_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'); // lifecycle/runtime/ -> repo root
-const KILO_JSON_PATH = resolve(_CR_DIR, 'kilo.json');
+const _REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'); // lifecycle/runtime/ -> repo root
+const KILO_JSON_PATH = resolve(_REPO_ROOT, 'kilo.json');
 
 /**
  * 加载模型表（自带 readFileSync）。内部 key = `<alias>/<modelId>`，

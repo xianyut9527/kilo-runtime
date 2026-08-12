@@ -29,11 +29,9 @@ export { detectCapabilities } from './capability-detector.mjs';
 export { selectModel } from './model-selector.mjs';
 export { detectEarlyExit, setSignals, getSignals, addSignals } from './early-exit.mjs';
 
-// Fix: use __dirname (kilo_config repo root) instead of process.cwd() (business project)
-// conductor runs in business project cwd, but kilo.json/config.yaml are in kilo_config repo
-const _RUNTIME_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'); // lifecycle/runtime/ -> repo root
-const KILO_JSON_PATH = resolve(_RUNTIME_DIR, 'kilo.json');
-const CONFIG_YAML_PATH = resolve(_RUNTIME_DIR, 'lifecycle', 'config.yaml');
+const _REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'); // lifecycle/runtime/ -> repo root
+const KILO_JSON_PATH = resolve(_REPO_ROOT, 'kilo.json');
+const CONFIG_YAML_PATH = resolve(_REPO_ROOT, 'lifecycle', 'config.yaml');
 
 // ——— Fix #2: lifecycle/config.yaml `runtime.early_exit_signals` 落地 ———
 // 简化解：纯正则匹配 `early_exit_signals: [a, b, c]`，不引入 yaml 解析库；
