@@ -381,4 +381,4 @@ evidence:
 
 - **\`[BASH_WRITE_BLOCKED]\`**：bash 命令含文件写入/修改意图（Set-Content / Add-Content / Out-File / git commit / rm -rf / npm publish 等）
   - 来源：\`scripts/bash-guard.mjs\` WRITE_PATTERNS
-  - 处理：conductor edit:deny / write:deny，改用 \`task\` 委派 coder 或 \`glob\` / \`grep\` 只读工具
+  - 处理：conductor 不直接修改文件，改用 \`task\` 委派 coder 或 \`glob\` / \`grep\` 只读工具

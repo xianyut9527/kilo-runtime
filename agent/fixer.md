@@ -8,10 +8,10 @@ reasoning: false
 permission:
   bash: allow
   read: allow
-  edit: allow
   task: deny
   glob: allow
   grep: allow
+  edit: allow
 subagent_type: fixer
 # ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
 # 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
@@ -90,6 +90,8 @@ can_handoff_to:
 **模型**：见 `kilo.json` `agent.fixer.model`（快速修复能力需求）
 
 **做什么**：分析阻塞问题的根因，实施最小修复，验证通过。
+
+**文件修改方式**：通过 bash 工具执行文件修改（Set-Content / node fs.writeFileSync / PowerShell here-string）。当前环境无独立 edit/write 工具，所有文件修改经 bash 完成。
 
 **不做什么**：不重新设计架构、不扩大修复范围、不跳过验证。
 

@@ -7,10 +7,10 @@ steps: 60
 permission:
   bash: allow
   read: allow
-  edit: deny
   task: deny
   glob: allow
   grep: allow
+  edit: deny
 subagent_type: plan-reviewer
 # ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
 # 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护

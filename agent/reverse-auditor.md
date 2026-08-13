@@ -7,10 +7,10 @@ steps: 80
 permission:
   bash: allow
   read: allow
-  edit: deny
   task: deny
   glob: allow
   grep: allow
+  edit: deny
 subagent_type: reverse-auditor
 # ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
 # 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
@@ -156,4 +156,4 @@ issues:
 - 必须独立重跑验证命令（不复用 coder/verifier 输出）
 - 任何声明无本轮 fresh 证据 → `[UNVERIFIED]`
 - 发现"同意""认可""coder 说的对"等信任传递词 → 立即停止，重新验证
-- **只审查不修复**：permission.edit = deny，禁止任何修改性工具
+- **只审查不修复**：只审查不修复，禁止任何文件修改操作

@@ -8,10 +8,10 @@ reasoning: false
 permission:
   bash: allow
   read: allow
-  edit: allow
   task: deny
   glob: allow
   grep: allow
+  edit: allow
 subagent_type: coder
 # ---- v6 一智能体一文件：生命周期路由声明（bootstrap 扫此 frontmatter 自动注册）----
 # 模型绑定在 kilo.json agent.<name>.model；能力倾向参考 docs/model-registry.md 人类维护
@@ -72,6 +72,8 @@ can_handoff_to:
 **模型**：见 `kilo.json` `agent.coder.model`（Code-tuned，编码专精能力需求）
 
 **做什么**：读取代码、实现变更、运行测试、验证通过。
+
+**文件修改方式**：通过 bash 工具执行文件修改（Set-Content / node fs.writeFileSync / PowerShell here-string）。当前环境无独立 edit/write 工具，所有文件修改经 bash 完成。读取文件用 read 工具，搜索用 grep/glob。
 
 **不做什么**：不做架构设计（planner 已完成）、不做最终审查（reviewer 负责）、不做反向审计。
 
