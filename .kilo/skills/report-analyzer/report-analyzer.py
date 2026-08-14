@@ -2672,8 +2672,6 @@ def _validate_cli_combinations(args, parser):
         parser.error("--quiet 与 --verbose 互斥")
 
 
-if __name__ == "__main__":
-    sys.exit(main())
 def _load_v2_sources(args):
     """统一加载 v2.0 三数据源(供 main 与 rerender 共用)。
 
@@ -2706,8 +2704,6 @@ def _resolve_members(meta_members, args_members, default=True):
     if default:
         return list(ALL_V19_MEMBERS)
     return []
-
-
 def render_html_from_stats(stats, start=None, end=None, path=None):
     """stats → HTML 渲染 + 写盘(封装 generate_html_report + write_html)。
 
@@ -2931,3 +2927,6 @@ def _main_print_result(stats, paths, return_code=0):
 
 
 # ===================== 主入口段结束 =====================
+
+if __name__ == "__main__":
+    sys.exit(main())
