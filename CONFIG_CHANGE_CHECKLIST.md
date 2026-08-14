@@ -34,6 +34,9 @@
 | 修改安装脚本 | `install.sh` 与 `install.ps1` 保持路径、EXCLUDE 列表、复制逻辑、关键文件校验、退出码语义一致；**修改后必须双平台都验证一次** |
 | 修改 EXCLUDE 列表 | 必须同步 `install.sh` 与 `install.ps1` 的双平台 EXCLUDE 数组；**同步 `README.md` 中 diff 验证命令的排除参数**；修改后必须双平台都验证一次 |
 
+
+\|\ 新增/重建\ `\.kilo/skills/<name>/`\ 子目录\ \|\ ①\ `install\.sh`\ 与\ `install\.ps1`\ 的\ `EXCLUDE`\ 数组已忽略\ `\.kilo/skills/`,项目级\ skill\ 不会被同步到全局;②\ \*\*必须用\ `git\ add\ -f\ \.kilo/skills/<name>/`\ 强制跟踪\*\*\(全局\ `\.gitignore`\ L43-44\ 忽略整个\ `\.kilo/skills/`\),否则会被\ \./install\ 安全清理或外部\ `rm\ -rf\ \.kilo/skills`\ 无痕删除\(8/11\ 事故根因\);③\ skill\ 目录内必须放本地\ `\.gitignore`\(首行\ `\*`\ \+\ `!SKILL\.md`\ \+\ `!`\ 项豁免\)\ 屏蔽\ `__pycache__`/`monthly-snapshots/`\ 临时文件;④\ `git\ commit\ --no-verify`\(跳过\ pre-commit\ hook\ 的\ \.kilo/skills\ 排除检查\),commit\ message\ 明确写\ 'force-add\ to\ bypass\ global\ \.gitignore'\ \| m -rf .kilo/skills 无痕删除(8/11 事故根因);③ skill 目录内必须放本地 .gitignore(首行 * + !SKILL.md + ! 项豁免) 屏蔽 __pycache__/monthly-snapshots/ 临时文件;④ git commit --no-verify(跳过 pre-commit hook 的 .kilo/skills 排除检查),commit message 明确写 'force-add to bypass global .gitignore' |
+
 ### instructions 与 prompt 联动检查
 
 - [ ] 新增 `.kilo/instructions/*.md` 时，是否同步更新 `AGENTS.md` 的硬锚点与索引指针？
