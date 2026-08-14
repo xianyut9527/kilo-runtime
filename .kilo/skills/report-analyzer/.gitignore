@@ -1,0 +1,7 @@
+*
+!.gitignore
+!SKILL.md
+__pycache__/
+*.pyc
+monthly-snapshots/
+tests/__pycache__/
