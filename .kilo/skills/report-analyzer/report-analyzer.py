@@ -2555,22 +2555,15 @@ def _run_stats_pipeline(records, members, start, end, args, metadata, snapshots,
         monthly_snapshots=snapshots,
         headcount_target=headcount,
     )
-    json_path = None
-    html_path = None
-    if args.output:
-        json_path = args.output
-        save_stats_json(stats, json_path)
-    elif not args.html:
-        json_path = _default_output_names(start, end)[0]
+    json_path, html_path = _resolve_outputs(args, start, end)
+    if json_path:
         save_stats_json(stats, json_path)
     if args.html:
-        html_path = args.html
         html = generate_html_report(stats, start_date=start, end_date=end)
         write_html(html, html_path)
     elif args.json_only:
         LOG.info("--json-only: 跳过 HTML 渲染")
     else:
-        html_path = _default_output_names(start, end, html_only=True)
         html = generate_html_report(stats, start_date=start, end_date=end)
         write_html(html, html_path)
     _print_terminal_summary_if_needed(stats, args)
@@ -2602,12 +2595,10 @@ def main(argv=None) -> int:
     LOG.info("%s %s 启动", APP_NAME, APP_VERSION)
 
     # ---- 1. 三数据源(v2.0)----
-    metadata = None if args.no_backfill_v2 else load_project_metadata(args.project_metadata)
-    snapshots = None if args.no_backfill_v2 else load_monthly_snapshots(args.monthly_snapshot_dir)
-    headcount = None if args.no_backfill_v2 else load_headcount_target(args.headcount_target)
+    metadata, snapshots, headcount = _load_v2_sources(args)
 
     # ---- 2. 成员与周期 ----
-    members = parse_members_arg(args.members)
+    members = _resolve_members(None, args.members)
     start, end = resolve_dates(args.start_date, args.end_date)
     LOG.info("成员 %d 人,日期范围 %s ~ %s", len(members), format_date(start), format_date(end))
 
@@ -2633,10 +2624,7 @@ def main(argv=None) -> int:
                 pass
         if start > end:
             start, end = end, start
-        if meta.get("members"):
-            listed = [m for m in meta["members"] if m]
-            if listed and not args.members or (args.members == DEFAULT_MEMBERS_TOKEN and listed):
-                members = listed
+        members = _resolve_members(meta.get("members"), args.members)
         LOG.info("离线模式: 记录 %d 条,周期 %s ~ %s", len(records), format_date(start), format_date(end))
     else:
         # 在线模式:AdsPower + Playwright 抓仓颉日报
@@ -2662,8 +2650,7 @@ def main(argv=None) -> int:
                                        args, metadata, snapshots, headcount)
     if stats is None:
         return 1
-    LOG.info("完成: JSON=%s HTML=%s", paths.get("json"), paths.get("html"))
-    return 0
+    return _main_print_result(stats, paths)
 
 
 def _detect_python_runtime():
@@ -2687,30 +2674,6 @@ def _validate_cli_combinations(args, parser):
 
 if __name__ == "__main__":
     sys.exit(main())
-def export_records_json(records, path, members=None, start=None, end=None):
-    """将原始日报记录导出为 JSON(离线重放 / rerender 输入)。
-
-    输出形态与 load_records_from_json 的输入互逆:
-      {"meta": {"members": [...], "start": "...", "end": "..."},
-       "records": [...]}
-    供 rerender.py --input 直接消费,也用于 --from-json 回放。
-    """
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    meta = {}
-    if members:
-        meta["members"] = list(members)
-    if start:
-        meta["start"] = format_date(start)
-    if end:
-        meta["end"] = format_date(end)
-    payload = {"meta": meta, "records": records}
-    text = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
-    p.write_text(text, encoding="utf-8")
-    LOG.info("记录已导出 %d 条 → %s", len(records), p)
-    return len(text.encode("utf-8"))
-
-
 def _load_v2_sources(args):
     """统一加载 v2.0 三数据源(供 main 与 rerender 共用)。
 
@@ -2825,7 +2788,7 @@ def _resolve_outputs(args, start, end):
     default_json, default_html = _default_output_names(start, end)
     if args.output:
         json_path = str(_ensure_suffix(args.output, ".json"))
-    elif args.html or not args.json_only:
+    elif not args.html:
         json_path = default_json
     if args.html:
         html_path = str(_ensure_suffix(args.html, ".html"))
@@ -2953,24 +2916,6 @@ def rerender_from_records_path(
         quiet=quiet,
     )
     return stats, paths, meta
-
-
-def _rebuild_from_scrape_cache(cache_path, args):
-    """从抓取缓存 JSON 重建统计(供 --from-json 指向导出缓存时复用)。
-
-    缓存形态与 export_records_json 一致({meta, records});
-    直接委托 rerender_from_records_path,与 rerender.py 行为完全一致。
-    """
-    return rerender_from_records_path(
-        cache_path,
-        project_metadata=getattr(args, "project_metadata", None),
-        monthly_snapshots=getattr(args, "monthly_snapshot_dir", None),
-        headcount_target=getattr(args, "headcount_target", None),
-        no_backfill=getattr(args, "no_backfill_v2", False),
-        json_out=getattr(args, "output", None),
-        html_out=getattr(args, "html", None),
-        quiet=getattr(args, "quiet", False),
-    )
 
 
 def _main_print_result(stats, paths, return_code=0):
