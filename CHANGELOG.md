@@ -14,6 +14,21 @@
 - **U3 `scripts/flow-audit.mjs`**：i18n 一致性校验（5 映射表 39 键全枚举 → 全 stage-i18n.mjs 存在 → 全输出函数可调用）。
 - **U4 `agent/conductor.md`**：铁律 §i18n 渲染规范（执行报告 / 失败诊断 / 单元派发 / 委派反馈 4 场景统一走 `formatStage/formatStatus/formatVerdict/formatIntent/formatTier`，禁裸 key 直出）。
 - **U5（本轮 D5 补丁）**：`scripts/i18n-render.mjs` 补 `--stage`/`--tier`/`--intent`/`--verdict` 4 个 CLI 分支（与 `--status` 对称）；`scripts/lib/stage-i18n.mjs` STATUS_ZH 防御性补全 PENDING/PASS/FAIL；`scripts/lifecycle-doctor/checks/i18n-coverage.mjs` 纳管（5 映射 + 8 函数导出校验）；`README.md` 加 i18n 渲染器使用文档小节。
+
+### Changed
+- **去重 `agent/coder.md` §架构意识(33 → 4 行)**:消除与自动注入 playbook `coding-engineering.md` 的双源重复。原 §架构意识 + §落地流程 把组件化硬规则 4 条 + 反模式表 8 行 + 落地 9 步逐字复制进 coder.md,违反 DRY 且会双源漂移。现压缩为 4 行指针:`## 编码前架构自检` 标题 + 引用完整 playbook + 8 项反模式 checklist 锚点(checklist 锚点非冗余,与 reviewer.md:144 / reverse-auditor.md:114 各自保留对应)。`+4 -33` 净减 29 行;语义对齐 `coding-engineering.md` §组件化硬规则 / §反模式检测 / §落地流程 9 步。
+
+### Added
+- **`coding-engineering.md` 新增 `§系统规范优先` 段**(L13-44,5 条硬规则):
+  1. **系统规范调研**(必跑):调官方 API / 扫仓库组件 / 看既有调用方,未跑 → `[LOCAL_PATCH]`/`[COPY_PASTE_FIX]`/`[REINVENT_WHEEL]`
+  2. **调用而非侵入**:用组件公共 API/扩展点,禁止本地 fork/patch-package,侵入式改造 → `[INVASIVE_MOD]`
+  3. **遵循系统约定**:命名/结构/错误处理与项目既定风格一致,标新立异 → `[STYLE_DRIFT]`
+  4. **复用优先于造轮子**:同类需求已有 → 消费,跨 ≥2 处 → 必抽,自己写且不消费不抽 → `[REINVENT_WHEEL]`
+  5. **优雅与简洁是结果**:架构优雅在前(调用而非侵入+复用而非造轮+遵循而非标新),代码优雅在后(见 §优雅编码硬标准)
+- **`coding-engineering.md` §落地流程插新 step 2「系统规范调研」**,原 9 步改 10 步,序号顺延。frontmatter description 同步加"系统规范优先"作为索引入口。
+- **3 个新增失败标记**:`[REINVENT_WHEEL]`(重复造轮子)/ `[INVASIVE_MOD]`(侵入式改造)/ `[STYLE_DRIFT]`(标新立异风格),verifier / reverse-auditor 可在后续接入对应检测。
+- **同步范围**:install.ps1 已同步到全局 `~/.config/kilo/.kilo/instructions/coding-engineering.md`(81 → 115 行,lifecycle-doctor 378 PASS / 0 FAIL / 0 WARN)。其他无项目级 overlay 的项目立即生效。
+
 ## [Unreleased] tier-routing-unify-001（v3.x 重构）
 
 ### 路由开关统一为 tier
