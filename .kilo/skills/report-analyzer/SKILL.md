@@ -3,6 +3,12 @@ name: report-analyzer
 description: 项目成员工作报告统计分析 skill。通过 AdsPower + Playwright 抓取仓颉系统日报,按项目/成员维度统计工时占比与完成情况,输出可交互 HTML 周报(9 大 Section + v2.0 项目交付总览/状态分桶/人力盘点)。
 keywords: [日报, 工时, AdsPower, 仓颉, 项目报告, 项目成员工作报告, HTML 周报, 成员工时统计, 报告分析]
 version: "2.0"
+license: MIT
+compatibility:
+  - kilo-agent >= 2026
+metadata:
+  version: "2.0"
+  category: project-report
 ---
 
 # report-analyzer — 项目成员工作报告统计分析
