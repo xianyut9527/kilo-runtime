@@ -139,7 +139,7 @@ const ctx = {
 runGraphMount(ctx);
 runRoleConfig(ctx);
 runSemantic(ctx);
-runMatrixDocsKilojsonScripts(ctx);
+await runMatrixDocsKilojsonScripts(ctx);
 runDecoupleAudit(ctx);
 runPathNormalize(ctx);
 runEncodingSafety(ctx);

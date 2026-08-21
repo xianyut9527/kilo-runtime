@@ -1,6 +1,6 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
-  "model": "hx/glm-5.2",
+  "model": "hx/minimax-m3",
   "small_model": "hx/minimax-m3",
   "default_agent": "conductor",
   "snapshot": true,
@@ -22,12 +22,12 @@
     },
     "planner": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
+      "model": "hx/minimax-m3",
       "prompt": "规划智能体。分析需求、调研代码、输出设计方案、定义验收点。只设计不写代码。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "plan-reviewer": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6",
+      "model": "hx/deepseek-v4-flash",
       "prompt": "方案审查智能体（plan-reviewer）。审查 planner 输出方案的需求完整性/一致性/可行性/可测性/范围与需求扩散覆盖，只审查不修复。verdict=FAIL → 方案回流 planner 重做（round 自增，max_rounds=3，超限 ESCALATE 升级人工）；审查者自身异常/超时 → 挂载点 on_fail: abort 中止流转。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "coder": {
@@ -37,12 +37,12 @@
     },
     "verifier": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
+      "model": "hx/minimax-m3",
       "prompt": "正向验证智能体。按验收标准逐条验证、L1-L3 分层、5 元组证据、独立重跑。只验证不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6",
+      "model": "hx/deepseek-v4-flash",
       "prompt": "静态代码审查智能体。从安全、架构、简化、SCOPE_CREEP 四视角审查代码质量。只审查不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "reverse-auditor": {

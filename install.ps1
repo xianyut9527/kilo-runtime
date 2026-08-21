@@ -56,18 +56,17 @@ try {
     $HasBackup = $false
     if (Test-Path $Target) {
         Write-Host "[CLEAN] Purging target directory: $Target" -ForegroundColor Yellow
-        # Backup node_modules + package.json + package-lock.json (protect @kilocode/plugin deps before purge)
+        # Backup package.json + package-lock.json (protect @kilocode/plugin deps before purge)
+        # RecursiveExclude 已排除 node_modules,本不拷过去,故无需备份/还原整目录(GB 级 IO 浪费)
         $BackupDir = Join-Path $env:TEMP "kilo_backup_$(Get-Date -Format yyyyMMdd_HHmmss)"
         $PkgJson = Join-Path $Target "package.json"
         $PkgLock = Join-Path $Target "package-lock.json"
-        $NodeMods = Join-Path $Target "node_modules"
-        if ((Test-Path $PkgJson) -or (Test-Path $PkgLock) -or (Test-Path $NodeMods)) {
+        if ((Test-Path $PkgJson) -or (Test-Path $PkgLock)) {
             New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
             if (Test-Path $PkgJson)  { Copy-Item $PkgJson  $BackupDir -Force -ErrorAction Stop }
             if (Test-Path $PkgLock)  { Copy-Item $PkgLock  $BackupDir -Force -ErrorAction Stop }
-            if (Test-Path $NodeMods) { Copy-Item $NodeMods $BackupDir -Recurse -Force -ErrorAction Stop }
             $HasBackup = $true
-            Write-Host "[BACKUP] node_modules + package.json + package-lock.json -> $BackupDir" -ForegroundColor Cyan
+            Write-Host "[BACKUP] package.json + package-lock.json -> $BackupDir" -ForegroundColor Cyan
         }
         Remove-Item -Path "$Target\*" -Recurse -Force -ErrorAction Stop
     }
@@ -107,11 +106,10 @@ try {
     $CopiedFiles = 0
     $CopiedDirs = 0
     Copy-SourceTree $Source $Target 0
-    # Restore node_modules + package.json + package-lock.json (re-apply @kilocode/plugin deps after sync)
+    # Restore package.json + package-lock.json (re-apply @kilocode/plugin deps after sync)
     if ($HasBackup) {
         if (Test-Path (Join-Path $BackupDir "package.json"))  { Copy-Item (Join-Path $BackupDir "package.json")  $PkgJson -Force -ErrorAction Stop }
         if (Test-Path (Join-Path $BackupDir "package-lock.json")) { Copy-Item (Join-Path $BackupDir "package-lock.json") $PkgLock -Force -ErrorAction Stop }
-        if (Test-Path (Join-Path $BackupDir "node_modules")) { Copy-Item (Join-Path $BackupDir "node_modules") $NodeMods -Recurse -Force -ErrorAction Stop }
         Write-Host "[RESTORE] @kilocode/plugin deps restored from backup" -ForegroundColor Green
     }
 

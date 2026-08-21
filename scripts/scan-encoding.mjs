@@ -9,7 +9,9 @@
 //
 // 用法：
 //   node scripts/scan-encoding.mjs [file1] [file2] ...
+//   node scripts/scan-encoding.mjs --from-stdin < files.json
 //   无参数时默认扫 `git diff --name-only HEAD`
+//   支持 --from-stdin 模式(读 stdin JSON 数组,Windows ENAMETOOLONG 安全)
 //
 // 退出码：
 //   0 = 所有检查 PASS
@@ -287,6 +289,32 @@ function main() {
   selfCheck();
 
   const args = process.argv.slice(2);
+
+  // --from-stdin 模式:从 stdin 读 JSON 数组,直接走 scanFile(Windows ENAMETOOLONG 安全)
+  if (args[0] === '--from-stdin') {
+    (async () => {
+      let data = '';
+      for await (const chunk of process.stdin) data += chunk;
+      let files;
+      try {
+        files = JSON.parse(data);
+      } catch (e) {
+        process.stderr.write('Error: stdin JSON parse failed\n');
+        process.exit(2);
+      }
+      if (!Array.isArray(files) || files.length === 0) {
+        // 空数组 -> 明确提示而非裸 [], 便于 consume 方区分“无变更”与“全 PASS”
+        console.log(JSON.stringify({ info: 'no changes, 0 files scanned', files: [] }, null, 2));
+        process.exit(0);
+      }
+      const results = files.map(scanFile);
+      process.stdout.write(JSON.stringify(results, null, 2) + '\n');
+      const hasFail = results.some((r) => r.checks.some((c) => !c.pass));
+      process.exit(hasFail ? 1 : 0);
+    })();
+    return;
+  }
+
   const filePaths = resolveFilePaths(args);
 
   if (filePaths.length === 0) {

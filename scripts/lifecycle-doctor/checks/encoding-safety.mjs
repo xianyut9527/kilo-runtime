@@ -35,7 +35,7 @@ const SELF_PATH = path.join(ROOT, 'scripts', 'lifecycle-doctor', 'checks', 'enco
 
 const SCAN_ENCODING = path.join(ROOT, 'scripts', 'scan-encoding.mjs');
 const MAX_BUFFER = 50 * 1024 * 1024;
-const MAX_FILES = 2000;  // 防止仓库过大时 spawnSync 爆 stdout
+const MAX_FILES = 50000;  // 防御性上限,防止极端情况下仓库文件数爆 stdout 缓冲
 const SPAWN_TIMEOUT_MS = 60000;
 
 /**
@@ -93,11 +93,12 @@ export function run(ctx) {
     return { name: checkName, status: 'FAIL', detail: 'no target files' };
   }
 
-  const result = spawnSync('node', [SCAN_ENCODING, ...files], {
+  const result = spawnSync('node', [SCAN_ENCODING, '--from-stdin'], {
     cwd: root,
     encoding: 'utf8',
     maxBuffer: MAX_BUFFER,
     timeout: SPAWN_TIMEOUT_MS,
+    input: JSON.stringify(files),
   });
 
   if (result.error) {

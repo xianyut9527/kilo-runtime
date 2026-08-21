@@ -5,10 +5,23 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import process from 'node:process';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { extractFrontmatter, parseStageFrontmatter, parseKiloJson, readText } from '../lib/parse.mjs';
 
-export function run(ctx) {
+function spawnCheck(args, opts) {
+  return new Promise((resolve) => {
+    const p = spawn(process.execPath, args, { ...opts });
+    let stdout = '', stderr = '';
+    if (p.stdout) p.stdout.setEncoding('utf8');
+    if (p.stderr) p.stderr.setEncoding('utf8');
+    p.stdout?.on('data', (c) => { stdout += c; });
+    p.stderr?.on('data', (c) => { stderr += c; });
+    p.on('error', (err) => resolve({ status: -1, stdout, stderr: String((err && err.message) || err) }));
+    p.on('close', (code) => resolve({ status: code, stdout, stderr }));
+  });
+}
+
+export async function run(ctx) {
   const { cf, agents, ROOT, STAGES_DIR, AGENT_DIR, KILO_JSON_PATH } = ctx;
 
   // ============================================================
@@ -165,9 +178,9 @@ export function run(ctx) {
       }
     }
     let bad = 0;
-    for (const f of scriptFiles) {
-      const r = spawnSync(process.execPath, ['--check', f], { cwd: ROOT, encoding: 'utf8', timeout: 15000 });
-      if (r.status !== 0) { bad++; cf.fail('scripts.syntax', `${path.relative(ROOT, f)}: ${(r.stderr || r.stdout || 'check failed').trim().split('\n')[0]}`); }
+    const results = await Promise.all(scriptFiles.map(async (f) => ({ f, ...(await spawnCheck(['--check', f], { cwd: ROOT, encoding: 'utf8', timeout: 15000 })) })));
+    for (const r of results) {
+      if (r.status !== 0) { bad++; cf.fail('scripts.syntax', `${path.relative(ROOT, r.f)}: ${(r.stderr || r.stdout || 'check failed').trim().split('\n')[0]}`); }
     }
     if (bad === 0) cf.pass('scripts.syntax', `${scriptFiles.length} 个脚本全部通过 node --check`);
   }
@@ -177,9 +190,9 @@ export function run(ctx) {
     const libFiles = [];
     try { for (const n of fs.readdirSync(path.join(ROOT, 'scripts/lib'))) { if (n.endsWith('.mjs')) libFiles.push(path.join(ROOT, 'scripts/lib', n)); } } catch {}
     let bad = 0;
-    for (const f of libFiles) {
-      const r = spawnSync(process.execPath, ['--input-type=module', '-e', `await import('file:///${f.replace(/\\/g, '/')}')`], { cwd: ROOT, encoding: 'utf8', timeout: 15000 });
-      if (r.status !== 0) { bad++; cf.fail('scripts.modules', `${path.relative(ROOT, f)}: ${(r.stderr || r.stdout || 'load failed').trim().split('\n')[0]}`); }
+    const results = await Promise.all(libFiles.map(async (f) => ({ f, ...(await spawnCheck(['--input-type=module', '-e', `await import('file:///${f.replace(/\\/g, '/')}')`], { cwd: ROOT, encoding: 'utf8', timeout: 15000 })) })));
+    for (const r of results) {
+      if (r.status !== 0) { bad++; cf.fail('scripts.modules', `${path.relative(ROOT, r.f)}: ${(r.stderr || r.stdout || 'load failed').trim().split('\n')[0]}`); }
     }
     if (bad === 0) cf.pass('scripts.modules', `${libFiles.length} 个 lib 模块动态加载冒烟 PASS`);
   }
