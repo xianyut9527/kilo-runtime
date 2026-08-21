@@ -47,7 +47,7 @@
     },
     "reverse-auditor": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-pro",
+      "model": "hx/deepseek-v4-flash",
       "prompt": "反向验证审查智能体。从反向视角独立审查 diff：反向核对验收标准/设计门 DAG 一致性、SCOPE_CREEP、调试残留、重复实现 LOCAL_PATCH/COPY_PASTE_FIX、FAKE_CONTEXT、越界改动。只审查不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "fixer": {
@@ -141,8 +141,8 @@
             "output": 16384
           }
         },
-        "minimax-m3": {
-          "name": "minimax-m3",
+        "kimi-k3": {
+          "name": "kimi-k3",
           "reasoning": true,
           "modalities": {
             "input": ["text", "image"],
@@ -153,8 +153,8 @@
             "output": 16384
           }
         },
-        "MiniMax-M3": {
-          "name": "MiniMax-M3",
+        "minimax-m3": {
+          "name": "minimax-m3",
           "reasoning": true,
           "modalities": {
             "input": ["text", "image"],

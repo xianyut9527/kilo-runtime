@@ -2,11 +2,20 @@
 // Inputs (defaultModel, requiredCaps) → scored model + override_reason.
 // Routes by capability gaps: vision → first vision model, code → code-optimized
 // model, economy-mode + small task → smallModel down-grade. Pure function; reads
-// capability registry only; no third-party deps, no kilo.json mutation.
+// capability registry + kilo.json config anchors only; no third-party deps, no kilo.json mutation.
 //
 // v2 (Fix #4/#5): 支持 `options.models` 预解析的 merged map（避免在 selectModel
 // 内部重复 readFileSync kilo.json）；vision 选择改为确定性排序（code 能力
 // 优先 + 字典序兜底），不再依赖 Object.keys 遍历顺序。
+// v3 (U1): code 升级目标从 kilo.json 顶层 code_optimized_model 读取（cachedDerive
+// mtime 缓存，对齐 index.mjs L184-189 模式），替换原硬编码 CODE_OPTIMIZED_MODEL；
+// 读取后经 normalizeModelId 剥离 provider 前缀再 withProviderPrefix 拼回（与
+// smallModel 路径 L57 对齐，防双前缀 hx/hx/...）。DEFAULT_SMALL_MODEL 移除（本就被
+// options.smallModel 透传覆盖），economy 保留 kilo.json small_model 兜底。
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { cachedDerive } from '../../scripts/lib/derived-cache.mjs';
 import {
   getCapabilities,
   listVisionModels,
@@ -17,8 +26,39 @@ import {
   getProviderPrefixForModelId,
 } from './capability-registry.mjs';
 
-const CODE_OPTIMIZED_MODEL = 'kimi-k2.7-code';
-const DEFAULT_SMALL_MODEL = 'kimi-k2.6';
+const _REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'); // lifecycle/runtime/ -> repo root
+const KILO_JSON_PATH = resolve(_REPO_ROOT, 'kilo.json');
+
+// U1: 从 kilo.json 顶层 code_optimized_model 读取 code 升级目标模型（cachedDerive mtime 缓存，
+// 装配后静态，跨调用命中）。缺失/损坏 → 返回 null（normalizeModelId(null) 原样返回，
+// withProviderPrefix 里 getProviderPrefixForModelId 未找到 alias → 原样返回，不抛错）。
+function readCodeOptimizedModel() {
+  try {
+    return cachedDerive('kiloCodeOptimizedModel', [KILO_JSON_PATH], () => {
+      const raw = readFileSync(KILO_JSON_PATH, 'utf8');
+      const cfg = JSON.parse(raw);
+      return cfg?.code_optimized_model ?? null;
+    });
+  } catch (err) {
+    console.warn(`[model-selector] failed to load code_optimized_model: ${err?.message ?? err}`);
+    return null;
+  }
+}
+
+// U1: 从 kilo.json 顶层 small_model 兜底读取（selectForDispatch 已透传 smallModel，
+// 仅在直接调用 selectModel + economy 且未传 smallModel 时兜底，避免回归 undefined）。
+function readSmallModelFromKiloJson() {
+  try {
+    return cachedDerive('kiloSmallModel', [KILO_JSON_PATH], () => {
+      const raw = readFileSync(KILO_JSON_PATH, 'utf8');
+      const cfg = JSON.parse(raw);
+      return cfg?.small_model ?? null;
+    });
+  } catch (err) {
+    console.warn(`[model-selector] failed to load small_model: ${err?.message ?? err}`);
+    return null;
+  }
+}
 
 // 与 capability-registry.inferCode 保持一致的轻量判断（避免在 sort 比较器里
 // 调 getCapabilities 触发额外 readFileSync）。
@@ -90,8 +130,11 @@ export function selectModel(defaultModel, requiredCaps = {}, options = {}) {
   }
 
   if (requiredCaps.code === true && defaultCaps.code !== true) {
+    // U1: 严格对齐 smallModel 路径 —— normalize 剥离可能的前缀后再 withProviderPrefix
+    // 拼回，禁止直接传裸字符串（否则若传入带前缀字符串会双前缀 hx/hx/...）。
+    const codeModel = normalizeModelId(readCodeOptimizedModel());
     return {
-      selected_model: withProviderPrefix(CODE_OPTIMIZED_MODEL, options),
+      selected_model: withProviderPrefix(codeModel, options),
       override_reason: "code-required: " + defaultModel + " lacks code",
       upgraded: true,
       downgraded: false,
@@ -104,7 +147,7 @@ export function selectModel(defaultModel, requiredCaps = {}, options = {}) {
     requiredCaps.long_context !== true &&
     requiredCaps.vision !== true
   ) {
-    const smallModel = normalizedSmall ?? DEFAULT_SMALL_MODEL;
+    const smallModel = normalizedSmall ?? readSmallModelFromKiloJson();
     return {
       selected_model: withProviderPrefix(smallModel, options),
       override_reason: "economy-mode: small task",

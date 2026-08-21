@@ -17,9 +17,12 @@ models:
   "hx/kimi-k2.7-code":
     vendor: moonshot
     architecture: kimi-k2.7-code
-  "hx/MiniMax-M3":
+  "hx/kimi-k3":
+    vendor: moonshot
+    architecture: kimi-k3
+  "hx/minimax-m3":
     vendor: minimax
-    architecture: MiniMax-M3
+    architecture: minimax-m3
 ---
 
 # docs/model-registry
@@ -44,14 +47,15 @@ models:
 | `hx/deepseek-v4-pro` | deepseek | deepseek-v4-pro | ★★★★★ | ★★★★★ | 200K | ★★★★★ | 2 |
 | `hx/kimi-k2.6` | moonshot | kimi-k2.6 | ★★★★★ | ★★★★☆ | 200K | ★★★★☆ | 3 |
 | `hx/kimi-k2.7-code` | moonshot | kimi-k2.7-code | ★★★★☆ | ★★★★★ | 200K | ★★★★☆ | 4 |
-| `hx/MiniMax-M3` | minimax | MiniMax-M3 | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 5 |
-| `hx/deepseek-v4-flash` | deepseek | deepseek-v4-flash | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 6 |
+| `hx/kimi-k3` | moonshot | kimi-k3 | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 5 |
+| `hx/minimax-m3` | minimax | minimax-m3 | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 6 |
+| `hx/deepseek-v4-flash` | deepseek | deepseek-v4-flash | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 7 |
 
 > **稳定性排序用途**：`kilo.json` 中关键路径模型优先选用稳定性排序靠前的模型，当前默认 `glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6`。
 
 ## 稳定性优先选模型指南
 
-当前稳定性排序（由稳定到不稳定）：`glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6` > `kimi-k2.7-code` > `MiniMax-M3` > `deepseek-v4-flash`。
+当前稳定性排序（由稳定到不稳定）：`glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6` > `kimi-k2.7-code` > `kimi-k3` > `minimax-m3` > `deepseek-v4-flash`。
 
 ## 按智能体能力倾向矩阵
 
@@ -91,20 +95,21 @@ models:
 
 ## 当前模型绑定决策记录（P1-1 固化，防回摆）
 
-> 历史曾出现 conductor/coder/fixer 在 MiniMax-M3 与 deepseek-v4-flash 间反复切换（2617f3a 切 MiniMax-M3 -> 后续回 deepseek-v4-flash）。本节固化当前决策理由，改绑前先评估以下依据。
+> 历史曾出现 conductor/coder/fixer 在 minimax-m3 与 deepseek-v4-flash 间反复切换（2617f3a 切 minimax-m3 -> 后续回 deepseek-v4-flash）。本节固化当前决策理由，改绑前先评估以下依据。
 
 | 智能体 | 当前模型(kilo.json) | 决策理由 |
 |--------|---------------------|----------|
-| conductor(默认主) | hx/deepseek-v4-flash | reasoning + 低延迟编排判定；conductor edit:deny 不写代码，flash 档够用且省成本 |
+| conductor(默认主) | hx/minimax-m3 | reasoning + 低延迟编排判定；conductor edit:deny 不写代码，minimax-m3 档够用且省成本 |
 | coder | hx/deepseek-v4-flash | 编码 ★★★★☆ + 200K 上下文；flash 档兼顾速度与编码能力 |
 | fixer | hx/deepseek-v4-flash | 最小修复场景同 coder，复用绑定降低切换成本 |
 | planner/verifier | hx/glm-5.2 | 稳定性排序 1（最稳），规划/验证对稳定性要求高于编码专精 |
 | plan-reviewer/reviewer | hx/kimi-k2.6 | 多模态输入(image) + 强 reasoning，方案/代码审查需深度推理 |
-| reverse-auditor | hx/deepseek-v4-pro | 反向核对需最强推理，pro 档 reasoning ★★★★★ |
-| small_model | hx/deepseek-v4-flash-noreason | economy 降级目标，轻量任务省成本 |
+| reverse-auditor | hx/deepseek-v4-flash | 反向核对需强推理，flash 档 reasoning ★★★★☆ |
+| small_model | hx/minimax-m3 | economy 降级目标，轻量任务省成本 |
+| code_optimized_model | hx/kimi-k2.7-code | code 升级路径锚点（model-selector 读此字段替代硬编码魔数） |
 ## Tier 级模型覆盖（model_overrides）
 
-> lifecycle/config.yaml 	ier_defaults[Tn].model_overrides 字段，由 pply-tier-auto 机械写入 	ask_context.config.model_overrides。conductor dispatch 时若该字段存在，覆盖 kilo.json 的 agent 模型绑定。优先级：config.model_overrides.<agent> > runtime_decision > kilo.json agent.<name>.model。
+> lifecycle/config.yaml tier_defaults[Tn].model_overrides 字段，由 apply-tier-auto 机械写入 task_context.config.model_overrides。conductor dispatch 时若该字段存在，覆盖 kilo.json 的 agent 模型绑定。优先级：config.model_overrides.<agent> > runtime_decision > kilo.json agent.<name>.model。
 
 | Tier | Agent | 覆盖模型 | 理由 |
 |------|-------|----------|------|

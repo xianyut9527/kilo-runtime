@@ -48,6 +48,10 @@ kilo.json.bak.*
 .kilo/task_context/
 .kilo/task_context/**
 
+# 多模型审计产物（mmo.mjs 每次执行落盘的 JSON，运行时数据不入库）
+.kilo/mmo-audit/
+.kilo/mmo-audit/**
+
 # IDE 注入的 MCP 运行时产物
 .playwright-mcp/
 .playwright-mcp/**
