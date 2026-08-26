@@ -1118,6 +1118,7 @@ function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd, agent, ti
     );
     writeContext(taskId, ctx);
   }
+  process.exit(exitCode);
 }
 
 function cmdSizeCheck(taskId) {

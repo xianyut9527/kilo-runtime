@@ -354,6 +354,16 @@ evidence:
 | 验证类 | verifier | 6000 |
 | 审查类 | reviewer, reverse-auditor | 8000 |
 
+### hard_limit 事前注入（与 overload_count 事后计数互补）
+
+| 机制 | 时机 | 作用 | 触发条件 |
+|------|------|------|----------|
+| hard_limit | 事前（委派 prompt 注入） | subagent 生成时控制长度 | return_contract.hard_limit 字段存在 |
+| overload_count | 事后（返回后计数） | 超限熔断 | 返回字符 > 角色上限 |
+
+两者互补非替代: hard_limit 降低超限概率，overload_count 处理已超限情况。
+conductor 委派包 SOP 见 agent/conductor.md §委派包必含 hard_limit 硬指令。
+
 所有 subagent 返回内容 **≤ 角色上限**（结构化摘要：verdict + 证据 file:line + 关键结论）。
 **禁止**：完整报告 / 长表 / 复述文件内容--完整 finding 落 task_context（`verification.forward` / `verification.review` / `verification.reverse`），返回消息只放摘要+指针。分档放宽是给 finding 多的审查类留余量，非鼓励写满。
 

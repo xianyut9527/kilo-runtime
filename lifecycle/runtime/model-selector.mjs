@@ -33,14 +33,21 @@ const KILO_JSON_PATH = resolve(_REPO_ROOT, 'kilo.json');
 // 装配后静态，跨调用命中）。缺失/损坏 → 返回 null（normalizeModelId(null) 原样返回，
 // withProviderPrefix 里 getProviderPrefixForModelId 未找到 alias → 原样返回，不抛错）。
 function readCodeOptimizedModel() {
+  // U4: 从 provider.hx.models 中找第一个 modelId 含 code/coder 的模型（与 codeOfId 逻辑一致），
+  // 不再依赖非官方顶层 code_optimized_model 字段（违反 kilo.json schema additionalProperties:false）。
   try {
-    return cachedDerive('kiloCodeOptimizedModel', [KILO_JSON_PATH], () => {
-      const raw = readFileSync(KILO_JSON_PATH, 'utf8');
+    return cachedDerive("kiloCodeOptimizedModel", [KILO_JSON_PATH], () => {
+      const raw = readFileSync(KILO_JSON_PATH, "utf8");
       const cfg = JSON.parse(raw);
-      return cfg?.code_optimized_model ?? null;
+      const models = cfg?.provider?.hx?.models ?? {};
+      const codeModelId = Object.keys(models).find(id => {
+        const lower = String(id).toLowerCase();
+        return lower.includes("code") || lower.includes("coder");
+      });
+      return codeModelId ? ("hx/" + codeModelId) : null;
     });
   } catch (err) {
-    console.warn(`[model-selector] failed to load code_optimized_model: ${err?.message ?? err}`);
+    console.warn(`[model-selector] failed to find code-optimized model: ${err?.message ?? err}`);
     return null;
   }
 }

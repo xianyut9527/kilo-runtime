@@ -7,9 +7,9 @@
   "compaction": {
     "auto": true,
     "prune": true,
-    "tail_turns": 8,
-    "preserve_recent_tokens": 60000,
-    "reserved": 24000
+    "tail_turns": 4,
+    "preserve_recent_tokens": 40000,
+    "reserved": 32000
   },
   "commit_message": {
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
@@ -57,7 +57,10 @@
     }
   },
   "skills": {
-    "paths": ["~/.config/kilo/.kilo/skills", "~/.agents/skills"]
+    "paths": [
+      "~/.config/kilo/.kilo/skills",
+      "~/.agents/skills"
+    ]
   },
   "permission": {
     "bash": "allow"
@@ -71,15 +74,31 @@
     },
     "gitnexus": {
       "type": "local",
-      "command": ["gitnexus", "mcp"],
+      "command": [
+        "gitnexus",
+        "mcp"
+      ],
       "enabled": true,
       "timeout": 30000
     },
     "playwright": {
       "type": "local",
-      "command": ["npx", "@playwright/mcp"],
+      "command": [
+        "npx",
+        "@playwright/mcp"
+      ],
       "enabled": false,
       "timeout": 120000
+    },
+    "codegraph": {
+      "type": "local",
+      "command": [
+        "E:/wj/000/codegraph-win32-x64/bin/codegraph.cmd",
+        "serve",
+        "--mcp"
+      ],
+      "enabled": true,
+      "timeout": 30000
     }
   },
   "provider": {
@@ -88,9 +107,8 @@
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "baseURL": "https://huixin.nat100.top/v1",
-        "timeout": 990000,
-        "chunkTimeout": 990000,
-        "maxRetries": 2
+        "timeout": 1800000,
+        "chunkTimeout": 1800000
       },
       "models": {
         "deepseek-v4-pro": {
@@ -98,7 +116,7 @@
           "reasoning": true,
           "limit": {
             "context": 200000,
-            "output": 16384
+            "output": 32768
           }
         },
         "deepseek-v4-flash": {
@@ -106,7 +124,7 @@
           "reasoning": true,
           "limit": {
             "context": 200000,
-            "output": 16384
+            "output": 32768
           }
         },
         "glm-5.2": {
@@ -114,55 +132,75 @@
           "reasoning": true,
           "limit": {
             "context": 200000,
-            "output": 16384
+            "output": 32768
           }
         },
         "kimi-k2.6": {
           "name": "kimi-k2.6",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
-            "output": 16384
+            "output": 32768
           }
         },
         "kimi-k2.7-code": {
           "name": "kimi-k2.7-code",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
-            "output": 16384
+            "output": 32768
           }
         },
         "kimi-k3": {
           "name": "kimi-k3",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
-            "output": 16384
+            "output": 32768
           }
         },
         "minimax-m3": {
           "name": "minimax-m3",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
-            "output": 16384
+            "output": 32768
           }
         }
       }

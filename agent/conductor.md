@@ -89,8 +89,8 @@ can_handoff_to:
    - **委派包 = 核心摘要**：只传 goal（1 句）+ context_anchor（文件:行号）+ acceptance_criteria（可验条件）+ forbidden_files（边界）+ 验证命令 + 返回契约（按角色分档上限，见 .kilo/instructions/output-schema.md §返回超限约束）。完整六条见 §核心编排流程。**禁止传文件内容复述、长摘要、步骤详解**——subagent 有独立 context window，自己读文件。委派智能体原则上都是核心摘要，传文件具体内容进去既冗余又撑大 context。
    - **返回契约**：subagent 只返回 ≤角色上限核心摘要（verdict + 证据 file:line + 关键结论），禁止完整报告/长表/复述文件内容。task 返回 >角色上限（见 output-schema §返回超限约束分档） → 标 `[RETURN_OVER_LIMIT]`，`set overload_count +1`。`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先提取核心摘要压缩（见铁律 #9），仍超限才切 agent_manager worktree。
    - 单次 task 委派规模限制（文件数/prompt 字符数）见铁律 #9 step 0 pre-dispatch。
-   - **6a. AgentRuntime 委派前调用（[T2] 必跑；T0/T1 跳过）**：dispatch task 前先调 runtime select —— `import { selectForDispatch } from '../lifecycle/runtime/index.mjs'`（**路径从 agent/ 出发**；`select` 未被该路径使用，已移除避免未用 import）；用 `selectForDispatch(agent.model, task_context.intent.raw, attachedFiles, {userMessage: task_context.intent.raw})` 得到 `runtime_decision`，其中 `agent.model` 指 **该 agent 在 kilo.json agent.<name>.model 字段绑定的 model**（**costPriority/smallModel 从 `lifecycle/config.yaml runtime:` 段读，不依赖 task_context.config.runtime**——该字段不存在）。`runtime.select()` 调用整体 try/catch 包裹，失败回退到 agent 原始 model + 在 dispatch_log 追加 `{runtime_status: 'degraded', error: e.message}`。处理逻辑：
-      - `tier in ['T0','T1']`：**跳过 runtime**（T0 极速通道无需优化；T1 快通道靠机械门+正向验证托底，balanced 默认下横切层 no-change，关掉省每次 dispatch 的 runtime 开销）
+   - **6a. AgentRuntime 委派前调用（[T1/T2] 必跑；T0 跳过）**：dispatch task 前先调 runtime select —— `import { selectForDispatch } from '../lifecycle/runtime/index.mjs'`（**路径从 agent/ 出发**；`select` 未被该路径使用，已移除避免未用 import）；用 `selectForDispatch(agent.model, task_context.intent.raw, attachedFiles, {userMessage: task_context.intent.raw})` 得到 `runtime_decision`，其中 `agent.model` 指 **该 agent 在 kilo.json agent.<name>.model 字段绑定的 model**（**costPriority/smallModel 从 `lifecycle/config.yaml runtime:` 段读，不依赖 task_context.config.runtime**——该字段不存在）。`runtime.select()` 调用整体 try/catch 包裹，失败回退到 agent 原始 model + 在 dispatch_log 追加 `{runtime_status: 'degraded', error: e.message}`。处理逻辑：
+      - `tier in ['T0']`：**跳过 runtime**（T0 极速通道无需优化；T1+ 走 runtime selectForDispatch 启用模型调度优化）
       - `tier === 'T2'` 且 `runtime_decision.upgraded === true || runtime_decision.downgraded === true` → 调 task 工具时 model 参数传 `runtime_decision.selected_model`，并在 dispatch_log 追加 `{runtime_override: {from: agent.model, to: runtime_decision.selected_model, reason: runtime_decision.override_reason}}`（`agent.model` 同上，指该 agent 在 kilo.json agent.<name>.model 字段绑定的 model）
     - **6a1. model_overrides 覆盖（U3，T1 快通道 verifier 降级）**：dispatch 时若 `task_context.config.model_overrides.<agent>` 存在（apply-tier-auto 已从 `lifecycle/config.yaml` `tier_defaults[Tn].model_overrides` 机械写入 `config.model_overrides`），task 工具 model 参数传该值，并在 dispatch_log 追加 `{model_override: {agent: <name>, to: <value>}}`。优先级：`config.model_overrides.<agent>` > runtime_decision（6a）> kilo.json agent.<name>.model。T2 不覆盖（保留 glm-5.2）。
     - **6b. 完工即写（subagent 返回前必写 task_context 产物）**：subagent 在返回消息前，必须先执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> --batch - --agent <name>`（stdin 传 JSON 批量写入），把各角色 frontmatter `task_context.write` 声明的产物字段落盘——coder→`execution.diffs/changes/acceptance_map`；verifier→`verification.forward/execution.verification`；fixer→`fixing_history/execution.diffs`。**返回消息只留指针与结论**（verdict + 证据 file:line + 关键结论，≤角色上限，见 output-schema §返回超限约束），不携带产物全文。**conductor 验证闭环**：收到 task 返回后先 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" get <task_id> <字段路径>` 验证产物已写入；缺字段 → 标 `[WRITE_MISSING]` 重派 1 次（同 agent 新会话补写），仍缺 → 标 `[PROCESS_VIOLATION]` 暂停。本子条目不改变 WRITE_MATRIX 各角色写权限。
@@ -201,6 +201,24 @@ SOP:
 2. **`forbidden_files`** 列表 — 边界外文件禁止触碰
 3. **`return_contract.byte_level`** — 委派方要求 subagent 必填的 byte-level 字段(file/line/SHA256/cmd/exit)
 4. **verification_command** — 至少 1 条客观命令(Get-Content L 行 / git diff stat / grep 严格匹配)
+
+### 委派包必含 hard_limit 硬指令（防 abort 事前门禁）
+
+每次 task 委派必含 `return_contract.hard_limit: <N>` 字段，N 取自 output-schema §返回超限约束角色分档:
+- 执行类(coder/fixer): 4000
+- 规划类(planner/plan-reviewer): 4000
+- 验证类(verifier): 6000
+- 审查类(reviewer/reverse-auditor): 8000
+
+**与 overload_count 的关系**: hard_limit 是事前注入（subagent prompt 里就看到上限），overload_count 是事后计数（返回后 conductor 量字符数）。两者互补:
+- hard_limit 事前: 让 subagent 在生成时就控制长度，减少超限概率
+- overload_count 事后: 超限后的熔断机制（计数 ≥3 切 worktree）
+- 优先级: hard_limit 事前 > overload_count 事后（预防优于治疗）
+
+委派包示例:
+return_contract:
+  hard_limit: 4000  # coder 角色上限
+  overflow_instruction: "返回超过 hard_limit 时，只保留 verdict + 证据 file:line + 1 句关键结论，其余落 task_context 后只返回指针"
 
 ### 委派包按角色差异化传递上下文
 
