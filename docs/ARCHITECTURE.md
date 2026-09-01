@@ -21,9 +21,11 @@ INIT（conductor 内建）→ 区分 INQUIRY / EXECUTION（**M1 起参与路由*
 INIT（conductor 内建）→ 定级 T0–T2，写入 config.agents
   │
   ├─ T0 ────────────────→ EXECUTING → DELIVERING → DONE
-  ├─ T1 ──→ PLANNING ──→ EXECUTING → QUALITY → DELIVERING → DONE
+  ├─ T1-low/med ────────→ EXECUTING → QUALITY → DELIVERING → DONE
+  ├─ T1-high ──→ PLANNING ──→ EXECUTING → QUALITY → DELIVERING → DONE
   ├─ T2 ──→ PLANNING ──→ EXECUTING → QUALITY → DELIVERING → DONE
 ```
+> **T1 强度分流**：`t1_strength` 三档（low/medium/high），INIT 按 `lifecycle/stages/init.md §2b` 判定，仅 T1 EXECUTION 生效——low/medium 直通 EXECUTING（跳 PLANNING），high 走完整设计门。
 
 | 阶段 | 类型 | 执行者 | 必配角色 | 挂载点 | 说明 |
 |------|------|--------|----------|--------|------|

@@ -3,14 +3,14 @@
 // 编码健康度检测器：扫描文件列表，检测 BOM / U+FFFD / GBK 残留字节流
 //
 // 用途：
-//   - verifier L1 必查项（默认对 git diff --name-only HEAD 跑）
+//   - verifier L1 必查项（默认对 git diff --name-only HEAD 跑；--diff-filter=ACMR 排除已删除文件）
 //   - coder 完工前自检
 //   - lifecycle-doctor.mjs 编码健康度检查项调用覆盖全 repo
 //
 // 用法：
 //   node scripts/scan-encoding.mjs [file1] [file2] ...
 //   node scripts/scan-encoding.mjs --from-stdin < files.json
-//   无参数时默认扫 `git diff --name-only HEAD`
+//   无参数时默认扫 `git diff --name-only --diff-filter=ACMR HEAD`（排除已删除文件）
 //   支持 --from-stdin 模式(读 stdin JSON 数组,Windows ENAMETOOLONG 安全)
 //
 // 退出码：
@@ -234,9 +234,9 @@ function resolveFilePaths(args) {
     return args.map((p) => path.resolve(process.cwd(), p));
   }
 
-  // 默认：git diff --name-only HEAD
+  // 默认：git diff --name-only --diff-filter=ACMR HEAD（ACMR=Added/Copied/Modified/Renamed，排除 Deleted）
   try {
-    const out = execSync('git diff --name-only HEAD', {
+    const out = execSync('git diff --name-only --diff-filter=ACMR HEAD', {
       encoding: 'utf8',
       cwd: process.cwd(),
       stdio: ['pipe', 'pipe', 'pipe'],

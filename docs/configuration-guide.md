@@ -444,13 +444,9 @@ hooks:
 
 ---
 
+## 6. graph.yaml nodes 快查
 
-```yaml
-
-nodes:
-
-
-
+节点清单见 `lifecycle/graph.yaml`（单一真相，本手册不重复枚举——防止文档漂移）；字段详解见上文 §4。
 
 ---
 

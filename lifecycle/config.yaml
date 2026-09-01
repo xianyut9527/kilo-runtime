@@ -45,6 +45,54 @@
 # ============================================================
 version: 1
 
+# ============================================================
+# t1_strength_signals：T1 内部强度分级唯一规则源（声明式）
+# 供 transition-check checkT1StrengthEligibility 与 conductor INIT 判定消费。
+# 语义：T1 任务按复杂度信号分三档 {low, medium, high}，决定是否走完整设计门。
+#   low/medium → INIT→EXECUTING 直通（跳过 PLANNING）
+#   high       → 保持 INIT→PLANNING 完整设计门
+# 判定信号 = 决策分支/状态耦合/契约影响/机制变更风险，非文件数。
+# 与 tier_escalation 同构：声明式规则集，词表/阈值调整仅改本文件零代码。
+# ============================================================
+t1_strength_signals:
+  # fail-safe：判不了按 high（走完整设计门，宁严勿松）
+  default_strength: high
+
+  # 机制变更/契约变更/状态耦合/多分支信号词（>=15 个）
+  # intent.raw 命中任一 → 若 conductor 声明 low，transition-check 强制升 high
+  strength_escalation_words:
+    - 机制
+    - 契约
+    - 状态耦合
+    - 多分支
+    - 架构
+    - 协议
+    - 接口契约
+    - 数据流
+    - 依赖注入
+    - 全局状态
+    - 并发
+    - 事务边界
+    - 兼容性
+    - 迁移策略
+    - 扩散
+
+  # 四维度判定表（YAML 注释形式）：
+  #   决策分支数  high>=3 / medium 1-2 / low 0
+  #   状态耦合    跨组件状态依赖 = high
+  #   契约影响    API/配置/文件格式变更 = high
+  #   新增机制    新抽象/新协议 = high
+  #
+  # 三档定义：
+  #   high   = 任一维度命中机制信号（分支>=3 / 跨组件状态耦合 / 契约变更 / 新增机制）
+  #   medium = 1-2 分支单模块、无契约影响
+  #   low    = "非常明确任务"：改动点唯一 + 验收标准用户显式给出 + 无信号词命中
+  strength_dimensions:
+    decision_branches: "high>=3 / medium 1-2 / low 0"
+    state_coupling: "跨组件状态依赖 = high"
+    contract_impact: "API/配置/文件格式变更 = high"
+    new_mechanism: "新抽象/新协议 = high"
+
 tier_defaults:
   # T0 极速通道：INIT → EXECUTING → DELIVERING
   # 无可选视角；恒定挂载智能体（coder）由图拓扑限定自动加载

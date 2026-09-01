@@ -43,7 +43,7 @@
 
 ### A.4 完整定级决策树
 
-> **【自约束指针】** 本决策树及 §A.4 任何**语义修订**（新增/删除/改判据、术语、定义）一律属逻辑性修改，最低 T1。详见本文件 §A.4 Step 1a「T0 前置硬否决闸门」+ Step 2「第一硬门」。
+> **【自约束指针】** 本决策树及 §A.4 任何**语义修订**（新增/删除/改判据、术语、定义）一律属逻辑性修改，最低 T1。详见本文件 §A.4 Step 1a「T0 前置硬否决闸门」+ Step 2「第一硬门」+ Step 4b「T1 强度判定」（强度判定标准单源为 lifecycle/stages/init.md §2b，本处仅摘要）。
 
 ```
 Step 1: 意图判定（core.md）
@@ -84,6 +84,15 @@ Step 4a: 机制复杂度升档判定（仅在 Step 4 未明确 T2 时进入）
     2. 架构语义：对 lifecycle/graph.yaml 语义描述的实质性变更（graph.yaml 本身 forbidden 不动；仅指引用/解释 graph 语义的其他文件变更）
     3. 行为契约：task_context schema 字段语义变更、或 agent/*.md frontmatter 契约字段语义变更（如 mount/task_context/gate 字段含义改变）
   有意收紧：命中即升 T2 是设计选择——机制复杂度低估会导致全生命周期传播错误，按成本不对称原则直接取高
+
+Step 4b: T1 强度判定（EXECUTION + tier==T1 时必做；T2/INQUIRY 跳过）
+  单源：lifecycle/stages/init.md §2b（本处仅摘要，判定标准以 init.md 为准）
+  按 lifecycle/config.yaml `t1_strength_signals` 四维度判定表输出三档 sizing.t1_strength：
+    - high   = 机制/契约/状态耦合/≥3 分支任一命中（走完整设计门 INIT→PLANNING）
+    - medium = 1-2 分支单模块无契约面（直通 INIT→EXECUTING）
+    - low    = 非常明确 + 纯表面语义 + 无信号词（直通 INIT→EXECUTING）
+  防低判兜底：intent.raw 命中 strength_escalation_words 而声明 low → 强制升 high（阻断直通）
+  默认档 fail-safe = high（判不了按高，走完整设计门）
 ```
 
 ---

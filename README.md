@@ -41,8 +41,9 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   │   ├── security-checklist.md  # 安全/性能检查清单（由 verifier 在 L3 调用）
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
 │   │   ├── evolution.md           # 自进化闭环（执行→反思→提炼→固化写入规则）
-│   │   ├── skill-upgrade.md       # Skill 升级提案生成（由维护者根据实际运行反馈人工评估后触发）
-│   │   ├── skill-usage-tracking.md # skill 使用记录协议（已简化，不再独立追踪）
+│   │   ├── byte-level-verify.md   # byte-level 验证 SOP（委派包/证据契约/路径陷阱）
+│   │   ├── coding-engineering.md  # 编码工程化标准（设计模式/组件化/反模式）
+│   │   ├── workflow-detail.md     # 工作流细则（§A 两阶段定级决策树/单元闭环）
 │   │   └── skills-lifecycle.md    # Skills 生命周期管理规则（按需引用，不自动注入）
 │   ├── skills/                   # skill 能力扩展位（运行时由 Kilo 从项目级与社区源发现，仓库不预置源文件；见 kilo.json skills.paths）
 ├── agent/                        # Kilo 智能体定义（v6 单源：一智能体一文件，frontmatter 自注册生命周期路由）
@@ -52,6 +53,8 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   ├── verifier.md               # 正向验证（mount: QUALITY hook:verify；L1/L2/L3、5 元组证据）
 │   ├── reviewer.md               # 静态审查（mount: QUALITY hook:review；安全编码模式/架构/简化/SCOPE_CREEP 四视角）
 │   ├── fixer.md                  # 修复智能体（mount: QUALITY hook:fix, auto-trigger；定向修复阻塞问题）
+│   ├── plan-reviewer.md          # 方案审查（mount: PLANNING post；tiers: [T2]）
+│   ├── reverse-auditor.md        # 反向验证审查（mount: QUALITY post；反向核对 diff）
 │   └── (新增智能体 = 丢一个 <name>.md + kilo.json 绑模型，零改框架)
 ├── lifecycle/                    # 生命周期（5 阶段：INIT→PLANNING→EXECUTING→QUALITY→DELIVERING）
 │   ├── graph.yaml                # 主 DAG 单一真相来源（节点 INIT/PLANNING/.../DONE + 边 + 流转条件）
@@ -66,9 +69,9 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 ├── docs/                           # 参考文档
 │   ├── ARCHITECTURE.md              # 架构全景导航（v2.1 综合速查手册）
 │   ├── agent-mount-guide.md        # 智能体挂载注册指南（frontmatter mount 字段）
-│   ├── conductor-full-spec.md      # conductor 完整设计规范（运行时精简版的完整版）
+│   ├── conductor-full-spec.md      # conductor 完整设计规范（运行时精简版的完整版 + 设计门产物 + 多智能体架构历史）
 │   ├── configuration-guide.md      # 配置指南（快速上手：新增智能体/阶段/模型/定级调整）
-│   ├── conductor-full-spec.md      # conductor 完整设计规范（设计门产物 + 多智能体架构历史）
+│   ├── tier-bench-report.md        # Tier 0/1/2 对比测试报告（2026-08-07 bench）
 │   └── model-registry.md          # 模型能力倾向矩阵人类可读版（v6.1 唯一能力参考，无机器可读副本）
 ├── install.ps1                   # Kilo 配置安装脚本（Windows）
 ├── install.sh                    # Kilo 配置安装脚本（macOS/Linux）
@@ -184,13 +187,10 @@ diff -rq . ~/.config/kilo \
 
 ## MCP 扩展
 
-本配置默认零耦合（所有 MCP `enabled: false`），需用时手动启用：
+本配置仅启用本地代码图谱类 MCP（gitnexus / codegraph，`enabled: true`），其余（context7 / playwright 等）默认 `enabled: false` 占位；需用时手动启用。
 
-- **可选 MCP 工具**：通用类别包括远程文档检索、代码图谱索引、浏览器自动化等。具体 MCP 由 IDE 运行时注入决定；本仓库仅在 `kilo.json` 的 `mcp` 节保留占位配置，默认全部 `enabled: false`。启用时按所选工具官方文档配置（如部分工具需全局安装 CLI 客户端、设置环境变量等）。
+- **可选 MCP 工具**：通用类别包括远程文档检索、代码图谱索引、浏览器自动化等。具体 MCP 由 IDE 运行时注入决定；本仓库在 `kilo.json` 的 `mcp` 节维护启用清单与占位配置。启用时按所选工具官方文档配置（如部分工具需全局安装 CLI 客户端、设置环境变量等）。
 
-
-
-> 注意：MCP 服务器会增加上下文和工具面，不要同时启用太多高噪声服务器。
 
 ## Skills 跨项目复用
 

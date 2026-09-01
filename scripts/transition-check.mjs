@@ -47,7 +47,7 @@ import { getStageRequiredRoles, isConditionalRole, hasRequirementSpread, hasSpre
 import { cachedDerive } from './lib/derived-cache.mjs';
 import { verifyField } from './lib/byte-verify.mjs';
 import { ERROR_CODES, codeMsg } from './error-codes.mjs';
-import { checkT0Eligibility } from './delivery-audit.mjs';
+import { checkT0Eligibility, checkT1StrengthEligibility } from './delivery-audit.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GRAPH_PATH = path.resolve(__dirname, '..', 'lifecycle', 'graph.yaml');
@@ -312,11 +312,52 @@ export function resolveVars(ctx) {
   return {
     intent_type: pick(intent.intent_type),
     tier: pick(sizing.tier),
+    t1_strength: pick(sizing.t1_strength),
     quality_verdict: pick(ctx.quality && ctx.quality.verdict),
     forward_result: pick(fwd.forward_result, fwd.verdict),
     review_result: pick(review.review_result, review.verdict),
   };
 }
+
+// ============================================================
+// T1 强度校验纯函数（供 INIT 出口门禁 + 自检复用）
+// ============================================================
+
+// T1 强度合法性校验：tier!=='T1' 跳过；T1 时 t1_strength 必填 ∈ {low,medium,high}
+// custom_overrides.t1_strength 显式声明时作为生效值（覆盖 sizing.t1_strength）
+export function validateT1Strength(ctx) {
+  const tier = ctx.sizing?.tier;
+  if (tier !== 'T1') {
+    return { ok: true, effective: undefined, reason: 'tier=' + (tier || '(空)') + '，非 T1 跳过' };
+  }
+  const strength = ctx.sizing?.t1_strength;
+  const override = ctx.custom_overrides?.t1_strength;
+  const effective = ['low', 'medium', 'high'].includes(override) ? override : strength;
+  if (!['low', 'medium', 'high'].includes(effective)) {
+    return { ok: false, effective, reason: 't1_strength=' + JSON.stringify(strength) + ' 非法/缺失（合法值 low/medium/high）' };
+  }
+  return { ok: true, effective, reason: 't1_strength=' + effective };
+}
+
+// minimal_gate 校验：T1 直通边（INIT→EXECUTING）conductor 必须补齐的最小产物
+// goal(string 非0) + acceptance_criteria(array length>=1) + forbidden_files(array)
+export function validateMinimalGate(ctx) {
+  const mg = ctx.plan?.minimal_gate;
+  if (!mg || typeof mg !== 'object') {
+    return { ok: false, reason: 'plan.minimal_gate 缺失或非对象' };
+  }
+  if (typeof mg.goal !== 'string' || mg.goal.trim().length === 0) {
+    return { ok: false, reason: 'plan.minimal_gate.goal 缺失或非空字符串' };
+  }
+  if (!Array.isArray(mg.acceptance_criteria) || mg.acceptance_criteria.length < 1) {
+    return { ok: false, reason: 'plan.minimal_gate.acceptance_criteria 缺失或 <1 条' };
+  }
+  if (!Array.isArray(mg.forbidden_files)) {
+    return { ok: false, reason: 'plan.minimal_gate.forbidden_files 缺失或非数组' };
+  }
+  return { ok: true, reason: 'plan.minimal_gate 完整' };
+}
+
 
 // ============================================================
 // recovery_pending hook (U5)
@@ -430,6 +471,21 @@ function main() {
       }
     }
   }
+  // T1 强度合法性校验：INIT 出口 tier=T1 时 t1_strength 必填 ∈ {low, medium, high}
+  // custom_overrides.t1_strength 显式声明时作为生效值（不阻断）
+  if (FROM === 'INIT' && vars.tier === 'T1') {
+    const v = validateT1Strength(ctx);
+    if (!v.ok) {
+      die(1, '[INVALID_T1_STRENGTH] INIT 阶段 T1 任务未写入合法 t1_strength（' + v.reason + '）。按 init.md §2b 四维度写入 sizing.t1_strength \'<low|medium|high>\' 或 custom_overrides.t1_strength 显式覆盖。');
+    }
+    // T1 low 强度 + 命中升级信号词 → 强制升 high（防该走规划被跳过）
+    const t1 = checkT1StrengthEligibility({ ...ctx, sizing: { ...(ctx.sizing || {}), t1_strength: v.effective } });
+    if (t1.ok === false || t1.status === 'WARN') {
+      if (ctx.custom_overrides?.t1_strength !== 'low') {
+        die(1, '[PROCESS_VIOLATION] T1 强度低判: intent.raw 命中升级信号词, t1_strength 强制升 high。' + t1.detail + '。由 conductor 重写 sizing.t1_strength=high 后重新流转。');
+      }
+    }
+  }
   if (FROM === 'QUALITY') {
     if (vars.quality_verdict !== 'PASS' && vars.quality_verdict !== 'CIRCUIT_BREAKER') {
       die(1, `[MISSING_QUALITY_VERDICT] QUALITY 阶段未写入合法 verdict（当前=${JSON.stringify(vars.quality_verdict)}）。T1/T2/T3 必须经过 QUALITY hooks（verify/review/fix 循环），写入 quality.verdict ∈ {PASS, CIRCUIT_BREAKER} 后才能离开。`);
@@ -468,6 +524,9 @@ function main() {
   const isT1orT2 = tier === 'T1' || tier === 'T2';
   const isExempt = !isT1orT2;  // T0 边豁免；T1/T2 走 provenance gate；INQUIRY 直通见 M1 分支
   const isCircuitBreakerExit = FROM === 'QUALITY' && TO === 'DELIVERING' && vars.quality_verdict === 'CIRCUIT_BREAKER';
+  // T1 直通边（INIT→EXECUTING low/medium）：跳过 PLANNING 设计门，provenance 不要求 PLANNING roles
+  // （PLANNING roles 仅在 FROM==='PLANNING' 时加入，天然不命中；此处显式声明豁免语义）
+  const isT1DirectEdge = FROM === 'INIT' && TO === 'EXECUTING' && tier === 'T1';
 
   if (FROM === 'PLANNING' && TO === 'DELIVERING' && intentType === 'INQUIRY') {
     // M1 INQUIRY 直通：仅校验 PLANNING 必配角色 + post:PLANNING 恒定挂载，跳过 EXECUTING/QUALITY roles 与 review tiered mounts
@@ -486,7 +545,7 @@ function main() {
     }
   } else if (!isExempt && !isCircuitBreakerExit) {
     const provenanceRequired = [];
-    if (FROM === 'PLANNING' && TO === 'EXECUTING') {
+    if (FROM === 'PLANNING' && TO === 'EXECUTING' && !isT1DirectEdge) {
       provenanceRequired.push(...getStageRequiredRoles('PLANNING'));
     }
     if (FROM === 'EXECUTING' && TO === 'QUALITY') {
@@ -617,6 +676,14 @@ function main() {
       }
     }
   }
+  // INIT→EXECUTING 直通边（T1 low/medium）minimal_gate 门禁：
+  // 直通无 plan 产物，conductor 必须补齐 plan.minimal_gate 最小产物（goal + acceptance_criteria≥1 + forbidden_files）
+  if (FROM === 'INIT' && TO === 'EXECUTING' && vars.tier === 'T1') {
+    const mg = validateMinimalGate(ctx);
+    if (!mg.ok) {
+      die(1, '[MISSING_MINIMAL_GATE] INIT -> EXECUTING: T1 直通边缺少 plan.minimal_gate 最小产物（' + mg.reason + '）。conductor 按 T1 直通包规范写入 plan.minimal_gate。');
+    }
+  }
   // recovery_pending hook (U5): QUALITY->DELIVERING - 上一次 retry 仍未补全 -> 阻断
   // CB 出口豁免 (与 verification.forward 校验同: CB 是用户决策的降级路径)
   if (FROM === 'QUALITY' && TO === 'DELIVERING' && !isCircuitBreakerExit) {
@@ -701,6 +768,16 @@ function main() {
   ctx.current_stage = TO;
   writeContext(taskId, ctx);
   process.stdout.write(`PASS transition ${FROM} -> ${TO} (when=${edge.when || 'none'}${edge.gate ? ` gate=${edge.gate}` : ''} | quality_round=${quality.round}/${maxR})\n`);
+  // T1 强度显式展示（避免用户疑惑"没走规划"）：INIT 出口时直观标出强度档位与去向
+  if (FROM === 'INIT' && vars.tier === 'T1' && (TO === 'EXECUTING' || TO === 'PLANNING')) {
+    // effective 复用 validateT1Strength：custom_overrides.t1_strength 显式覆盖时显示生效值，不重建逻辑
+    const eff = validateT1Strength(ctx).effective || vars.t1_strength;
+    if (eff === 'high') {
+      process.stdout.write('  T1 强度(t1_strength)=high → 去向: INIT→PLANNING 走完整设计门\n');
+    } else {
+      process.stdout.write('  T1 强度(t1_strength)=' + (eff || 'low|medium') + ' → 去向: INIT→EXECUTING 直通跳过规划(PLANNING)\n');
+    }
+  }
   process.exit(0);
 }
 
@@ -735,6 +812,38 @@ async function runSelfCheck() {
   const r9 = checkRecoveryPending({ recovery_log: [{ type: 'write-missing', action: 'retry', timestamp: 1, script_output: { byte_verification: [{ present: false }, { field: 'z', present: false }] } }] });
   assertEq('skip entry without field', Array.isArray(r9) && r9.length === 1 && r9[0] === 'z', true);
   assertEq('no fields tracked -> []', checkRecoveryPending({ recovery_log: [{ type: 'write-missing', action: 'retry', timestamp: 1, script_output: {} }] }), []);
+
+  // === U3 T1 强度（t1_strength）自检断言 ===
+  // ① resolveVars t1_strength 映射
+  const rv = resolveVars({ intent: {}, sizing: { tier: 'T1', t1_strength: 'low' } });
+  assertEq('resolveVars t1_strength maps sizing.t1_strength', rv.t1_strength, 'low');
+  assertEq('resolveVars t1_strength undefined when absent', resolveVars({ intent: {}, sizing: { tier: 'T1' } }).t1_strength, undefined);
+  // ② 合法值 low/medium/high 放行
+  assertEq('validateT1Strength low ok', validateT1Strength({ sizing: { tier: 'T1', t1_strength: 'low' } }).ok, true);
+  assertEq('validateT1Strength medium ok', validateT1Strength({ sizing: { tier: 'T1', t1_strength: 'medium' } }).ok, true);
+  assertEq('validateT1Strength high ok', validateT1Strength({ sizing: { tier: 'T1', t1_strength: 'high' } }).ok, true);
+  assertEq('validateT1Strength effective returned', validateT1Strength({ sizing: { tier: 'T1', t1_strength: 'medium' } }).effective, 'medium');
+  // ③ 非法值/缺失阻断
+  assertEq('validateT1Strength invalid value blocks', validateT1Strength({ sizing: { tier: 'T1', t1_strength: 'super' } }).ok, false);
+  assertEq('validateT1Strength missing blocks', validateT1Strength({ sizing: { tier: 'T1' } }).ok, false);
+  // ① custom_overrides 显式覆盖生效
+  assertEq('custom_overrides.t1_strength overrides invalid', validateT1Strength({ sizing: { tier: 'T1', t1_strength: 'bad' }, custom_overrides: { t1_strength: 'low' } }).effective, 'low');
+  // ④ low + 信号词 → WARN
+  const warnR = checkT1StrengthEligibility({ intent: { raw: '需要设计契约与并发机制' }, sizing: { tier: 'T1', t1_strength: 'low' } });
+  assertEq('low + escalation word -> WARN', warnR.status === 'WARN' && warnR.ok === false, true);
+  // low 无信号词 → PASS；tier!=T1 跳过；strength!=low 跳过
+  assertEq('low no signal -> PASS', checkT1StrengthEligibility({ intent: { raw: '简单改一行' }, sizing: { tier: 'T1', t1_strength: 'low' } }).status, 'PASS');
+  assertEq('tier=T2 skip', checkT1StrengthEligibility({ intent: { raw: '契约' }, sizing: { tier: 'T2', t1_strength: 'low' } }).status, 'PASS');
+  assertEq('strength=high skip', checkT1StrengthEligibility({ intent: { raw: '契约' }, sizing: { tier: 'T1', t1_strength: 'high' } }).status, 'PASS');
+  // ⑤ minimal_gate 完整放行 / 缺失阻断
+  const goodMg = { plan: { minimal_gate: { goal: 'x', acceptance_criteria: ['a'], forbidden_files: [] } } };
+  assertEq('minimal_gate ok', validateMinimalGate(goodMg).ok, true);
+  assertEq('minimal_gate missing blocks', validateMinimalGate({}).ok, false);
+  assertEq('minimal_gate empty goal blocks', validateMinimalGate({ plan: { minimal_gate: { goal: '', acceptance_criteria: ['a'], forbidden_files: [] } } }).ok, false);
+  assertEq('minimal_gate empty ac blocks', validateMinimalGate({ plan: { minimal_gate: { goal: 'x', acceptance_criteria: [], forbidden_files: [] } } }).ok, false);
+  // ⑥ T2 无 strength 不阻断
+  assertEq('T2 no strength not blocked', validateT1Strength({ sizing: { tier: 'T2' } }).ok, true);
+
 
   const { execSync } = await import('node:child_process');
   const scanOut = execSync('node scripts/scan-encoding.mjs scripts/transition-check.mjs', { encoding: 'utf8' });

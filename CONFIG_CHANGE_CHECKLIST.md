@@ -35,7 +35,7 @@
 | 修改 EXCLUDE 列表 | 必须同步 `install.sh` 与 `install.ps1` 的双平台 EXCLUDE 数组；**同步 `README.md` 中 diff 验证命令的排除参数**；修改后必须双平台都验证一次 |
 
 
-\|\ 新增/重建\ `\.kilo/skills/<name>/`\ 子目录\ \|\ ①\ `install\.sh`\ 与\ `install\.ps1`\ 的\ `EXCLUDE`\ 数组已忽略\ `\.kilo/skills/`,项目级\ skill\ 不会被同步到全局;②\ \*\*必须用\ `git\ add\ -f\ \.kilo/skills/<name>/`\ 强制跟踪\*\*\(全局\ `\.gitignore`\ L43-44\ 忽略整个\ `\.kilo/skills/`\),否则会被\ \./install\ 安全清理或外部\ `rm\ -rf\ \.kilo/skills`\ 无痕删除\(8/11\ 事故根因\);③\ skill\ 目录内必须放本地\ `\.gitignore`\(首行\ `\*`\ \+\ `!SKILL\.md`\ \+\ `!`\ 项豁免\)\ 屏蔽\ `__pycache__`/`monthly-snapshots/`\ 临时文件;④\ `git\ commit\ --no-verify`\(跳过\ pre-commit\ hook\ 的\ \.kilo/skills\ 排除检查\),commit\ message\ 明确写\ 'force-add\ to\ bypass\ global\ \.gitignore'\ \| m -rf .kilo/skills 无痕删除(8/11 事故根因);③ skill 目录内必须放本地 .gitignore(首行 * + !SKILL.md + ! 项豁免) 屏蔽 __pycache__/monthly-snapshots/ 临时文件;④ git commit --no-verify(跳过 pre-commit hook 的 .kilo/skills 排除检查),commit message 明确写 'force-add to bypass global .gitignore' |
+| 新增/重建 \`.kilo/skills/<name>/\` 子目录 | ① \`install.sh\`/\`install.ps1\` 的 EXCLUDE 数组已忽略 \`.kilo/skills/\`；② **必须用 \`git add -f .kilo/skills/<name>/\` 强制跟踪**（全局 .gitignore L43-44 忽略整个目录，否则会被 install 安全清理或 rm 无痕删除，8/11 事故根因）；③ skill 目录内放本地 .gitignore（首行 * + !SKILL.md + 豁免项）屏蔽临时文件；④ git commit --no-verify 跳过 pre-commit hook 检查，commit message 写明 force-add 原因 |
 
 ### instructions 与 prompt 联动检查
 
@@ -57,7 +57,6 @@
 - **输出格式规范**（交付输出的最小公共字段、`[MARKER]` 标记语言规范、状态枚举）→ 集中维护在 `.kilo/instructions/output-schema.md`；其他文件只做引用。
 - **SKILL.md frontmatter 规范**（含 keywords 数量 3–20、name 与目录名一致、兼容 agentskills.io 标准）→ 由项目级 `.kilo/skills/` 各 skill 自治；全局骨架只在 `skills-lifecycle.md` 给出编写参考，不强制校验仓库外的 skill 文件。
 - **自进化闭环**（执行→反思→提炼→固化的写入规则与优先级）→ 集中维护在 `.kilo/instructions/evolution.md`；其他文件只做引用。
-- **Skill 升级提案**（由维护者根据实际运行反馈人工评估后触发）→ 集中维护在 `.kilo/instructions/skill-upgrade.md`；其他文件只做引用。
 - **工作流参考**（small_model 触发规则、需求扩散与同类点扫描）→ 集中维护在 `.kilo/instructions/workflow-reference.md`；README 与其他文件只做引用。
 
 修改这些规则时，优先改主文档；agent 文件只保留必要引用和角色化执行要求。

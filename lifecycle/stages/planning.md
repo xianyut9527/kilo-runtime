@@ -1,5 +1,5 @@
 ---
-description: 生命周期阶段 PLANNING — 设计门。T1+ 编码前必须经过 planner 输出方案+验收点+DAG。
+description: 生命周期阶段 PLANNING — 设计门。T1-high / T2 编码前必须经过 planner 输出方案+验收点+DAG（T1 low/medium 直通不经本阶段）。
 model_capability: deep-reasoning
 token_budget: 12000
 # required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
@@ -11,6 +11,8 @@ required_roles: [planner]
 # lifecycle/stages/planning
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（纯拓扑）；必配角色契约见本文件 frontmatter `required_roles`；智能体经 frontmatter `mount` 自注册挂载。
+
+> **直通分流**：T1 low/medium 直通不经本阶段（见 `lifecycle/graph.yaml` INIT→EXECUTING 直通边）；本阶段服务 T1-high 与 T2。
 
 ## 输入
 
@@ -106,7 +108,7 @@ PLANNING 阶段需在 `plan.task_dag.units[]` 每单元加：
 
 ## 路由规则（边定义见 graph.yaml）
 
-- `PLANNING → EXECUTING`：方案输出后无条件流转（执行类 T1/T2 必经）
+- `PLANNING → EXECUTING`：方案输出后流转，仅 T1-high / T2 生效（T1 low/medium 直通不经本阶段，见 graph.yaml INIT→EXECUTING 直通边）
 
 ## 硬规则
 

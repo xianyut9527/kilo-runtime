@@ -16,8 +16,8 @@ Kilo 框架工具集，19 个顶层 `.mjs`（Node ESM，零 npm 依赖，Windows
 | `bash-guard.mjs` | bash 命令静态分析（写拦截 + PS5.1 regex） | `"<bash cmd>"` | 0/1/2 | — |
 | `task-context.mjs` | `task_context` CRUD + pre-dispatch size-check + 状态断言 | 多子命令（`init/get/set/validate/assert/size-check/log-dispatch/delete`） | 0/1/2 | WRITE_MATRIX 派生自 agent/*.md frontmatter |
 | `task-context-runtime.mjs` | 纯运行时层（零副作用，供其他脚本 ESM import） | （库文件，无 CLI） | — | `lib/derived-cache.mjs` |
-| `transition-check.mjs` | 阶段流转门禁（DAG 合法性 + quality.round 机械递增 + 熔断） | `<task_id> --from X --to Y` | 0/1/2/3 | `error-codes.mjs` |
-| `flow-audit.mjs` | 流程合规审计（T1/T2 必经链路 + dispatch_log 完整性） | `[<task_id> / --all / --clean-stale]` | 0/1 | `lifecycle/stages/*.md` required_roles |
+| `transition-check.mjs` | 阶段流转门禁（DAG 合法性 + quality.round 机械递增 + 熔断 + T1 强度门禁(INIT 出口校验 t1_strength + 直通边 minimal_gate)） | `<task_id> --from X --to Y` | 0/1/2/3 | `error-codes.mjs` |
+| `flow-audit.mjs` | 流程合规审计（T1/T2 必经链路 + T1 按强度分流 + dispatch_log 完整性） | `[<task_id> / --all / --clean-stale]` | 0/1 | `lifecycle/stages/*.md` required_roles |
 | `acceptance-check.mjs` | 机械验收门（A 层第一门，verify_command exit code 硬门） | `<task_id>` | 0/1/2 | `task_context.execution.acceptance_map` |
 | `diff-boundary-check.mjs` | SCOPE_CREEP / FORBIDDEN_TOUCH 机械边界门 | `<task_id>` | 0/1/2 | `task_context.plan.task_dag.units[].key_files/forbidden_files` |
 | `trust-transfer-check.mjs` | convergence-auditor 三步校验（独立 evidence / 信任传递措辞 / fresh 性） | `<task_id> [--round N]` | 0/1 | — |

@@ -17,12 +17,12 @@
   "agent": {
     "conductor": {
       "mode": "primary",
-      "model": "hx/minimax-m3",
+      "model": "hx/deepseek-v4-flash",
       "prompt": "工作流编排者（conductor）。启动期装配 lifecycle/ 元数据 + 挂载点加载 + task_context + 流转门禁。核心动作：判定意图→定级→委派→流转→验证→交付。工程化防 abort：严格按铁律 #9；委派包见 §委派不亲为。委派只传核心摘要；size-check 超限切 worktree。DAG 流转；transition-check 校验必经智能体；跳过委派=[VIOLATION]。输出契约见 .kilo/instructions/output-schema.md。"
     },
     "planner": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
+      "model": "hx/glm-5.3",
       "prompt": "规划智能体。分析需求、调研代码、输出设计方案、定义验收点。只设计不写代码。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "plan-reviewer": {
@@ -37,7 +37,7 @@
     },
     "verifier": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
+      "model": "hx/glm-5.3-flash",
       "prompt": "正向验证智能体。按验收标准逐条验证、L1-L3 分层、5 元组证据、独立重跑。只验证不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "reviewer": {
@@ -47,7 +47,7 @@
     },
     "reverse-auditor": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
+      "model": "hx/glm-5.3",
       "prompt": "反向验证审查智能体。从反向视角独立审查 diff：反向核对验收标准/设计门 DAG 一致性、SCOPE_CREEP、调试残留、重复实现 LOCAL_PATCH/COPY_PASTE_FIX、FAKE_CONTEXT、越界改动。只审查不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "fixer": {
@@ -57,10 +57,7 @@
     }
   },
   "skills": {
-    "paths": [
-      "~/.config/kilo/.kilo/skills",
-      "~/.agents/skills"
-    ]
+    "paths": ["~/.config/kilo/.kilo/skills", "~/.agents/skills"]
   },
   "permission": {
     "bash": "allow"
@@ -74,19 +71,13 @@
     },
     "gitnexus": {
       "type": "local",
-      "command": [
-        "gitnexus",
-        "mcp"
-      ],
+      "command": ["gitnexus", "mcp"],
       "enabled": true,
       "timeout": 30000
     },
     "playwright": {
       "type": "local",
-      "command": [
-        "npx",
-        "@playwright/mcp"
-      ],
+      "command": ["npx", "@playwright/mcp"],
       "enabled": false,
       "timeout": 120000
     },
@@ -135,17 +126,28 @@
             "output": 32768
           }
         },
+        "glm-5.3": {
+          "name": "glm-5.3",
+          "reasoning": true,
+          "limit": {
+            "context": 200000,
+            "output": 32768
+          }
+        },
+        "glm-5.3-flash": {
+          "name": "glm-5.3-flash",
+          "reasoning": true,
+          "limit": {
+            "context": 200000,
+            "output": 32768
+          }
+        },
         "kimi-k2.6": {
           "name": "kimi-k2.6",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -156,13 +158,8 @@
           "name": "kimi-k2.7-code",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -173,13 +170,8 @@
           "name": "kimi-k3",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -190,13 +182,8 @@
           "name": "minimax-m3",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,

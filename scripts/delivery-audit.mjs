@@ -25,6 +25,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 // ============================================================
 // 常量
 // ============================================================
@@ -154,6 +156,72 @@ export function checkT0Eligibility(ctx) {
   }
   return { check: 'T0_ELIGIBILITY', status: 'PASS', ok: true, detail: 'intent.raw 未命中逻辑指示词', remediation: '(无)' };
 }
+
+// 从 lifecycle/config.yaml 读取 t1_strength_signals.strength_escalation_words
+// 简单 YAML 词表提取（与 tier_escalation 解析同构，脚本自包含，不引入 yaml 库）
+// 返回 string[]；段缺失/文件缺失/词表为空 → null（调用方按不阻断处理）
+function readStrengthEscalationWords() {
+  const cfgPath = path.resolve(__dirname, '..', 'lifecycle', 'config.yaml');
+  let text;
+  try {
+    text = fs.readFileSync(cfgPath, 'utf8');
+  } catch {
+    return null;
+  }
+  const words = [];
+  let inSignals = false;
+  let inWords = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const hashIdx = raw.search(/\s#/);
+    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
+    if (!line.trim()) continue;
+    if (/^t1_strength_signals\s*:/.test(line)) { inSignals = true; inWords = false; continue; }
+    if (!inSignals) continue;
+    if (/^[^\s#]/.test(line) && !/^t1_strength_signals/.test(line)) { inSignals = false; break; }
+    if (/^  strength_escalation_words\s*:\s*$/.test(line)) { inWords = true; continue; }
+    if (/^  [a-z_]+\s*:/.test(line) && !/^  strength_escalation_words/.test(line)) { inWords = false; continue; }
+    if (inWords) {
+      const m = line.match(/^    -\s+(.+?)\s*$/);
+      if (m) words.push(m[1]);
+    }
+  }
+  return words.length > 0 ? words : null;
+}
+
+// T1_STRENGTH_ELIGIBILITY（WARN）：T1 low 强度任务 intent.raw 是否命中强度升级信号词
+// 导出供 transition-check.mjs 复用（INIT 出口 T1 直通边强制升 high 判定）
+// 语义：tier!=='T1' 或 t1_strength!=='low' → PASS 跳过；low + 命中信号词 → WARN
+export function checkT1StrengthEligibility(ctx) {
+  const tier = ctx.sizing?.tier;
+  const strength = ctx.sizing?.t1_strength;
+  if (tier !== 'T1' || strength !== 'low') {
+    return { check: 'T1_STRENGTH_ELIGIBILITY', status: 'PASS', ok: true, detail: 'tier=' + (tier || '(空)') + ' strength=' + (strength || '(空)') + '，跳过', remediation: '(无)' };
+  }
+  const raw = typeof ctx.intent?.raw === 'string' ? ctx.intent.raw : '';
+  if (!raw) {
+    return { check: 'T1_STRENGTH_ELIGIBILITY', status: 'PASS', ok: true, detail: 'intent.raw 为空，无信号词可命中', remediation: '(无)' };
+  }
+  const words = readStrengthEscalationWords();
+  if (!words || words.length === 0) {
+    return { check: 'T1_STRENGTH_ELIGIBILITY', status: 'PASS', ok: true, detail: 'config.yaml t1_strength_signals.strength_escalation_words 段缺失或为空，跳过', remediation: '(无)' };
+  }
+  const rawLower = raw.toLowerCase();
+  const hits = [];
+  for (const w of words) {
+    if (rawLower.includes(w.toLowerCase())) hits.push(w);
+  }
+  if (hits.length >= 1) {
+    return {
+      check: 'T1_STRENGTH_ELIGIBILITY',
+      status: 'WARN',
+      ok: false,
+      detail: '命中强度升级信号词: [' + hits.join(', ') + ']',
+      remediation: '强制升 high 或 custom_overrides.t1_strength=low 显式覆盖',
+    };
+  }
+  return { check: 'T1_STRENGTH_ELIGIBILITY', status: 'PASS', ok: true, detail: 'intent.raw 未命中强度升级信号词', remediation: '(无)' };
+}
+
 
 // 极简 glob 匹配：支持 ** 跨目录、* 单段、? 单字符；路径已规范化为正斜杠
 function globMatch(file, pattern) {

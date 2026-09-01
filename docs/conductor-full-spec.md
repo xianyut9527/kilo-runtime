@@ -56,6 +56,7 @@ INIT（conductor 内建）→ INIT（conductor 内建）
   → T1+: PLANNING [履行 required_roles: [planner] 的智能体] → EXECUTING [履行 required_roles: [coder] 的智能体]
          → QUALITY [hooks 自动挂载：verify + review + fix 循环] → DELIVERING（conductor 内建，executor: conductor）
 ```
+> **T1 直通分流**：`t1_strength` low/medium 走 INIT→EXECUTING 直通（跳 PLANNING）；高强度/机制变更走完整设计门。防低判：信号词命中强制升 high（判定见 `lifecycle/stages/init.md §2b`）。
 
 > 智能体名**不出现在上述流程图**中。各阶段加载谁由 `agent/*.md` frontmatter `mount` 自注册决定，stage 文件只声明 `required_roles` 契约。
 

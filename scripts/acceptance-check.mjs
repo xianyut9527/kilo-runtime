@@ -54,10 +54,17 @@ function readAcceptanceMap(taskId) {
 
 const CMD_TIMEOUT_MS = 120000;
 
+function winCommand(cmd) {
+  // Windows 下 Node execSync(shell:true) 走 cmd.exe；单引号非 cmd 引号字面量，
+  // 将成对单引号转双引号（仅当未混用双引号时），避免 pattern 带引号零命中。非 win32 不做。
+  if (process.platform !== "win32") return cmd;
+  if (cmd.indexOf("'") === -1 || cmd.indexOf('"') !== -1) return cmd;
+  return cmd.replace(/'([^']*)'/g, "$1");
+}
 function runCommand(cmd) {
   // 返回 {exit, stdout, stderr}；超时/异常也返回非零 exit，不抛
   try {
-    const stdout = execSync(cmd, {
+    const stdout = execSync(winCommand(cmd), {
       cwd: process.cwd(),
       shell: true,
       timeout: CMD_TIMEOUT_MS,

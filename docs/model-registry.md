@@ -5,6 +5,12 @@ models:
   "hx/glm-5.2":
     vendor: zhipu
     architecture: glm-5.2
+  "hx/glm-5.3":
+    vendor: zhipu
+    architecture: glm-5.3
+  "hx/glm-5.3-flash":
+    vendor: zhipu
+    architecture: glm-5.3-flash
   "hx/deepseek-v4-pro":
     vendor: deepseek
     architecture: deepseek-v4-pro
@@ -44,18 +50,20 @@ models:
 | 模型 ID（kilo.json provider.hx.models） | 厂商 | 架构 | 推理 | 编码 | 长上下文 | 安全边界 | 稳定性排序 |
 |------|------|------|------|------|----------|----------|----------|
 | `hx/glm-5.2` | zhipu | glm-5.2 | ★★★★★ | ★★★★☆ | 200K | ★★★★★ | 1（最稳定） |
-| `hx/deepseek-v4-pro` | deepseek | deepseek-v4-pro | ★★★★★ | ★★★★★ | 200K | ★★★★★ | 2 |
-| `hx/kimi-k2.6` | moonshot | kimi-k2.6 | ★★★★★ | ★★★★☆ | 200K | ★★★★☆ | 3 |
-| `hx/kimi-k2.7-code` | moonshot | kimi-k2.7-code | ★★★★☆ | ★★★★★ | 200K | ★★★★☆ | 4 |
-| `hx/kimi-k3` | moonshot | kimi-k3 | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 5 |
-| `hx/minimax-m3` | minimax | minimax-m3 | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 6 |
-| `hx/deepseek-v4-flash` | deepseek | deepseek-v4-flash | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 7 |
+| `hx/glm-5.3` | zhipu | glm-5.3 | ★★★★★ | ★★★★☆ | 200K | ★★★★★ | 2 |
+| `hx/deepseek-v4-pro` | deepseek | deepseek-v4-pro | ★★★★★ | ★★★★★ | 200K | ★★★★★ | 3 |
+| `hx/kimi-k2.6` | moonshot | kimi-k2.6 | ★★★★★ | ★★★★☆ | 200K | ★★★★☆ | 4 |
+| `hx/kimi-k2.7-code` | moonshot | kimi-k2.7-code | ★★★★☆ | ★★★★★ | 200K | ★★★★☆ | 5 |
+| `hx/kimi-k3` | moonshot | kimi-k3 | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 6 |
+| `hx/minimax-m3` | minimax | minimax-m3 | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 7 |
+| `hx/deepseek-v4-flash` | deepseek | deepseek-v4-flash | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 8 |
+| `hx/glm-5.3-flash` | zhipu | glm-5.3-flash | ★★★★☆ | ★★★☆☆ | 200K | ★★★★☆ | 9 |
 
-> **稳定性排序用途**：`kilo.json` 中关键路径模型优先选用稳定性排序靠前的模型，当前默认 `glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6`。
+> **稳定性排序用途**：`kilo.json` 中关键路径模型优先选用稳定性排序靠前的模型，当前默认 `glm-5.2` > `glm-5.3` > `deepseek-v4-pro` > `kimi-k2.6`。
 
 ## 稳定性优先选模型指南
 
-当前稳定性排序（由稳定到不稳定）：`glm-5.2` > `deepseek-v4-pro` > `kimi-k2.6` > `kimi-k2.7-code` > `kimi-k3` > `minimax-m3` > `deepseek-v4-flash`。
+当前稳定性排序（由稳定到不稳定）：`glm-5.2` > `glm-5.3` > `deepseek-v4-pro` > `kimi-k2.6` > `kimi-k2.7-code` > `kimi-k3` > `minimax-m3` > `deepseek-v4-flash` > `glm-5.3-flash`（glm-5.3 编号为 2，glm-5.3-flash 排末位 9）。
 
 ## 按智能体能力倾向矩阵
 
@@ -65,17 +73,12 @@ models:
 
 | 智能体 | 生命周期阶段 | 能力倾向 | 能力要点 |
 |--------|-------------|----------|----------|
-| `conductor` | `INIT` / `INIT` / `DELIVERING` | `fast-reasoning` | 低延迟、轻量判定 |
+| `conductor` | `INIT` / `DELIVERING` | `fast-reasoning` | 低延迟、轻量判定 |
 | `planner` | `PLANNING` | `deep-reasoning` | 架构分析、长上下文、复杂推理 |
 | `coder` | `EXECUTING` | `code-generation` | 编码专精、风格一致、最小改动 |
 | `verifier` | `QUALITY`（verify hook） | `strict-verification` | 边界敏感、逻辑审查、安全敏感 |
 | `reviewer` | `QUALITY`（review hook） | `deep-reasoning` | 架构视角、安全视角、强 reasoning |
 | `fixer` | `QUALITY`（fix hook, auto-trigger） | `code-generation` | 快速修复、最小改动、假设驱动调试 |
-
-
-| 智能体 | 角色 | 能力倾向 | 能力要点 |
-|--------|------|----------|----------|
-| verifier | 严格验证 | `strict-verification` | 严格验证，发现边界问题和逻辑漏洞 |
 
 
 ## 模型降级规则
@@ -99,12 +102,13 @@ models:
 
 | 智能体 | 当前模型(kilo.json) | 决策理由 |
 |--------|---------------------|----------|
-| conductor(默认主) | hx/minimax-m3 | reasoning + 低延迟编排判定；conductor edit:deny 不写代码，minimax-m3 档够用且省成本 |
+| conductor(默认主) | hx/glm-5.3-flash | reasoning + 低延迟编排判定；conductor edit:deny 不写代码，flash 档够用且省成本；glm 族稳定性优于 minimax-m3 |
 | coder | hx/deepseek-v4-flash | 编码 ★★★★☆ + 200K 上下文；flash 档兼顾速度与编码能力 |
 | fixer | hx/deepseek-v4-flash | 最小修复场景同 coder，复用绑定降低切换成本 |
-| planner/verifier | hx/glm-5.2 | 稳定性排序 1（最稳），规划/验证对稳定性要求高于编码专精 |
+| planner | hx/glm-5.3 | 规划需深推理，glm-5.3（reasoning ★★★★★，2026-08 升级）对稳定性与深推理要求最高 |
+| verifier | hx/glm-5.3-flash | 正向验证快通道：保留 reasoning 的 flash 档，低延迟；与 L124 T1 model_overrides 覆盖(deepseek-v4-flash)分层——kilo.json 基础绑定=glm-5.3-flash |
 | plan-reviewer/reviewer | hx/kimi-k2.6 | 多模态输入(image) + 强 reasoning，方案/代码审查需深度推理 |
-| reverse-auditor | hx/deepseek-v4-flash | 反向核对需强推理，flash 档 reasoning ★★★★☆ |
+| reverse-auditor | hx/glm-5.3 | 反向核对需强推理，glm-5.3 深推理档与 planner 同族 |
 | small_model | hx/minimax-m3 | economy 降级目标，轻量任务省成本 |
 | code_optimized_model | hx/kimi-k2.7-code | code 升级路径锚点（model-selector 读此字段替代硬编码魔数） |
 ## Tier 级模型覆盖（model_overrides）

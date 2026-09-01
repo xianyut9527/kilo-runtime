@@ -16,7 +16,7 @@ permission:
 type: primary
 
 task_context:
-  write: [intent, sizing, status, convergence, quality.verdict, quality.max_rounds, config, current_stage, dispatch_log, overload_count, dispatch_pending]
+  write: [intent, sizing, status, convergence, quality.verdict, quality.max_rounds, config, current_stage, dispatch_log, overload_count, dispatch_pending, plan.minimal_gate]
   forbid_write: [execution.verification]
 matrix-table: none
 
@@ -73,6 +73,7 @@ can_handoff_to:
 1. **[意图判定]**：任何任务先判定 INQUIRY/EXECUTION。**M1 起 intent 参与路由**（INQUIRY 直通路径：T0 → `DELIVERING`；T1/T2 → `PLANNING → DELIVERING`，省 coder/verifier/reviewer；EXECUTION 仍走 tier-based 全流程）。intent 同时仍是产物形态标记，决定 `DELIVERING` 内容组织（INQUIRY = 分析结论 + 证据表 + 维度覆盖；EXECUTION = 验收映射 + 变更摘要）。具体边定义见 `lifecycle/graph.yaml`，路由规则见 `lifecycle/stages/init.md` §路由规则。INTENT 标注为可选：仅在 DELIVERING 最终报告或与 task_context 不一致时补显（见 §10.1），不作为固定输出成员。
 2. **定级必输出**：执行类定级 T0/T1/T2 标注 `[TIER: Tn]`，理由写入 `task_context.sizing`。T0 须逐条核验六条标准；T0 判定须先核验 `workflow-detail.md` §A.4 Step 1a T0 前置硬否决 4 条（>3 文件/跨模块/需新增测试/安全敏感）+ **Step 2 第一硬门（涉及任何逻辑性修改一律最低 T1，不允许走 T0 极速通道）**，任一命中强制升 T1。**机械兜底**：`scripts/delivery-audit.mjs#checkT0Eligibility` 扫描 `intent.raw` 逻辑指示词 + `sizing.key_files` 逻辑路径 glob，命中即 WARN 阻断 T0 直通（`transition-check.mjs` INIT 出口校验，详见 scripts/delivery-audit.mjs）。
    - **INIT 机械应用 config + 升级扫描（合并为单次进程 apply-tier-auto）**：定级后必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" apply-tier-auto <task_id> <Tn> --agent conductor`，该命令原子完成"扫描 `lifecycle/config.yaml` `tier_escalation` 升级触发 → 升级 `sizing.tier` + 写 `escalation_reasons` → 按最终 tier 机械写 `config.agents` + `review_mode` + `custom_overrides`"。`apply-tier` / `apply-escalation` 子命令保留为单点降级路径，conductor 默认走 apply-tier-auto。从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。**禁止手工 `set config.agents.*`**。
+   - **2b. T1 强度判定（EXECUTION + tier==T1 必做）**：T1 执行类定级后必判 `sizing.t1_strength` 三档（low/medium/high），按 `lifecycle/stages/init.md` §2b 四维度（决策分支数/状态耦合/契约影响/新增机制），规则源 `lifecycle/config.yaml` `t1_strength_signals`。机械写入命令：`node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> sizing.t1_strength '<low|medium|high>' --agent conductor`。防低判：`intent.raw` 命中 `t1_strength_signals.strength_escalation_words`（机制/契约/状态耦合/多分支等信号词）而声明 `low` → transition-check 强制升 `high`（`checkT1StrengthEligibility`，INIT 出口校验）。
    - **2a. T1→T2 自动升级（apply-tier-auto 内含）**：扫描 `intent.raw` + `sizing.key_files`，命中 `lifecycle/config.yaml` `tier_escalation` 关键词组（auth/payment/crypto/security/personal_data）或敏感路径 glob（**/auth/**、**/payment/**、**/crypto/**、**/security/**、**/pii/**）→ 强制 `sizing.tier=T2` 并写入 `sizing.escalation_reasons`。
      - **规则源**：`lifecycle/config.yaml` `tier_escalation` 段（mode / keyword_groups / sensitive_path_globs）是唯一声明式规则集，本子条目不重复关键词清单——以 config.yaml 为准。
      - **跳过升级**：`config.custom_overrides.tier` 存在时跳过（用户明示偏好），仅记 `escalation_reasons=["skipped: custom_overrides.tier=..."]`。
@@ -254,6 +255,22 @@ verification_command: "grep -n 'GitNexus|gitnexus|context7' <files>"
 
 ### byte-level SOP 文档
 见 `.kilo/instructions/byte-level-verify.md`(本任务 U5a 创建)
+### T1 直通路径委派包（INIT→EXECUTING 直通边，T1 low/medium）
+
+> 直通边（`lifecycle/graph.yaml` INIT→EXECUTING，`t1_strength ∈ {low, medium}`）生效时，跳过 PLANNING 无 plan 产物。conductor 在派发 coder 前**必写** `plan.minimal_gate` 最小产物（transition-check 直通边校验，缺失 → `[MISSING_MINIMAL_GATE]` 阻断）：
+
+```yaml
+plan.minimal_gate:
+  goal: "1 句"                          # 必填，非空字符串
+  acceptance_criteria: ["≥2 条"]        # 必填，≥1 条（用户显式验收 + 强度判定推导）
+  forbidden_files: ["..."]              # 必填，数组（可为空）
+  verification_method: ["≥1 条客观命令"] # 必填，≥1 条可机械回放命令
+```
+
+- **写入命令**：`node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> plan.minimal_gate '<json>' --agent conductor`（conductor frontmatter `task_context.write` 已含 `plan.minimal_gate`）。
+- **验收推导**：acceptance_criteria 至少含用户显式验收 + 由 t1_strength 判定推导的强度相关验收。
+- **与委派包关系**：minimal_gate 是直通边的最小 plan 产物，替代完整 plan.task_dag；派发 coder 的委派包仍按 §委派包 SOP 必含 4 字段 + hard_limit。
+
 ## 路径规范(强制,012 U5 教训)
 
 > **反 012 U5 verifier 路径错 + 漏 sync 教训**:subagent 委派包必用 `path.resolve()` 相对项目根,禁止硬编码 `lifecycle-doctor/`(实际是 `scripts/lifecycle-doctor/`)。

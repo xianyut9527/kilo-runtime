@@ -45,6 +45,33 @@ T2: 跨模块 / 5+ 文件 / 规则扩散 / 安全敏感词 / 机制·契约变�
 
 定级完成后，conductor 按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户覆盖（prompt 显式声明）写入 `task_context.config.agents` + `review_mode` + `custom_overrides`。
 
+
+### 2b. T1 强度判定（EXECUTION + tier==T1 时必做）
+
+按 `lifecycle/config.yaml` 的 `t1_strength_signals` 四维度判定表输出三档 `sizing.t1_strength`：
+
+| 维度 | high | medium | low |
+| --- | --- | --- | --- |
+| 决策分支数 | >=3 | 1-2 | 0 |
+| 状态耦合 | 跨组件状态依赖 | 单模块 | 无 |
+| 契约影响 | API/配置/文件格式变更 | 无 | 无 |
+| 新增机制 | 新抽象/新协议 | 无 | 无 |
+
+三档定义：
+- **high** = 任一维度命中机制信号（分支>=3 / 跨组件状态耦合 / 契约变更 / 新增机制）→ 走完整设计门（INIT→PLANNING）
+- **medium** = 1-2 分支单模块、无契约影响 → INIT→EXECUTING 直通
+- **low** = "非常明确任务"：改动点唯一 + 验收标准用户显式给出 + 无信号词命中 → INIT→EXECUTING 直通
+
+**机械写入命令**（T1 EXECUTION 必执行）：
+
+```bash
+node scripts/task-context.mjs set <task_id> sizing.t1_strength '<low|medium|high>' --agent conductor
+```
+
+**防低判兜底**：`intent.raw` 命中 `t1_strength_signals.strength_escalation_words`（机制/契约/状态耦合/多分支等信号词）而 conductor 声明 `low` → transition-check 强制升 `high`（写脚本在 U3，此处声明规则）。
+
+**"非常明确任务"显式定义**：改动点唯一 + 验收标准用户显式给出 + 无信号词命中 → 判 `low`。
+
 ### 安全门禁（v6 框架稳定化，2026-08-09）
 
 INIT 阶段必跑：
@@ -60,6 +87,7 @@ status_signal: "DONE" | "NEEDS_CONTEXT"
 transition_context:
   intent_type: "INQUIRY" | "EXECUTION"
   tier: "T0" | "T1" | "T2"
+  t1_strength: "low" | "medium" | "high"  # T1 EXECUTION 必填；T0/T2/INQUIRY 可缺省
   project: "string"
   keywords: ["string"]
 quality_gate:
@@ -72,7 +100,9 @@ quality_gate:
 - INQUIRY + T0 → `DELIVERING`（M1 直通：纯问答极速，省编码角色/QUALITY）
 - INQUIRY + T1/T2 → `PLANNING` → `DELIVERING`（M1：设计门角色出分析方案后直通）
 - EXECUTION + T0 → `EXECUTING`（极速通道，无设计门/验证/审查）
-- EXECUTION + T1/T2 → `PLANNING`（设计门）
+- EXECUTION + T1 + t1_strength ∈ {low, medium} → `EXECUTING`（直通，跳过 PLANNING；conductor 补齐 minimal_gate 委派包）
+- EXECUTION + T1 + t1_strength == high → `PLANNING`（完整设计门）
+- EXECUTION + T2 → `PLANNING`（设计门）
 
 ## 硬规则
 
@@ -81,6 +111,7 @@ quality_gate:
 3. **显式输出判定结论**：输出顶部必须标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
 4. **强制写入 intent_type + tier**：判定完成后必须执行 `node scripts/task-context.mjs set <task_id> intent.intent_type '<INQUIRY|EXECUTION>' --agent conductor` 和 `node scripts/task-context.mjs set <task_id> sizing.tier '<T0|T1|T2>' --agent conductor`。未写入合法值时，transition-check.mjs 将拒绝流转；intent.raw 为空时 checkT0Eligibility 机械门无法判定逻辑性修改，T0 直通将被阻断。
 5. **SIZING 机械应用 config**：定级后必须执行 `node scripts/task-context.mjs apply-tier-auto <task_id> <Tn> --agent conductor`，从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。禁止手工 `set config.agents.*`。
+6. **T1 EXECUTION 必写 t1_strength**：T1 执行类任务定级后必须执行 `node scripts/task-context.mjs set <task_id> sizing.t1_strength '<low|medium|high>' --agent conductor`。缺失或非法值时 transition-check 阻断流转；`intent.raw` 命中强度信号词而声明 low → 强制升 high。
 
 ## 降级处理
 

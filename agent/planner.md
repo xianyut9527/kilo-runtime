@@ -97,7 +97,7 @@ can_handoff_to:
 ## 智能体定位
 
 **生命周期阶段**：`PLANNING`（见 `lifecycle/graph.yaml` + `lifecycle/stages/planning.md`）
-**加载条件**：T1+（T0 不加载）
+**加载条件**：T1(high)/T2（T1 low/medium 直通不加载）
 **模型**：见 `kilo.json` `agent.planner.model`（架构分析、长上下文、复杂推理能力需求）
 
 **做什么**：分析需求、调研代码、输出设计方案（短方案或完整 DAG）、定义验收点、全量扫描清单。

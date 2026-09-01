@@ -31,7 +31,11 @@ const AGENT_KEY_MAP = {
   'coder': ['coder'],
   'fixer': ['fixer'],
   'planner/verifier': ['planner', 'verifier'],
+  'planner': ['planner'],
+  'verifier': ['verifier'],
   'plan-reviewer/reviewer': ['plan-reviewer', 'reviewer'],
+  'plan-reviewer': ['plan-reviewer'],
+  'reviewer': ['reviewer'],
   'reverse-auditor': ['reverse-auditor'],
 };
 

@@ -47,7 +47,10 @@
 # 边字段说明：
 #   from / to    起止节点 ID
 #   when         流转条件表达式（对照 task_context 求值）；省略 = 无条件流转
-#                常用变量：intent_type / tier / quality_verdict
+#                常用变量：intent_type / tier / quality_verdict / t1_strength
+#                t1_strength：INIT 阶段写入 sizing.t1_strength（三档 low/medium/high）；
+#                仅 T1 EXECUTION 求值（T1 low/medium 直通跳过设计门，high 走完整设计门）；
+#                T2/INQUIRY 忽略该变量（T2 无强度概念，INQUIRY 不分流）
 # ============================================================
 # 挂载点（mount）命名空间（派生，零声明——节点存在即挂载点存在）：
 #   on:bootstrap   装配完成后、INIT 前（任务启动挂载点）
@@ -110,10 +113,15 @@ edges:
   # 虚拟入口 → INIT
   - { from: START, to: INIT }
 
-  # INIT → PLANNING（EXECUTION T1/T2）
+  # INIT → EXECUTING（EXECUTION T1 low/medium 直通：跳过设计门，conductor 补齐 minimal_gate 最小产物）
+  - from: INIT
+    to: EXECUTING
+    when: "intent_type == 'EXECUTION' and tier == 'T1' and t1_strength in ['low','medium']"
+
+  # INIT → PLANNING（EXECUTION T1 high / T2：完整设计门）
   - from: INIT
     to: PLANNING
-    when: "intent_type == 'EXECUTION' and tier in ['T1','T2']"
+    when: "intent_type == 'EXECUTION' and (tier == 'T2' or (tier == 'T1' and t1_strength == 'high'))"
 
   # INIT → PLANNING（INQUIRY T1/T2，M1：planner 出分析方案）
   - from: INIT

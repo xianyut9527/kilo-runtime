@@ -105,12 +105,17 @@ function listActiveContexts(allMode = false, activeThresholdMs = 30 * 60 * 1000)
 // 单 task_context 审计
 // ============================================================
 
-// 必经阶段序列（按 tier + intent_type：M1 起 intent 参与，INQUIRY 直通跳过 EXECUTING/QUALITY）
-function requiredStages(tier, intentType) {
+// 必经阶段序列（按 tier + intent_type + t1_strength：M1 起 intent 参与，INQUIRY 直通跳过 EXECUTING/QUALITY；
+// T1 EXECUTION 按强度分流——low/medium 直通跳过 PLANNING，high/undefined 走完整设计门）
+function requiredStages(tier, intentType, strength) {
   // M1 INQUIRY 直通分流
   if (intentType === 'INQUIRY' && tier === 'T0') return ['INIT', 'DELIVERING'];
   if (intentType === 'INQUIRY' && (tier === 'T1' || tier === 'T2')) return ['INIT', 'PLANNING', 'DELIVERING'];
   if (tier === 'T0') return ['INIT', 'EXECUTING', 'DELIVERING'];
+  // T1 EXECUTION 强度分流：low/medium 直通（无 PLANNING）；high/undefined 走完整设计门
+  if (tier === 'T1' && intentType === 'EXECUTION' && (strength === 'low' || strength === 'medium')) {
+    return ['INIT', 'EXECUTING', 'QUALITY', 'DELIVERING'];
+  }
   if (tier === 'T1' || tier === 'T2') return ['INIT', 'PLANNING', 'EXECUTING', 'QUALITY', 'DELIVERING'];
   return [];
 }
@@ -164,6 +169,7 @@ function checkDispatchLog(ctx, required) {
   // 对每个需要委派的阶段（非 conductor 内建），校验 required_roles 已派发
   // INIT 仍为 conductor 内建（无条件 skip）；DELIVERING 仅在无 required_roles 时 skip
   // DELIVERING 与 INIT 同为 conductor 内建阶段（executor: conductor），无需 required_roles 校验
+  // T1 直通链（required 无 PLANNING）：PLANNING roles 自然被跳过，仅校验 EXECUTING/QUALITY/DELIVERING roles
   for (const stage of required) {
     if (stage === 'INIT') continue;
     if (stage === 'DELIVERING' && getStageRequiredRoles('DELIVERING').length === 0) continue;
@@ -204,6 +210,7 @@ function auditContext(taskId) {
 
   const intentType = ctx.intent?.intent_type;
   const tier = ctx.sizing?.tier;
+  const strength = ctx.sizing?.t1_strength;
   const status = ctx.status;
 
   // 只校验活跃 task_context（DONE/FAILED 已结束）
@@ -232,7 +239,7 @@ function auditContext(taskId) {
     return { taskId, intentType, tier, status, required: [], errors };
   }
 
-  const required = requiredStages(tier, intentType);
+  const required = requiredStages(tier, intentType, strength);
   const errors = [
     ...checkTransitionLog(ctx, required),
     ...checkDispatchLog(ctx, required),
@@ -276,7 +283,8 @@ function cleanStale() {
     const tier = ctx.sizing?.tier;
     if (tier !== 'T1' && tier !== 'T2') { kept++; continue; }
 
-    const required = requiredStages(tier, intentType);
+    const strength = ctx.sizing?.t1_strength;
+    const required = requiredStages(tier, intentType, strength);
     const errors = [
       ...checkTransitionLog(ctx, required),
       ...checkDispatchLog(ctx, required),

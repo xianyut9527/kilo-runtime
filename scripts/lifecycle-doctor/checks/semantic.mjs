@@ -205,7 +205,7 @@ export function run(ctx) {
   {
     const KNOWN_WHEN_VARS = new Set([
       'intent_type', 'tier', 'quality_verdict',
-      'forward_result', 'review_result',
+      'forward_result', 'review_result', 't1_strength',
     ]);
     const TC_TOP_FIELDS = new Set([
       'task_id', 'intent', 'sizing', 'config', 'plan', 'plan_review',
@@ -221,7 +221,7 @@ export function run(ctx) {
     const usedVars = new Set();
     for (const e of graph.edges) {
       if (!e.when) continue;
-      const tokens = e.when.match(/[a-zA-Z_][a-zA-Z_0-9]*/g) || [];
+      const tokens = e.when.replace(/'[^']*'/g, '').match(/[a-zA-Z_][a-zA-Z_0-9]*/g) || [];
       for (const tk of tokens) {
         if (!LITERALS.has(tk)) usedVars.add(tk);
       }
