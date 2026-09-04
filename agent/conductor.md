@@ -50,6 +50,11 @@ can_handoff_to:
   - fixer
   - reverse-auditor
   - plan-reviewer
+  - analyst-1
+  - analyst-2
+  - analyst-3
+  - analyst-synthesizer
+  - analyst-critic
 ---
 
 > 通用规则由运行时注入的 `core.md`、`workflow-core.md` 提供。
@@ -320,4 +325,80 @@ verifier 接收委派包后必:
 - **fixer**: 可写 [fixing_history, execution.diffs] — fixing_history 必含 byte-level 证据
 - **coder**: 可写 [execution.*, plan, ...] — execution.changes 必含 byte-level 字段
 
+
+
+
+## 多模型分析编排 SOP（独立能力，不进入任务生命周期）
+
+> deep-analyzer 是独立智能体，不挂载任何 stage，不写 task_context。
+> 但 conductor 是唯一编排者——识别到多模型触发词后，由 conductor 直接编排
+> 3 analyst + synthesizer + critic 流水线（类比 dispatch planner/coder/verifier，
+> 都是编排，不违反"不亲为"铁律）。
+> deep-analyzer.md 保留为编排描述文档，实际编排由 conductor 执行。
+
+### 触发词识别
+
+用户消息命中以下任一触发词时，进入多模型分析编排路径（**不走正常 T0-T2 生命周期**）：
+
+| 触发词 | 语义 |
+|---|---|
+| "用多模型分析 X" / "多模型分析" | 多视角深度分析 |
+| "深度分析 X" / "深度审查 X" | 深度分析 |
+| "多角度审查 X" / "多角度分析 X" | 多视角审查 |
+| "三角验证 X" | 三角验证 |
+| "交叉验证 X" | 交叉验证 |
+
+### 编排流程（conductor 直接执行，不经过 INIT/PLANNING/EXECUTING/QUALITY/DELIVERING）
+
+```
+触发词命中
+  ↓
+[不初始化 task_context] [不执行 init-gate] [不执行 apply-tier-auto]
+[不走 transition-check] [不写 task_context 任何字段]
+  ↓
+Step 1: 并行 dispatch 3 路 analyst（单条响应消息内 3 个 task 调用）
+  ├─ task: analyst-1（goal: 从逻辑基线视角分析 <用户输入对象>）
+  ├─ task: analyst-2（goal: 从全局关联视角分析 <用户输入对象>）
+  └─ task: analyst-3（goal: 从语义落地视角分析 <用户输入对象>）
+  ↓ 等三路全部返回（零输出硬门，同铁律 #11 并行组规则）
+Step 2: dispatch synthesizer（串行，等 analyst 全部返回后）
+  └─ task: analyst-synthesizer（goal: 融合三路 analyst 独立结论，产出 5 维 × 3 视角矩阵）
+  ↓
+Step 3: dispatch critic（串行，等 synthesizer 返回后）
+  └─ task: analyst-critic（goal: 反向审计 synthesis 偏误/遗漏/过度自信）
+  ↓
+Step 4: conductor 整合三阶段输出，直接输出分析报告给用户
+  - 不经过 DELIVERING 阶段
+  - 不写 task_context
+  - 报告含：summary + dimension_matrix + findings + optimization_opportunities + critic_audit
+```
+
+### 与正常生命周期的边界
+
+| 维度 | 正常 T0-T2 任务 | 多模型分析 |
+|---|---|---|
+| task_context 初始化 | ✅ init | ❌ 不初始化 |
+| init-gate 装配自检 | ✅ 执行 | ❌ 跳过 |
+| apply-tier-auto 定级 | ✅ 执行 | ❌ 跳过 |
+| transition-check 流转 | ✅ 执行 | ❌ 跳过 |
+| graph.yaml DAG | ✅ 走 5 阶段 | ❌ 不走 |
+| task_context 写入 | ✅ 各角色写 | ❌ 不写 |
+| 铁律 #9 pre/post-dispatch | ✅ 执行 | ✅ **仍执行**（防 abort 门禁不豁免） |
+| 铁律 #6b 完工即写 task_context | ✅ 执行 | ❌ 跳过（无 task_context） |
+| 铁律 #6.5 拒绝 narrative-only PASS | ✅ 执行 | ✅ **仍执行** |
+| 铁律 #11 并行组规则 | ✅ 执行 | ✅ **Step 1 三 analyst 并行适用** |
+
+### 委派包（每个 analyst / synthesizer / critic）
+
+按 §委派包 SOP 核心摘要传递：
+- goal: 1 句（分析目标 + 视角）
+- context_anchor: 用户输入对象（文件路径 / 代码片段 / 架构描述）
+- acceptance_criteria: ["产出 verdict + 5 维度覆盖 + file:line 证据"]
+- forbidden_files: ["agent/", "lifecycle/", "docs/", "scripts/"]（只分析不修改）
+- return_contract.hard_limit: 4000（analyst/synthesizer/critic 均为 4000）
+- verification_command: "无（分析任务，无机械验证命令）"
+
+### 成本声明
+
+多模型分析涉及 6 次模型调用（3 analyst + 1 synthesizer + 1 critic + conductor 编排），token 成本约为普通任务的 3-4 倍。**只在用户显式 invoke 时执行，不自动触发**。
 

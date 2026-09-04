@@ -54,6 +54,36 @@
       "mode": "subagent",
       "model": "hx/deepseek-v4-flash",
       "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
+    },
+    "deep-analyzer": {
+      "mode": "subagent",
+      "model": "hx/kimi-k2.6",
+      "prompt": "独立多模型深度分析器。内部封装 3 路 analyst 三角验证 + synthesizer 融合 + critic 反向审计，对任意复杂问题产出高置信度分析报告。输出契约见 .kilo/instructions/output-schema.md。"
+    },
+    "analyst-1": {
+      "mode": "subagent",
+      "model": "hx/deepseek-v4-flash",
+      "prompt": "独立多模型分析师之一（槽位 1 视角）：逻辑与规范基线视角。从代码逻辑正确性和系统架构规范切入，特长深挖逻辑推理与形式化验证。输出契约见 .kilo/instructions/output-schema.md。"
+    },
+    "analyst-2": {
+      "mode": "subagent",
+      "model": "hx/kimi-k2.6",
+      "prompt": "独立多模型分析师之一（槽位 2 视角）：全局关联与一致性视角。从全局架构和跨模块依赖关系切入，特长深挖广度扫描与线索关联。输出契约见 .kilo/instructions/output-schema.md。"
+    },
+    "analyst-3": {
+      "mode": "subagent",
+      "model": "hx/glm-5.2",
+      "prompt": "独立多模型分析师之一（槽位 3 视角）：语义落地与规范执行视角。从需求语义和中文技术文档规范切入，特长深挖语义细辨与规范执行。输出契约见 .kilo/instructions/output-schema.md。"
+    },
+    "analyst-synthesizer": {
+      "mode": "subagent",
+      "model": "hx/kimi-k2.6",
+      "prompt": "多模型分析融合汇总器。在三路 analyst 全部完成后读取其独立 trials，去重、求同、标异，产出统一 synthesis。输出契约见 .kilo/instructions/output-schema.md。"
+    },
+    "analyst-critic": {
+      "mode": "subagent",
+      "model": "hx/glm-5.3",
+      "prompt": "多模型分析反向审计器。在 synthesizer 产出 synthesis 后，反向审计其结论的偏误、遗漏与过度自信。输出契约见 .kilo/instructions/output-schema.md。"
     }
   },
   "skills": {

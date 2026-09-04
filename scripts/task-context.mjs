@@ -158,10 +158,32 @@ function loadWriteMatrixFromGenerated() {
   try {
     const raw = fs.readFileSync(GENERATED_DERIVATIONS_PATH, 'utf8');
     const data = JSON.parse(raw);
-    if (data && typeof data === 'object' && data.writeMatrix && typeof data.writeMatrix === 'object') {
-      return Object.freeze(data.writeMatrix);
+    if (!data || typeof data !== 'object' || !data.writeMatrix || typeof data.writeMatrix !== 'object') {
+      return null;
     }
-    return null;
+    // P0-2 fingerprint freshness 校验：derivations.json 的 fingerprint 记录生成时的
+    // agent/*.md mtime.size 快照；若当前任一 agent 文件 mtime 与 fingerprint 不匹配，
+    // 视为 stale，回退 cachedDerive 路径重新派生（fail-closed）。
+    if (data.fingerprint && typeof data.fingerprint === 'string') {
+      const stale = data.fingerprint.split('|').some((entry) => {
+        const m = entry.match(/^(.+?)@(\d+(?:\.\d+)?)$/);
+        if (!m) return false; // 无法解析的条目跳过（保守不判 stale）
+        const file = m[1];
+        const mtimeSize = m[2];
+        const full = path.join(AGENT_DIR, file);
+        try {
+          const stat = fs.statSync(full);
+          return String(stat.mtimeMs) !== String(mtimeSize);
+        } catch {
+          return false; // 文件不存在或 stat 失败，保守不判 stale
+        }
+      });
+      if (stale) {
+        process.stderr.write(`[DERIVATIONS_STALE] ${GENERATED_DERIVATIONS_PATH} fingerprint 与当前 agent/*.md mtime 不匹配，回退 cachedDerive 路径\n`);
+        return null;
+      }
+    }
+    return Object.freeze(data.writeMatrix);
   } catch {
     process.stderr.write(`[DERIVATIONS_FALLBACK] ${GENERATED_DERIVATIONS_PATH} 缺失/损坏，回退 cachedDerive 路径\n`);
     return null;

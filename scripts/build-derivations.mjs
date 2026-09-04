@@ -68,7 +68,7 @@ function extractTaskContextWrite(frontmatter) {
     const inline = line.match(/^\s+write\s*:\s*\[(.*)\]\s*(?:#.*)?$/);
     if (inline) {
       for (const part of inline[1].split(',')) {
-        const v = part.trim();
+        const v = part.trim().replace(/^["']|["']$/g, '');
         if (v) items.push(v);
       }
       inWrite = false;

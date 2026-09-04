@@ -87,7 +87,7 @@ function _parsePostPreMountsUncached(mode) {
       const tiersM = line.match(/^\s+tiers\s*:\s*\[([^\]]*)\]\s*(?:#.*)?$/);
       if (tiersM) {
         curTiers = tiersM[1].split(',')
-          .map((s) => s.trim())
+          .map((s) => s.trim().replace(/^["']|["']$/g, ''))
           .filter((s) => s.length > 0);
       }
     }
