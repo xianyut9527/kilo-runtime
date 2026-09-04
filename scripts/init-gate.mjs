@@ -11,6 +11,8 @@
 // 仅使用 Node 内置模块；Windows PowerShell + Linux bash 兼容。
 
 import { spawnSync } from 'node:child_process';
+import { scanLessons } from './lessons-inject.mjs';
+import { readContext } from './task-context-runtime.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -67,4 +69,32 @@ if (apply.status !== 0) {
 }
 
 process.stdout.write('ok: init-gate doctor=PASS apply-tier-auto=' + (apply.stdout || '').trim() + '\n');
+
+// ---- 经验注入 (lessons-inject): 扫描当月 lessons 命中当前 intent.raw, 写入 intent.prior_lessons ----
+// 增强非硬门: 任何 IO/解析错误只 stderr, 不阻断 init-gate 退出语义。
+const dryRun = args.includes('--dry-run');
+try {
+  const { ctx } = readContext(taskId);
+  const raw = (ctx.intent && typeof ctx.intent.raw === 'string') ? ctx.intent.raw : '';
+  if (raw.trim().length > 0) {
+    const month = new Date().toISOString().slice(0, 7);
+    const hits = scanLessons(raw, { month });
+    if (hits.length > 0) {
+      const json = JSON.stringify(hits);
+      if (dryRun) {
+        process.stdout.write('lessons-inject (dry-run) hits=' + hits.length + ': ' + json + '\n');
+      } else {
+        const inj = spawnSync(process.execPath, [TASK_CONTEXT, 'set', taskId, '--batch', JSON.stringify({ 'intent.prior_lessons': hits }), '--agent', 'conductor'], {
+          cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000,
+        });
+        if (inj.error) throw inj.error;
+        if (inj.status !== 0) throw new Error('task-context set intent.prior_lessons failed exit=' + inj.status + ': ' + (inj.stderr || inj.stdout || ''));
+        process.stdout.write('lessons-inject: wrote ' + hits.length + ' prior_lesson(s) to intent.prior_lessons\n');
+      }
+    }
+  }
+} catch (e) {
+  // 经验注入失败不阻断 init-gate (增强非硬门)
+  process.stderr.write('[lessons-inject] skipped (non-fatal): ' + (e && e.message || e) + '\n');
+}
 process.exit(0);

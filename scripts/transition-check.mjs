@@ -47,6 +47,7 @@ import { getStageRequiredRoles, isConditionalRole, hasRequirementSpread, hasSpre
 import { cachedDerive } from './lib/derived-cache.mjs';
 import { verifyField } from './lib/byte-verify.mjs';
 import { ERROR_CODES, codeMsg } from './error-codes.mjs';
+import { recordThenDie } from './lessons-recorder.mjs';
 import { checkT0Eligibility, checkT1StrengthEligibility } from './delivery-audit.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -411,6 +412,25 @@ function main() {
   if (toIdx === -1 || toIdx + 1 >= args.length) die(2, 'Error: --to <NODE> is required');
   const FROM = args[fromIdx + 1];
   const TO = args[toIdx + 1];
+  // dieMsg: die(1,...) 的失败回写统一出口——先沉淀经验(lessons-recorder)再退出。
+  // 失败日志本身是 process 级退出, 经验沉淀副作用在 recorder 内部 try/catch 保护,
+  // 任何 IO 错误只 stderr 不阻断退出语义。code 从 msg 提取: [CODE] 前缀;
+  // 根因句 = msg 去掉 [CODE] 前缀后的主体。
+  function dieMsg(msg, codeOverride) {
+    let code = codeOverride;
+    let root = msg;
+    const m = (msg || "").match(/^\[([A-Z_]+)\]\s*/);
+    if (m) {
+      if (!code) code = m[1];
+      root = msg.slice(m[0].length);
+    }
+    recordThenDie(1, msg, {
+      taskId,
+      code: code || "PROCESS_VIOLATION",
+      stage: FROM + "->" + TO,
+      rootCause: root,
+    });
+  }
 
   // 加载 graph.yaml（仅主图）
   // 加载 graph.yaml（仅主图，走 mtime 缓存；读失败由 loadGraphCached 内部 die 处理）
@@ -419,7 +439,7 @@ function main() {
   // 校验节点存在性
   for (const n of [FROM, TO]) {
     if (!graph.nodes.has(n)) {
-      die(1, `[PROCESS_VIOLATION] unknown node "${n}"（graph.yaml 已声明节点: ${[...graph.nodes.keys()].join(', ')}）`);
+      dieMsg(`[PROCESS_VIOLATION] unknown node "${n}"（graph.yaml 已声明节点: ${[...graph.nodes.keys()].join(', ')}）`);
     }
   }
 
@@ -428,7 +448,7 @@ function main() {
   if (candidateEdges.length === 0) {
     const outs = graph.edges.filter((e) => e.from === FROM)
       .map((e) => `${FROM} -> ${e.to}${e.when ? ` (when: ${e.when})` : ''}${e.gate ? ` (gate: ${e.gate})` : ''}`);
-    die(1, `[PROCESS_VIOLATION] no edge ${FROM} -> ${TO} in graph.yaml. 合法出边:\n  ${outs.join('\n  ') || '(无出边——终态节点)'}`);
+    dieMsg(`[PROCESS_VIOLATION] no edge ${FROM} -> ${TO} in graph.yaml. 合法出边:\n  ${outs.join('\n  ') || '(无出边——终态节点)'}`);
   }
 
   // 读 task_context（必须在 init 之后才能流转）
@@ -437,28 +457,28 @@ function main() {
     const result = readContext(taskId);
     ctx = result.ctx;
   } catch (e) {
-    die(1, `[PROCESS_VIOLATION] task_context not initialized for task_id=${taskId}. Run: node scripts/task-context.mjs init ${taskId}`);
+    dieMsg(`[PROCESS_VIOLATION] task_context not initialized for task_id=${taskId}. Run: node scripts/task-context.mjs init ${taskId}`);
   }
   const vars = resolveVars(ctx);
 
   // 阶段顺序硬门：FROM 必须等于 task_context.current_stage（已设置时），防止跨阶段跳跃
   const actualCurrentStage = ctx.current_stage;
   if (actualCurrentStage && actualCurrentStage !== 'START' && actualCurrentStage !== FROM) {
-    die(1, `[PROCESS_VIOLATION] stage mismatch: transition claims ${FROM} -> ${TO}, but task_context.current_stage="${actualCurrentStage}"。必须先经 transition-check 逐步流转，不得跳跃。`);
+    dieMsg(`[PROCESS_VIOLATION] stage mismatch: transition claims ${FROM} -> ${TO}, but task_context.current_stage="${actualCurrentStage}"。必须先经 transition-check 逐步流转，不得跳跃。`);
   }
 
   // INIT 只能从 START 进入：current_stage 已非 START（已流转过）→ 拒绝重复 INIT 空转直通
   if (TO === 'INIT' && actualCurrentStage && actualCurrentStage !== 'START') {
-    die(1, `[PROCESS_VIOLATION] INIT 只能从 START 进入，但 current_stage="${actualCurrentStage}"（已流转过）。禁止重复 INIT 空转直通。`);
+    dieMsg(`[PROCESS_VIOLATION] INIT 只能从 START 进入，但 current_stage="${actualCurrentStage}"（已流转过）。禁止重复 INIT 空转直通。`);
   }
 
   // 关键字段缺失硬门（在求值 when 之前拒绝，给出明确错误）
   if (FROM === 'INIT') {
     if (vars.intent_type !== 'INQUIRY' && vars.intent_type !== 'EXECUTION') {
-      die(1, `[PROCESS_VIOLATION] INIT 阶段未写入合法 intent_type（当前=${JSON.stringify(vars.intent_type)}）。必须执行 task-context.mjs set <task_id> intent.intent_type '<INQUIRY|EXECUTION>' --agent conductor`);
+      dieMsg(`[PROCESS_VIOLATION] INIT 阶段未写入合法 intent_type（当前=${JSON.stringify(vars.intent_type)}）。必须执行 task-context.mjs set <task_id> intent.intent_type '<INQUIRY|EXECUTION>' --agent conductor`);
     }
     if (!['T0', 'T1', 'T2'].includes(vars.tier)) {
-      die(1, `[PROCESS_VIOLATION] INIT 阶段未写入合法 tier（当前=${JSON.stringify(vars.tier)}）。必须执行 task-context.mjs set <task_id> sizing.tier '<T0|T1|T2>' --agent conductor`);
+      dieMsg(`[PROCESS_VIOLATION] INIT 阶段未写入合法 tier（当前=${JSON.stringify(vars.tier)}）。必须执行 task-context.mjs set <task_id> sizing.tier '<T0|T1|T2>' --agent conductor`);
     }
   }
   // T0 定级合理性校验：INIT 出口 tier=T0 时，intent.raw 命中逻辑指示词且无 custom_overrides.tier 覆盖 → 拒绝 T0 直通
@@ -467,7 +487,7 @@ function main() {
     if (t0.ok === false || t0.status === 'WARN') {
       const override = ctx.custom_overrides?.tier;
       if (override !== 'T0') {
-        die(1, `[PROCESS_VIOLATION] T0 定级不合理：${t0.detail}。建议升 T1 或显式声明 custom_overrides.tier=T0 覆盖。`);
+        dieMsg(`[PROCESS_VIOLATION] T0 定级不合理：${t0.detail}。建议升 T1 或显式声明 custom_overrides.tier=T0 覆盖。`);
       }
     }
   }
@@ -476,19 +496,19 @@ function main() {
   if (FROM === 'INIT' && vars.tier === 'T1') {
     const v = validateT1Strength(ctx);
     if (!v.ok) {
-      die(1, '[INVALID_T1_STRENGTH] INIT 阶段 T1 任务未写入合法 t1_strength（' + v.reason + '）。按 init.md §2b 四维度写入 sizing.t1_strength \'<low|medium|high>\' 或 custom_overrides.t1_strength 显式覆盖。');
+      dieMsg('[INVALID_T1_STRENGTH] INIT 阶段 T1 任务未写入合法 t1_strength（' + v.reason + '）。按 init.md §2b 四维度写入 sizing.t1_strength \'<low|medium|high>\' 或 custom_overrides.t1_strength 显式覆盖。');
     }
     // T1 low 强度 + 命中升级信号词 → 强制升 high（防该走规划被跳过）
     const t1 = checkT1StrengthEligibility({ ...ctx, sizing: { ...(ctx.sizing || {}), t1_strength: v.effective } });
     if (t1.ok === false || t1.status === 'WARN') {
       if (ctx.custom_overrides?.t1_strength !== 'low') {
-        die(1, '[PROCESS_VIOLATION] T1 强度低判: intent.raw 命中升级信号词, t1_strength 强制升 high。' + t1.detail + '。由 conductor 重写 sizing.t1_strength=high 后重新流转。');
+        dieMsg('[PROCESS_VIOLATION] T1 强度低判: intent.raw 命中升级信号词, t1_strength 强制升 high。' + t1.detail + '。由 conductor 重写 sizing.t1_strength=high 后重新流转。');
       }
     }
   }
   if (FROM === 'QUALITY') {
     if (vars.quality_verdict !== 'PASS' && vars.quality_verdict !== 'CIRCUIT_BREAKER') {
-      die(1, `[MISSING_QUALITY_VERDICT] QUALITY 阶段未写入合法 verdict（当前=${JSON.stringify(vars.quality_verdict)}）。T1/T2/T3 必须经过 QUALITY hooks（verify/review/fix 循环），写入 quality.verdict ∈ {PASS, CIRCUIT_BREAKER} 后才能离开。`);
+      dieMsg(`[MISSING_QUALITY_VERDICT] QUALITY 阶段未写入合法 verdict（当前=${JSON.stringify(vars.quality_verdict)}）。T1/T2/T3 必须经过 QUALITY hooks（verify/review/fix 循环），写入 quality.verdict ∈ {PASS, CIRCUIT_BREAKER} 后才能离开。`);
     }
   }
 
@@ -501,7 +521,7 @@ function main() {
     try {
       ok = evalAst(parseExpr(tokenize(e.when), e.when), vars);
     } catch (err) {
-      die(1, `[PROCESS_VIOLATION] when 表达式解析失败: ${err.message}`);
+      dieMsg(`[PROCESS_VIOLATION] when 表达式解析失败: ${err.message}`);
     }
     if (ok) { edge = e; break; }
     lastFailEdge = e;
@@ -510,7 +530,7 @@ function main() {
   if (!edge) {
     const dump = Object.keys(vars).map((k) => `${k}=${JSON.stringify(vars[k])}`).join(' ');
     const allWhens = candidateEdges.map((e) => e.when || '(none)').join(' | ');
-    die(1, `[PROCESS_VIOLATION] transition ${FROM} -> ${TO} rejected by all when conditions: ${allWhens}\n  current: ${dump}`);
+    dieMsg(`[PROCESS_VIOLATION] transition ${FROM} -> ${TO} rejected by all when conditions: ${allWhens}\n  current: ${dump}`);
   }
 
   // ============================================================
@@ -540,7 +560,7 @@ function main() {
       const requiredNorm = provenanceRequired.map((a) => a.replace(/-/g, '_'));
       const missing = requiredNorm.filter((a) => !dispatchedAgents.has(a));
       if (missing.length > 0) {
-        die(1, `[PROCESS_VIOLATION] missing dispatch provenance for ${FROM} -> ${TO}: required agents ${JSON.stringify(provenanceRequired)}, missing ${JSON.stringify(missing)}. dispatch_log agents: ${JSON.stringify([...dispatchedAgents])}`);
+        dieMsg(`[PROCESS_VIOLATION] missing dispatch provenance for ${FROM} -> ${TO}: required agents ${JSON.stringify(provenanceRequired)}, missing ${JSON.stringify(missing)}. dispatch_log agents: ${JSON.stringify([...dispatchedAgents])}`);
       }
     }
   } else if (!isExempt && !isCircuitBreakerExit) {
@@ -597,7 +617,7 @@ function main() {
       const requiredNorm = provenanceRequired.map((a) => a.replace(/-/g, '_'));
       const missing = requiredNorm.filter((a) => !dispatchedAgents.has(a));
       if (missing.length > 0) {
-        die(1, `[PROCESS_VIOLATION] missing dispatch provenance for ${FROM} -> ${TO}: required agents ${JSON.stringify(provenanceRequired)}, missing ${JSON.stringify(missing)}. dispatch_log agents: ${JSON.stringify([...dispatchedAgents])}`);
+        dieMsg(`[PROCESS_VIOLATION] missing dispatch provenance for ${FROM} -> ${TO}: required agents ${JSON.stringify(provenanceRequired)}, missing ${JSON.stringify(missing)}. dispatch_log agents: ${JSON.stringify([...dispatchedAgents])}`);
       }
     }
   }
@@ -607,7 +627,7 @@ function main() {
   if (FROM === 'EXECUTING' && (TO === 'QUALITY' || TO === 'DELIVERING')) {
     const exec = ctx.execution || {};
     if (!exec.diffs && !exec.changes && !exec.acceptance_map) {
-      die(1, codeMsg('MISSING_EXECUTION_PRODUCT', `${FROM} -> ${TO}: execution 产物全空（coder 未产出 diffs/changes/acceptance_map，禁止空转流转）`));
+      dieMsg(codeMsg('MISSING_EXECUTION_PRODUCT', `${FROM} -> ${TO}: execution 产物全空（coder 未产出 diffs/changes/acceptance_map，禁止空转流转）`));
     }
   }
   // INIT→DELIVERING 直通边产物门禁：
@@ -633,14 +653,14 @@ function main() {
       return true;
     })();
     if (!hasExec && !hasPlan && !hasVer) {
-      die(1, codeMsg('MISSING_EXECUTION_PRODUCT', `INIT -> DELIVERING: EXECUTION 直通无可交付产物（execution/plan/verification 全空）。EXECUTION T0 极速通道必须由 coder 产出 execution 产物，禁止空转。`));
+      dieMsg(codeMsg('MISSING_EXECUTION_PRODUCT', `INIT -> DELIVERING: EXECUTION 直通无可交付产物（execution/plan/verification 全空）。EXECUTION T0 极速通道必须由 coder 产出 execution 产物，禁止空转。`));
     }
   }
   // plan / verification.forward 校验：T1/T2 非 CB 出口
   if (!isExempt && !isCircuitBreakerExit) {
     if (FROM === 'PLANNING' && TO === 'EXECUTING') {
       if (!ctx.plan || typeof ctx.plan !== 'object' || Object.keys(ctx.plan).length === 0) {
-        die(1, codeMsg('MISSING_PLAN_PRODUCT', `PLANNING -> EXECUTING: plan 为空（planner 未产出方案，禁止空转流转）`));
+        dieMsg(codeMsg('MISSING_PLAN_PRODUCT', `PLANNING -> EXECUTING: plan 为空（planner 未产出方案，禁止空转流转）`));
       }
       // T2 plan_review 熔断：round >= max_rounds 仍 FAIL → 阻断回流，强制 ESCALATE
       const tier = ctx.sizing && ctx.sizing.tier;
@@ -650,28 +670,28 @@ function main() {
         if (pr.verdict === 'ESCALATE') {
           // ESCALATE = plan-reviewer 判定方案不可修复，允许流转（带降级标记）
         } else if (typeof pr.round === 'number' && pr.round >= maxR && pr.verdict !== 'PASS') {
-          die(1, codeMsg('PLAN_REVIEW_CB', `PLANNING -> EXECUTING: plan_review.round=${pr.round} >= max_rounds=${maxR} 且 verdict=${pr.verdict}（方案审查熔断，应 ESCALATE 而非回流）`));
+          dieMsg(codeMsg('PLAN_REVIEW_CB', `PLANNING -> EXECUTING: plan_review.round=${pr.round} >= max_rounds=${maxR} 且 verdict=${pr.verdict}（方案审查熔断，应 ESCALATE 而非回流）`));
         }
       }
     }
     if (FROM === 'QUALITY' && TO === 'DELIVERING') {
       if (!ctx.verification || !ctx.verification.forward) {
-        die(1, codeMsg('MISSING_VERIFICATION_PRODUCT', `QUALITY -> DELIVERING: verification.forward 为空（verifier 未产出验证结果，禁止 conductor 假写 verdict=PASS）`));
+        dieMsg(codeMsg('MISSING_VERIFICATION_PRODUCT', `QUALITY -> DELIVERING: verification.forward 为空（verifier 未产出验证结果，禁止 conductor 假写 verdict=PASS）`));
       }
       const evidence = ctx.verification.forward.evidence;
       if (!Array.isArray(evidence) || evidence.length < 1) {
-        die(1, codeMsg('INSUFFICIENT_EVIDENCE', `QUALITY -> DELIVERING: verification.forward.evidence 数组必填 ≥1 条`));
+        dieMsg(codeMsg('INSUFFICIENT_EVIDENCE', `QUALITY -> DELIVERING: verification.forward.evidence 数组必填 ≥1 条`));
       }
       for (let i = 0; i < evidence.length; i++) {
         const e = evidence[i];
         if (!e.cmd || typeof e.cmd !== 'string' || e.cmd.trim().length === 0) {
-          die(1, codeMsg('MISSING_EVIDENCE_FIELD', `evidence[${i}].cmd 缺失或非字符串`));
+          dieMsg(codeMsg('MISSING_EVIDENCE_FIELD', `evidence[${i}].cmd 缺失或非字符串`));
         }
         if (typeof e.exit !== 'number') {
-          die(1, codeMsg('MISSING_EVIDENCE_FIELD', `evidence[${i}].exit 缺失或非数字(0/非0)`));
+          dieMsg(codeMsg('MISSING_EVIDENCE_FIELD', `evidence[${i}].exit 缺失或非数字(0/非0)`));
         }
         if (!e.stdout_key || typeof e.stdout_key !== 'string') {
-          die(1, codeMsg('MISSING_EVIDENCE_FIELD', `evidence[${i}].stdout_key 缺失或非字符串(≤200字关键输出)`));
+          dieMsg(codeMsg('MISSING_EVIDENCE_FIELD', `evidence[${i}].stdout_key 缺失或非字符串(≤200字关键输出)`));
         }
       }
     }
@@ -681,7 +701,7 @@ function main() {
   if (FROM === 'INIT' && TO === 'EXECUTING' && vars.tier === 'T1') {
     const mg = validateMinimalGate(ctx);
     if (!mg.ok) {
-      die(1, '[MISSING_MINIMAL_GATE] INIT -> EXECUTING: T1 直通边缺少 plan.minimal_gate 最小产物（' + mg.reason + '）。conductor 按 T1 直通包规范写入 plan.minimal_gate。');
+      dieMsg('[MISSING_MINIMAL_GATE] INIT -> EXECUTING: T1 直通边缺少 plan.minimal_gate 最小产物（' + mg.reason + '）。conductor 按 T1 直通包规范写入 plan.minimal_gate。');
     }
   }
   // recovery_pending hook (U5): QUALITY->DELIVERING - 上一次 retry 仍未补全 -> 阻断
@@ -689,7 +709,7 @@ function main() {
   if (FROM === 'QUALITY' && TO === 'DELIVERING' && !isCircuitBreakerExit) {
     const stillMissing = checkRecoveryPending(ctx);
     if (Array.isArray(stillMissing) && stillMissing.length > 0) {
-      die(1, `[RECOVERY_RETRY_EXHAUSTED] QUALITY -> DELIVERING: recovery_log 最后一条 retry (type=write-missing) 标记的字段在 task_context 中仍未补写: ${JSON.stringify(stillMissing)}。请先补写这些字段并重新触发 recovery,否则禁止流转到 DELIVERING。`);
+      dieMsg(`[RECOVERY_RETRY_EXHAUSTED] QUALITY -> DELIVERING: recovery_log 最后一条 retry (type=write-missing) 标记的字段在 task_context 中仍未补写: ${JSON.stringify(stillMissing)}。请先补写这些字段并重新触发 recovery,否则禁止流转到 DELIVERING。`);
     }
   }
 
@@ -702,22 +722,22 @@ function main() {
       for (const u of units) {
         const unitId = u.id || u.unit_id || 'unknown';  // 重构:提取 helper
         if (!u.premise_audit) {
-          die(1, codeMsg('MISSING_PREMISE_AUDIT', `unit=${unitId} — plan.task_dag.units[].premise_audit 必填`));
+          dieMsg(codeMsg('MISSING_PREMISE_AUDIT', `unit=${unitId} — plan.task_dag.units[].premise_audit 必填`));
         }
         if (!u.premise_audit.existence_cmd || typeof u.premise_audit.existence_cmd !== 'string' || u.premise_audit.existence_cmd.trim().length === 0) {
-          die(1, codeMsg('MISSING_EXISTENCE_CMD', `unit=${unitId} — premise_audit.existence_cmd 必填(L3 广搜命令字面量)`));
+          dieMsg(codeMsg('MISSING_EXISTENCE_CMD', `unit=${unitId} — premise_audit.existence_cmd 必填(L3 广搜命令字面量)`));
         }
         if (!Array.isArray(u.premise_audit.alternatives) || u.premise_audit.alternatives.length < 2) {
-          die(1, codeMsg('FEW_ALTERNATIVES', `unit=${unitId} — premise_audit.alternatives 必填 ≥ 2 个方案,只有 ${Array.isArray(u.premise_audit.alternatives) ? u.premise_audit.alternatives.length : 0} 个 = 高风险`));
+          dieMsg(codeMsg('FEW_ALTERNATIVES', `unit=${unitId} — premise_audit.alternatives 必填 ≥ 2 个方案,只有 ${Array.isArray(u.premise_audit.alternatives) ? u.premise_audit.alternatives.length : 0} 个 = 高风险`));
         }
         if (!u.premise_audit.falsifiable_test || typeof u.premise_audit.falsifiable_test !== 'string' || u.premise_audit.falsifiable_test.trim().length === 0) {
-          die(1, codeMsg('MISSING_FALSIFIABLE_TEST', `unit=${unitId} — premise_audit.falsifiable_test 必填非空(关键前提+验证方法)`));
+          dieMsg(codeMsg('MISSING_FALSIFIABLE_TEST', `unit=${unitId} — premise_audit.falsifiable_test 必填非空(关键前提+验证方法)`));
         }
         if (!Array.isArray(u.premise_audit.user_hints) || u.premise_audit.user_hints.length < 1) {
-          die(1, codeMsg('MISSING_USER_HINTS', `unit=${unitId} — premise_audit.user_hints 必填 ≥1 数组(用户常识暗示,允许 ["(none)"] 显式声明无)`));
+          dieMsg(codeMsg('MISSING_USER_HINTS', `unit=${unitId} — premise_audit.user_hints 必填 ≥1 数组(用户常识暗示,允许 ["(none)"] 显式声明无)`));
         }
         if (!u.premise_audit.existence_result || typeof u.premise_audit.existence_result !== 'object') {
-          die(1, codeMsg('MISSING_EXISTENCE_RESULT', `unit=${unitId} — premise_audit.existence_result 必填对象(cmd/stdout_key/hit_count 字段,记录 existence_cmd 实际跑过的结果,杜绝 LLM 写假命令字面量)`));
+          dieMsg(codeMsg('MISSING_EXISTENCE_RESULT', `unit=${unitId} — premise_audit.existence_result 必填对象(cmd/stdout_key/hit_count 字段,记录 existence_cmd 实际跑过的结果,杜绝 LLM 写假命令字面量)`));
         }
       }
     }
@@ -729,7 +749,7 @@ function main() {
     if (unitsWithSpread.length > 0) {
       for (const unit of unitsWithSpread) {
         const errs = validateRequirementSpread(unit);
-        if (errs.length > 0) die(1, `[PROCESS_VIOLATION] unit ${unit.unit_id} requirement_spread 校验失败: ${errs.join('; ')}`);
+        if (errs.length > 0) dieMsg(`[PROCESS_VIOLATION] unit ${unit.unit_id} requirement_spread 校验失败: ${errs.join('; ')}`);
       }
     }
   }
