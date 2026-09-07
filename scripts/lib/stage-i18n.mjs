@@ -23,6 +23,12 @@ export const TIER_ZH = {
   T2: '全视角|5 阶段 full + 反向审计',
 };
 
+export const STRENGTH_ZH = {
+  low:    '低强度|低配 fast',
+  medium: '中强度|标准强度',
+  high:   '高强度|深度 fast',
+};
+
 export const STATUS_ZH = {
   initialized: '已初始化',
   running:     '执行中|任务正在运行',
@@ -87,6 +93,7 @@ function _format(map, key, kind) {
 
 export function formatStage(s)    { return _format(STAGE_ZH, s,    'stage-i18n'); }
 export function formatTier(t)     { return _format(TIER_ZH, t,     'stage-i18n'); }
+export function formatStrength(s) { return _format(STRENGTH_ZH, s,  'stage-i18n'); }
 export function formatStatus(s)   { return _format(STATUS_ZH, s,   'stage-i18n'); }
 export function formatIntent(i)   { return _format(INTENT_ZH, i,   'stage-i18n'); }
 export function formatVerdict(v)  { return _format(VERDICT_ZH, v,  'stage-i18n'); }
@@ -94,7 +101,13 @@ export function formatVerdict(v)  { return _format(VERDICT_ZH, v,  'stage-i18n')
 export function formatTriple(o) {
   o = o || {};
   const lines = [];
-  if (o.tier   !== undefined) lines.push('[TIER: '   + formatTier(o.tier)   + ']');
+  if (o.tier !== undefined) {
+    let tierLine = '[TIER: ' + formatTier(o.tier) + ']';
+    if (o.tier === 'T1' && o.strength !== undefined) {
+      tierLine = '[TIER: ' + formatTier(o.tier) + ' 强度:' + formatStrength(o.strength) + ']';
+    }
+    lines.push(tierLine);
+  }
   if (o.stage  !== undefined) lines.push('[STAGE: '  + formatStage(o.stage)  + ']');
   if (o.status !== undefined) lines.push('[STATUS: ' + formatStatus(o.status) + ']');
   if (o.intent !== undefined) lines.push('[INTENT: ' + formatIntent(o.intent) + ']');

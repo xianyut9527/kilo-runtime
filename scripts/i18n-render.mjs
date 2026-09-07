@@ -3,15 +3,15 @@
 // See --help. Zero deps. Unknown key -> stderr + exit 2.
 
 import {
-  STAGE_ZH, TIER_ZH, STATUS_ZH, INTENT_ZH, VERDICT_ZH,
-  labelOf, descOf, formatStage, formatTier, formatStatus, formatIntent, formatVerdict, formatTriple,
+  STAGE_ZH, TIER_ZH, STATUS_ZH, INTENT_ZH, VERDICT_ZH, STRENGTH_ZH,
+  labelOf, descOf, formatStage, formatTier, formatStatus, formatIntent, formatVerdict, formatTriple, formatStrength,
 } from './lib/stage-i18n.mjs';
 
 const MAPS = { STAGE: STAGE_ZH, TIER: TIER_ZH, STATUS: STATUS_ZH, INTENT: INTENT_ZH, VERDICT: VERDICT_ZH };
 
 const USAGE = `Usage: i18n-render <KEY>
        i18n-render --map <MAP> <KEY>
-       i18n-render --triple <TIER> <STAGE> [STATUS]
+       i18n-render --triple <TIER> <STAGE> [STATUS] [STRENGTH]
        i18n-render --stage <STAGE>
        i18n-render --tier <TIER>
        i18n-render --status <STATUS>
@@ -44,9 +44,14 @@ if (args[0] === '--all') {
 }
 
 if (args[0] === '--triple') {
-  const [t, s, st] = args.slice(1);
-  if (!t || !s) die('--triple requires <TIER> <STAGE> [STATUS]');
-  process.stdout.write(formatTriple({ tier: t, stage: s, status: st }) + '\n');
+  const [t, s, st, str] = args.slice(1);
+  if (!t || !s) die('--triple requires <TIER> <STAGE> [STATUS] [STRENGTH]');
+  // 3 参简化形 `--triple T1 EXECUTING low` 时 low 为强度；4 参形 `--triple T1 EXECUTING PASS low` 时 low 为强度
+  let status = st, strength = str;
+  if (strength === undefined && st !== undefined && Object.prototype.hasOwnProperty.call(STRENGTH_ZH, st)) {
+    strength = st; status = undefined;
+  }
+  process.stdout.write(formatTriple({ tier: t, stage: s, status, strength }) + '\n');
   process.exit(0);
 }
 

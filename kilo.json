@@ -1,6 +1,6 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
-  "model": "hx/glm-5.2",
+  "model": "hx/glm-5.3-flash",
   "small_model": "hx/minimax-m3",
   "default_agent": "conductor",
   "snapshot": true,
@@ -27,7 +27,7 @@
     },
     "plan-reviewer": {
       "mode": "subagent",
-      "model": "hx/qwen3.8-max",
+      "model": "hx/kimi-k2.6",
       "prompt": "方案审查智能体（plan-reviewer）。审查 planner 输出方案的需求完整性/一致性/可行性/可测性/范围与需求扩散覆盖，只审查不修复。verdict=FAIL → 方案回流 planner 重做（round 自增，max_rounds=3，超限 ESCALATE 升级人工）；审查者自身异常/超时 → 挂载点 on_fail: abort 中止流转。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "coder": {
@@ -42,7 +42,7 @@
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "hx/qwen3.8-max",
+      "model": "hx/kimi-k2.6",
       "prompt": "静态代码审查智能体。从安全、架构、简化、SCOPE_CREEP 四视角审查代码质量。只审查不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "reverse-auditor": {
@@ -57,7 +57,7 @@
     },
     "deep-analyzer": {
       "mode": "subagent",
-      "model": "hx/qwen3.8-max",
+      "model": "hx/kimi-k2.6",
       "prompt": "独立多模型深度分析器。内部封装 3 路 analyst 三角验证 + synthesizer 融合 + critic 反向审计，对任意复杂问题产出高置信度分析报告。输出契约见 .kilo/instructions/output-schema.md。"
     },
     "analyst-1": {
@@ -67,7 +67,7 @@
     },
     "analyst-2": {
       "mode": "subagent",
-      "model": "hx/qwen3.8-max",
+      "model": "hx/kimi-k2.6",
       "prompt": "独立多模型分析师之一（槽位 2 视角）：全局关联与一致性视角。从全局架构和跨模块依赖关系切入，特长深挖广度扫描与线索关联。输出契约见 .kilo/instructions/output-schema.md。"
     },
     "analyst-3": {
@@ -77,7 +77,7 @@
     },
     "analyst-synthesizer": {
       "mode": "subagent",
-      "model": "hx/qwen3.8-max",
+      "model": "hx/kimi-k2.6",
       "prompt": "多模型分析融合汇总器。在三路 analyst 全部完成后读取其独立 trials，去重、求同、标异，产出统一 synthesis。输出契约见 .kilo/instructions/output-schema.md。"
     },
     "analyst-critic": {
@@ -127,7 +127,7 @@
       "name": "hx",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
-        "baseURL": "https://huixin.nat100.top/v1",
+        "baseURL": "https://xianyu1.natapp4.cc/v1",
         "timeout": 1800000,
         "chunkTimeout": 1800000
       },
@@ -210,18 +210,6 @@
         },
         "minimax-m3": {
           "name": "minimax-m3",
-          "reasoning": true,
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
-          },
-          "limit": {
-            "context": 200000,
-            "output": 32768
-          }
-        },
-        "qwen3.8-max": {
-          "name": "qwen3.8-max",
           "reasoning": true,
           "modalities": {
             "input": ["text", "image"],

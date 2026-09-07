@@ -18,11 +18,11 @@ const ROOT = path.resolve(__dirname, '..', '..', '..');
 const STAGE_I18N = path.join(ROOT, 'scripts', 'lib', 'stage-i18n.mjs');
 const I18N_RENDER = path.join(ROOT, 'scripts', 'i18n-render.mjs');
 
-const EXPECTED_MAPS = ['STAGE_ZH', 'TIER_ZH', 'STATUS_ZH', 'INTENT_ZH', 'VERDICT_ZH'];
+const EXPECTED_MAPS = ['STAGE_ZH', 'TIER_ZH', 'STATUS_ZH', 'INTENT_ZH', 'VERDICT_ZH', 'STRENGTH_ZH'];
 const EXPECTED_FUNCS = [
   'labelOf', 'descOf',
   'formatStage', 'formatTier', 'formatStatus', 'formatIntent', 'formatVerdict',
-  'formatTriple',
+  'formatTriple', 'formatStrength',
 ];
 const CLI_KINDS = [
   { flag: '--stage', key: 'PLANNING' },
@@ -67,7 +67,7 @@ export async function run(ctx) {
   const missingMaps = EXPECTED_MAPS.filter((k) => mod[k] == null || typeof mod[k] !== 'object');
   if (missingMaps.length === 0) {
     const sizes = EXPECTED_MAPS.map((k) => `${k}=${Object.keys(mod[k]).length}`).join(',');
-    cf.pass('i18n.maps_exported', `5 个映射表全部导出（${sizes}）`);
+    cf.pass('i18n.maps_exported', `6 个映射表全部导出（${sizes}）`);
   } else {
     cf.fail('i18n.maps_exported', `缺映射表: ${missingMaps.join(', ')}`);
   }
@@ -75,7 +75,7 @@ export async function run(ctx) {
   // 3. 8 个函数导出
   const missingFuncs = EXPECTED_FUNCS.filter((k) => typeof mod[k] !== 'function');
   if (missingFuncs.length === 0) {
-    cf.pass('i18n.functions_exported', `8 个函数全部导出（${EXPECTED_FUNCS.join(', ')}）`);
+    cf.pass('i18n.functions_exported', `9 个函数全部导出（${EXPECTED_FUNCS.join(', ')}）`);
   } else {
     cf.fail('i18n.functions_exported', `缺函数: ${missingFuncs.join(', ')}`);
   }
@@ -100,6 +100,11 @@ export async function run(ctx) {
     }
     cliPass++;
   }
+  // 额外：--triple 强度烟测（T1 + strength 输出含强度标签）
+  const strRes = spawnSync('node', [renderPath, '--triple', 'T1', 'EXECUTING', 'low'], { cwd: root, encoding: 'utf8', timeout: 10000 });
+  const strOut = (strRes.stdout || '').trim();
+  if (strRes.status !== 0 || !strOut.includes('强度')) { cliFailures.push('--triple T1 EXECUTING low 缺强度标签 (exit=' + strRes.status + ' stderr=' + (strRes.stderr||'').trim() + ')'); }
+
   if (cliFailures.length === 0) {
     cf.pass('i18n.cli_smoke', `5 个 --<kind> 分支烟测全绿（${cliPass}/5）`);
   } else {
