@@ -1,6 +1,5 @@
 ---
 description: 生命周期阶段 QUALITY — 质量保障。机械前置门（acceptance-check + diff-boundary-check）fail-fast → LLM hooks 并行（verify+review 同轮）→ fix(onFail) 循环。T1=机械门+正向验证快通道（反向验证/审查角色 tiers:[T2] 不加载）；T2=全视角并行。
-model_capability: strict-verification
 token_budget: 10000        # × 智能体数
 # required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
 # 必配：verifier（verify hook）；fixer（fix hook, auto-trigger）

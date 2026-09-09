@@ -3,7 +3,7 @@
  * decouple-check.mjs — 扫全仓第三方 MCP 工具名残留
  *
  * 扫 gitnexus / context7 / GitNexus / Context7 / @playwright / .playwright-mcp
- * 自动发现遗漏(011 .gitignore 漏改教训)
+ * 自动发现遗漏(.gitignore 漏改教训)
  *
  * exit 0 = 0 critical
  * exit 1 = ≥1 critical
@@ -26,7 +26,7 @@ function getAllFiles(dir, files = []) {
   if (!fs.existsSync(dir)) return files;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
-    // 路径规范化(防 012 U5 教训):path.join 在 Windows 用 \,EXCLUDES 用 /,必 replace 避免 includes 永不匹配
+    // 路径规范化(防路径陷阱):path.join 在 Windows 用 \,EXCLUDES 用 /,必 replace 避免 includes 永不匹配
     if (EXCLUDES.some(e => full.replace(/\\/g, '/').includes(e))) continue;
     if (entry.isDirectory()) {
       getAllFiles(full, files);

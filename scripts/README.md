@@ -1,11 +1,11 @@
 # scripts/ — 工具脚本集
 
-Kilo 框架工具集，19 个顶层 `.mjs`（Node ESM，零 npm 依赖，Windows PowerShell 5.1 兼容）。
+Kilo 框架工具集，32 个顶层 `.mjs`（Node ESM，零 npm 依赖，Windows PowerShell 5.1 兼容）。
 所有脚本仅使用 `node:fs / node:path / node:os / node:process / node:url / node:child_process` 内置模块，stderr 输出仅 ASCII 防 PS5.1 GBK 乱码。
 
 > 子目录：`lib/`（4 个工具模块，供顶层脚本 ESM import）+ `lifecycle-doctor/`（框架静态装配 + runtime 引擎 + 7 个 check 子项）。
 
-## 核心工具（19 个顶层 `.mjs`）
+## 核心工具（32 个顶层 `.mjs`）
 
 | 脚本 | 职责 | CLI 用法 | 退出码 | 关键依赖 |
 |---|---|---|---|---|
@@ -24,10 +24,11 @@ Kilo 框架工具集，19 个顶层 `.mjs`（Node ESM，零 npm 依赖，Windows
 | `search-discipline-check.mjs` | 搜索纪律机械门（无 include / pattern 爆炸 / PCRE 不支持特性） | `<task_id>` | 0/1/2 | — |
 | `decouple-check.mjs` | 扫全仓第三方 MCP 工具名残留（gitnexus/context7/playwright） | （无 args） | 0/1/2 | 自豁免 |
 | `agents-smoke-test.mjs` | 7 subagent 端到端冒烟测试调度（Node 18+ fetch） | 见脚本注释 | 0/1 | `kilo.json` provider/agent 配置 |
-| `error-codes.mjs` | 错误码单一来源（transition-check / 文档同源） | （库文件，无 CLI） | — | — |
+| `error-codes.mjs` | 错误码单一来源（transition-check / 文档同源 + LLM 判定标记 SSOT 注册） | （库文件，无 CLI） | — | — |
 | `new-agent.mjs` | 新 agent 脚手架（写 .md + kilo.json + 改 EXPECTED_SUBAGENTS） | `<name> "<description>" [model]` | 0/2 | — |
 | `new-stage.mjs` | 新 stage 脚手架（写 stages/<id>.md + 改 graph.yaml） | `<id> "<description>" [executor]` | 0/2 | — |
 | `new-validator.mjs` | 新 transition validator 脚手架（写 error-codes + 改 transition-check） | `<code> "<desc>" <from> <to>` | 0/2 | — |
+| `kb.mjs` | 跨项目故障-根因-修复经验库 CLI（add/query/hit/archive/doctor/selftest） | `add / query / hit / archive / selftest`（见脚本注释） | 0/1/2 | `lessons-recorder` |
 
 ## 三件套（框架级安全门禁 v6）
 

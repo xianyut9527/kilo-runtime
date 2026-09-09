@@ -214,7 +214,6 @@ tier_defaults:
   T1:
     agents:
       my_agent: true        # ← 加这一行
-    review_mode: fast
 ```
 
 ### 4.4 改熔断阈值
@@ -232,7 +231,7 @@ hooks:
 ```json
 // kilo.json（唯一模型绑定来源）
 "verifier": {
-  "model": "hx/kimi-k2.7-code"    // ← 改这里
+  "model": "hx/kimi-k2.6"    // ← 改这里
 }
 ```
 

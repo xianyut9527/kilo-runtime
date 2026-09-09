@@ -5,6 +5,22 @@
 
 
 
+## [Unreleased] scan-fixes（提交前扫描修复批次）
+
+### Fixed
+
+- **P1-1 模型注册漂移**：`kilo.json` 删除 `glm-5.3`（重复注册块，仅保留 `glm-5.3-flash`）；`scripts/check-model-registry-sync.mjs` 移除断言 4 死代码（`code_optimized_model` 非官方字段，违反 schema additionalProperties:false），SYNC 断言缩至 3 条。
+- **P1-2 FILE_CONFLICT 漏检**：`scripts/task-context.mjs` 文件级去重原 `.find()` 只比对第一个持锁 guard，3+ 并行单元下漏检后持锁单元 key_files 交集；改为遍历全部 running timeout_guards，命中任一即 exit 2（FX-005 防线），消息改用 `\n` 转义单行输出。
+- **P2-1 code 升级空模型风险 + 测试腐化**：`lifecycle/runtime/model-selector.mjs` code 升级块加 null 守卫——仓库 kilo.json 无 code/coder 模型时 `readCodeOptimizedModel()` 返回 null，原硬拼 `selected_model:null + upgraded:true` 空模型传 dispatch，现落穿 no-change；`model-selector.test.mjs` 同步更新为「code 升级禁用」新契约（选 `hx/glm-5.2` / `no-change` / `upgraded:false`），vision 测试 fixture 改用 kimi-k2.6。
+- **P3 杂项收敛**：`scripts/check-model-registry-sync.mjs` 断言 4 死代码清理；`knowledge-base/index.md`、`scripts/kb.mjs`、`scripts/task-context.mjs` 收敛尾部多余空行为单个结尾换行；`AGENTS.md` 补单个结尾换行（git diff --check 干净）。
+
+## [Unreleased] knowledge-base（跨项目故障-根因-修复经验库落地）
+
+### Added
+
+- **knowledge-base/** 经验库骨架：`index.md`（库属性声明 + 症状→FX 索引表 + 新增流程 + FX 文件模板）+ `fixes/FX-001.md`（首条：reviewer/task 子代理 tool execution aborted 中断处理）。定位：跨项目知识库，路径解析基准为全局根 `~/.config/kilo/`，任何项目 findUp 读到同一份。
+- **消费接入**：`.kilo/instructions/reflection.md`「强制跨会话根因回溯」第 3 步检索 `<GLOBAL_ROOT>/knowledge-base/index.md`，命中打 `[KB_HIT]`、未命中打 `[KB_MISS]`；`AGENTS.md` 硬锚点索引已加 knowledge-base 行。
+
 ## [Unreleased] i18n-render-design（中文 i18n 渲染器 4 unit 完工）
 
 ### Added

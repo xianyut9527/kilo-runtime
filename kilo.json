@@ -118,7 +118,7 @@
         "serve",
         "--mcp"
       ],
-      "enabled": true,
+      "enabled": false,
       "timeout": 30000
     }
   },
@@ -132,14 +132,6 @@
         "chunkTimeout": 1800000
       },
       "models": {
-        "deepseek-v4-pro": {
-          "name": "deepseek-v4-pro",
-          "reasoning": true,
-          "limit": {
-            "context": 200000,
-            "output": 32768
-          }
-        },
         "deepseek-v4-flash": {
           "name": "deepseek-v4-flash",
           "reasoning": true,
@@ -156,17 +148,13 @@
             "output": 32768
           }
         },
-        "glm-5.3": {
-          "name": "glm-5.3",
-          "reasoning": true,
-          "limit": {
-            "context": 200000,
-            "output": 32768
-          }
-        },
         "glm-5.3-flash": {
           "name": "glm-5.3-flash",
           "reasoning": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "limit": {
             "context": 200000,
             "output": 32768
@@ -174,30 +162,6 @@
         },
         "kimi-k2.6": {
           "name": "kimi-k2.6",
-          "reasoning": true,
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
-          },
-          "limit": {
-            "context": 200000,
-            "output": 32768
-          }
-        },
-        "kimi-k2.7-code": {
-          "name": "kimi-k2.7-code",
-          "reasoning": true,
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
-          },
-          "limit": {
-            "context": 200000,
-            "output": 32768
-          }
-        },
-        "kimi-k3": {
-          "name": "kimi-k3",
           "reasoning": true,
           "modalities": {
             "input": ["text", "image"],
@@ -222,5 +186,6 @@
         }
       }
     }
-  }
+  },
+  "remote_control": true
 }

@@ -76,7 +76,7 @@ function inferVision(model) {
 
 // Fix P0-2: 默认 code-capable（对齐 inferReasoning 的 `!== false` 保守语义）。
 // 旧逻辑按名字含 'code'/'coder' 判定 -> glm-5.2/deepseek 等被误判"缺 code"而触发
-// 不必要的升级到 kimi-k2.7-code，与 model-registry 人工评级（glm-5.2 编码 ★★★★☆）
+// 不必要的升级到编码特化模型，与 model-registry 人工评级（glm-5.2 编码 ★★★★☆）
 // 矛盾，且遮蔽 economy 降级路径。新逻辑：显式 model.capabilities.code === false
 // 才判非 code（纯视觉/纯对话模型），缺省 true。如需标记某模型非 code，在 kilo.json
 // provider.hx.models.<id> 加 `capabilities: { code: false }`（可选字段，不破坏现有结构）。

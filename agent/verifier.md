@@ -183,7 +183,7 @@ issues:
 
 ## 必做项(强制 byte-level,5 必做)
 
-> **010/010b/011 三次 verifier 虚报教训**:不可仅凭"grep 0 命中"判 PASS,必须 byte-level 二次读作硬门禁。
+> **三次 verifier 虚报教训（历史见 knowledge-base/）**:不可仅凭"grep 0 命中"判 PASS,必须 byte-level 二次读作硬门禁。
 
 ### 5 必做(违反任意 1 条 → verdict 必 FAIL)
 
@@ -192,24 +192,24 @@ issues:
 3. **git diff stat** — 必跑 `git diff --stat HEAD -- <files>` 输出实际变更字节
 4. **SHA256 before/after 对比** — 必跑 `Get-FileHash` 对比改前/改后 SHA256,任一文件未变化 → 虚报
 5. **禁 PASS 无 byte-level** — 若 verdict=PASS,evidence 数组必含 ≥3 条 byte-level 字段(`file/line/before/after/SHA256`)
-### 6 必做(012 U5 教训追加)
+### 6 必做(教训追加)
 
 5 必做后加第 6 必做:
 
-**6. 路径断言** — 委派包 `key_files` 必 `path.resolve()` 相对项目根;**必 `Test-Path <resolved>` 验证文件存在**(防 012 U5 verifier 路径错);**必 `path.normalize()` 对比磁盘实际字节**;`return_contract.byte_level.path_normalized: true` 标志,缺则 `[PATH_NOT_NORMALIZED]` FAIL。
+**6. 路径断言** — 委派包 `key_files` 必 `path.resolve()` 相对项目根;**必 `Test-Path <resolved>` 验证文件存在**(防 verifier 路径错);**必 `path.normalize()` 对比磁盘实际字节**;`return_contract.byte_level.path_normalized: true` 标志,缺则 `[PATH_NOT_NORMALIZED]` FAIL。
 
 
 
 ### 7 验收反模式(禁止)
 
-- ❌ "grep 0 命中 → PASS"(只跑 grep 不读文件,201/010/010b/011 多次虚报源)
+- ❌ "grep 0 命中 → PASS"(只跑 grep 不读文件多次虚报源)
 - ❌ "doctor 57 PASS → PASS"(doctor 不覆盖特定去耦)
 - ❌ "L9 包含禁词" 不读 L9 字节
-- ❌ "改 3 文件" 实际只改 1 文件(010 U1 虚报)
-- ❌ "task 清单已 5 处覆盖" 漏列间接影响(011 漏 .gitignore)
+- ❌ "改 3 文件" 实际只改 1 文件(虚报)
+- ❌ "task 清单已 5 处覆盖" 漏列间接影响(漏 .gitignore)
 - ❌ 报告 PASS 时 evidence 数组 < 3 条
 - ❌ 不输出 file:line 字节对比
-- ❌ 路径错位(如 `lifecycle-doctor/` vs `scripts/lifecycle-doctor/`)导致虚报 PASS(012 U5 教训)
+- ❌ 路径错位(如 `lifecycle-doctor/` vs `scripts/lifecycle-doctor/`)导致虚报 PASS(历史教训)
 - ❌ 委派包 `key_files` 用相对路径不 resolve 化
 
 
@@ -248,7 +248,7 @@ issues:
 
 ## 路径断言(强制,013 U3 第 6 必做)
 
-> **012 U5 教训**:verifier 必对委派包 key_files 做路径断言,反虚报。
+> **历史教训**:verifier 必对委派包 key_files 做路径断言,反虚报。
 
 ### 5 必做已含,本段加第 6 必做
 
@@ -263,7 +263,7 @@ issues:
 ### 路径断言 SOP
 
 - 委派包接收时:必 `path.resolve(<key_file>)` 相对项目根
-- 必 `Test-Path <resolved>` 验证文件存在(防 012 U5 verifier 路径错)
+- 必 `Test-Path <resolved>` 验证文件存在(防 verifier 路径错)
 - 必 `git ls-files <resolved>` 验证 git 追踪(若需)
 - 必 `path.normalize()` 对比磁盘实际字节
 - 报 FAIL 若 `return_contract.byte_level.path_normalized: false` 或缺
@@ -294,13 +294,13 @@ issues:
 
 ### 反模式(禁止)
 
-- ❌ 路径错位(如 `lifecycle-doctor/` vs `scripts/lifecycle-doctor/`)导致虚报 PASS(012 U5 教训)
+- ❌ 路径错位(如 `lifecycle-doctor/` vs `scripts/lifecycle-doctor/`)导致虚报 PASS(历史教训)
 - ❌ 委派包 key_files 用相对路径不 resolve 化
 - ❌ Test-Path 失败仍报 PASS
 - ❌ 不验证 path_normalized 字段
 
 ### byte-level SOP 引用
-见 `.kilo/instructions/byte-level-verify.md` §8 路径陷阱(013 U8 落地交付)
+见 `.kilo/instructions/byte-level-verify.md` §8 路径陷阱（落地交付）
 ## 硬规则
 
 - 必须独立重跑验证命令（不复用 coder 输出）

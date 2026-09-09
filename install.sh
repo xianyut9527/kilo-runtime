@@ -198,6 +198,9 @@ CRITICAL_FILES=(
     "scripts/sanitize-agent-description.mjs"
     "scripts/sync-agent-prompt.mjs"
     "scripts/validate-agent-prompt.mjs"
+    "knowledge-base/index.md"
+    "knowledge-base/fixes/FX-001.md"
+    "scripts/kb.mjs"
 )
 
 MISSING=()
@@ -245,6 +248,21 @@ else
     echo "[WRITE] ${MD_REPLACED} .md file(s) had KILO_CONFIG_DIR placeholders substituted"
 fi
 
+
+# Rebuild derivations.json on target: install 占位符替换改写了 agent/*.md 内容，
+# repo 构建的内容指纹与 target 实际不符；在 target 侧重建使 fingerprint 匹配
+echo ""
+echo "Rebuilding derivations.json on target..."
+BUILD_DERIV="${TARGET_DIR}/scripts/build-derivations.mjs"
+if [ -f "${BUILD_DERIV}" ]; then
+    if node "${BUILD_DERIV}" 2>&1; then
+        echo "[BUILD_DERIVATIONS] derivations.json rebuilt on target"
+    else
+        echo "[WARN] build-derivations.mjs exited $?; derivations.json may be stale. Run manually: node \"${BUILD_DERIV}\""
+    fi
+else
+    echo "[WARN] build-derivations.mjs not found at ${BUILD_DERIV}; derivations.json may be stale. Run manually: node \"${BUILD_DERIV}\""
+fi
 # Ensure skill directories exist
 echo ""
 echo "Ensuring skill directories exist..."

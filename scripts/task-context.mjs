@@ -45,6 +45,7 @@
 // 跨平台：Windows PowerShell 5.1 + Linux bash 兼容
 
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import process from 'node:process';
@@ -53,14 +54,14 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-import { readContext, writeContext, appendTransitionLog, contextPath, buildInitialContext,
+import { readContext, readContextOptional, writeContext, appendTransitionLog, contextPath, buildInitialContext,
          VALID_STATUSES, VERIFICATION_FIELDS, QUALITY_ROUND_FIELD, CURRENT_STAGE_FIELD,
          TOTAL_ROUNDS_FIELD, readHooksFromConfig, readConvergenceFromConfig, readTierDefaults,
          readTierEscalation,
          readSizeCheckThreshold, readDispatchPromptThreshold, readMaxFilesPerTask, readTimeouts,
          assertValidTaskId, getByPath, setByPath, pathAllowedBy, pathPrefix, parseValue,
          extractFrontmatter, die } from './task-context-runtime.mjs';
-import { discoverPostPreConstantMountsByAgent, discoverPostPreTieredMounts } from './lib/post-pre-mounts.mjs';
+import { discoverPostPreConstantMountsByAgent, discoverPostPreTieredMounts, discoverHookTieredMounts } from './lib/post-pre-mounts.mjs';
 import { getStageRequiredRoles } from './lib/stage-roles.mjs';
 import { cachedDerive, listMdFiles } from './lib/derived-cache.mjs';
 
@@ -166,20 +167,26 @@ function loadWriteMatrixFromGenerated() {
     // 视为 stale，回退 cachedDerive 路径重新派生（fail-closed）。
     if (data.fingerprint && typeof data.fingerprint === 'string') {
       const stale = data.fingerprint.split('|').some((entry) => {
-        const m = entry.match(/^(.+?)@(\d+(?:\.\d+)?)$/);
-        if (!m) return false; // 无法解析的条目跳过（保守不判 stale）
+        const m = entry.match(/^(.+?)@([0-9a-f]{12}|MISSING)$/);
+        if (!m) return false; // 无法解析的条目跳过（保守不判 stale，兼容旧 mtime 格式）
         const file = m[1];
-        const mtimeSize = m[2];
-        const full = path.join(AGENT_DIR, file);
+        const digest = m[2];
+        if (digest === 'MISSING') return false; // 生成时缺失，保守不判 stale
+        // scope：graph.yaml/config.yaml 位于 lifecycle/，其余默认 agent/
+        const dir = (file === 'graph.yaml' || file === 'config.yaml')
+          ? path.resolve(__dirname, '..', 'lifecycle')
+          : AGENT_DIR;
+        const full = path.join(dir, file);
         try {
-          const stat = fs.statSync(full);
-          return String(stat.mtimeMs) !== String(mtimeSize);
+          const content = fs.readFileSync(full);
+          const cur = createHash('sha256').update(content).digest('hex').slice(0, 12);
+          return cur !== digest;
         } catch {
-          return false; // 文件不存在或 stat 失败，保守不判 stale
+          return false; // 文件不存在或读取失败，保守不判 stale
         }
       });
       if (stale) {
-        process.stderr.write(`[DERIVATIONS_STALE] ${GENERATED_DERIVATIONS_PATH} fingerprint 与当前 agent/*.md mtime 不匹配，回退 cachedDerive 路径\n`);
+        process.stderr.write(`[DERIVATIONS_STALE] ${GENERATED_DERIVATIONS_PATH} fingerprint 与当前 agent/*.md 内容不匹配，回退 cachedDerive 路径\n`);
         return null;
       }
     }
@@ -225,8 +232,9 @@ function usage() {
     '  node scripts/task-context.mjs validate <task_id>',
     '  node scripts/task-context.mjs assert <task_id> <type> [args...]',
     '  node scripts/task-context.mjs size-check <task_id>',
+    '  node scripts/task-context.mjs archive <task_id>',
     '  node scripts/task-context.mjs dispatch-prompt-check <task_id>',
-    '  node scripts/task-context.mjs pre-dispatch <task_id> --agent <name> --tier <T0|T1|T2> --prompt-chars <N> [--file-count <F>] [--bash-cmd "<cmd>"]',
+    '  node scripts/task-context.mjs pre-dispatch <task_id> --agent <name> --tier <T0|T1|T2> --prompt-chars <N> [--file-count <F>] [--bash-cmd "<cmd>"] [--unit-id <id>] [--key-files <a,b,c>]',
     "  node scripts/task-context.mjs log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>",
     '  node scripts/task-context.mjs post-dispatch <task_id> --dispatch-seq <N> --result <pass|fail|timeout> --agent <name> --mode <task|agent_manager> --stage <STAGE>',
     "  node scripts/task-context.mjs delete <task_id> [--force]",
@@ -244,13 +252,14 @@ function usage() {
     '  init        Create task_context_<task_id>.json under os.tmpdir()/kilo/.',
     '  get         Print value at dot.path (JSON).',
     '  set         Write JSON value to dot.path. Enforces write matrix.',
-    '  apply-tier  Apply config.yaml tier_defaults to config.agents + review_mode (INIT helper).',
+    '  apply-tier  Apply config.yaml tier_defaults to config.agents (INIT helper).',
     '  apply-tier-auto Merged apply-escalation + apply-tier (one process, one read/write). exit=0/1/2.',
     '  apply-escalation Scan intent.raw + sizing.key_files against config.yaml tier_escalation; auto-upgrade to T2 if matched (INIT helper).',
     '  validate    Check required top-level fields, quality integers, and convergence mm_fusion integers.',
     '  size-check  Print task_context file character count (pre-dispatch safety gate vs config.size_check_threshold; exit=2 if exceeded).',
+    "  archive     Archive execution/verification/plan/fixing_history detail fields to $TEMP/kilo/tasks/<id> sidecar; replace in main ctx with archive marker (retains intent/sizing/config/current_stage/quality.verdict/dispatch_log/status).",
     "  dispatch-prompt-check Read dispatch_pending.prompt_chars/file_count written by conductor pre-dispatch; exit=1 if pending info missing, exit=2 if prompt_chars>dispatch_prompt_threshold or file_count>max_files_per_task. PASS otherwise.",
-    "  pre-dispatch    Combined gate: writes dispatch_pending + dispatch-prompt-check + size-check + bash-guard + timeout_guard start (when --agent --tier given). Replaces the 4-call `set` + `dispatch-prompt-check` + `size-check` + `agent-timeout-guard start` sequence. exit=0 pass / 1 audit fail / 2 over-limit.",
+    "  pre-dispatch    Combined gate: writes dispatch_pending + dispatch-prompt-check + size-check + bash-guard + timeout_guard start (when --agent --tier given). Replaces the 4-call `set` + `dispatch-prompt-check` + `size-check` + `agent-timeout-guard start` sequence. With --unit-id: unit-level dedup gate (blocks if same unit already has a running guard). exit=0 pass / 1 audit fail / 2 over-limit or duplicate dispatch.",
     "  log-dispatch Append {agent, mode, stage, timestamp} to dispatch_log[] (provenance gate). --agent must be in write-matrix agent set; --stage must be a graph.yaml node. Whitelist-enforced.",
     "  post-dispatch   Merged agent-timeout-guard check + clear + log-dispatch (one process). exit=0 cleared+provenance / 4 [RETRY] (timeout, count<=max) / 5 [ESCALATE] (timeout, count>max) / 1,2 error. Timeout verdict overrides --result.",
     "  recover      Unified entry: dispatch one of the recover-*.mjs sub-scripts by --type, capture stdout+exit, append to recovery_log[]. --type in {context-unsafe, write-missing, process-violation}. Atomic write via validateSingleWrite (conductor-only). exit=0 success / 1 recoverable / 2 usage / 3 circuit-breaker.",
@@ -569,7 +578,7 @@ function cmdSetBatch(taskId, batchInput, agent) {
 // apply-tier: INIT 阶段机械应用 config.yaml tier_defaults
 // 消除"conductor 手工 set config.agents 容易漏写/写错"的根因。
 // 读 config.yaml tier_defaults[tier]，
-// 原子写入 config.agents + config.review_mode。
+// 原子写入 config.agents。
 // 覆盖 config.agents 整体（非增量），保证与 config.yaml 单一真相一致。
 // ============================================================
 function cmdApplyTier(taskId, tier, agent, opts) {
@@ -592,24 +601,18 @@ function cmdApplyTier(taskId, tier, agent, opts) {
 
   const entry = tierMap[tier];
   const agentsValue = entry.agents || {};
-  const reviewMode = entry.review_mode || 'none';
-
   // 复用 validateSingleWrite 做硬门校验（config.agents 布尔 + conductor 有权写 config）
   const agentsCheck = validateSingleWrite(agent, 'config.agents', agentsValue);
   if (!agentsCheck.allowed) {
     die(agentsCheck.code, `apply-tier: ${agentsCheck.message}`);
   }
-  const rmCheck = validateSingleWrite(agent, 'config.review_mode', reviewMode);
-  if (!rmCheck.allowed) {
-    die(rmCheck.code, `apply-tier: ${rmCheck.message}`);
-  }
-
   // 原子写入：读 → 改 → 写
   const { ctx } = readContext(taskId);
   // config.agents 整体覆盖（保证与 config.yaml 一致，清除残留的脏开关）
   ctx.config = ctx.config || {};
   ctx.config.agents = agentsValue;
-  ctx.config.review_mode = reviewMode;
+  // U1: 读 tier_defaults[Tn].model_overrides 写入 config.model_overrides（conductor dispatch 时按 agent 覆盖 model）
+  ctx.config.model_overrides = entry.model_overrides || {};
   // 同步写 sizing.tier（消除 INIT 后 transition-check 报 "tier undefined" 的根因）
   // 幂等：当前 tier 与目标 tier 一致则不写多余字段
   ctx.sizing = ctx.sizing || {};
@@ -619,7 +622,7 @@ function cmdApplyTier(taskId, tier, agent, opts) {
   writeContext(taskId, ctx);
 
   process.stdout.write(
-    `ok: apply-tier ${tier} → config.agents=${JSON.stringify(agentsValue)} review_mode=${reviewMode} sizing.tier=${tier}\n`
+    `ok: apply-tier ${tier} → config.agents=${JSON.stringify(agentsValue)} model_overrides=${JSON.stringify(entry.model_overrides || {})} sizing.tier=${tier}\n`
   );
   process.exit(0);
 }
@@ -806,20 +809,16 @@ function cmdApplyTierAuto(taskId, declaredTier, agent, opts) {
   }
   const entry = tierMap[finalTier];
   const agentsValue = entry.agents || {};
-  const reviewMode = entry.review_mode || 'none';
   const agentsCheck = validateSingleWrite(agent, 'config.agents', agentsValue);
   if (!agentsCheck.allowed) die(agentsCheck.code, `apply-tier-auto: ${agentsCheck.message}`);
-  const rmCheck = validateSingleWrite(agent, 'config.review_mode', reviewMode);
-  if (!rmCheck.allowed) die(rmCheck.code, `apply-tier-auto: ${rmCheck.message}`);
   ctx.config = ctx.config || {};
   ctx.config.agents = agentsValue;
-  ctx.config.review_mode = reviewMode;
   // U3: 读 tier_defaults[Tn].model_overrides 写入 config.model_overrides（conductor dispatch 时按 agent 覆盖 model）
   ctx.config.model_overrides = entry.model_overrides || {};
   if (ctx.sizing.tier !== finalTier) ctx.sizing.tier = finalTier;
 
   writeContext(taskId, ctx);
-  process.stdout.write(`ok: apply-tier-auto declared=${declaredTier} final=${finalTier} upgraded=${upgraded} config.agents=${JSON.stringify(agentsValue)} review_mode=${reviewMode} escalation_reasons=${JSON.stringify(ctx.sizing.escalation_reasons)}\n`);
+  process.stdout.write(`ok: apply-tier-auto declared=${declaredTier} final=${finalTier} upgraded=${upgraded} config.agents=${JSON.stringify(agentsValue)} model_overrides=${JSON.stringify(entry.model_overrides || {})} escalation_reasons=${JSON.stringify(ctx.sizing.escalation_reasons)}\n`);
   process.exit(0);
 }
 
@@ -1062,7 +1061,24 @@ function evalDispatchPrompt(ctx) {
 // size-check 超限时本命令仅返回 exit 2（阻断）；摘要压缩 + 切 worktree 仍由 conductor
 // 在收到 exit 2 后按铁律 #9 step 0a 流程处理（脚本不做副作用压缩）。
 // ============================================================
-function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd, agent, tier) {
+// ============================================================
+// 单元级去重门禁配置读取（lifecycle/config.yaml dedup_unit_dispatch）
+// 缺省 true：同一 unit 未 post-dispatch 前禁止重复 pre-dispatch
+// （防并发写冲突 + token 浪费）。config 缺失/解析失败 → 缺省 true。
+// ============================================================
+function readDedupUnitDispatch() {
+  const cfgPath = path.resolve(__dirname, '..', 'lifecycle', 'config.yaml');
+  try {
+    const text = fs.readFileSync(cfgPath, 'utf8');
+    const m = text.match(/dedup_unit_dispatch:\s*(true|false)/);
+    if (!m) return true; // 配置项缺失 → 缺省开启
+    return m[1] === 'true';
+  } catch {
+    return true; // config.yaml 缺失 → 缺省开启
+  }
+}
+
+function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd, agent, tier, unitId, keyFiles, ephemeral) {
   assertValidTaskId(taskId);
   const promptChars = Number.parseInt(promptCharsArg, 10);
   if (!Number.isInteger(promptChars) || promptChars < 0) {
@@ -1076,14 +1092,104 @@ function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd, agent, ti
     }
   }
 
-  // 1. 读 ctx 一次，修改 dispatch_pending（不立即写，合并到统一写）
-  const { ctx } = readContext(taskId);
-  ctx.dispatch_pending = { prompt_chars: promptChars, file_count: fileCount };
+  // 1. 读 ctx（MMO 多模型路径用 readContextOptional，--ephemeral 允许 ctx 缺失）
+  //    正常 dispatch 路径仍在下面强制 dispatch_pending 写入，语义不变。
+  const { ctx } = readContextOptional(taskId);
+
+  // MMO 多模型分析路径（--ephemeral）：task_context 未初始化，不持久化任何字段。
+  // 只做内存级 prompt-chars 数值校验 + bash-guard，exit 0，stdout 标 [ephemeral]。
+  // —— 解决死锁根因：铁律 #9 step0 强制 pre-dispatch，原 readContext 对未 init 的
+  //    task_id die(1) 阻断 dispatch，MMO 路径因门禁无法通过机械校验只能绕过执行。
+  // ctx==null 且不带 --ephemeral：维持原语义（die exit 1 阻断，普通路径回归保持）。
+  // ctx!=null（已 init）且带 --ephemeral：走常规路径（fail-safe，防误降级）。
+  if (ctx == null) {
+    if (!ephemeral) {
+      die(1, `Error: task_context not found for task_id=${taskId}`);
+    }
+    // ephemeral：内存级 prompt 校验（不依赖 dispatch_pending 落盘）
+    const promptThreshold = readDispatchPromptThreshold();
+    const maxFiles = readMaxFilesPerTask();
+    if (promptChars > promptThreshold) {
+      process.stdout.write(`FAIL dispatch-prompt-check (prompt_chars=${promptChars} threshold=${promptThreshold}) — prompt 超限，阻断 dispatch\n`);
+      process.exit(2);
+    }
+    if (fileCount !== null && maxFiles !== null && fileCount > maxFiles) {
+      process.stdout.write(`FAIL dispatch-prompt-check (file_count=${fileCount} max_files=${maxFiles}) — 文件数超限，阻断 dispatch\n`);
+      process.exit(2);
+    }
+    process.stdout.write(`PASS dispatch-prompt-check (ephemeral prompt_chars=${promptChars} threshold=${promptThreshold})\n`);
+    // bash-guard 子进程（可选 --bash-cmd）
+    if (bashCmd) {
+      const bg = spawnSync('node', [path.resolve(SCRIPT_DIR, 'bash-guard.mjs'), bashCmd], { encoding: 'utf8' });
+      const bgExit = bg.status || 0;
+      if (bgExit === 2) {
+        process.stdout.write(`[pre-dispatch] bash-guard BLOCKED: ${(bg.stdout || '').trim()}\n`);
+        process.exit(2);
+      } else {
+        process.stdout.write(`[pre-dispatch] bash-guard: PASS (exit ${bgExit})\n`);
+      }
+    }
+    process.stdout.write('[ephemeral] pre-dispatch pass（MMO 多模型：task_context 未 init，仅内存校验，不持久化）\n');
+    process.exit(0);
+  }
+  ctx.dispatch_pending = { prompt_chars: promptChars, file_count: fileCount, unit_id: unitId || null, key_files: keyFiles || null };
+
+  // 单元级去重门禁（默认开启，config.dedup_unit_dispatch 控制）：
+  // 门禁仅对显式 --unit-id 生效：同一 unit 已有 running 派发则阻断（exit 2）。
+  // 未传 --unit-id 时无法可靠判断 conductor 实际想派哪个单元（task_dag 顺序不可靠，
+  // 多单元并行时推断会误伤合法并发或漏掉重复派发），故跳过去重，保持向后兼容。
+  // 根因：U9 重派时同一条消息并行发起 20+ 相同 task，多 coder 并发写互相覆盖 + 并发写 task_context 致 rename ENOENT。
+  const dedupEnabled = readDedupUnitDispatch();
+  if (dedupEnabled && unitId) {
+    if (Array.isArray(ctx.timeout_guards)) {
+      const dup = ctx.timeout_guards.some((g) => g && g.unit_id === unitId && g.status === 'running');
+      if (dup) {
+        process.stdout.write(`[DUPLICATE_DISPATCH] unit=${unitId} 已有 running 派发，禁止重复派发\n`);
+        process.exit(2);
+      }
+    }
+  }
+
+  // 文件级去重门禁（可选 --key-files）：
+  // 不同单元若 key_files 有交集（都改同一文件）→ 阻断（防并发写冲突）。
+  // 仅当显式传 --key-files 时生效；未传则跳过去重（向后兼容）。
+  // 语义：不同单元、不同文件 → 放行；不同单元、同一文件 → 阻断；同一单元 → 单元级去重已拦。
+  // P1-2 fix：原 .find() 只比对第一个满足条件的 running guard，3+ 并行单元下会漏检后持
+  // 锁单元的 key_files 交集；改为遍历全部 running guards，命中任一即阻断（并发写防线）。
+  if (keyFiles && keyFiles.length > 0) {
+    if (Array.isArray(ctx.timeout_guards)) {
+      for (const g of ctx.timeout_guards) {
+        if (!g) continue;
+        if (g.status !== 'running' || !Array.isArray(g.key_files) || g.key_files.length === 0) continue;
+        const overlap = keyFiles.filter((f) => g.key_files.includes(f));
+        if (overlap.length > 0) {
+          process.stdout.write(`[FILE_CONFLICT] 文件 ${overlap.join(',')} 已被 unit=${g.unit_id || '(unknown)'} 占用，禁止并发修改\n`);
+          process.exit(2);
+        }
+      }
+    }
+  }
 
   // 2. dispatch-prompt-check（内存校验）
   const dpc = evalDispatchPrompt(ctx);
   // 3. size-check（内存计算，避免冗余 disk read）
-  const sc = evalSizeCheck(taskId, ctx);
+  let sc = evalSizeCheck(taskId, ctx);
+  // U4: size 超限自动 archive（先侧边转储，主 ctx 剪除细节字段后重测；失败保持原样 exit 2）
+  if (sc.exitCode === 2) {
+    try {
+      const archived = doArchive(taskId, ctx);
+      writeContext(taskId, ctx);
+      const recheck = evalSizeCheck(taskId, ctx);
+      process.stdout.write('[pre-dispatch] [archive] auto archived ' + archived.count + ' detail field(s) -> ' + archived.sidecarPath + ' (' + recheck.line + ')\n');
+      if (recheck.exitCode === 0) {
+        sc = { exitCode: 0, line: recheck.line + '（size-check 触发自动 archive 后达标）' };
+      } else {
+        sc = { exitCode: 2, line: recheck.line + '（archive 后仍超限，维持阻断）' };
+      }
+    } catch (e) {
+      process.stderr.write('[pre-dispatch] [archive] 归档失败，保持阻断: ' + e.message + '\n');
+    }
+  }
 
   // 合并：取最严重 exit code（2 > 1 > 0）
   const exitCode = Math.max(dpc.exitCode, sc.exitCode);
@@ -1133,6 +1239,8 @@ function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd, agent, ti
       status: 'running',
       agent,
       tier,
+      unit_id: unitId || null,
+      key_files: keyFiles || null,
     });
     const effectiveSeq = ctx.timeout_guards.length - 1;
     process.stdout.write(
@@ -1160,6 +1268,74 @@ function cmdSizeCheck(taskId) {
   } catch (e) {
     die(1, `Error: cannot read task_context for task_id=${taskId}: ${e.message}`);
   }
+}
+
+// ============================================================
+// archive 子命令 + 辅助（U4：交付素材自动归档 protection，防机械删除）
+// 把主 ctx 的 execution / verification / plan / fixing_history 细节字段原子转储到
+// sidecar $TEMP/kilo/tasks/<id>/<id>.archive-<ts>.json，主 ctx 这些字段替换为
+// {archived:true, path, summary, archived_at_ms}。保留字段不归档：
+// intent / sizing / config / current_stage / quality.verdict / dispatch_log / status
+// 原子性：先验证 sidecar 写入成功再改主 ctx；失败不误归档（调用方保持原样）。
+// ============================================================
+const ARCHIVE_FIELDS = ['execution', 'verification', 'plan', 'fixing_history'];
+
+function archiveSidecarPath(taskId) {
+  return path.join(os.tmpdir(), 'kilo', 'tasks', taskId, taskId + '.archive-' + Date.now() + '.json');
+}
+
+// 200 字符内执行细节摘要（供主 ctx archive marker 与 sidecar 顶层使用）
+function archiveSummary(ctx) {
+  const pieces = [];
+  const e = (ctx && ctx.execution) || {};
+  if (Array.isArray(e.diffs) && e.diffs.length) pieces.push('diffs=' + e.diffs.length);
+  if (Array.isArray(e.acceptance_map) && e.acceptance_map.length) pieces.push('acceptance_map=' + e.acceptance_map.length);
+  if (Array.isArray(e.changes) && e.changes.length) pieces.push('changes=' + e.changes.length);
+  const base = pieces.length ? pieces.join(', ') : 'archived detail fields';
+  return String(base).slice(0, 200);
+}
+
+// 执行归档：写 sidecar（+ 回读校验）+ mutate ctx 细节字段为 archive marker。
+// 返回 {sidecarPath, count, marker}。sidecar 写入失败抛异常（调用方捕获后保持原样 exit 2）。
+function doArchive(taskId, ctx) {
+  const sidecarPath = archiveSidecarPath(taskId);
+  const dumped = {};
+  for (const f of ARCHIVE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(ctx, f)) dumped[f] = ctx[f];
+  }
+  const summary = archiveSummary(ctx);
+  const archivedAtMs = Date.now();
+  const archiveDoc = {
+    task_id: taskId,
+    archived_at_ms: archivedAtMs,
+    archived_field_names: ARCHIVE_FIELDS.filter((f) => Object.prototype.hasOwnProperty.call(dumped, f)),
+    summary,
+    archived: dumped,
+  };
+  // 原子写 sidecar：先 write tmp，回读校验成功再 rename 到最终路径
+  fs.mkdirSync(path.dirname(sidecarPath), { recursive: true });
+  const tmpPath = sidecarPath + '.tmp';
+  const content = JSON.stringify(archiveDoc, null, 2) + '\n';
+  fs.writeFileSync(tmpPath, content, 'utf8');
+  const readBack = fs.readFileSync(tmpPath, 'utf8');
+  if (readBack.length !== content.length) throw new Error('sidecar 写入校验失败（长度不符）');
+  try { JSON.parse(readBack); } catch (err) { throw new Error('sidecar 写入校验失败（JSON 损坏）: ' + err.message); }
+  fs.renameSync(tmpPath, sidecarPath);
+  // 主 ctx 细节字段 → archive marker
+  const marker = { archived: true, path: sidecarPath, summary, archived_at_ms: archivedAtMs };
+  for (const f of ARCHIVE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(ctx, f)) ctx[f] = marker;
+  }
+  return { sidecarPath, count: archiveDoc.archived_field_names.length, marker };
+}
+
+function cmdArchive(taskId) {
+  assertValidTaskId(taskId);
+  const { ctx } = readContext(taskId);
+  const archived = doArchive(taskId, ctx);
+  writeContext(taskId, ctx);
+  process.stdout.write('ok: archived ' + archived.count + ' detail field(s) -> ' + archived.sidecarPath + ' (retained intent/sizing/config/current_stage/quality.verdict/dispatch_log/status)\n');
+  process.exit(0);
 }
 
 // ============================================================
@@ -1336,6 +1512,20 @@ function cmdLogDispatch(taskId, agent, mode, stage) {
       if (hit) allowed = true;
     }
   }
+  // S9c: hook 型挂载（at: <STAGE> + hook: + tiers: [..]）agent 同样允许按对应阶段记录，
+  //      但须按 sizing.tier 过滤：仅当 tier ∈ entry.tiers 才放行（与 S9b 语义一致）。
+  //      仅限 log-dispatch 补记，不改变 task dispatch 行为。
+  if (!allowed) {
+    const { ctx: ctxForTier } = readContext(taskId);
+    const tier = ctxForTier.sizing && ctxForTier.sizing.tier;
+    if (tier) {
+      const hookMounts = discoverHookTieredMounts();
+      const hit = hookMounts.some(
+        (m) => m.name === agent && m.stage === stage && Array.isArray(m.tiers) && m.tiers.includes(tier)
+      );
+      if (hit) allowed = true;
+    }
+  }
   if (!allowed) {
     die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 stage "${stage}" 的 required_roles（${requiredRoles ? requiredRoles.join(', ') : '(无)'}），亦无 post:${stage}/pre:${stage} 恒定/定级挂载。防跨阶段乱派发。`);
   }
@@ -1366,13 +1556,25 @@ function cmdLogDispatch(taskId, agent, mode, stage) {
 //   exit 1/2 = 参数/权限错
 // 超时判定优先于 conductor 传的 --result：实际超时则强制按 timeout 处理。
 // ============================================================
-function cmdPostDispatch(taskId, seq, result, agent, mode, stage) {
+function cmdPostDispatch(taskId, seq, result, agent, mode, stage, ephemeral) {
   assertValidTaskId(taskId);
   if (!Number.isInteger(seq) || seq < 0) {
     die(2, 'Error: post-dispatch requires --dispatch-seq <non-negative integer>');
   }
   if (!['pass', 'fail', 'timeout'].includes(result)) {
     die(2, 'Error: post-dispatch requires --result <pass|fail|timeout>');
+  }
+
+  // MMO 多模型路径（--ephemeral）：task_context 未 init 时 taskId/seq/result 基础校验后直接 noop（agent/mode/stage 校验在常规路径内，ephemeral 跳过）。
+  // 一次 CLI 进程无守护承载，不建内存 stub（避免假写盘）。退出 0 放行，stdout 标 noop。
+  // —— 解决死锁根因：原 post-dispatch 依赖 readContext，未 init task_id 直接 die(1)。
+  // ctx 存在（已 init）且带 --ephemeral：走常规路径（fail-safe，防误降级）。
+  if (ephemeral) {
+    const { ctx: ctxOpt } = readContextOptional(taskId);
+    if (ctxOpt == null) {
+      process.stdout.write('[ephemeral] post-dispatch noop（MMO 多模型：task_context 未 init，无 guard/dispatch_log 可清，仅参数放行）\n');
+      process.exit(0);
+    }
   }
 
   const { ctx } = readContext(taskId);
@@ -1436,6 +1638,19 @@ function cmdPostDispatch(taskId, seq, result, agent, mode, stage) {
       if (hit) allowed = true;
     }
   }
+  // S9c: hook 型挂载（at: <STAGE> + hook: + tiers: [..]）agent 同样允许按对应阶段记录，
+  //      但须按 sizing.tier 过滤：仅当 tier ∈ entry.tiers 才放行（与 S9b 语义一致）。
+  //      仅限 log-dispatch 补记，不改变 task dispatch 行为。
+  if (!allowed) {
+    const tier = ctx.sizing && ctx.sizing.tier;
+    if (tier) {
+      const hookMounts = discoverHookTieredMounts();
+      const hit = hookMounts.some(
+        (m) => m.name === agent && m.stage === stage && Array.isArray(m.tiers) && m.tiers.includes(tier)
+      );
+      if (hit) allowed = true;
+    }
+  }
   if (!allowed) {
     die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 stage "${stage}" 的 required_roles（${requiredRoles ? requiredRoles.join(', ') : '(无)'}），亦无 post:${stage}/pre:${stage} 恒定/定级挂载。防跨阶段乱派发。`);
   }
@@ -1474,6 +1689,16 @@ function cmdPostDispatch(taskId, seq, result, agent, mode, stage) {
   g.status = 'cleared';
   g.actual_duration_s = Math.round(elapsed / 1000);
   g.clear_result = result;
+  // 单元级去重锁释放：guard 置 cleared 时清 dispatch_pending.unit_id，
+  // 释放该 unit 派发锁，允许后续 fail 后合法重派（防死锁）。
+  if (ctx.dispatch_pending && ctx.dispatch_pending.unit_id !== undefined && ctx.dispatch_pending.unit_id !== null) {
+    ctx.dispatch_pending.unit_id = null;
+  }
+  // 文件级去重锁释放：guard 置 cleared 时清 dispatch_pending.key_files，
+  // 释放文件锁，允许后续不同单元合法修改同一文件（防死锁）。
+  if (ctx.dispatch_pending && ctx.dispatch_pending.key_files !== undefined && ctx.dispatch_pending.key_files !== null) {
+    ctx.dispatch_pending.key_files = null;
+  }
   writeContext(taskId, ctx);
   process.stdout.write(
     `ok: post-dispatch seq=${seq} cleared result=${result} actual_duration_s=${g.actual_duration_s} (dispatch_log appended agent=${agent} mode=${mode} stage=${stage})\n`
@@ -1723,6 +1948,10 @@ function main() {
     if (args.length !== 2) die(2, 'Error: size-check requires exactly <task_id>');
     cmdSizeCheck(args[1]);
   }
+  if (sub === 'archive') {
+    if (args.length !== 2) die(2, 'Error: archive requires exactly <task_id>');
+    cmdArchive(args[1]);
+  }
   if (sub === 'dispatch-prompt-check') {
     if (args.length !== 2) die(2, 'Error: dispatch-prompt-check requires exactly <task_id>');
     cmdDispatchPromptCheck(args[1]);
@@ -1745,10 +1974,18 @@ function main() {
     const tIdx = args.indexOf('--tier');
     const agent = aIdx !== -1 && aIdx + 1 < args.length ? args[aIdx + 1] : undefined;
     const tier = tIdx !== -1 && tIdx + 1 < args.length ? args[tIdx + 1] : undefined;
+    const uIdx = args.indexOf('--unit-id');
+    const unitId = uIdx !== -1 && uIdx + 1 < args.length ? args[uIdx + 1] : undefined;
+    const kfIdx = args.indexOf('--key-files');
+    const keyFiles = kfIdx !== -1 && kfIdx + 1 < args.length
+      ? String(args[kfIdx + 1]).split(',').map((f) => f.trim()).filter((f) => f.length > 0)
+      : undefined;
+    const ephIdx = args.indexOf('--ephemeral');
+    const ephemeral = ephIdx !== -1;
     if ((agent && !tier) || (tier && !agent)) {
       die(2, 'Error: pre-dispatch --agent and --tier must be both present or both absent');
     }
-    cmdPreDispatch(taskId, promptChars, fileCount, bashCmd, agent, tier);
+    cmdPreDispatch(taskId, promptChars, fileCount, bashCmd, agent, tier, unitId, keyFiles, ephemeral);
   }
   if (sub === 'log-dispatch') {
     // log-dispatch <task_id> --agent <name> --mode <task|agent_manager> --stage <STAGE>
@@ -1773,8 +2010,10 @@ function main() {
     if (aIdx === -1 || aIdx + 1 >= args.length) die(2, 'Error: post-dispatch requires --agent <name>');
     if (mIdx === -1 || mIdx + 1 >= args.length) die(2, 'Error: post-dispatch requires --mode <task|agent_manager>');
     if (sIdx === -1 || sIdx + 1 >= args.length) die(2, 'Error: post-dispatch requires --stage <STAGE>');
+    const ephIdx = args.indexOf('--ephemeral');
+    const ephemeral = ephIdx !== -1;
     const seq = Number.parseInt(args[seqIdx + 1], 10);
-    cmdPostDispatch(args[1], seq, args[rIdx + 1], args[aIdx + 1], args[mIdx + 1], args[sIdx + 1]);
+    cmdPostDispatch(args[1], seq, args[rIdx + 1], args[aIdx + 1], args[mIdx + 1], args[sIdx + 1], ephemeral);
   }
   if (sub === 'recover') {
     // recover <task_id> --type <t> [passthrough flags...]
@@ -1832,6 +2071,3 @@ const isMainModule = (() => {
 if (isMainModule) {
   main();
 }
-
-
-

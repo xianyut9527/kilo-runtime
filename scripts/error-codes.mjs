@@ -99,6 +99,41 @@ export const ERROR_CODES = {
     msg: 'recovery 重试配额耗尽（max_write_retry 内仍失败），升级 conductor escalate',
     see: 'lifecycle/config.yaml §recovery',
   },
+
+  // === LLM 判定标记（agent/AGENTS 声明，非机械门，U10 三合一审计 SSOT 注册）===
+  // 这些标记由 conductor/reviewer/verifier/planner/fixer 等 LLM 角色在返回消息中判定，
+  // 无独立脚本执行者（非机械门），但需在 error-codes.mjs 单一来源注册，防幽灵门禁/未注册漂移。
+  AGENT_UNAVAILABLE: { code: 'AGENT_UNAVAILABLE', msg: 'Tool execution aborted 视为会话断开，按节点 on_fail 派发或降级 conductor 内建处理', see: 'agent/conductor.md 铁律 #9' },
+  COPY_PASTE_FIX: { code: 'COPY_PASTE_FIX', msg: '重复实现/复制粘贴式补丁（同类实现 ≥2 处未走共享抽象）', see: 'agent/reviewer.md §组件化合规' },
+  DEBUG_LEFTOVER: { code: 'DEBUG_LEFTOVER', msg: '调试残留（console.log/debugger/print/TODO/注释代码）', see: 'agent/reverse-auditor.md §3' },
+  DEGRADED: { code: 'DEGRADED', msg: '脚本不存在降级手工编排（DEGRADED 不豁免 permission）', see: 'agent/conductor.md 铁律 #8' },
+  ENCODING_DRIFT: { code: 'ENCODING_DRIFT', msg: '编码健康度漂移（BOM/U+FFFD/GBK 残留），scan-encoding 命中阻断', see: 'agent/verifier.md §scan-encoding' },
+  ESCALATE: { code: 'ESCALATE', msg: 'timeout 且计数 > agent_timeout_max_retries，按节点 on_fail:escalate', see: 'agent/conductor.md 铁律 #9' },
+  FAKE_CONTEXT: { code: 'FAKE_CONTEXT', msg: '自验声明与 diff 实际改动不匹配（声称验证但无对应改动/测试）', see: 'AGENTS.md 锚点 5 / agent/reverse-auditor.md §5' },
+  FORBIDDEN_TOUCH: { code: 'FORBIDDEN_TOUCH', msg: 'diff 触及 forbidden_files 列出的文件', see: 'agent/reverse-auditor.md §6' },
+  LOCAL_PATCH: { code: 'LOCAL_PATCH', msg: '局部补丁（未走共享抽象/组件化）', see: 'agent/reviewer.md §组件化合规' },
+  MISSING_ACCEPTANCE_MAP: { code: 'MISSING_ACCEPTANCE_MAP', msg: '验收必附映射表缺失', see: 'AGENTS.md 锚点 5' },
+  MISSING_MINIMAL_GATE: { code: 'MISSING_MINIMAL_GATE', msg: '直通边最小产物缺失（transition-check 直通边校验）', see: 'agent/conductor.md §直通边' },
+  MISSING_OLD_PHRASING_SCAN: { code: 'MISSING_OLD_PHRASING_SCAN', msg: '全网旧措辞扫描缺失（涉及规则/判据/语义同步时必填）', see: 'agent/planner.md §硬门' },
+  MISSING_PREVENTION: { code: 'MISSING_PREVENTION', msg: '防复发缺失（扫描与防复发机制未建立）', see: 'agent/reviewer.md' },
+  MISSING_SCAN: { code: 'MISSING_SCAN', msg: '扫描缺失（同类实现/影响面未扫描）', see: 'agent/reviewer.md' },
+  MISSING_STAGE_MARKER: { code: 'MISSING_STAGE_MARKER', msg: 'stage 标识缺失或与 task_context 不符', see: 'agent/conductor.md §10.1' },
+  NO_CONCLUSION_CLOSE: { code: 'NO_CONCLUSION_CLOSE', msg: 'DELIVERING 输出无末尾 verdict 总结段落', see: 'agent/conductor.md §DELIVERING' },
+  PARTIAL_IMPLEMENTATION: { code: 'PARTIAL_IMPLEMENTATION', msg: '部分实现（需回到需求扩散包补齐同类点）', see: 'agent/fixer.md' },
+  PATH_NOT_NORMALIZED: { code: 'PATH_NOT_NORMALIZED', msg: '委派包 key_files 路径未 path.resolve/normalize 或磁盘字节不符', see: 'agent/verifier.md §6 路径断言' },
+  PLAN_REVIEW_MISS: { code: 'PLAN_REVIEW_MISS', msg: '方案未审查（T1/T2 时 plan_review.verdict ≠ PASS）进入 EXECUTING', see: 'agent/plan-reviewer.md §兜底' },
+  PS51_REGEX_RISK: { code: 'PS51_REGEX_RISK', msg: 'bash 命令含 PS5.1 复杂 regex（Where-Object -match 含 ( [ { ?）', see: 'agent/verifier.md §bash-guard' },
+  QUALITY_CB: { code: 'QUALITY_CB', msg: '降级交付（quality 熔断后 DELIVERING 降级）', see: 'agent/conductor.md §DELIVERING' },
+  RETRY: { code: 'RETRY', msg: 'timeout 且计数 ≤ agent_timeout_max_retries，同 agent 新会话重跑', see: 'agent/conductor.md 铁律 #9' },
+  RETURN_OVER_LIMIT: { code: 'RETURN_OVER_LIMIT', msg: 'subagent 返回超角色上限，重派', see: 'AGENTS.md 锚点 16 / output-schema §返回超限约束' },
+  ROLLBACK: { code: 'ROLLBACK', msg: '变差时回滚', see: 'agent/fixer.md' },
+  SCOPE_CREEP: { code: 'SCOPE_CREEP', msg: 'verification 能力 L2 反向核对 diff 命中越界改动', see: 'AGENTS.md 锚点 6' },
+  SEARCH_LADDER_VIOLATION: { code: 'SEARCH_LADDER_VIOLATION', msg: '搜索四层阶梯跳级（绕过 L2 直接全仓 Grep 或已索引仓库首选 Grep）', see: 'AGENTS.md 锚点 15' },
+  SLOT_ABORT: { code: 'SLOT_ABORT', msg: '挂载点 on_fail:abort 中止流转（审查者异常/超时非 verdict 返回）', see: 'agent/plan-reviewer.md' },
+  UNCOVERED_CHANGE: { code: 'UNCOVERED_CHANGE', msg: 'diff 改动无法映射到任一验收标准/plan.scheme_summary', see: 'agent/reverse-auditor.md §1' },
+  UNVERIFIED: { code: 'UNVERIFIED', msg: '任何声明无本轮 fresh 证据', see: 'agent/verifier.md' },
+  VERIFY_PENDING: { code: 'VERIFY_PENDING', msg: '无法运行（验证待定）', see: 'agent/verifier.md' },
+  VIOLATION: { code: 'VIOLATION', msg: '跳过委派/流程违规（DAG 流转缺失必经智能体）', see: 'agent/conductor.md' },
 };
 
 // helper：构造带 [CODE] 前缀的错误消息

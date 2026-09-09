@@ -109,7 +109,7 @@ function readConvergenceFromConfig() {
 
 // ============================================================
 // 从 lifecycle/config.yaml 解析 tier_defaults
-// 返回 { execution: { T0: {agents, review_mode, provider?}, ... } }
+// 返回 { execution: { T0: {agents, provider?}, ... } }
 // conductor 在 INIT 阶段调用 readTierDefaults().execution[tier] 取默认组合，
 // 消除"手工 set config.agents 容易漏写/写错"的根因（mm-eval-20260731 全 false bug）。
 // 复用 lifecycle-doctor.mjs 的 yaml 子集解析器（脚本自包含）。
@@ -121,19 +121,17 @@ function parseTierDefaults(text) {
   let curTier = null;
   let inAgents = false;
   let curAgents = null;
-  let curReviewMode = null;
   let curProvider = null;
   let curModelOverrides = null;
 
   function flush() {
     if (curTier && section) {
-      const entry = { agents: curAgents || {}, review_mode: curReviewMode || 'none' };
+      const entry = { agents: curAgents || {} };
       if (curProvider) entry.provider = curProvider;
       if (curModelOverrides) entry.model_overrides = curModelOverrides;
       result[section][curTier] = entry;
     }
     curAgents = null;
-    curReviewMode = null;
     curProvider = null;
     curModelOverrides = null;
   }
@@ -191,15 +189,7 @@ function parseTierDefaults(text) {
       }
     }
 
-    // review_mode (4-space indent, sibling of agents)
-    const rmM = line.match(/^    review_mode\s*:\s*(\w+)\s*$/);
-    if (rmM) {
-      inAgents = false;
-      curReviewMode = rmM[1];
-      continue;
-    }
-
-    // model_overrides (4-space indent, sibling of review_mode)
+    // model_overrides (4-space indent, sibling of agents)
     const moStart = line.match(/^    model_overrides\s*:\s*$/);
     if (moStart) {
       inAgents = false;
@@ -377,7 +367,6 @@ function buildInitialContext(taskId) {
       // 仅差异化开关（恒定挂载智能体无 when，不依赖 config.agents，由图拓扑限定）
       // INIT 按 lifecycle/config.yaml tier_defaults 覆盖写入
       agents: {},
-      review_mode: 'none',
       custom_overrides: {},
     },
     plan: {},
@@ -424,6 +413,30 @@ function readContext(taskId) {
     die(1, `Error: cannot read task_context for task_id=${taskId}: ${e.message}`);
   }
   // 剥离 UTF-8 BOM（外部工具可能以 UTF-8 with BOM 写入）
+  if (raw.charCodeAt(0) === 0xFEFF) {
+    raw = raw.slice(1);
+  }
+  try {
+    return { ctx: JSON.parse(raw), path: p };
+  } catch (e) {
+    die(1, `Error: invalid JSON in task_context for task_id=${taskId}: ${e.message}`);
+  }
+}
+
+// readContextOptional(taskId)：task_context 可选读（MMO 多模型路径 pre/post-dispatch --ephemeral 用）。
+// 文件不存在 -> 返回 {ctx: null, path: null}（不 die）；文件存在但 JSON 损坏/读取失败 -> 维持
+// readContext 严格校验语义（die 1）。readContext 原语义不动：普通 dispatch 在 ctx 缺失时仍 die 阻断。
+function readContextOptional(taskId) {
+  const p = contextPath(taskId);
+  if (!fs.existsSync(p)) {
+    return { ctx: null, path: null };
+  }
+  let raw;
+  try {
+    raw = fs.readFileSync(p, 'utf8');
+  } catch (e) {
+    die(1, `Error: cannot read task_context for task_id=${taskId}: ${e.message}`);
+  }
   if (raw.charCodeAt(0) === 0xFEFF) {
     raw = raw.slice(1);
   }
@@ -683,6 +696,7 @@ export {
   buildInitialContext,
   die,
   readContext,
+  readContextOptional,
   writeContext,
   appendTransitionLog,
   getByPath,

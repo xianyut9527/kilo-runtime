@@ -28,7 +28,6 @@
 - 偏差标记（如有）：
   - 上调 → `[TIER_UPGRADED]` + 原因
   - 下调 → `[DOWNGRADE_AFTER_PLAN]` + 依据
-- review_mode：none / fast / full（按本文件「review_mode 决策表」确定）
 ```
 
 ### A.3 下调门硬条件（5 条全满足）
@@ -115,22 +114,6 @@ Step 4b: T1 强度判定（EXECUTION + tier==T1 时必做；T2/INQUIRY 跳过）
 
 ---
 
-## §C. review_mode 详细说明
-
-### C.1 模式说明
-
-- **none**：跳过验证/审查角色。仅 T0（极速通道）适用。
-- **fast**：机械门 + 正向验证。T1 模式。FAIL -> 修复 -> 重跑；熔断 -> escalate（可升 T2 拉反向验证/审查角色深挖）。
-- **full**：机械门 + 正向验证 + 反向验证 + 审查，四视角全并行。T2 模式。
-
-### C.2 总体验收三步
-
-1. reviewer 按 review_mode 审查
-2. 所有单元集成验证
-3. 回归测试
-
----
-
 ## §D. 异常路由 + 标记映射（完整版）
 
 ### D.1 异常路由表
@@ -211,7 +194,7 @@ conductor 必须执行以下标记的硬动作：
 
 1. **验证确认**：测试、构建、类型、Lint 通过；声明完成必须有本轮 fresh 证据，不得援引上一轮或他人结论（来源：superpowers/verification-before-completion）。
 2. **范围确认**：`git diff --` 确认改动范围，无 SCOPE_CREEP。
-3. **经验沉淀**：T1+ 任务完成后，conductor 记录任务执行摘要与关键决策，供后续任务参考。
+3. **经验沉淀（硬规则）**：凡「verifier/reviewer FAIL 经修复转 PASS」的任务，conductor 收尾必须执行 `node "${KILO_CONFIG_DIR}/scripts/kb.mjs" add --symptoms "<症状词>" --name "<一句话经验>" --category <编排|方法|执行|需求>` 沉淀教训，随后 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> execution.kb_write '{"fx":"FX-0NN"}' --agent conductor` 写回执（add 输出的实际编号）；未沉淀/未写 execution.kb_write 回执 → transition-check DELIVERING→DONE 机械阻断 `[MISSING_KB_WRITE]`；无 FAIL 无需写。
 
 ### G.2 分支收尾协议（来源：superpowers/finishing-a-development-branch）
 

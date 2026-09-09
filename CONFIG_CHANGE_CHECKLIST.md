@@ -13,6 +13,7 @@
 | 安装脚本 | `install.sh` / `install.ps1` | 双平台同步 |
 | 目录结构 | `README.md` | 必须与文件系统一致 |
 | 路径解析语义（全局根目录 vs 项目级 overlay） | `AGENTS.md`（全局指令入口声明） | `docs/configuration-guide.md` §0.5 只做引用 |
+| 跨项目故障经验（FX 索引与模板） | knowledge-base/index.md | .kilo/instructions/reflection.md 只做检索入口引用 |
 
 ## 修改检查
 
@@ -33,6 +34,7 @@
 | 新增/修改 `scripts/lifecycle-doctor/` | ① 同步 `README.md` 中对该脚本的说明（如存在）；② 同步 `CHANGELOG.md` 记录新增/变更的校验维度；③ 若新增校验维度涉及 frontmatter 字段或 prompt 引用规则，同步更新本文档对应修改检查项 |
 | 修改安装脚本 | `install.sh` 与 `install.ps1` 保持路径、EXCLUDE 列表、复制逻辑、关键文件校验、退出码语义一致；**修改后必须双平台都验证一次** |
 | 修改 EXCLUDE 列表 | 必须同步 `install.sh` 与 `install.ps1` 的双平台 EXCLUDE 数组；**同步 `README.md` 中 diff 验证命令的排除参数**；修改后必须双平台都验证一次 |
+| 修改 `knowledge-base/`（index.md 或 fixes/*.md） | ① 新 FX 按四段结构（症状/根因/修复/复验）+ frontmatter（id/name/symptoms/category/hit_count/confidence/last_used）；② 跑 node scripts/kb.mjs add（索引自动重建）；③ 跨项目库，落盘后同步全局根 ~/.config/kilo/knowledge-base/；④ 重跑 node scripts/lifecycle-doctor/index.mjs 确认全绿 |
 
 
 | 新增/重建 \`.kilo/skills/<name>/\` 子目录 | ① \`install.sh\`/\`install.ps1\` 的 EXCLUDE 数组已忽略 \`.kilo/skills/\`；② **必须用 \`git add -f .kilo/skills/<name>/\` 强制跟踪**（全局 .gitignore L43-44 忽略整个目录，否则会被 install 安全清理或 rm 无痕删除，8/11 事故根因）；③ skill 目录内放本地 .gitignore（首行 * + !SKILL.md + 豁免项）屏蔽临时文件；④ git commit --no-verify 跳过 pre-commit hook 检查，commit message 写明 force-add 原因 |

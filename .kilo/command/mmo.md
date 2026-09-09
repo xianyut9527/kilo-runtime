@@ -94,7 +94,7 @@ skill 会读 `mmo-fusion.md` 生成最终报告。常见 skill：
 /mmo 生成 2026 年 1-7 月代码贡献报告 --pre "git log --since=2026-01-01 --until=2026-07-31 --numstat" --skill pm-weekly-month-report --out report.docx
 
 # 临时换模型
-/mmo 审查架构 --models "hx/glm-5.2,hx/kimi-k3,hx/deepseek-v4-flash"
+/mmo 审查架构 --models "hx/glm-5.2,hx/kimi-k2.6,hx/deepseek-v4-flash"
 
 # 融合模型读文件核对
 /mmo 核对报告数据 --anchors "authors.json,repos.csv"

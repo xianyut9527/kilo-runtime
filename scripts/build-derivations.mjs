@@ -14,6 +14,7 @@
 // 输出文件不入 git（.gitignore 已追加 scripts/lib/.generated/ 规则）。
 
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,10 +25,10 @@ const GRAPH_PATH = path.join(ROOT, 'lifecycle', 'graph.yaml');
 const CONFIG_PATH = path.join(ROOT, 'lifecycle', 'config.yaml');
 const OUT_DIR = path.join(__dirname, 'lib', '.generated');
 const OUT_FILE = path.join(OUT_DIR, 'derivations.json');
-const DERIVATIONS_VERSION = 1;
+const DERIVATIONS_VERSION = 2;
 
 // ============================================================
-// 源文件 mtime 指纹（含增删：缺失标 MISSING）
+// 源文件内容摘要指纹（sha256 hex 截断 12 位；含增删：缺失标 MISSING）
 // ============================================================
 function sourceFingerprint(files) {
   const sorted = [...files].sort();
@@ -35,8 +36,9 @@ function sourceFingerprint(files) {
   for (const f of sorted) {
     let key;
     try {
-      const st = fs.statSync(f);
-      key = `${path.basename(f)}@${st.mtimeMs}`;
+      const content = fs.readFileSync(f);
+      const digest = createHash('sha256').update(content).digest('hex').slice(0, 12);
+      key = `${path.basename(f)}@${digest}`;
     } catch {
       key = `${path.basename(f)}@MISSING`;
     }
@@ -180,17 +182,15 @@ function parseTierDefaults(text) {
   let curTier = null;
   let inAgents = false;
   let curAgents = null;
-  let curReviewMode = null;
   let curProvider = null;
 
   function flush() {
     if (curTier && section) {
-      const entry = { agents: curAgents || {}, review_mode: curReviewMode || 'none' };
+      const entry = { agents: curAgents || {} };
       if (curProvider) entry.provider = curProvider;
       result[section][curTier] = entry;
     }
     curAgents = null;
-    curReviewMode = null;
     curProvider = null;
   }
 
@@ -214,8 +214,6 @@ function parseTierDefaults(text) {
       if (agentM) { curAgents[agentM[1]] = agentM[2] === 'true'; continue; }
       if (!/^ {6,}/.test(line) && line.trim()) inAgents = false;
     }
-    const rmM = line.match(/^    review_mode\s*:\s*(\w+)\s*$/);
-    if (rmM) { inAgents = false; curReviewMode = rmM[1]; continue; }
     const provM = line.match(/^    provider\s*:\s*(\w+)\s*$/);
     if (provM) { curProvider = provM[1]; continue; }
   }

@@ -6,7 +6,9 @@
 //   node scripts/lessons-recorder.mjs <task_id> --code <ERROR_CODE|PROCESS_VIOLATION|...> --stage <FROM->TO> --root-cause "<一句话根因>"
 //   node scripts/lessons-recorder.mjs --self-check
 //
-// 输出: docs/lessons/YYYY-MM.md (相对 cwd), 按 code+evidence[0].file 聚合去重, count 累计。
+// 输出: docs/lessons/YYYY-MM.md (默认锚定本仓 docs/lessons, 不依赖 cwd), 按 code+evidence[0].file 聚合去重, count 累计。
+// Breaking Change: 默认目录从 process.cwd()/docs/lessons 改为 __dirname/../docs/lessons (本仓 docs/lessons)。
+//   调用方若以非仓库根 cwd 运行, 写入位置会变化; 需固定位置时用 LESSONS_DIR 环境变量覆盖。
 // 失败安全: 任何 IO/解析错误只 stderr 打印, 不抛给调用方 (recordThenDie 内部 try/catch)。
 // 仅使用 Node 内置模块; 遵循本仓库脚本风格 (transition-check.mjs)。
 
@@ -24,7 +26,7 @@ const __dirname = path.dirname(__filename);
 // 经验目录: 默认 docs/lessons; 支持 LESSONS_DIR 环境覆盖 (self-check 用临时目录, 防污染真实仓库)。
 export function resolveLessonsDir() {
   if (process.env.LESSONS_DIR) return path.resolve(process.env.LESSONS_DIR);
-  return path.resolve(process.cwd(), 'docs', 'lessons');
+  return path.resolve(__dirname, '..', 'docs', 'lessons');
 }
 
 // 中文/英文通用停用词 (去噪, 保留业务词)
@@ -242,6 +244,27 @@ function writeFileAtomic(filePath, content) {
   }
 }
 
+
+// === bumpLessonCount: 经验命中后回写计数 (反馈闭环) ===
+// 按纯 code 聚合 (忽略 evidence file): 同 code 所有条目 count 求和后再 +1。
+// code 不存在 / 月文件不存在 -> {bumped:false, count:0} (不创建新条目)。
+export function bumpLessonCount(code, month) {
+  const m = month || new Date().toISOString().slice(0, 7);
+  const dir = resolveLessonsDir();
+  const filePath = path.join(dir, `${m}.md`);
+  if (!fs.existsSync(filePath)) return { bumped: false, count: 0 };
+  const entries = readLessonsFile(filePath);
+  const matches = entries.filter((e) => e.code === code);
+  if (matches.length === 0) return { bumped: false, count: 0 };
+  matches[0].count = (matches[0].count || 1) + 1;
+  const total = matches.reduce((s, e) => s + (e.count || 1), 0);
+  let out = `# 经验沉淀 ${m}\n\n`;
+  const blocks = entries.map((e) => '\`\`\`yaml\n' + formatEntry(e) + '\n\`\`\`');
+  out += blocks.join('\n') + '\n';
+  writeFileAtomic(filePath, out);
+  return { bumped: true, count: total, entry: matches[0] };
+}
+
 // === recordThenDie: transition-check 失败的统一出口 ===
 // 内部 try/catch 调 recorder 主体; 失败只 stderr, 然后复制 die 语义 (stderr + exit exitCode)。
 export function recordThenDie(exitCode, msg, opts = {}) {
@@ -327,10 +350,30 @@ function main() {
       'Usage:',
       '  node scripts/lessons-recorder.mjs <task_id> --code <CODE> --stage <FROM->TO> --root-cause "<文本>"',
       '  node scripts/lessons-recorder.mjs --self-check',
+      '  node scripts/lessons-recorder.mjs --bump <CODE> [--month YYYY-MM]',
       '',
       'Records a failure lesson into docs/lessons/YYYY-MM.md (aggregated by code+evidence file).',
     ].join('\n') + '\n');
     process.exit(0);
+  }
+  if (args.includes('--bump')) {
+    const bi = args.indexOf('--bump');
+    const code = args[bi + 1];
+    const mi = args.indexOf('--month');
+    const month = mi !== -1 && args[mi + 1] ? args[mi + 1] : undefined;
+    if (!code) {
+      process.stderr.write('Error: --bump requires a CODE\n');
+      process.exit(2);
+    }
+    try {
+      const res = bumpLessonCount(code, month);
+      if (res.bumped) process.stdout.write(`ok: bumped code=${code} month=${month || 'default'} -> count=${res.count}\n`);
+      else process.stdout.write(`no-op: code=${code} not found in month=${month || 'default'}\n`);
+      process.exit(0);
+    } catch (e) {
+      process.stderr.write(`[lessons-recorder] error: ${e && e.message || e}\n`);
+      process.exit(1);
+    }
   }
   const taskId = args[0];
   const codeIdx = args.indexOf('--code');
@@ -392,6 +435,36 @@ function selfCheck() {
     const r4 = record({ taskId, code: 'PROCESS_VIOLATION', stage: 'PLANNING->EXECUTING', rootCause: '无证据文件' });
     assertEq('shared code+evidence aggregated (created=false)', r4.created, false);
     assertEq('total entries = 2', readLessonsFile(filePath).length, 2);
+  // bumpLessonCount self-check: 命中 bump / 不存在 code / 跨月定向
+  const r5 = record({ taskId, code: 'BUMP_TARGET', stage: 'EXECUTING->EXECUTING', rootCause: 'bump 命中' });
+  const r5b = record({ taskId, code: 'BUMP_TARGET', stage: 'EXECUTING->EXECUTING', rootCause: 'bump 命中' });
+  // 造一条同 code 不同 evidence(file) 的条目 → 验证按纯 code 聚合
+  const ctxPath2 = path.join(os.tmpdir(), 'kilo', `task_context_${taskId}_b.json`);
+  fs.mkdirSync(path.dirname(ctxPath2), { recursive: true });
+  fs.writeFileSync(ctxPath2, JSON.stringify({
+    task_id: taskId + '_b',
+    intent: { raw: '实现用户登录鉴权中间件防止未授权访问' },
+    sizing: { tier: 'T1', t1_strength: 'medium' },
+    verification: { forward: { evidence: [{ file: 'src/other-file.js', line: 7 }] } },
+    dispatch_log: [{ agent: 'coder', mode: 'task', stage: 'EXECUTING' }],
+  }, null, 2), 'utf8');
+  const r6 = record({ taskId: taskId + '_b', code: 'BUMP_TARGET', stage: 'EXECUTING->EXECUTING', rootCause: 'bump 跨文件' });
+  // 同 code BUMP_TARGET: r5+r5b 聚合 count=2, r6 独立 count=1 → 求和=3, bump 后=4
+  const bumpRes = bumpLessonCount('BUMP_TARGET');
+  assertEq('bump bumped=true', bumpRes.bumped, true);
+  assertEq('bump count=sum(all code entries)+1', bumpRes.count, 4);
+  const bumpMiss = bumpLessonCount('NO_SUCH_CODE');
+  assertEq('bump missing code -> false/0', [bumpMiss.bumped, bumpMiss.count], [false, 0]);
+  const otherMonth = '1999-01';
+  const bumpCross = bumpLessonCount('BUMP_TARGET', otherMonth);
+  assertEq('bump cross-month missing file -> false/0', [bumpCross.bumped, bumpCross.count], [false, 0]);
+  // 跨月定向 bump: 在 otherMonth 已有文件
+  fs.mkdirSync(tmpDir, { recursive: true });
+  fs.writeFileSync(path.join(tmpDir, otherMonth + '.md'), '```yaml\n' + formatEntry({ code: 'BUMP_TARGET', date: '1999-01-01', stage: 'EXECUTING->QUALITY', tier: 'T1', t1_strength: null, intent_keywords: [], evidence: [{file:'x.js',line:1}], root_cause: 'm', see: '', count: 2 }) + '\n```\n', 'utf8');
+  const bumpCrossHit = bumpLessonCount('BUMP_TARGET', otherMonth);
+  assertEq('bump cross-month hit count=3', bumpCrossHit.count, 3);
+  // cleanup extra ctx
+  try { fs.rmSync(ctxPath2, { force: true }); } catch { /* 忽略 */ }
   } catch (e) {
     console.error('FAIL self-check exception: ' + (e && e.stack || e));
     fail = 1;

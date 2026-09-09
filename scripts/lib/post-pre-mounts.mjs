@@ -6,14 +6,17 @@
 // discoverPostPreConstantMountsByAgent 曾各自重复实现同一 frontmatter 解析逻辑
 // （仅返回形状不同）。本模块抽取为单一真相源，两个调用点 import 派生。
 //
-// 挂载两种模式（tiers 字段替代 config.agents.<key> 开关挂载）：
+// 挂载三种模式（tiers 字段替代 config.agents.<key> 开关挂载）：
 //   恒定挂载 —— 无 when 且无 tiers（!curWhen && !curTiers）→ 图拓扑可达即加载
 //   定级挂载 —— tiers: [T1,T2] → 按当前 sizing.tier 求值，命中才纳入
+//   hook 挂载 —— at: <STAGE>（无 post:/pre: 前缀）+ hook: <name> + tiers: [..] →
+//                按当前 sizing.tier 求值，命中才纳入（kind: 'hook'）
 // 互斥规则：when 与 tiers 不得同时存在（lifecycle-doctor B4 校验）
 //
 // 公开 API：
 //   discoverPostPreConstantMounts()        -> [{ name, stage, kind: 'post'|'pre' }]（恒定挂载）
 //   discoverPostPreTieredMounts()          -> [{ name, stage, kind: 'post'|'pre', tiers: [] }]（定级挂载）
+//   discoverHookTieredMounts()              -> [{ name, stage, kind: 'hook', tiers: [] }]（hook 挂载）
 //   discoverPostPreConstantMountsByAgent() -> Map<agentName, Set<stageId>>（恒定挂载）
 //
 // 纯 Node 内置模块，无第三方依赖。
@@ -58,8 +61,16 @@ function _parsePostPreMountsUncached(mode) {
     let curAt = null;
     let curWhen = null;
     let curTiers = null;
+    let curHook = null;
     const flush = () => {
       if (!curAt) return;
+      if (mode === 'hook') {
+        // hook 型挂载：at: <STAGE>（无 post:/pre: 前缀）+ hook: <name> + tiers: [..]
+        if (curHook && Array.isArray(curTiers) && curTiers.length > 0) {
+          result.push({ name, stage: curAt, kind: 'hook', tiers: curTiers });
+        }
+        return;
+      }
       const pm = curAt.match(/^(post|pre):(\S+)$/);
       if (!pm) return;
       if (mode === 'constant') {
@@ -77,13 +88,16 @@ function _parsePostPreMountsUncached(mode) {
         curAt = null;
         curWhen = null;
         curTiers = null;
+        curHook = null;
         continue;
       }
       if (!inMount) continue;
       const atM = line.match(/^\s*-\s*at\s*:\s*(\S+)\s*(?:#.*)?$/);
-      if (atM) { flush(); curAt = atM[1]; curWhen = null; curTiers = null; continue; }
+      if (atM) { flush(); curAt = atM[1]; curWhen = null; curTiers = null; curHook = null; continue; }
       const whenM = line.match(/^\s+when\s*:\s*(.+)$/);
       if (whenM) curWhen = whenM[1].trim();
+      const hookM = line.match(/^\s+hook\s*:\s*(\S+)\s*(?:#.*)?$/);
+      if (hookM) curHook = hookM[1];
       const tiersM = line.match(/^\s+tiers\s*:\s*\[([^\]]*)\]\s*(?:#.*)?$/);
       if (tiersM) {
         curTiers = tiersM[1].split(',')
@@ -115,7 +129,16 @@ export function discoverPostPreTieredMounts() {
 }
 
 // ============================================================
-// 公开 API 3：task-context log-dispatch 用
+// 公开 API 3：task-context log-dispatch 用（hook 挂载）
+//   返回 [{ name, stage, kind: 'hook', tiers: [] }]
+//   log-dispatch 扩展：hook 型挂载（at: <STAGE> + hook: + tiers:）agent 按 sizing.tier 过滤放行。
+// ============================================================
+export function discoverHookTieredMounts() {
+  return parsePostPreMounts('hook');
+}
+
+// ============================================================
+// 公开 API 4：task-context log-dispatch 用
 //   返回 Map<agentName, Set<stageId>>（agent 在哪些 stage 上有 post:/pre: 恒定挂载）。
 //   log-dispatch 扩展：若 --agent 在 --stage 上有 post:/pre: 恒定挂载，
 //   即使不在 required_roles 也允许记录（plan-reviewer 的 post:PLANNING 钩子不再被拒）。

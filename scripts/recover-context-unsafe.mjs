@@ -5,9 +5,8 @@
 // 退出码: 0=safe / 1=needs-recovery / 2=usage-error / 3=circuit-breaker
 
 import process from 'node:process';
-import { readContext, readSizeCheckThreshold } from './task-context-runtime.mjs';
+import { readContext, readSizeCheckThreshold, readRecoveryConfig } from './task-context-runtime.mjs';
 
-const OVERLOAD_CIRCUIT_BREAKER = 5;
 const SIZE_WARN_RATIO = 0.8;
 const VALID_ACTIONS = Object.freeze(['check', 'compact-done', 'worktree-switched']);
 
@@ -40,10 +39,6 @@ function parseArgs(argv) {
   return out;
 }
 
-function getByPath(obj, dotPath) {
-  return dotPath.split('.').reduce(function (o, k) { return (o == null ? o : o[k]); }, obj);
-}
-
 function measureContextChars(ctx) {
   return Buffer.byteLength(JSON.stringify(ctx), 'utf8');
 }
@@ -53,8 +48,9 @@ function recommend(state) {
   const contextChars = state.contextChars;
   const sizeThreshold = state.sizeThreshold;
   const action = state.action;
-  if (overload >= OVERLOAD_CIRCUIT_BREAKER) {
-    return { recommended: 'circuit-breaker', reason: 'overload_count=' + overload + ' >= ' + OVERLOAD_CIRCUIT_BREAKER };
+  const circuitBreaker = state.circuitBreaker;
+  if (overload >= circuitBreaker) {
+    return { recommended: 'circuit-breaker', reason: 'overload_count=' + overload + ' >= ' + circuitBreaker };
   }
   if (overload > 0) {
     return { recommended: 'compact', reason: 'overload_count=' + overload + ' > 0' };
@@ -91,17 +87,18 @@ function main() {
   } catch (e) {
     die(1, 'Error: readContext failed: ' + e.message);
   }
-  const overload = Number(getByPath(ctx, 'safety.overload_count') || 0);
+  const overload = Number(ctx.overload_count || 0);
   const sizeThreshold = readSizeCheckThreshold();
+  const circuitBreaker = readRecoveryConfig().circuit_breaker_overload;
   const contextChars = measureContextChars(ctx);
-  const rec = recommend({ overload: overload, contextChars: contextChars, sizeThreshold: sizeThreshold, action: args.action });
+  const rec = recommend({ overload: overload, contextChars: contextChars, sizeThreshold: sizeThreshold, action: args.action, circuitBreaker: circuitBreaker });
   const result = {
     task_id: args.taskId,
     action: args.action,
     overload_count: overload,
     context_chars: contextChars,
     size_threshold: sizeThreshold,
-    overload_threshold: OVERLOAD_CIRCUIT_BREAKER,
+    overload_threshold: circuitBreaker,
     recommended_action: rec.recommended,
     reason: rec.reason,
     context_path: ctxPath,

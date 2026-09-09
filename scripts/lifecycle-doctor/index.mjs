@@ -34,6 +34,7 @@ import { run as runSanitizeSelfTest } from './checks/sanitize-self-test.mjs';
 import { run as runAgentRuntime } from './checks/agent-runtime.mjs';
 import { run as runGuardWiring } from './checks/guard-wiring.mjs';
 import { run as runI18nCoverage } from './checks/i18n-coverage.mjs';
+import { run as runKbHealth } from './checks/kb-health.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..', '..');
@@ -149,6 +150,7 @@ runGuardWiring(ctx);
 
 // i18n-coverage is async; await before final report.
 await runI18nCoverage(ctx);
+runKbHealth(ctx);
 
 // 收尾：缓存 / 同步 prompt / 报告
 report(cf, VERBOSE, { fullMode: FULL_MODE, fastMode: FAST_MODE, syncPrompt: SYNC_PROMPT, scriptsDir: SCRIPTS_DIR, root: ROOT, quiet: QUIET });

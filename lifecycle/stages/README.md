@@ -91,7 +91,7 @@ mount:
 - **`after` 语义**：声明在哪些 agent 之后执行（类似 React hooks 声明顺序）；省略 = 并行组成员（无 after 依赖时单条消息并行发起；按 agent 文件名字典序组织；共享零输出硬门，详见 `agent/conductor.md` §智能体加载规则）
 - **`trigger` 语义**：`onChange`（deps 变化时触发，默认）、`afterPass`（前置 hooks 全 PASS 后触发）、`onFail`（前置 hooks 任一 FAIL 时触发）
 - **`when` 条件语法**：`config.agents.<key>` 由 conductor 在 INIT 按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户显式覆盖写入；无 `when` = 恒定挂载（图拓扑可达即加载——推荐默认，新增智能体零配置）。
-- **`tiers` 定级挂载语法**：`tiers: [T1, T2]` 替代 when 开关，dispatch 前按 `sizing.tier ∈ tiers` 求值（如 plan-reviewer `tiers: [T2]`——T1 关闭、T2 开启）；when 与 tiers 互斥（lifecycle-doctor B4 校验）。
+- **`tiers` 定级挂载语法**：`tiers: [T1, T2]` 替代 when 开关，dispatch 前按 `sizing.tier ∈ tiers` 求值（如 plan-reviewer `tiers: [T1, T2]`——T1/T2 均开启方案审查）；when 与 tiers 互斥（lifecycle-doctor B4 校验）。
 - **必配角色校验**：阶段必配角色契约在本阶段 `stages/<id>.md` frontmatter `required_roles`（阶段语义内聚，单一真相）；角色名 = 智能体文件名（去 .md）或其 frontmatter 显式 `role` 字段。bootstrap/doctor 静态预演——无智能体在该主槽履行该角色 → `[ASSEMBLY_FAIL]`。**graph.yaml 永不出现角色名/智能体名**。
 
 ## 扩展指南（插拔式，文件制自动注册）
@@ -105,7 +105,7 @@ mount:
 | 挂载到任意阶段 | frontmatter `mount` 加一条 `{at: <STAGE>}`（主槽）或 `pre:<STAGE>` / `post:<STAGE>`；启动/收尾：`on:bootstrap` / `on:done`；可选视角加 `on_fail: degrade` |
 | 一槽挂载多个 | 多个 agent .md frontmatter 声明同一 `at` + `hook`；都省略 `after` 默认并行启动（共享零输出硬门；详见 `agent/conductor.md` §智能体加载规则） |
 | 调整执行顺序 | frontmatter mount 条目声明 `after: [agent-name]`（相对依赖，只引用前驱；框架自动 topo-sort） |
-| 新增阶段 | ① 丢 `lifecycle/stages/<name>.md`（frontmatter：description/model_capability/token_budget + 非内建阶段需 `required_roles`；文件名派生节点 ID）② `graph.yaml` 加 node（type/executor/on_fail）+ edges（语义 ID，无占号问题）——三挂载点自动派生 |
+| 新增阶段 | ① 丢 `lifecycle/stages/<name>.md`（frontmatter：description/token_budget + 非内建阶段需 `required_roles`；文件名派生节点 ID）② `graph.yaml` 加 node（type/executor/on_fail）+ edges（语义 ID，无占号问题）——三挂载点自动派生 |
 | 改阶段失败策略 | `graph.yaml` 节点 `on_fail` 字段改值（abort/retry_once/degrade/escalate/pause）；派发动作见 `agent/conductor.md` §异常处理派发表 |
 | 改超时预算 | `lifecycle/config.yaml` `timeouts` 段：`per_agent_s` 调单智能体预算（可选覆盖，缺省回退 stage_default_s），`per_tier_multiplier` 调定级系数 |
 | 禁用智能体 | `config.yaml` `overrides.disabled_agents` 加名字（若使某 `required_roles` 角色无履行者 → `[ASSEMBLY_FAIL]`） |

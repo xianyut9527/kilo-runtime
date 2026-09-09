@@ -1,6 +1,5 @@
 ---
 description: 生命周期阶段 EXECUTING — 实现。读取→编码→测试→修复，交付可运行代码。
-model_capability: code-generation
 token_budget: 16000        # 按单元拆分，每单元 ≤ 16000，多单元按组分配
 # required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
 required_roles: [coder]

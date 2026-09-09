@@ -31,7 +31,6 @@ const stageFile = path.join(ROOT, 'lifecycle', 'stages', `${id.toLowerCase()}.md
 const stageTemplate = `---
 description: ${desc}
 executor: ${executor}        # conductor 内建 或 subagent 委派
-model_capability: ${executor === 'conductor' ? 'fast-reasoning' : 'deep-reasoning'}
 token_budget: 4000
 # required_roles 仅 subagent 模式需要，conductor 内建省略
 ${executor === 'subagent' ? 'required_roles: [<agent-name>]' : ''}

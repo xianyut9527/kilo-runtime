@@ -29,6 +29,7 @@ keywords: reflection, 根因回溯, Circuit Breaker
 回溯动作（**未跑 kilo_local_recall 不得进入修复阶段**）：
 - `kilo_local_recall` 搜索历史同类问题（轻量级，本机所有会话）
 - `gitnexus_*` 验证影响面
+- **第 3 步 检索 knowledge-base**：`<GLOBAL_ROOT>/knowledge-base/index.md`（继承 AGENTS.md 全局根解析基准，即 `~/.config/kilo/knowledge-base/index.md`，禁止硬编码盘符）。机械检索：`node "<GLOBAL_ROOT>/scripts/kb.mjs" query "<症状诱因词>"`（GLOBAL_ROOT 语义=全局配置根，禁止硬编码盘符）；命中 exit 0 → 读对应 `fixes/FX-*.md` 全文并打 `[KB_HIT]`；exit 1 → `[KB_MISS]` 并在经验收敛后按 `knowledge-base/index.md` 模板回写新增 FX
 
 ## Circuit Breaker
 

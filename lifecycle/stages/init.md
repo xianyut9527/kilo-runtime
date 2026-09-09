@@ -1,14 +1,13 @@
 ---
 description: 生命周期阶段 INIT — 意图判定 + 任务定级。合并原 INTENT + SIZING，conductor 内建一步完成。
 executor: conductor        # conductor 内建主槽，不经 mount 挂载
-model_capability: fast-reasoning
 token_budget: 6000
 ---
 
 # lifecycle/stages/init
 
 > 通用规则由运行时注入的 `core.md` 和 `workflow-core.md` 提供。流转关系见 `lifecycle/graph.yaml`（单一真相来源），本文件只定义执行逻辑。
-> 执行元数据（executor / model_capability / token_budget）见 frontmatter；本阶段为 conductor 内建（executor 声明），无 required_roles。
+> 执行元数据（executor / token_budget）见 frontmatter；本阶段为 conductor 内建（executor 声明），无 required_roles。
 
 ## 输入
 
@@ -28,6 +27,12 @@ token_budget: 6000
 
 ### 2. 任务定级（INQUIRY 默认 T1，EXECUTION 按 T0/T1/T2）
 
+INQUIRY 定级判据：
+- **单点事实问答**（查一个值/确认一个事实/读一个文件）→ **T0 直通**（M1 极速，省设计门/编码角色）
+- **多维度分析**（对比/权衡/方案评估/跨文件综合）→ **T1**（经 PLANNING 出分析方案后直通 DELIVERING）
+
+
+定级完成后，conductor 按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户覆盖（prompt 显式声明）写入 `task_context.config.agents` + `custom_overrides`。
 按 `workflow-detail.md §A.4` 决策树执行：
 
 ```
@@ -43,7 +48,6 @@ T2: 跨模块 / 5+ 文件 / 规则扩散 / 安全敏感词 / 机制·契约变�
      → 完整设计门 → 单元 DAG → 设计门角色 → 编码角色 → 验证角色 → 审查角色(full)
 ```
 
-定级完成后，conductor 按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户覆盖（prompt 显式声明）写入 `task_context.config.agents` + `review_mode` + `custom_overrides`。
 
 
 ### 2b. T1 强度判定（EXECUTION + tier==T1 时必做）
@@ -110,8 +114,9 @@ quality_gate:
 2. **流转必裁判**：INIT → 下一节点前必须执行 `node scripts/transition-check.mjs <task_id> --from INIT --to <NEXT>`，exit 0 才允许流转。
 3. **显式输出判定结论**：输出顶部必须标注 `[INTENT: INQUIRY]` 或 `[INTENT: EXECUTION]`。
 4. **强制写入 intent_type + tier**：判定完成后必须执行 `node scripts/task-context.mjs set <task_id> intent.intent_type '<INQUIRY|EXECUTION>' --agent conductor` 和 `node scripts/task-context.mjs set <task_id> sizing.tier '<T0|T1|T2>' --agent conductor`。未写入合法值时，transition-check.mjs 将拒绝流转；intent.raw 为空时 checkT0Eligibility 机械门无法判定逻辑性修改，T0 直通将被阻断。
-5. **SIZING 机械应用 config**：定级后必须执行 `node scripts/task-context.mjs apply-tier-auto <task_id> <Tn> --agent conductor`，从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents` + `review_mode`。禁止手工 `set config.agents.*`。
+5. **SIZING 机械应用 config**：定级后必须执行 `node scripts/task-context.mjs apply-tier-auto <task_id> <Tn> --agent conductor`，从 `lifecycle/config.yaml` tier_defaults 机械写入 `config.agents`。禁止手工 `set config.agents.*`。
 6. **T1 EXECUTION 必写 t1_strength**：T1 执行类任务定级后必须执行 `node scripts/task-context.mjs set <task_id> sizing.t1_strength '<low|medium|high>' --agent conductor`。缺失或非法值时 transition-check 阻断流转；`intent.raw` 命中强度信号词而声明 low → 强制升 high。
+7. **prior_lessons 注入（INIT 硬规则）**：`intent.prior_lessons` 非空时，conductor 必须在首次执行/修复角色委派包中携带 prior_lessons 摘要（含 lessons 的 code + 摘要文本），供执行阶段规避已知失败模式。本规则仅约束 INIT 侧注入。
 
 ## 降级处理
 

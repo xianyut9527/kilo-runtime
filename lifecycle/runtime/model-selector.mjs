@@ -7,7 +7,7 @@
 // v2 (Fix #4/#5): 支持 `options.models` 预解析的 merged map（避免在 selectModel
 // 内部重复 readFileSync kilo.json）；vision 选择改为确定性排序（code 能力
 // 优先 + 字典序兜底），不再依赖 Object.keys 遍历顺序。
-// v3 (U1): code 升级目标从 kilo.json 顶层 code_optimized_model 读取（cachedDerive
+// v3 (U1): code 升级目标从 provider.hx.models 扫含 code/coder 的 id 读取（cachedDerive
 // mtime 缓存，对齐 index.mjs L184-189 模式），替换原硬编码 CODE_OPTIMIZED_MODEL；
 // 读取后经 normalizeModelId 剥离 provider 前缀再 withProviderPrefix 拼回（与
 // smallModel 路径 L57 对齐，防双前缀 hx/hx/...）。DEFAULT_SMALL_MODEL 移除（本就被
@@ -29,9 +29,10 @@ import {
 const _REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'); // lifecycle/runtime/ -> repo root
 const KILO_JSON_PATH = resolve(_REPO_ROOT, 'kilo.json');
 
-// U1: 从 kilo.json 顶层 code_optimized_model 读取 code 升级目标模型（cachedDerive mtime 缓存，
-// 装配后静态，跨调用命中）。缺失/损坏 → 返回 null（normalizeModelId(null) 原样返回，
-// withProviderPrefix 里 getProviderPrefixForModelId 未找到 alias → 原样返回，不抛错）。
+// U1: 实际机制是扫 provider.hx.models 找含 code/coder 的 id（见下方 U4 实现），
+// 非顶层 code_optimized_model 字段。无命中 → 返回 null = code 升级路径禁用
+// （优雅降级，非错误；normalizeModelId(null) 原样返回，withProviderPrefix 未找到
+// alias → 原样返回，不抛错）。
 function readCodeOptimizedModel() {
   // U4: 从 provider.hx.models 中找第一个 modelId 含 code/coder 的模型（与 codeOfId 逻辑一致），
   // 不再依赖非官方顶层 code_optimized_model 字段（违反 kilo.json schema additionalProperties:false）。
@@ -139,13 +140,17 @@ export function selectModel(defaultModel, requiredCaps = {}, options = {}) {
   if (requiredCaps.code === true && defaultCaps.code !== true) {
     // U1: 严格对齐 smallModel 路径 —— normalize 剥离可能的前缀后再 withProviderPrefix
     // 拼回，禁止直接传裸字符串（否则若传入带前缀字符串会双前缀 hx/hx/...）。
+    // P2-1 fix: readCodeOptimizedModel 返回 null（仓库 kilo.json 无 code/coder 模型）时，
+    // 不再硬拼 selected_model:null + upgraded:true；改为落穿 no-change，避免空模型传 dispatch。
     const codeModel = normalizeModelId(readCodeOptimizedModel());
-    return {
-      selected_model: withProviderPrefix(codeModel, options),
-      override_reason: "code-required: " + defaultModel + " lacks code",
-      upgraded: true,
-      downgraded: false,
-    };
+    if (codeModel) {
+      return {
+        selected_model: withProviderPrefix(codeModel, options),
+        override_reason: "code-required: " + defaultModel + " lacks code",
+        upgraded: true,
+        downgraded: false,
+      };
+    }
   }
 
   if (

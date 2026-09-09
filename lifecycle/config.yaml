@@ -25,7 +25,6 @@
 #   路径B「tiers 定级挂载」（同阶段按 tier 差异化）：
 #       - 智能体 frontmatter 声明 tiers: [T1,T2] —— 按当前 sizing.tier 求值，
 #         命中才加载；不依赖 config.agents 开关（与路径A互斥，不得同时声明）
-#   review_mode：none（无验证/审查角色）/ fast（机械门+正向验证，T1）/ full（正向+反向+审查全并行，T2）
 #
 # tier_escalation：定级自动升级触发器（任务内容/路径命中敏感域 → 强制升 T2）
 #   - 触发模式 mode：any（缺省）= 任一关键词组内任一关键词命中 或 任一路径 glob 命中即升级
@@ -43,7 +42,6 @@
 # agents 键命名规则（自动派生，无需手写映射表）：
 #   键 = agent 文件名去 .md 后连字符转下划线
 # ============================================================
-version: 1
 
 # ============================================================
 # t1_strength_signals：T1 内部强度分级唯一规则源（声明式）
@@ -55,8 +53,6 @@ version: 1
 # 与 tier_escalation 同构：声明式规则集，词表/阈值调整仅改本文件零代码。
 # ============================================================
 t1_strength_signals:
-  # fail-safe：判不了按 high（走完整设计门，宁严勿松）
-  default_strength: high
 
   # 机制变更/契约变更/状态耦合/多分支信号词（>=15 个）
   # intent.raw 命中任一 → 若 conductor 声明 low，transition-check 强制升 high
@@ -98,14 +94,12 @@ tier_defaults:
   # 无可选视角；恒定挂载智能体（coder）由图拓扑限定自动加载
   T0:
     agents: {}
-    review_mode: none
 
   # T1 标准闭环
   # 恒定挂载：planner/coder/verifier/reviewer/fixer（拓扑可达即加载）
   # model_overrides：T1 快通道 verifier 降级到 deepseek-v4-flash（保留 reasoning，不用 flash-noreason）
   T1:
     agents: {}
-    review_mode: fast
     model_overrides:
       verifier: "hx/deepseek-v4-flash"
 
@@ -113,7 +107,6 @@ tier_defaults:
   # 适合复杂任务：架构变更、跨多文件重构、安全敏感改动
   T2:
     agents: {}
-    review_mode: full
 
 # ============================================================
 # tier_escalation：定级自动升级触发器
@@ -190,13 +183,6 @@ overrides:
 
   # model_overrides：覆盖 kilo.json 的模型绑定
   # 键 = agent 名，值 = 模型 ID（能力倾向参考 docs/model-registry.md 人工维护，无机械校验）
-  model_overrides: {}
-
-  # condition_overrides：强制覆盖 task_context.config.agents 布尔值
-  # 注：config.agents 现仅为 lifecycle-doctor 一致性校验对象，挂载由 mount[].tiers 决定；
-  # 此覆盖写字段值供 doctor 校验一致性，不再产生运行时挂载效果。
-  # 键 = "config.agents.<key>"，值 = true/false
-  condition_overrides: {}
 
 # ============================================================
 # custom_overrides：默认自定义覆盖段（conductor 写入 task_context 的初始值）
@@ -223,6 +209,7 @@ hooks:
 size_check_threshold: 120000
 dispatch_prompt_threshold: 4000   # dispatch-prompt-check 阈值：单次 task prompt 字符数上限（小任务上限 ×1.5 安全系数，可调）
 max_files_per_task: 5             # 单次 task 委派涉及文件数上限（3→5：清理 lessons 时多文件 batch 编辑需求；超 5 应回流 PLANNING 拆单元）
+dedup_unit_dispatch: true   # 单元级去重门禁：同一 unit 未 post-dispatch 前禁止重复 pre-dispatch（防并发写冲突 + token 浪费）
 
 # ============================================================
 # recovery：自愈/重试引擎阈值（v1 新增，T20260811-001-recovery-engineering）
@@ -292,14 +279,10 @@ timeouts:
 
 # ============================================================
 # runtime：AgentRuntime 横切层配置（v1 新增）
-# cost_priority: 模型选择的成本偏好
-#   balanced(默认) - 按能力匹配不主动降级
-#   quality       - 任务大时优先 kimi-k2.7-code / MiniMax-M3
 #   economy       - 小任务主动降级到 small_model
 # early_exit_signals: 早退信号词列表（覆盖 default）
 # capability_strict: 严格模式=能力缺失时拒绝 dispatch 并 escalate
 # ============================================================
 runtime:
-  cost_priority: balanced
   early_exit_signals: []  # 空=用 early-exit.mjs 内置默认
   capability_strict: false

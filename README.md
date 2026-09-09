@@ -32,6 +32,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 ├── kilo.json                     # 全局配置入口（Kilo 侧）
 ├── AGENTS.md                     # 全局骨架设计与长期参考文档
 ├── CONFIG_CHANGE_CHECKLIST.md    # 配置变更一致性检查清单
+├── knowledge-base/               # 跨项目故障-根因-修复经验库（findUp 全局根同一份；细则见 .kilo/instructions/reflection.md）
 ├── .kilo/                        # Kilo 配置（保留为编排规则 + 项目知识层）
 │   ├── instructions/
 │   │   ├── core.md                # 运行时核心规则

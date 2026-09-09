@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import { getCapabilitiesFromMap } from '../capability-registry.mjs';
 
 test('显式 code:true → code=true', () => {
-  const preload = { 'hx/kimi-k2.7-code': { capabilities: { code: true }, _alias: 'hx', _id: 'kimi-k2.7-code' } };
-  const c = getCapabilitiesFromMap('kimi-k2.7-code', preload);
+  const preload = { 'hx/test-code-model': { capabilities: { code: true }, _alias: 'hx', _id: 'test-code-model' } };
+  const c = getCapabilitiesFromMap('test-code-model', preload);
   assert.equal(c.code, true);
 });
 
@@ -35,15 +35,15 @@ test('vision 按 modalities.input 推导，与 code 字段独立', () => {
   assert.equal(c.code, true); // 缺省 code 不受 modalities 影响
 });
 
-test('显式 code:true + vision 共存（kimi-k2.7-code 真实形态）', () => {
+test('显式 code:true + vision 共存（test-code-model 真实形态）', () => {
   const preload = {
-    'hx/kimi-k2.7-code': {
+    'hx/test-code-model': {
       capabilities: { code: true },
       modalities: { input: ['text', 'image'], output: ['text'] },
-      _alias: 'hx', _id: 'kimi-k2.7-code'
+      _alias: 'hx', _id: 'test-code-model'
     }
   };
-  const c = getCapabilitiesFromMap('kimi-k2.7-code', preload);
+  const c = getCapabilitiesFromMap('test-code-model', preload);
   assert.equal(c.code, true);
   assert.equal(c.vision, true);
 });

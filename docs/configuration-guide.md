@@ -404,24 +404,13 @@ edges:
 # agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值；定级挂载可用 mount[].tiers（如 plan-reviewer tiers:[T2]）替代 when 开关，按 sizing.tier 过滤
 tier_defaults:
   T0:
-    agents:
-      coder: true              # 布尔开关
-    review_mode: none          # none | fast | full
+    agents: {}                 # 恒定挂载由图拓扑限定（T0 极速通道：INIT→EXECUTING→DELIVERING）
   T1:
-    agents:
-      planner: true
-      coder: true
-      verifier: true
-      reviewer: true
-      fixer: true
-    review_mode: fast
+    agents: {}                 # 恒定挂载：planner/coder/verifier/reviewer/fixer（拓扑可达即加载）
+    model_overrides:
+      verifier: "hx/deepseek-v4-flash"   # T1 快通道 verifier 降级（保留 reasoning）
   T2:
-    agents:
-      coder: true
-      verifier: true
-      reviewer: true
-      fixer: true
-    review_mode: full
+    agents: {}                 # 恒定挂载：全视角验证（正向+审查全开）
 
 # overrides：用户/环境覆盖（默认全空 = 全量自动发现注册）
 overrides:

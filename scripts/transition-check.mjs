@@ -350,6 +350,9 @@ export function validateMinimalGate(ctx) {
   if (typeof mg.goal !== 'string' || mg.goal.trim().length === 0) {
     return { ok: false, reason: 'plan.minimal_gate.goal 缺失或非空字符串' };
   }
+  if (typeof mg.context_anchor !== 'string' || mg.context_anchor.trim().length === 0) {
+    return { ok: false, reason: 'plan.minimal_gate.context_anchor 缺失或非空字符串（文件:行号 精确指向）' };
+  }
   if (!Array.isArray(mg.acceptance_criteria) || mg.acceptance_criteria.length < 1) {
     return { ok: false, reason: 'plan.minimal_gate.acceptance_criteria 缺失或 <1 条' };
   }
@@ -395,6 +398,84 @@ function checkRecoveryPending(ctx) {
   if (missing.length === 0) return [];
   const stillMissing = missing.filter((f) => !verifyField(ctx, f).present);
   return stillMissing;
+}
+
+// ============================================================
+// KB 经验沉淀 gate（DELIVERING->DONE 专用，unit-2-delivering-gate）
+//   若 fixing_history 非空（存在即代表有 FAIL 转 PASS 的修复轮次），则要求
+//   execution.kb_write 存在且为对象含 fx 字段，并校验 knowledge-base/fixes/<fx>.md
+//   真实存在。缺字段或文件不存在 -> [MISSING_KB_WRITE] exit 1。
+//   fixing_history 为空/不存在 -> 跳过（无 FAIL 无需写经验）。
+//   KB 根 = path.resolve(path.dirname(本脚本), ../knowledge-base)；若该目录不存在
+//   则降级仅查字段（不校验文件存在）。
+// ============================================================
+function checkKbWriteGate(ctx) {
+  const fixingHistory = ctx.fixing_history;
+  const hasFixing = Array.isArray(fixingHistory) ? fixingHistory.length > 0 : !!fixingHistory;
+  if (!hasFixing) {
+    return { ok: true, skipped: true, reason: "fixing_history 为空/不存在，无 FAIL 转 PASS，跳过 KB 校验" };
+  }
+  const kbWrite = ctx.execution && ctx.execution.kb_write;
+  if (!kbWrite || typeof kbWrite !== "object" || Array.isArray(kbWrite)) {
+    return { ok: false, skipped: false, reason: "execution.kb_write 缺失或非对象（存在 fixing_history 的 FAIL 转 PASS 任务必须沉淀经验）" };
+  }
+  const fx = kbWrite.fx;
+  if (typeof fx !== "string" || fx.trim().length === 0) {
+    return { ok: false, skipped: false, reason: "execution.kb_write.fx 缺失或非空字符串" };
+  }
+  const kbRoot = path.resolve(__dirname, "..", "knowledge-base");
+  if (fs.existsSync(kbRoot)) {
+    const fxFile = path.join(kbRoot, "fixes", fx + ".md");
+    if (!fs.existsSync(fxFile)) {
+      return { ok: false, skipped: false, reason: "knowledge-base/fixes/" + fx + ".md 不存在（KB 根=" + kbRoot + "）" };
+    }
+    // 校验正文非 TODO 占位：四段任一仍为 "- TODO:" 即视为未补全
+    const fxText = fs.readFileSync(fxFile, "utf8");
+    if (fxText.includes("- TODO:")) {
+      return { ok: false, skipped: false, reason: "KB 正文仍为 TODO 占位，需用 kb.mjs add --body 补全" };
+    }
+  }
+  return { ok: true, skipped: false, reason: "execution.kb_write.fx=" + fx + " 已沉淀（KB 文件存在且正文非 TODO）" };
+}
+
+// ============================================================
+// lessons 反馈 gate（DELIVERING->DONE 专用，U5 lessons-反馈）
+//   要求：intent.prior_lessons 非空 且 intent_type=EXECUTION 的任务，必须在
+//   execution.prior_lessons_used 中逐条回填 lessons 落实证据（每项须含 code + bumped，
+//   且覆盖 prior_lessons 全部 code），否则 [MISSING_LESSONS_FEEDBACK] 阻断。
+//   三态：
+//    ① intent.prior_lessons 缺失/空，或 intent_type != EXECUTION -> {ok:true, skipped:true}
+//    ② 非空 + used 为非空数组、每项含 code+bumped 且覆盖 prior_lessons 全部 code -> 通过
+//    ③ 非空但 used 缺失/空/覆盖不全 -> 失败（[MISSING_LESSONS_FEEDBACK]）
+//   when 语义（intent_type==EXECUTION 且 prior_lessons 非空）在函数内判断，非 when 表达式。
+// ============================================================
+function checkLessonsFeedback(ctx) {
+  const intent = ctx.intent || {};
+  const prior = intent.prior_lessons;
+  // ① prior_lessons 缺失/空，或非 EXECUTION（INQUIRY 等不适用） -> 跳过，不误伤
+  if (intent.intent_type !== 'EXECUTION') {
+    return { ok: true, skipped: true, reason: "intent_type != EXECUTION，lessons 反馈不适用" };
+  }
+  const priorArr = Array.isArray(prior) ? prior : (prior && typeof prior === 'object' ? Object.values(prior) : null);
+  const hasPrior = Array.isArray(priorArr) && priorArr.length > 0;
+  if (!hasPrior) {
+    return { ok: true, skipped: true, reason: "intent.prior_lessons 缺失或为空，无 lessons 需反馈" };
+  }
+  const expectedCodes = priorArr.map((p) => p && p.code).filter((c) => typeof c === 'string' && c.trim().length > 0);
+  const used = ctx.execution && ctx.execution.prior_lessons_used;
+  if (!Array.isArray(used) || used.length === 0) {
+    return { ok: false, skipped: false, reason: "execution.prior_lessons_used 缺失或为空（prior_lessons 非空任务必须逐条回写落实证据）" };
+  }
+  const missingFields = used.filter((u) => !u || typeof u.code !== 'string' || u.code.trim().length === 0 || !u.bumped);
+  if (missingFields.length > 0) {
+    return { ok: false, skipped: false, reason: "execution.prior_lessons_used 存在缺 code 或 bumped 未置真的条目" };
+  }
+  const usedCodes = new Set(used.map((u) => u.code));
+  const uncovered = expectedCodes.filter((c) => !usedCodes.has(c));
+  if (uncovered.length > 0) {
+    return { ok: false, skipped: false, reason: "execution.prior_lessons_used 未覆盖全部 prior_lessons code（缺失: " + uncovered.join(', ') + "）" };
+  }
+  return { ok: true, skipped: false, reason: "execution.prior_lessons_used 已回填并覆盖全部 prior_lessons code（" + expectedCodes.length + " 条）" };
 }
 
 // ============================================================
@@ -713,6 +794,24 @@ function main() {
     }
   }
 
+  // KB 经验沉淀 gate（DELIVERING->DONE）：fixing_history 非空（FAIL 转 PASS）必须已写
+  // execution.kb_write.fx 且 knowledge-base/fixes/<fx>.md 存在；否则 [MISSING_KB_WRITE] 阻断。
+  if (FROM === "DELIVERING" && TO === "DONE") {
+    const kb = checkKbWriteGate(ctx);
+    if (!kb.ok) {
+      dieMsg("[MISSING_KB_WRITE] FAIL转PASS 任务未沉淀经验（跑 node scripts/kb.mjs add 后 set execution.kb_write）。" + kb.reason);
+    }
+  }
+
+  // lessons 反馈 gate（DELIVERING->DONE）：intent.prior_lessons 非空 + EXECUTION 必须已回写
+  // execution.prior_lessons_used（每项含 code+bumped 且覆盖全部 code）；否则 [MISSING_LESSONS_FEEDBACK] 阻断。
+  if (FROM === "DELIVERING" && TO === "DONE") {
+    const lf = checkLessonsFeedback(ctx);
+    if (!lf.ok) {
+      dieMsg("[MISSING_LESSONS_FEEDBACK] prior_lessons 非空任务未回写 lessons 落实证据（execution.prior_lessons_used 需含 code+bumped 且覆盖全部 code）。" + lf.reason);
+    }
+  }
+
   // premise_audit 必填校验（U1+U2 配套，U3 实现）：T1+ plan 流转 PLANNING->EXECUTING 时
   // 每个 unit 必须带 premise_audit 段（含 existence_cmd + ≥2 alternatives），
   // 拒绝"拍脑袋方案"——planner 必须先 L3 广搜证明假设存在，并列出 ≥2 个备选方案 + 风险评分。
@@ -856,14 +955,31 @@ async function runSelfCheck() {
   assertEq('tier=T2 skip', checkT1StrengthEligibility({ intent: { raw: '契约' }, sizing: { tier: 'T2', t1_strength: 'low' } }).status, 'PASS');
   assertEq('strength=high skip', checkT1StrengthEligibility({ intent: { raw: '契约' }, sizing: { tier: 'T1', t1_strength: 'high' } }).status, 'PASS');
   // ⑤ minimal_gate 完整放行 / 缺失阻断
-  const goodMg = { plan: { minimal_gate: { goal: 'x', acceptance_criteria: ['a'], forbidden_files: [] } } };
+  const goodMg = { plan: { minimal_gate: { goal: 'x', context_anchor: 'a.md:1', acceptance_criteria: ['a'], forbidden_files: [] } } };
   assertEq('minimal_gate ok', validateMinimalGate(goodMg).ok, true);
   assertEq('minimal_gate missing blocks', validateMinimalGate({}).ok, false);
-  assertEq('minimal_gate empty goal blocks', validateMinimalGate({ plan: { minimal_gate: { goal: '', acceptance_criteria: ['a'], forbidden_files: [] } } }).ok, false);
-  assertEq('minimal_gate empty ac blocks', validateMinimalGate({ plan: { minimal_gate: { goal: 'x', acceptance_criteria: [], forbidden_files: [] } } }).ok, false);
+  assertEq('minimal_gate empty goal blocks', validateMinimalGate({ plan: { minimal_gate: { goal: '', context_anchor: 'a.md:1', acceptance_criteria: ['a'], forbidden_files: [] } } }).ok, false);
+  assertEq('minimal_gate missing context_anchor blocks', validateMinimalGate({ plan: { minimal_gate: { goal: 'x', acceptance_criteria: ['a'], forbidden_files: [] } } }).ok, false);
+  assertEq('minimal_gate empty context_anchor blocks', validateMinimalGate({ plan: { minimal_gate: { goal: 'x', context_anchor: '', acceptance_criteria: ['a'], forbidden_files: [] } } }).ok, false);
+  assertEq('minimal_gate empty ac blocks', validateMinimalGate({ plan: { minimal_gate: { goal: 'x', context_anchor: 'a.md:1', acceptance_criteria: [], forbidden_files: [] } } }).ok, false);
   // ⑥ T2 无 strength 不阻断
   assertEq('T2 no strength not blocked', validateT1Strength({ sizing: { tier: 'T2' } }).ok, true);
 
+
+  // === U5 lessons 反馈 gate 自检断言 ===
+  // ① prior_lessons 缺失/空 -> skipped
+  assertEq('lessons no prior -> skipped', checkLessonsFeedback({ intent: {} }).ok, true);
+  assertEq('lessons empty prior -> skipped', checkLessonsFeedback({ intent: { intent_type: 'EXECUTION', prior_lessons: [] } }).ok, true);
+  assertEq('lessons INQUIRY -> skipped', checkLessonsFeedback({ intent: { intent_type: 'INQUIRY', prior_lessons: [{ code: 'X' }] } }).ok, true);
+  // ② 非空 + used 覆盖全部 -> 通过
+  const lfOk = checkLessonsFeedback({ intent: { intent_type: 'EXECUTION', prior_lessons: [{ code: 'X' }] }, execution: { prior_lessons_used: [{ code: 'X', bumped: true, count: 2 }] } });
+  assertEq('lessons covered -> ok', lfOk.ok, true);
+  assertEq('lessons covered -> not skipped', lfOk.skipped, false);
+  // ③ 非空但 used 缺失/空/覆盖不全 -> 失败
+  assertEq('lessons used missing -> fail', checkLessonsFeedback({ intent: { intent_type: 'EXECUTION', prior_lessons: [{ code: 'X' }] }, execution: {} }).ok, false);
+  assertEq('lessons used empty -> fail', checkLessonsFeedback({ intent: { intent_type: 'EXECUTION', prior_lessons: [{ code: 'X' }] }, execution: { prior_lessons_used: [] } }).ok, false);
+  assertEq('lessons used no bumped -> fail', checkLessonsFeedback({ intent: { intent_type: 'EXECUTION', prior_lessons: [{ code: 'X' }] }, execution: { prior_lessons_used: [{ code: 'X', bumped: false }] } }).ok, false);
+  assertEq('lessons used partial cover -> fail', checkLessonsFeedback({ intent: { intent_type: 'EXECUTION', prior_lessons: [{ code: 'X' }, { code: 'Y' }] }, execution: { prior_lessons_used: [{ code: 'X', bumped: true }] } }).ok, false);
 
   const { execSync } = await import('node:child_process');
   const scanOut = execSync('node scripts/scan-encoding.mjs scripts/transition-check.mjs', { encoding: 'utf8' });

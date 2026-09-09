@@ -7,7 +7,6 @@
 //   2. 决策记录表当前模型(kilo.json)列 == kilo.json agent.<name>.model
 //      （conductor/coder/fixer/planner/verifier/plan-reviewer/reviewer/reverse-auditor）
 //   3. small_model 行 == kilo.json 顶层 small_model
-//   4. code_optimized_model 行 == kilo.json 顶层 code_optimized_model（防 U1 策略锚点字段漂移）
 //
 // 任一断言失败 → exit 1 + 打印漂移明细；全过 → exit 0 + "SYNC OK"
 //
@@ -39,7 +38,13 @@ const AGENT_KEY_MAP = {
   'reverse-auditor': ['reverse-auditor'],
 };
 
-const REQUIRED_AGENTS = ['conductor', 'coder', 'fixer', 'planner', 'verifier', 'plan-reviewer', 'reviewer', 'reverse-auditor'];
+// 自动派生：从 agent/*.md 动态读取（U3 恢复），过滤未绑定决策表的 agent
+const AGENTS_DIR = path.join(ROOT, 'agent');
+const UNBOUND_AGENTS = new Set(['analyst-1', 'analyst-2', 'analyst-3', 'analyst-critic', 'analyst-synthesizer', 'deep-analyzer']);
+const REQUIRED_AGENTS = fs.readdirSync(AGENTS_DIR)
+  .filter((f) => f.endsWith('.md'))
+  .map((f) => f.replace(/\.md$/, ''))
+  .filter((a) => !UNBOUND_AGENTS.has(a));
 
 function die(code, msg) {
   process.stderr.write(msg + '\n');
@@ -71,7 +76,6 @@ function parseFrontmatterModels(fmText) {
 function parseDecisionTable(text) {
   const agentModel = new Map();
   let smallModel = null;
-  let codeOptimizedModel = null;
   const lines = text.split(/\r?\n/);
   let inDecision = false;
   for (const line of lines) {
@@ -87,11 +91,10 @@ function parseDecisionTable(text) {
     const model = row[2].trim();
     if (!model.startsWith('hx/')) continue;
     if (key === 'small_model') { smallModel = model; continue; }
-    if (key === 'code_optimized_model') { codeOptimizedModel = model; continue; }
     const mapped = AGENT_KEY_MAP[key];
     if (mapped) for (const a of mapped) agentModel.set(a, model);
   }
-  return { agentModel, smallModel, codeOptimizedModel };
+  return { agentModel, smallModel };
 }
 
 function main() {
@@ -134,7 +137,7 @@ function main() {
   for (const m of docModels) if (!kjModels.has(m)) drift.push('断言1: doc frontmatter 多 ' + m + '（kilo.json 未注册）');
 
   // 4. 断言 2 + 3：决策记录表
-  const { agentModel, smallModel, codeOptimizedModel } = parseDecisionTable(text);
+  const { agentModel, smallModel } = parseDecisionTable(text);
   nCheck++;
   for (const a of REQUIRED_AGENTS) {
     const docModel = agentModel.get(a);
@@ -145,12 +148,6 @@ function main() {
   nCheck++;
   if (smallModel === null) drift.push('断言3: 决策表缺 small_model 行');
   else if (smallModel !== kj.small_model) drift.push('断言3: small_model 表=' + smallModel + ' vs kilo.json=' + kj.small_model);
-  nCheck++;
-  const kjCodeOpt = kj.code_optimized_model;
-  if (kjCodeOpt !== undefined) {
-    if (codeOptimizedModel === null) drift.push('断言4: 决策表缺 code_optimized_model 行');
-    else if (codeOptimizedModel !== kjCodeOpt) drift.push('断言4: code_optimized_model 表=' + codeOptimizedModel + ' vs kilo.json=' + kjCodeOpt);
-  }
 
   // 5. 汇总
   if (drift.length === 0) {

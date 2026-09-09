@@ -1,6 +1,5 @@
 ---
 description: 生命周期阶段 PLANNING — 设计门。T1-high / T2 编码前必须经过 planner 输出方案+验收点+DAG（T1 low/medium 直通不经本阶段）。
-model_capability: deep-reasoning
 token_budget: 12000
 # required_roles：本阶段主槽必配角色契约（阶段语义内聚，单一真相）
 # 角色名 = 智能体文件名（去 .md）或其 frontmatter 显式 role 字段；
@@ -16,7 +15,6 @@ required_roles: [planner]
 
 ## 输入
 
-- `INIT` 输出的 intent_type + tier + review_mode
 - 用户请求（完整需求 + 约束）
 - 项目技术栈上下文
 - 相关代码文件（由智能体按需读取）

@@ -214,14 +214,11 @@ mount:
 tier_defaults:
   T0:
     agents: {}                    # 无可选视角
-    review_mode: none
   T1:
     agents: {}                    # 无可选视角
-    review_mode: fast
   T2:
     agents:
       my_auditor: true            # 用户自建可选视角示例
-    review_mode: full
 ```
 
 > **新增智能体默认零配置**：恒定挂载（无 `when`）的智能体无需在 `config.yaml` 声明，图拓扑可达即加载。

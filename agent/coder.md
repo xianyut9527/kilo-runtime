@@ -82,9 +82,9 @@ can_handoff_to:
 > 构建-测试-迭代循环思维：先复现后编码——无测试套件时先写最小复现再动手，禁止边写边猜。
 > 质量=测试证据密度，不是代码量。一切以测试证据为准，绝不盲目堆码。
 
-## Windows 路径陷阱(强制,013 U4 教训)
+## Windows 路径陷阱(强制)
 
-> **反 012 U5 教训**:path.join(`a`,`b`) 在 Windows = `a\b`(反斜杠),EXCLUDES 必用 `/` + `replace(/\\/g, "/")` 规范化,否则 `full.includes(e)` 永 false → 自豁免静默失效。
+> **反历史教训**:path.join(`a`,`b`) 在 Windows = `a\b`(反斜杠),EXCLUDES 必用 `/` + `replace(/\\/g, "/")` 规范化,否则 `full.includes(e)` 永 false → 自豁免静默失效。
 
 ### 3 大陷阱
 
@@ -95,7 +95,7 @@ can_handoff_to:
 ### 解:`full.replace(/\\/g, "/").includes(e)`
 
 ```js
-// 反模式(012 U5 教训):
+// 反模式(历史教训):
 if (EXCLUDES.some(e => full.includes(e))) continue;
 
 // 正例(Windows 兼容):
@@ -184,6 +184,7 @@ encoding_scan: "PASS" | "FAIL" | "N/A"
 ## 返回契约（防主会话 context 撑爆）
 
 - 输出契约见 `.kilo/instructions/output-schema.md` §返回契约（verdict + 证据 file:line + 关键结论，≤4000 字符）。
+- **输出头三行标识**：遵循 conductor.md 铁律 #10.1 Format A 单一源（TIER/STAGE/STATUS 三行 + `formatTriple` 渲染），禁止自造第二套格式。
 - 禁止返回完整报告/长表格/复述文件内容——详细产物写入 task_context（verdict/plan/execution 字段），返回消息只留指针与结论。
 - 返回超限约束见 `.kilo/instructions/output-schema.md` §返回超限约束（返回契约 §防 abort）。
 

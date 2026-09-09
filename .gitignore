@@ -76,3 +76,6 @@ _test_target_orig/
 .pytest_cache/
 # 编译时预生成静态派生数据（build-derivations.mjs 产物，不入版本库；缺失时 task-context.mjs 透明回退 cachedDerive）
 scripts/lib/.generated/
+# lessons 失败教训运行时回写产物（kb.mjs 交叉查重读取，仅本地运行时数据，不入库；与 task_context/mmo-audit 同性质）
+docs/lessons/
+docs/lessons/**

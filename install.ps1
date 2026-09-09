@@ -143,7 +143,10 @@ try {
         "scripts/bash-guard.mjs",
         "scripts/sanitize-agent-description.mjs",
         "scripts/sync-agent-prompt.mjs",
-        "scripts/validate-agent-prompt.mjs"
+        "scripts/validate-agent-prompt.mjs",
+        "knowledge-base/index.md",
+        "knowledge-base/fixes/FX-001.md",
+        "scripts/kb.mjs"
     )
 
     $Missing = @()
@@ -231,6 +234,22 @@ try {
         Write-Host "[WRITE]  $MdReplaced .md file(s) had KILO_CONFIG_DIR placeholders substituted" -ForegroundColor Green
     }
 
+
+    # Rebuild derivations.json on target: install 占位符替换改写了 agent/*.md 内容，
+    # repo 构建的内容指纹与 target 实际不符；在 target 侧重建使 fingerprint 匹配
+    Write-Host ""
+    Write-Host "Rebuilding derivations.json on target..." -ForegroundColor Cyan
+    $BuildDeriv = Join-Path $Target "scripts\build-derivations.mjs"
+    if (Test-Path $BuildDeriv) {
+        & node $BuildDeriv 2>&1 | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[WARN]   build-derivations.mjs exited $LASTEXITCODE; derivations.json may be stale. Run manually: node `"$BuildDeriv`"" -ForegroundColor Yellow
+        } else {
+            Write-Host "[BUILD_DERIVATIONS] derivations.json rebuilt on target" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "[WARN]   build-derivations.mjs not found at $BuildDeriv; derivations.json may be stale. Run manually: node `"$BuildDeriv`"" -ForegroundColor Yellow
+    }
     # Ensure skill directories exist
     Write-Host ""
     Write-Host "Ensuring skill directories exist..." -ForegroundColor Cyan
