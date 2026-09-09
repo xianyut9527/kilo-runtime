@@ -47,6 +47,8 @@ import { run as runMcpSanity } from './checks/mcp-sanity.mjs';
 import { run as runDerivationsFreshness } from './checks/derivations-freshness.mjs';
 import { run as runCommandPathHygiene } from './checks/command-path-hygiene.mjs';
 import { run as runUnitTests } from './checks/unit-tests.mjs';
+import { run as runRegistrySync } from './checks/registry-sync.mjs';
+import { run as runDispatchTableSync } from './checks/dispatch-table-sync.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SELF_ROOT = path.resolve(__dirname, '..', '..');
@@ -185,6 +187,8 @@ await runPromptSync(ctx);
 // unit-tests 真跑 lifecycle/runtime/__tests__/*.test.mjs（spawnSync 4 子进程 ~0.5s）：
 // 放最后且 --fast 直接跳过，保证不压 init-gate 热路径。
 runUnitTests(ctx);
+runRegistrySync(ctx);
+runDispatchTableSync(ctx);
 
 // 收尾：缓存 / 同步 prompt / 报告
 report(cf, VERBOSE, { fullMode: FULL_MODE, fastMode: FAST_MODE, syncPrompt: SYNC_PROMPT, scriptsDir: SCRIPTS_DIR, root: ROOT, quiet: QUIET });

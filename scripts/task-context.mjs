@@ -216,6 +216,22 @@ for (const f of REQUIRED_CONDUCTOR_FIELDS) {
 }
 
 // ============================================================
+// CU-1a: 派发白名单（注册名集合）——与 WRITE_MATRIX 写权限矩阵解耦
+// 派发溯源（谁能被 log-dispatch/post-dispatch 记账）与字段写权限（谁能写
+// task_context 哪些字段）是两个正交关注点：agent/*.md 文件存在即注册，
+// 但只有 frontmatter task_context.write 声明的才在 WRITE_MATRIX 有写权限。
+// 历史缺陷（config-hygiene-002 F1）：MMO 智能体（analyst-*/synthesizer/
+// critic/deep-analyzer）有 agent/*.md 文件但无 task_context.write，被白名单
+// 拒绝 → conductor-dispatch-sop.md §MMO 编排 SOP 的 post-dispatch 接线
+// 结构性失效。解耦后：文件存在 = 可派发记账；write 声明 = 可写字段。
+// ============================================================
+const deriveRegisteredAgentNames = () => (listMdFiles(AGENT_DIR) || []).map((f) => path.basename(f, '.md'));
+const REGISTERED_AGENTS = new Set([
+  ...Object.keys(WRITE_MATRIX),
+  ...(cachedDerive('registeredAgents', listMdFiles(AGENT_DIR), deriveRegisteredAgentNames) || []),
+]);
+
+// ============================================================
 // 工具
 // ============================================================
 
@@ -1466,9 +1482,10 @@ function cmdLogDispatch(taskId, agent, mode, stage) {
   if (!validModes.includes(mode)) {
     die(2, `Error: --mode must be one of: ${validModes.join(', ')}`);
   }
-  // --agent 白名单：注册智能体名（含 conductor）
-  if (!WRITE_MATRIX[agent] && agent !== 'conductor') {
-    die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 dispatch 白名单（${[...Object.keys(WRITE_MATRIX), 'conductor'].sort().join(', ')}）。防任意伪造 dispatch 记录。`);
+  // --agent 白名单：注册智能体名集合（agent/*.md 文件名 ∪ WRITE_MATRIX 键，含 conductor）
+  // CU-1a：与 WRITE_MATRIX 写权限解耦——文件存在即注册可派发，write 声明才管写字段
+  if (!REGISTERED_AGENTS.has(agent) && agent !== 'conductor') {
+    die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在注册智能体集（agent/*.md 文件名或 WRITE_MATRIX 键）。防任意伪造 dispatch 记录。`);
   }
   // --stage 白名单：graph.yaml 节点集合
   const nodeIds = readGraphNodeIds();
@@ -1572,7 +1589,16 @@ function cmdPostDispatch(taskId, seq, result, agent, mode, stage, ephemeral) {
   if (ephemeral) {
     const { ctx: ctxOpt } = readContextOptional(taskId);
     if (ctxOpt == null) {
-      process.stdout.write('[ephemeral] post-dispatch noop（MMO 多模型：task_context 未 init，无 guard/dispatch_log 可清，仅参数放行）\n');
+      // CU-1b: ephemeral 路径零 provenance 治理空洞——追加 sidecar 追踪（失败仅 stderr 不阻断）
+      try {
+        const traceDir = path.join(os.tmpdir(), 'kilo');
+        const tracePath = path.join(traceDir, 'mmo_trace.jsonl');
+        fs.mkdirSync(traceDir, { recursive: true });
+        fs.appendFileSync(tracePath, JSON.stringify({ ts: Date.now(), task_id: taskId, agent, kind: 'post', result }) + '\n');
+      } catch (traceErr) {
+        process.stderr.write('[mmo_trace] append failed: ' + (traceErr && traceErr.message ? traceErr.message : traceErr) + '\n');
+      }
+      process.stdout.write('[ephemeral] post-dispatch noop（MMO 多模型：task_context 未 init，无 guard/dispatch_log 可清，仅参数放行 + mmo_trace 追踪）\n');
       process.exit(0);
     }
   }
@@ -1604,8 +1630,9 @@ function cmdPostDispatch(taskId, seq, result, agent, mode, stage, ephemeral) {
   if (!validModes.includes(mode)) {
     die(2, `Error: --mode must be one of: ${validModes.join(', ')}`);
   }
-  if (!WRITE_MATRIX[agent] && agent !== 'conductor') {
-    die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在 dispatch 白名单（${[...Object.keys(WRITE_MATRIX), 'conductor'].sort().join(', ')}）。防任意伪造 dispatch 记录。`);
+  // CU-1a：与 log-dispatch 同源，注册名集合判定
+  if (!REGISTERED_AGENTS.has(agent) && agent !== 'conductor') {
+    die(2, `[PROCESS_VIOLATION] --agent "${agent}" 不在注册智能体集（agent/*.md 文件名或 WRITE_MATRIX 键）。防任意伪造 dispatch 记录。`);
   }
   const nodeIds = readGraphNodeIds();
   if (!nodeIds.includes(stage)) {

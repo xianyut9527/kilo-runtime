@@ -1,5 +1,11 @@
 # AGENTS.md
 
+<!-- CU-2c: 本文件是全局配置仓库（kilo_config）的源 AGENTS.md，install 时拷贝到 ~/.config/kilo/。
+     当 Kilo 在本仓库工作区内运行时，findUp 会同时发现本文件与部署副本 → 双重注入相同内容。
+     这只在「在本仓库内开发 kilo 配置」场景发生，非普遍配置缺陷。
+     若发现本文件与部署版内容漂移，以本仓库版为 SSOT，跑 install.ps1 同步部署副本。 -->
+
+
 > Kilo 通过 `findUp` 自动发现本文件作为**唯一全局指令入口**。
 >
 > **路径解析语义**：本文件运行时位于全局配置根目录 ~/.config/kilo/（Windows: C:\Users\<用户名>\.config\kilo\）。本文件内所有被引用路径（agent/*.md、lifecycle/、.kilo/instructions/*.md、docs/）均以**全局配置根目录**为解析基准，不以当前项目工作目录为基准。

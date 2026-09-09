@@ -129,7 +129,7 @@
       "options": {
         "baseURL": "https://xianyu1.natapp4.cc/v1",
         "timeout": 600000,
-        "chunkTimeout": 120000
+        "chunkTimeout": 600000
       },
       "models": {
         "deepseek-v4-flash": {

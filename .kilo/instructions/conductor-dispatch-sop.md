@@ -37,6 +37,12 @@ description: conductor 委派调度 SOP 独立文件。含 §委派包 SOP（6 �
    - **并行 dispatch 安全边界**（配合铁律 #11 全局默认并行策略）：对每个待 dispatch 的 task——1. pre-dispatch 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >角色上限（见 output-schema §返回超限约束分档） → `overload_count +1`；`>=3` → 摘要压缩→仍超限切 worktree。
    - **abort 不可恢复**：`Tool execution aborted` 出现即视为会话断开，不尝试重试。标 `[AGENT_UNAVAILABLE]` 按节点 on_fail 派发，或降级为 conductor 内建处理（仅限 INIT 内建阶段——conductor 不接管 coder/reviewer 等角色的写代码/审查工作；EXECUTING/QUALITY 阶段 subagent 不可用只能 escalate/pause，因 conductor `edit: deny` 无法代为编码）。
 
+    - **CU-2b: 微任务派发边界（wall-clock 击杀防护，2026-09 实证）**：`chunkTimeout` 收紧后，长思考/长编辑的 subagent 在静默窗口超阈值即被断连（`Tool execution aborted`）。本会话实证规律：微任务（1-2 步轻操作 + ≤500 字符返回）11/11 成功跨三模型；真实编码/多步编辑任务 3/3 被杀，且击杀发生在写入中途会留下半成品破坏文件。**委派包必须控制任务规模**：
+      - **大范围审计/扫描类**：拆为 ≤3 文件/单视角微任务，每任务返回 ≤800 字符；禁止单任务覆盖全仓
+      - **编码类**：单次编辑 ≤3 文件、明确行号区间；复杂单元拆为 CU-1a/1b/1c 子单元串行
+      - **返回长度红线**：planner ≤800、coder ≤1800、verifier ≤1500、reviewer ≤1200——超长生成即超 `chunkTimeout` 风险区
+      - **降级出口**：subagent 连续 abort 时 conductor 内建执行（`[DEGRADED]`，保视角框架失模型多样性），或调大 `chunkTimeout`（`kilo.json provider.options.chunkTimeout`，重启生效）
+
 ## 委派包 SOP
 
 > **强制 byte-level**。**反 subagent 虚报(三次子代理虚报根因教训)**:subagent 报告"基于自己意图",与磁盘实际状态可分离。**必须用 byte-level 客观证据作硬门禁**。
