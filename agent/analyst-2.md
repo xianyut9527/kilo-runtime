@@ -1,5 +1,5 @@
 ---
-description: 独立多模型分析师之一（槽位 2 视角）：全局关联与一致性视角。从全局架构和跨模块依赖关系切入，特长深挖广度扫描与线索关联。
+description: 独立多模型分析师之一（槽位 2 视角）：全局关联与一致性视角。从全局架构和跨模块依赖关系切入，特长深挖广度扫描与线索关联。输出契约见 .kilo/instructions/output-schema.md。
 mode: subagent
 hidden: true
 color: "#06B6D4"

@@ -1,6 +1,6 @@
-// early-exit.test.mjs — U4: early-exit.mjs 边界单测（node --test，零源码改动）
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+// early-exit.test.mjs — U4: early-exit.mjs 边界单测（零源码改动）
+// 跑法：node lifecycle/runtime/__tests__/early-exit.test.mjs（底座 scripts/lib/test-harness.mjs）
+import { test, assert } from '../../../scripts/lib/test-harness.mjs';
 import { detectEarlyExit } from '../early-exit.mjs';
 
 test('空字符串 → early_exit=false', () => {

@@ -17,11 +17,11 @@ description: conductor 委派调度 SOP 独立文件。含 §委派包 SOP（6 �
        1. **pre-dispatch 收到 size 超限自动调用 archive 子命令**：把 `execution / verification / plan / fixing_history` 细节字段原子转储到 sidecar `$TEMP/kilo/tasks/<id>/<id>.archive-<ts>.json`，主 ctx 这些字段替换为 `{archived:true, path, summary, archived_at_ms}`；**保留 intent / sizing / config / current_stage / quality.verdict / dispatch_log / status**（交付素材归档保护，不删除）。sidecar 写入失败则保持原样、维持 exit 2 阻断，不误归档。
        2. pre-dispatch 内建重测 size。exit 0 → 归档成功，继续 task dispatch。
        3. 仍 exit 2（不可归档字段如 dispatch_log 膨胀导致）→ `[CONTEXT_UNSAFE]` → 强制切 agent_manager worktree（独立 context，不占主会话）。
-       4. **手动兜底**：`node scripts/task-context.mjs archive <task_id>` 可独立调用归档（exit 0），供 conductor 离线压缩主 ctx 或恢复素材。
+       4. **手动兜底**：`node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" archive <task_id>` 可独立调用归档（exit 0），供 conductor 离线压缩主 ctx 或恢复素材。
    - **step 0c: shell-guard + encoding-prescan（铁律 #9 新增机械门禁，2026-08-09 框架稳定化）**
      - **shell-guard**：conductor 每次通过 `bash` 工具委派 subagent / 执行写操作命令时，必须先 `node "${KILO_CONFIG_DIR}/scripts/bash-guard.mjs" "<bash_cmd>"` 静态分析。命中（exit 2 + `[BASH_WRITE_BLOCKED]` 或 `[PS51_REGEX_RISK]`）→ 阻断，改用 `glob`/`grep` 只读工具或 `task` 委派 coder（conductor 自身 `edit:deny`/`write:deny`）。
      - **encoding-prescan**：EXECUTING 阶段 coder 完工 / DELIVERING 阶段 conductor 交付前，必须 `node "${KILO_CONFIG_DIR}/scripts/scan-encoding.mjs"`，扫所有 `git diff --name-only HEAD` 改动的 .md/.mjs/.json。命中 BOM/U+FFFD/GBK 残留 → 阻断，标 `[ENCODING_DRIFT]`，coder 重做（PS5.1 必须 `Set-Content -Encoding UTF8` 或 Node `fs.writeFileSync` 显式指定 encoding）。
-     - **pre-dispatch `--bash-cmd` 集成**：`node task-context.mjs pre-dispatch <task_id> --prompt-chars <N> --file-count <F> --bash-cmd "<cmd>"` 一步合并 step 0 + step 0c（bash-guard 子进程）。命中 exit 2 与 dispatch-prompt-check/size-check 任一 exit 2 都阻断 dispatch。
+     - **pre-dispatch `--bash-cmd` 集成**：`node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" pre-dispatch <task_id> --prompt-chars <N> --file-count <F> --bash-cmd "<cmd>"` 一步合并 step 0 + step 0c（bash-guard 子进程）。命中 exit 2 与 dispatch-prompt-check/size-check 任一 exit 2 都阻断 dispatch。
      - **反事故教训**：2026-08 在 culture-applet / kilo_config 项目连续发生 2 次编码侧事故（GBK mojibake + PS5.1 死循环）根因均为 subagent 未跑 scan-encoding/bash-guard。本步骤把已有工具接进机械门禁，禁止软规则口头提醒。
     - **step 0d: timeout-guard（dispatch 前后双段，铁律 #9 新增机械门禁）**
       - **[前]** timeout_guard start 已合并进 pre-dispatch（`--agent --tier` 触发，返回 effectiveSeq）；不再独立调 `agent-timeout-guard.mjs start`。
@@ -39,9 +39,7 @@ description: conductor 委派调度 SOP 独立文件。含 §委派包 SOP（6 �
 
 ## 委派包 SOP
 
-## 委派包 SOP(强制 byte-level)
-
-> **反 subagent 虚报(三次子代理虚报根因教训)**:subagent 报告"基于自己意图",与磁盘实际状态可分离。**必须用 byte-level 客观证据作硬门禁**。
+> **强制 byte-level**。**反 subagent 虚报(三次子代理虚报根因教训)**:subagent 报告"基于自己意图",与磁盘实际状态可分离。**必须用 byte-level 客观证据作硬门禁**。
 
 ### 委派包必含 6 字段(强制，单一规范)
 
@@ -74,10 +72,10 @@ return_contract:
 
 ### 委派包按角色差异化传递上下文
 
-委派时按角色裁剪上下文，只传该角色相关条目，不传无关历史（原 core.md §上下文摄取与过滤 移入）：
+委派时按角色裁剪上下文，只传该角色相关条目，不传无关历史：
 
 - **planner**：传完整过滤包。
-- **coder**：只传当前单元相关条目不传无关历史。派发前跑 `node "${KILO_CONFIG_DIR}/scripts/kb.mjs" query "<症状词>"`，命中 top3 注入委派包 context_anchor，无命中省略。
+- **coder**：只传当前单元相关条目。派发前跑 `node "${KILO_CONFIG_DIR}/scripts/kb.mjs" query "<症状词>"`，命中 top3 注入委派包 context_anchor，无命中省略。
 - **verifier**：传失败与验证相关条目。
 - **reviewer**：传风险与审查相关条目。
 - **fixer**：传失败证据与修复范围条目。派发前跑 `node "${KILO_CONFIG_DIR}/scripts/kb.mjs" query "<症状词>"`，命中 top3 注入委派包 context_anchor，无命中省略。
@@ -101,11 +99,11 @@ return_contract.byte_level: {
   before_sha: {"README.md": "abc..."},
   after_sha: {"README.md": "def..."}
 }
-verification_command: "grep -n 'GitNexus|gitnexus|context7' <files>"
+verification_command: "node ${KILO_CONFIG_DIR}/scripts/decouple-check.mjs"
 ```
 
 ### byte-level SOP 文档
-见 `.kilo/instructions/byte-level-verify.md`(本任务 U5a 创建)
+见 `.kilo/instructions/byte-level-verify.md`
 ### T1 直通路径委派包（INIT→EXECUTING 直通边，T1 low/medium）
 
 > 直通边（`lifecycle/graph.yaml` INIT→EXECUTING，`t1_strength ∈ {low, medium}`）生效时，跳过 PLANNING 无 plan 产物。conductor 在派发 coder 前**必写** `plan.minimal_gate` 最小产物（transition-check 直通边校验，缺失 → `[MISSING_MINIMAL_GATE]` 阻断）：
@@ -126,9 +124,7 @@ plan.minimal_gate:
 
 ## 路径规范
 
-## 路径规范(强制)
-
-> **反 verifier 路径错 + 漏 sync 教训**:subagent 委派包必用 `path.resolve()` 相对项目根,禁止硬编码 `lifecycle-doctor/`(实际是 `scripts/lifecycle-doctor/`)。
+> **强制**。**反 verifier 路径错 + 漏 sync 教训**:subagent 委派包必用 `path.resolve()` 相对项目根,禁止硬编码 `lifecycle-doctor/`(实际是 `scripts/lifecycle-doctor/`)。
 
 ### 委派包必含路径字段
 
@@ -178,8 +174,7 @@ verifier 接收委派包后必:
 
 ## MMO 编排 SOP
 
-## 多模型分析编排 SOP（独立能力，不进入任务生命周期）
-
+> **多模型分析编排，独立能力，不进入任务生命周期。**
 > deep-analyzer 是独立智能体，不挂载任何 stage，不写 task_context。
 > 但 conductor 是唯一编排者——识别到多模型触发词后，由 conductor 直接编排
 > 3 analyst + synthesizer + critic 流水线（类比 dispatch planner/coder/verifier，

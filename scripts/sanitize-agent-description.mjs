@@ -179,7 +179,12 @@ export function extractFrontmatter(text) {
 }
 
 /**
- * 从 frontmatter 块提取 description 字段（单行或多行）。
+ * 从 frontmatter 块提取 description 字段（单行 / 字面块 `|` / 折叠块 `>`）。
+ *
+ * 块标量必须先判：`description: |` 的指示符同样满足单行模式 `(.+)`，
+ * 若单行分支先命中就会把指示符本身当成值（历史缺陷：派生出 prompt="|"，
+ * 部署副本 deep-analyzer 提示词被写坏）。本函数以「块指示符优先」定序防回归。
+ *
  * @param {string} frontmatter
  * @returns {string|null}
  */
@@ -187,28 +192,46 @@ export function extractDescription(frontmatter) {
   if (!frontmatter) return null;
   const lines = frontmatter.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // 单行：description: xxx
-    const single = line.match(/^description:\s*(.+)$/);
-    if (single) {
-      let val = single[1].trim();
-      if ((val.startsWith('"') && val.endsWith('"')) ||
-          (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.slice(1, -1);
-      }
-      return val;
-    }
-    // 多行：description: > 或 description: |
-    const multiStart = line.match(/^description:\s*[>|]/);
-    if (multiStart) {
-      const parts = [];
+    const head = lines[i].match(/^description:(.*)$/);
+    if (!head) continue;
+    const raw = head[1];
+
+    // ---- 块标量：| |- |+ |2 > >- >+ >2 ----
+    const block = raw.match(/^\s*([|>])([+-]?\d*)\s*$/);
+    if (block) {
+      const folded = block[1] === '>';
+      const body = [];
+      let indent = -1;
       for (let j = i + 1; j < lines.length; j++) {
         const sub = lines[j];
-        if (/^\S/.test(sub)) break;
-        parts.push(sub.replace(/^\s+/, ''));
+        if (sub.trim() === '') { body.push(''); continue; }
+        const lead = sub.match(/^\s*/)[0].length;
+        if (lead === 0) break;            // 回到顶层键 = 块结束
+        if (indent < 0) indent = lead;    // 首个非空行的缩进为块基准
+        body.push(sub.slice(Math.min(indent, lead)));
       }
-      return parts.join(' ').trim();
+      while (body.length > 0 && body[body.length - 1] === '') body.pop();
+      if (folded) {
+        // 折叠标量：空行折成换行，相邻非空行以单空格连接
+        let out = '';
+        for (const seg of body) {
+          if (seg === '') out += '\n';
+          else out += (out !== '' && !out.endsWith('\n') ? ' ' : '') + seg;
+        }
+        return out.trim();
+      }
+      // 字面标量：保留行内换行
+      return body.join('\n').trim();
     }
+
+    // ---- 单行标量 ----
+    let val = raw.trim();
+    if (val.length > 1 &&
+        ((val.startsWith('"') && val.endsWith('"')) ||
+         (val.startsWith("'") && val.endsWith("'")))) {
+      val = val.slice(1, -1);
+    }
+    return val;
   }
   return null;
 }
@@ -291,7 +314,7 @@ function cliMain() {
 }
 
 // ============================================================
-// 自检（8 个用例）
+// 自检（15 个用例：8 sanitizeDescription + 7 extractDescription）
 // ============================================================
 
 function deepEqual(a, b) {
@@ -362,6 +385,17 @@ function runSelfTest() {
     },
   ];
 
+  // ---- extractDescription 用例（块标量回归防线：禁止再派生出 "|" / ">"）----
+  const descCases = [
+    { name: 'desc-single-line', fm: 'description: 单行描述\nmode: subagent', expected: '单行描述' },
+    { name: 'desc-quoted', fm: 'description: "带引号描述"\nmode: subagent', expected: '带引号描述' },
+    { name: 'desc-literal-block', fm: 'description: |\n  第一行\n  第二行\nmode: subagent', expected: '第一行\n第二行' },
+    { name: 'desc-folded-block', fm: 'description: >\n  第一行\n  第二行\nmode: subagent', expected: '第一行 第二行' },
+    { name: 'desc-block-chomp-strip', fm: 'description: |-\n  仅一行\nmode: subagent', expected: '仅一行' },
+    { name: 'desc-block-deeper-indent', fm: 'description: |\n    深缩进行\n    第二行\nmode: subagent', expected: '深缩进行\n第二行' },
+    { name: 'desc-missing', fm: 'mode: subagent', expected: null },
+  ];
+
   let pass = 0;
   let fail = 0;
   const failures = [];
@@ -380,7 +414,22 @@ function runSelfTest() {
     }
   }
 
-  process.stderr.write(`\n[SUMMARY] ${pass}/${cases.length} pass, ${fail} fail\n`);
+  for (const tc of descCases) {
+    const actual = extractDescription(tc.fm);
+    if (actual === tc.expected) {
+      pass++;
+      process.stderr.write(`[PASS] ${tc.name}\n`);
+    } else {
+      fail++;
+      failures.push(tc.name);
+      process.stderr.write(`[FAIL] ${tc.name}\n`);
+      process.stderr.write(`  expected: ${JSON.stringify(tc.expected)}\n`);
+      process.stderr.write(`  actual:   ${JSON.stringify(actual)}\n`);
+    }
+  }
+
+  const total = cases.length + descCases.length;
+  process.stderr.write(`\n[SUMMARY] ${pass}/${total} pass, ${fail} fail\n`);
 
   if (fail > 0) {
     process.stderr.write(`[FAIL] failed cases: ${failures.join(', ')}\n`);

@@ -1,6 +1,6 @@
-// capability-detector.test.mjs — U4: capability-detector.mjs 单测（node --test，零源码改动）
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+// capability-detector.test.mjs — U4: capability-detector.mjs 单测（零源码改动）
+// 跑法：node lifecycle/runtime/__tests__/capability-detector.test.mjs（底座 scripts/lib/test-harness.mjs）
+import { test, assert } from '../../../scripts/lib/test-harness.mjs';
 import { detectCapabilities } from '../capability-detector.mjs';
 
 test('空意图 + 空文件 → 默认能力集', () => {

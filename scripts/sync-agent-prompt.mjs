@@ -44,6 +44,73 @@ function agentNameFromFile(filename) {
   return filename.replace(/\.md$/, '');
 }
 
+// ===== 就地改写（保留 kilo.json 原有排版）=====
+//
+// 历史缺陷：写回时用 JSON.stringify(kilo)（无缩进）把整个文件压成 1 行，
+// 部署副本 kilo.json 变成 6KB 单行——人工不可读、git 不可 diff、漂移无法取证。
+// 本同步器只改 agent.<name>.prompt 一个字符串字面量，其余字节一律不动：
+// 直接在原文本上定位 → 替换 → 再 JSON.parse 复验，格式与内容双保。
+
+/** 从 openIdx（指向 `{`）起做括号配对扫描，返回匹配 `}` 之后的下标；字符串内的括号不计。 */
+function findBlockEnd(text, openIdx) {
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = openIdx; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return i + 1; }
+  }
+  return -1;
+}
+
+const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * 在 kilo.json 原文本中把 agent.<agentName>.prompt 的值替换为 newPrompt。
+ * @returns {{ok:true,text:string}|{ok:false,reason:string}}
+ */
+function replacePromptInPlace(text, agentName, newPrompt) {
+  const ak = /"agent"\s*:\s*\{/.exec(text);
+  if (!ak) return { ok: false, reason: 'kilo.json 无 "agent" 段' };
+  const agentOpen = ak.index + ak[0].length - 1;
+  const agentEnd = findBlockEnd(text, agentOpen);
+  if (agentEnd < 0) return { ok: false, reason: '"agent" 段括号不配对' };
+
+  const nameRe = new RegExp('"' + reEscape(agentName) + '"\\s*:\\s*\\{');
+  const nm = nameRe.exec(text.slice(agentOpen, agentEnd));
+  if (!nm) return { ok: false, reason: 'agent 段内未找到 "' + agentName + '"' };
+  const blkOpen = agentOpen + nm.index + nm[0].length - 1;
+  const blkEnd = findBlockEnd(text, blkOpen);
+  if (blkEnd < 0) return { ok: false, reason: 'agent.' + agentName + ' 括号不配对' };
+
+  const pm = /"prompt"\s*:\s*"/.exec(text.slice(blkOpen, blkEnd));
+  if (!pm) return { ok: false, reason: 'agent.' + agentName + ' 无 prompt 字段' };
+  const valStart = blkOpen + pm.index + pm[0].length;
+
+  let i = valStart;
+  let esc = false;
+  while (i < blkEnd) {
+    const c = text[i];
+    if (esc) esc = false;
+    else if (c === '\\') esc = true;
+    else if (c === '"') break;
+    i++;
+  }
+  if (i >= blkEnd) return { ok: false, reason: 'agent.' + agentName + ' prompt 字符串未闭合' };
+
+  // JSON.stringify(s).slice(1,-1) = 已转义、不含外层引号的字符串字面量内容
+  const escaped = JSON.stringify(newPrompt).slice(1, -1);
+  return { ok: true, text: text.slice(0, valStart) + escaped + text.slice(i) };
+}
+
 // ===== 主流程 =====
 
 const args = process.argv.slice(2);
@@ -96,6 +163,7 @@ let totalWarnings = 0;
 let sanitizedCount = 0;
 const drifts = [];
 const forceOverwrites = []; // --force 模式下将被覆盖的 agent 列表
+const pendingWrites = [];  // 待就地写回的 { name, value }（保格式，不重序列化整文件）
 
 for (const [name, desc] of descriptions) {
   const agentEntry = agents[name];
@@ -131,6 +199,7 @@ for (const [name, desc] of descriptions) {
         console.log(`[FORCE-DRIFT] ${name}: description ≠ prompt after sanitize (descLen=${desc.length} vs promptLen=${currentPrompt.length}, warnings=${san.warnings.length})`);
       } else {
         agentEntry.prompt = expectedPrompt;
+        pendingWrites.push({ name, value: expectedPrompt });
         updated++;
         forceOverwrites.push({ name, current: currentPrompt.length, next: expectedPrompt.length });
         if (verbose) {
@@ -151,6 +220,7 @@ for (const [name, desc] of descriptions) {
         console.log(`[DRIFT] ${name}: desc(${desc.length}) != prompt(${currentPrompt.length}) after sanitize, ${san.warnings.length} warning(s)`);
       } else {
         agentEntry.prompt = expectedPrompt;
+        pendingWrites.push({ name, value: expectedPrompt });
         updated++;
         if (verbose) console.log(`[SYNC] ${name}: prompt 已更新 (${currentPrompt.length} -> ${expectedPrompt.length}), warnings=${san.warnings.length}`);
       }
@@ -160,11 +230,35 @@ for (const [name, desc] of descriptions) {
   }
 }
 
-// 4. 写回 kilo.json（非 --check 模式且有更新时）—— 原子化写 + 备份保留 3 份
+// 4. 写回 kilo.json（非 --check 模式且有更新时）—— 就地替换 + 原子化写 + 备份保留 3 份
 if (!checkOnly && updated > 0) {
-  // 不缩进（compact JSON）保持单行数组原格式，无 BOM，末尾换行
-  // 避免 JSON.stringify(kilo, null, 2) 把单行数组 ['a','b'] 展开为多行污染工作区
-  const output = JSON.stringify(kilo) + '\n';
+  // 保格式：只替换 agent.<name>.prompt 的字符串字面量，其余字节（缩进/换行/键序）原样保留。
+  // 无 BOM，末尾换行维持原状。
+  let output = kiloRaw;
+  for (const w of pendingWrites) {
+    const r = replacePromptInPlace(output, w.name, w.value);
+    if (!r.ok) {
+      console.error(`\n[FAIL] 就地写入 agent.${w.name}.prompt 失败: ${r.reason}`);
+      console.error('       kilo.json 未被修改。请检查文件格式后重跑。');
+      process.exit(1);
+    }
+    output = r.text;
+  }
+  // 复验：就地替换后必须仍是合法 JSON，且 prompt 值与预期一致
+  try {
+    const reparsed = JSON.parse(output);
+    for (const w of pendingWrites) {
+      const entry = reparsed.agent && reparsed.agent[w.name];
+      if (!entry || entry.prompt !== w.value) {
+        throw new Error(`agent.${w.name}.prompt 复验不一致`);
+      }
+    }
+  } catch (e) {
+    console.error(`\n[FAIL] 就地替换后 kilo.json 校验失败: ${e.message}`);
+    console.error('       kilo.json 未被修改。');
+    process.exit(1);
+  }
+  if (!output.endsWith('\n')) output += '\n';
   const tmpPath = `${kiloJsonPath}.tmp`;
   // ISO 精确到秒 + 6 位 hrtime.bigint 后缀, 同秒多次写不覆盖
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '-' + process.hrtime.bigint().toString(36).slice(-6);

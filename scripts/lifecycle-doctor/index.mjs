@@ -5,9 +5,14 @@
 //
 // 两种模式（正交，互不依赖）：
 //   默认模式（静态）：校验 lifecycle/ + agent/ 文件互相一致
-//     node scripts/lifecycle-doctor/index.mjs [--verbose]
+//     node scripts/lifecycle-doctor/index.mjs [--verbose] [--root <dir>]
 //   --runtime 模式（运行时探针）：扫描 $TEMP/kilo/task_context_*.json
 //     node scripts/lifecycle-doctor/index.mjs --runtime [--verbose]
+//
+// --root <dir>：把校验基准从「脚本所在仓库」切到任意目录（部署副本 ~/.config/kilo）。
+//   历史缺陷：ROOT 硬编码为脚本自身位置，install 后的 post-sync doctor 永远只校验源码仓库，
+//   部署副本从不被校验 → 漂移全绿假象（曾导致运行时跑的是拆分前的旧 conductor.md）。
+//   install.ps1 / install.sh 必须在占位符替换后追加一次 `--root <target>` 校验。
 //
 // 架构正交三层：
 //   lifecycle/graph.yaml        纯拓扑（节点 id/type/executor/on_fail + 边）
@@ -35,9 +40,28 @@ import { run as runAgentRuntime } from './checks/agent-runtime.mjs';
 import { run as runGuardWiring } from './checks/guard-wiring.mjs';
 import { run as runI18nCoverage } from './checks/i18n-coverage.mjs';
 import { run as runKbHealth } from './checks/kb-health.mjs';
+import { run as runPromptSync } from './checks/prompt-sync.mjs';
+import { run as runAnchorRefs } from './checks/anchor-refs.mjs';
+import { run as runMarkdownHygiene } from './checks/markdown-hygiene.mjs';
+import { run as runMcpSanity } from './checks/mcp-sanity.mjs';
+import { run as runDerivationsFreshness } from './checks/derivations-freshness.mjs';
+import { run as runCommandPathHygiene } from './checks/command-path-hygiene.mjs';
+import { run as runUnitTests } from './checks/unit-tests.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..', '..');
+const SELF_ROOT = path.resolve(__dirname, '..', '..');
+
+// --root <dir> | --root=<dir>：校验基准目录，默认脚本所在仓库根
+function parseRoot(argv) {
+  const i = argv.indexOf('--root');
+  if (i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--')) return path.resolve(argv[i + 1]);
+  for (const a of argv) {
+    if (a.startsWith('--root=')) return path.resolve(a.slice('--root='.length));
+  }
+  return SELF_ROOT;
+}
+
+const ROOT = parseRoot(process.argv);
 const SCRIPTS_DIR = path.join(ROOT, 'scripts');
 const GRAPH_PATH = path.join(ROOT, 'lifecycle', 'graph.yaml');
 const CONFIG_PATH = path.join(ROOT, 'lifecycle', 'config.yaml');
@@ -142,15 +166,25 @@ runRoleConfig(ctx);
 runSemantic(ctx);
 await runMatrixDocsKilojsonScripts(ctx);
 runDecoupleAudit(ctx);
+runMcpSanity(ctx);
 runPathNormalize(ctx);
+runAnchorRefs(ctx);
+runMarkdownHygiene(ctx);
 runEncodingSafety(ctx);
 runSanitizeSelfTest(ctx);
 runAgentRuntime(ctx);
 runGuardWiring(ctx);
+runDerivationsFreshness(ctx);
+runCommandPathHygiene(ctx);
 
 // i18n-coverage is async; await before final report.
 await runI18nCoverage(ctx);
 runKbHealth(ctx);
+// prompt-sync is async (动态 import sanitize 工具); await before final report.
+await runPromptSync(ctx);
+// unit-tests 真跑 lifecycle/runtime/__tests__/*.test.mjs（spawnSync 4 子进程 ~0.5s）：
+// 放最后且 --fast 直接跳过，保证不压 init-gate 热路径。
+runUnitTests(ctx);
 
 // 收尾：缓存 / 同步 prompt / 报告
 report(cf, VERBOSE, { fullMode: FULL_MODE, fastMode: FAST_MODE, syncPrompt: SYNC_PROMPT, scriptsDir: SCRIPTS_DIR, root: ROOT, quiet: QUIET });

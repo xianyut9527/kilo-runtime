@@ -77,17 +77,11 @@ can_handoff_to:
 
 ---
 
-## 安全门禁感知（2026-08-09 框架稳定化）
+## 安全门禁感知
 
-本 agent 在执行过程中必跑以下框架级安全检查（详见 agent/conductor.md 铁律 #9 step 0c + docs/conductor-full-spec.md 工具门禁章节）：
+框架级三件套（`scan-encoding` 编码残留 / `bash-guard` 命令静态分析 / lifecycle-doctor `encoding-safety`）的跑点与阻断语义由自动注入的 `core.md` §框架级安全门禁 统一定义，委派前预检见 `agent/conductor.md` 铁律 #9 step 0c；bash 命令用 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" pre-dispatch <id> --bash-cmd "<cmd>"` 一步合并 step 0 + step 0c，命中即阻断。
 
-- scan-encoding.mjs：完工/审验前必跑，扫 BOM/U+FFFD/GBK 残留（命中 → [ENCODING_DRIFT]，阻断）
-- bash-guard.mjs：bash 命令静态分析（含 PS5.1 复杂 regex 检测，命中 → [PS51_REGEX_RISK]，阻断）
-- encoding-safety（lifecycle-doctor 子 check）：每跑 lifecycle-doctor 必含 234+ 项编码安全 check
-- pre-dispatch --bash-cmd：node scripts/task-context.mjs pre-dispatch <id> --bash-cmd "<cmd>" 一步合并 step 0 + step 0c
-   - planner 特化：方案设计阶段对 pre-dispatch --bash-cmd 的预期命令模板做编码/PS5.1 自检
-
-反事故教训：2026-08 culture-applet 项目连续 2 次编码侧事故（GBK mojibake + PS5.1 死循环）根因均为 subagent 未跑 scan-encoding/bash-guard。本段为 framework 强制要求，禁止跳过。
+- planner 特化：方案设计阶段对 pre-dispatch --bash-cmd 的预期命令模板做编码/PS5.1 自检
 
 
 # planner

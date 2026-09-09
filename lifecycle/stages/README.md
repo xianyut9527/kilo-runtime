@@ -47,7 +47,7 @@ lifecycle/
 > - `hook: review` review hooks：reviewer（trigger: afterPass，verify 全 PASS 后触发；检查代码质量/架构/SCOPE_CREEP）
 > - **循环逻辑**：检查（verify/review）发现 FAIL → 自动触发 fix 修复 → 代码变化 → 重新 verify → 直到全部 PASS 才离开 QUALITY 进入 DELIVERING
 > - **顺序由 hook 类型定义**：verify → fix → review → fix 循环是框架内置的，不需要绝对编号
-> - **同 hook 类型默认并行启动**：无 `after` 时默认并行启动（按 agent 文件名字典序组织为并行组，单条消息并行发起；共享零输出硬门；详见 `agent/conductor.md` §智能体加载规则）；需要顺序时声明 `after: [agent-name]`（有 after 的按拓扑排序串行）
+> - **同 hook 类型默认并行启动**：无 `after` 时默认并行启动（按 agent 文件名字典序组织为并行组，单条消息并行发起；共享零输出硬门；详见 `agent/conductor.md` §全局默认并行策略）；需要顺序时声明 `after: [agent-name]`（有 after 的按拓扑排序串行）
 > - **熔断**：`config.yaml hooks.quality.max_total_cycles`（唯一机械熔断阈值，按 `quality.round` 判定）
 
 > 注：角色名（如 `verifier`）是契约标识，实际挂载由 `agent/*.md` frontmatter `mount` 自注册决定。`config.agents` 开关见 `lifecycle/config.yaml` `tier_defaults`。
@@ -85,10 +85,10 @@ mount:
 #   - at: CHECKING                    # 兼容：自动映射为 QUALITY hook: verify
 ```
 
-- **同挂载点多个智能体**：多个 agent .md frontmatter 声明同一 `at` + `hook` 即可；都省略 `after` 时默认并行启动（按 agent 文件名字典序组织为并行组，单条消息并行发起；共享零输出硬门；详见 `agent/conductor.md` §智能体加载规则）。需显式依赖链时声明 `after: [agent-name]`。
+- **同挂载点多个智能体**：多个 agent .md frontmatter 声明同一 `at` + `hook` 即可；都省略 `after` 时默认并行启动（按 agent 文件名字典序组织为并行组，单条消息并行发起；共享零输出硬门；详见 `agent/conductor.md` §全局默认并行策略）。需显式依赖链时声明 `after: [agent-name]`。
 - **顺序调整**：声明 `after: [agent-name]`——只引用前驱 agent 名（相对依赖），**零改其他文件**。框架自动拓扑排序，检测环依赖报错。
 - **`hook` 类型**：`verify`（验证，检查代码质量）、`review`（审查，检查代码风格/架构）、`fix`（修复，自动修复问题）；hook 类型定义执行顺序，不需要绝对编号
-- **`after` 语义**：声明在哪些 agent 之后执行（类似 React hooks 声明顺序）；省略 = 并行组成员（无 after 依赖时单条消息并行发起；按 agent 文件名字典序组织；共享零输出硬门，详见 `agent/conductor.md` §智能体加载规则）
+- **`after` 语义**：声明在哪些 agent 之后执行（类似 React hooks 声明顺序）；省略 = 并行组成员（无 after 依赖时单条消息并行发起；按 agent 文件名字典序组织；共享零输出硬门，详见 `agent/conductor.md` §全局默认并行策略）
 - **`trigger` 语义**：`onChange`（deps 变化时触发，默认）、`afterPass`（前置 hooks 全 PASS 后触发）、`onFail`（前置 hooks 任一 FAIL 时触发）
 - **`when` 条件语法**：`config.agents.<key>` 由 conductor 在 INIT 按 `lifecycle/config.yaml` 的 `tier_defaults` + 用户显式覆盖写入；无 `when` = 恒定挂载（图拓扑可达即加载——推荐默认，新增智能体零配置）。
 - **`tiers` 定级挂载语法**：`tiers: [T1, T2]` 替代 when 开关，dispatch 前按 `sizing.tier ∈ tiers` 求值（如 plan-reviewer `tiers: [T1, T2]`——T1/T2 均开启方案审查）；when 与 tiers 互斥（lifecycle-doctor B4 校验）。
@@ -103,7 +103,7 @@ mount:
 | 引入新角色并设为某阶段必配 | 丢 agent 文件 + 该阶段 `stages/<id>.md` frontmatter `required_roles` 加一行（阶段语义变化，内聚；**graph.yaml 仍不动**） |
 | 多智能体履行同一角色 | 新 agent frontmatter 显式 `role: <角色名>`（缺省 role = 文件名）；required_roles 校验按 role 匹配 |
 | 挂载到任意阶段 | frontmatter `mount` 加一条 `{at: <STAGE>}`（主槽）或 `pre:<STAGE>` / `post:<STAGE>`；启动/收尾：`on:bootstrap` / `on:done`；可选视角加 `on_fail: degrade` |
-| 一槽挂载多个 | 多个 agent .md frontmatter 声明同一 `at` + `hook`；都省略 `after` 默认并行启动（共享零输出硬门；详见 `agent/conductor.md` §智能体加载规则） |
+| 一槽挂载多个 | 多个 agent .md frontmatter 声明同一 `at` + `hook`；都省略 `after` 默认并行启动（共享零输出硬门；详见 `agent/conductor.md` §全局默认并行策略） |
 | 调整执行顺序 | frontmatter mount 条目声明 `after: [agent-name]`（相对依赖，只引用前驱；框架自动 topo-sort） |
 | 新增阶段 | ① 丢 `lifecycle/stages/<name>.md`（frontmatter：description/token_budget + 非内建阶段需 `required_roles`；文件名派生节点 ID）② `graph.yaml` 加 node（type/executor/on_fail）+ edges（语义 ID，无占号问题）——三挂载点自动派生 |
 | 改阶段失败策略 | `graph.yaml` 节点 `on_fail` 字段改值（abort/retry_once/degrade/escalate/pause）；派发动作见 `agent/conductor.md` §异常处理派发表 |

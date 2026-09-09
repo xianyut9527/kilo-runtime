@@ -3,14 +3,16 @@ description: DELIVERING phase main slot - conductor built-in output final delive
 token_budget: 4000 # token_budget 仅用于 executor 调度预算，非输出长度限制；DELIVERING 输出不设上限
 executor: conductor
 pre_gate:
-  - script: "node scripts/flow-audit.mjs TASK_ID"
+  - script: "node ${KILO_CONFIG_DIR}/scripts/flow-audit.mjs TASK_ID"
     exit: 0
     on_fail: "[FLOW_AUDIT_FAIL] Block DELIVERING output, fallback to missing stages"
-  - script: "node scripts/bash-guard.mjs LAST_BASH"
+  - script: "node ${KILO_CONFIG_DIR}/scripts/bash-guard.mjs LAST_BASH"
     exit: 0
     on_fail: "[BASH_WRITE_BLOCKED] Last bash command contains write intent, block delivery and alert"
-# pre_gate is post-hoc audit (after-the-fact), real-time interception requires Kilo framework upgrade (tool call layer auto-insert gate).
-# Current solution = config layer hardening + audit fallback, maximum available solution.
+# pre_gate 语义（2026-09 校准）：这是**声明式清单**，由 conductor 在 DELIVERING 入口逐条手工执行；
+# 框架不会在工具调用层自动插门，因此它本质是事后审计（after-the-fact），实时拦截需 Kilo 框架升级。
+# 当前方案 = 配置层加固 + 审计兜底；实时拦截以外的流转不变量已由 transition-check 在各跳机械强制。
+# scripts/delivery-audit.mjs **不在本清单内**（它是人工事后自查/排障入口，与上面两项及各跳门控重复，不要接进来）。
 ---
 
 # conductor built-in phase (DELIVERING same as INIT, main slot occupied by conductor, no task launch)

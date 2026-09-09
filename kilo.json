@@ -58,7 +58,7 @@
     "deep-analyzer": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
-      "prompt": "独立多模型深度分析器。内部封装 3 路 analyst 三角验证 + synthesizer 融合 + critic 反向审计，对任意复杂问题产出高置信度分析报告。输出契约见 .kilo/instructions/output-schema.md。"
+      "prompt": "独立多模型深度分析器（deep-analyzer）。不参与任务生命周期，作为独立能力按需调用。内部封装 3 路 analyst 三角验证 + synthesizer 融合 + critic 反向审计，用于分析复杂问题（架构评审/根因分析/方案对比/技术选型/代码审查/配置审计）。触发：用户直接 invoke（用多模型分析 X / 深度分析 X / 多角度审查 X）。输出契约见 .kilo/instructions/output-schema.md。"
     },
     "analyst-1": {
       "mode": "subagent",
@@ -78,7 +78,7 @@
     "analyst-synthesizer": {
       "mode": "subagent",
       "model": "hx/kimi-k2.6",
-      "prompt": "多模型分析融合汇总器。在三路 analyst 全部完成后读取其独立 trials，去重、求同、标异，产出统一 synthesis。输出契约见 .kilo/instructions/output-schema.md。"
+      "prompt": "多模型分析融合汇总器。在三路 analyst（analyst-1/analyst-2/analyst-3）全部完成后读取三份独立 trials，去重、求同、标异，融合成统一 synthesis。输出契约见 .kilo/instructions/output-schema.md。"
     },
     "analyst-critic": {
       "mode": "subagent",
@@ -102,7 +102,7 @@
     "gitnexus": {
       "type": "local",
       "command": ["gitnexus", "mcp"],
-      "enabled": true,
+      "enabled": false,
       "timeout": 30000
     },
     "playwright": {
@@ -114,7 +114,7 @@
     "codegraph": {
       "type": "local",
       "command": [
-        "E:/wj/000/codegraph-win32-x64/bin/codegraph.cmd",
+        "codegraph",
         "serve",
         "--mcp"
       ],
@@ -128,8 +128,8 @@
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "baseURL": "https://xianyu1.natapp4.cc/v1",
-        "timeout": 1800000,
-        "chunkTimeout": 1800000
+        "timeout": 600000,
+        "chunkTimeout": 120000
       },
       "models": {
         "deepseek-v4-flash": {

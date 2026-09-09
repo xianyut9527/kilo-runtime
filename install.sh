@@ -21,11 +21,14 @@ case "${TARGET_DIR}" in
 esac
 
 # Items excluded only at the repo root level (to avoid clobbering same-named legit files)
+# 'reports' = 仓库根的历史审计归档（交付物，归档在仓库即够），运行时零读取方；
+# 用 ROOT_ONLY 而非 RECURSIVE，是为了不误伤任意层级可能同名的目录。
 ROOT_ONLY_EXCLUDE=(
     "install.ps1"
     "install.sh"
     "README.md"
     "LICENSE"
+    "reports"
 )
 
 # Items excluded at all levels (must stay in sync with install.ps1)
@@ -49,6 +52,53 @@ RECURSIVE_EXCLUDE=(
     "_test_target_orig"
     ".mcp-tmp/"
 )
+
+# Runtime data owned by the DEPLOYED copy, not by the repo. Keep in sync with install.ps1
+# ($RuntimeDataDirs / $RuntimeDataFiles) and scripts/deploy-drift-check.mjs.
+#
+# Why this exists: the installer purges TARGET before copying, while kb.mjs add and
+# lessons-recorder.mjs write into TARGET at runtime, so every install silently destroyed the
+# accumulated cross-project experience. These paths are backed up before the purge and restored
+# afterwards for files the repo does NOT own (repo wins for everything else; promote runtime
+# additions into the repo so they survive a machine change).
+RUNTIME_DATA_DIRS=("knowledge-base" "docs/lessons")
+RUNTIME_DATA_FILES=(".bash-permission-migrated" "kilo.jsonc")
+BACKUP_DIR=""
+
+backup_runtime_data() {
+    [ -d "${TARGET_DIR}" ] || return 0
+    BACKUP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/kilo_backup_XXXXXXXX")"
+    local rd rf
+    for rd in "${RUNTIME_DATA_DIRS[@]}"; do
+        [ -d "${TARGET_DIR}/${rd}" ] || continue
+        mkdir -p "${BACKUP_DIR}/${rd}"
+        cp -R "${TARGET_DIR}/${rd}/." "${BACKUP_DIR}/${rd}/" 2>/dev/null || true
+    done
+    for rf in "${RUNTIME_DATA_FILES[@]}"; do
+        [ -f "${TARGET_DIR}/${rf}" ] || continue
+        cp "${TARGET_DIR}/${rf}" "${BACKUP_DIR}/" 2>/dev/null || true
+    done
+    echo "[BACKUP] runtime data (${RUNTIME_DATA_DIRS[*]}) -> ${BACKUP_DIR}"
+    return 0
+}
+
+restore_runtime_data() {
+    if [ -z "${BACKUP_DIR}" ] || [ ! -d "${BACKUP_DIR}" ]; then return 0; fi
+    local restored=0 f rel dst
+    while IFS= read -r f; do
+        rel="${f#"${BACKUP_DIR}"/}"
+        dst="${TARGET_DIR}/${rel}"
+        if [ ! -e "${dst}" ]; then
+            mkdir -p "$(dirname "${dst}")"
+            cp "${f}" "${dst}"
+            restored=$((restored + 1))
+        fi
+    done < <(find "${BACKUP_DIR}" -type f)
+    if [ "${restored}" -gt 0 ]; then
+        echo "[RESTORE] ${restored} runtime-only file(s) preserved (KB / lessons / markers)"
+    fi
+    return 0
+}
 
 COPIED_FILES=0
 COPIED_DIRS=0
@@ -140,6 +190,7 @@ for item in "${RECURSIVE_EXCLUDE[@]}"; do
 done
 
 # Use rsync for the main path; fall back to cp loop if rsync is missing.
+backup_runtime_data
 if command -v rsync &> /dev/null; then
     purge_target
     # --info=stats2 prints a summary block including
@@ -165,14 +216,18 @@ else
     purge_target
     copy_source_tree "${SOURCE_DIR}" "${TARGET_DIR}" 0
 fi
+restore_runtime_data
 
-# Post-sync framework health self-check (mirrors install.ps1 L115-121)
+# Post-sync framework health self-check (repo side; the deployed copy is gated at the end of this
+# script with `--root ${TARGET_DIR}`). Historical defect: only ${SOURCE_DIR} was checked while
+# lifecycle-doctor's ROOT was hardcoded to the script location, so the deployed copy was never
+# validated and drift looked green.
 if command -v node >/dev/null 2>&1; then
   if ! node "${SOURCE_DIR}/scripts/lifecycle-doctor/index.mjs" > "${TARGET_DIR}/.sync-doctor.log" 2>&1; then
-    echo "[SYNC] FAIL: post-sync lifecycle-doctor exited $?. See ${TARGET_DIR}/.sync-doctor.log" >&2
+    echo "[SYNC] FAIL: post-sync lifecycle-doctor (repo) failed. See ${TARGET_DIR}/.sync-doctor.log" >&2
     exit 1
   fi
-  echo "[SYNC] OK: post-sync lifecycle-doctor passed"
+  echo "[SYNC] OK: post-sync lifecycle-doctor passed (repo)"
 fi
 
 # Note: agents/ compat copy intentionally removed.
@@ -180,54 +235,27 @@ fi
 # which makes agent routing unstable.
 # See https://kilo.ai/docs/configure/agents
 
-# Critical file existence check
-CRITICAL_FILES=(
-    "kilo.json"
-    "AGENTS.md"
-    ".kilo/instructions/core.md"
-    ".kilo/instructions/workflow-core.md"
-    ".kilo/instructions/reflection.md"
-    "agent/conductor.md"
-    "agent/verifier.md"
-    "lifecycle/graph.yaml"
-    "lifecycle/config.yaml"
-    "lifecycle/stages/README.md"
-    "scripts/lifecycle-doctor/checks/encoding-safety.mjs"
-    "scripts/scan-encoding.mjs"
-    "scripts/bash-guard.mjs"
-    "scripts/sanitize-agent-description.mjs"
-    "scripts/sync-agent-prompt.mjs"
-    "scripts/validate-agent-prompt.mjs"
-    "knowledge-base/index.md"
-    "knowledge-base/fixes/FX-001.md"
-    "scripts/kb.mjs"
-)
-
-MISSING=()
-for f in "${CRITICAL_FILES[@]}"; do
-    if [ ! -e "${TARGET_DIR}/${f}" ]; then
-        MISSING+=("$f")
-    fi
-done
-
-if [ ${#MISSING[@]} -gt 0 ]; then
-    echo "[SYNC] FAIL: missing critical files: ${MISSING[*]}"
-    exit 1
-fi
+# Critical file existence check removed: the hand-maintained CRITICAL_FILES list silently missed
+# entries (.kilo/instructions/conductor-dispatch-sop.md was never listed, so its absence in the
+# deployed copy went unnoticed). Superseded by scripts/deploy-drift-check.mjs at the end of this
+# script, which compares every file (strictly stronger).
 
 # UTF-8 note: bash inherits locale from the environment; if you see CJK mojibake,
 # add `export LANG=en_US.UTF-8` (or your locale) to your shell profile.
 
 # .md file path placeholder substitution
-# agent/*.md and .kilo/instructions/*.md contain ${KILO_CONFIG_DIR} placeholders
-# in command examples (e.g. node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs").
+# agent/*.md, .kilo/instructions/*.md and lifecycle/stages/*.md contain ${KILO_CONFIG_DIR}
+# placeholders in command examples (e.g. node "${KILO_CONFIG_DIR}/scripts/transition-check.mjs").
 # These must be replaced with the actual global config directory path so that
 # conductor and other agents can execute lifecycle scripts from any project.
 # ${HOME} in .md files is left as-is because bash/PowerShell resolve it at runtime.
+# 注意：本清单与 install.ps1 的 $MdFilePatterns 必须保持一致（事实源双处声明）；
+#       新增运行时文档不同步这里，占位符会原样残留到运行时，
+#       lifecycle-doctor checks/command-path-hygiene.mjs 会 FAIL。
 echo ""
 echo "Substituting .md file path placeholders..."
 MD_REPLACED=0
-for md_dir in "${TARGET_DIR}/agent" "${TARGET_DIR}/.kilo/instructions"; do
+for md_dir in "${TARGET_DIR}/agent" "${TARGET_DIR}/.kilo/instructions" "${TARGET_DIR}/lifecycle/stages"; do
     if [ -d "${md_dir}" ]; then
         for md_file in "${md_dir}"/*.md; do
             [ -f "${md_file}" ] || continue
@@ -291,8 +319,28 @@ else
     echo "[WARN] sync-agent-prompt.mjs not found at ${SYNC_SCRIPT}, skip"
 fi
 
+# ---- Deployed-copy gates: must run after placeholder substitution + prompt sync (both rewrite
+# target content). Mirrors install.ps1.
+if command -v node >/dev/null 2>&1; then
+    echo ""
+    echo "Validating deployed copy (doctor --root target)..."
+    if ! node "${TARGET_DIR}/scripts/lifecycle-doctor/index.mjs" --root "${TARGET_DIR}" > "${TARGET_DIR}/.deploy-doctor.log" 2>&1; then
+        echo "[SYNC] FAIL: deployed-copy lifecycle-doctor failed. See ${TARGET_DIR}/.deploy-doctor.log" >&2
+        exit 1
+    fi
+    echo "[SYNC] OK: deployed-copy lifecycle-doctor passed"
+
+    echo ""
+    echo "Checking deploy drift (repo vs target)..."
+    if ! node "${TARGET_DIR}/scripts/deploy-drift-check.mjs" --repo "${SOURCE_DIR}" --target "${TARGET_DIR}"; then
+        echo "[SYNC] FAIL: deploy drift detected (see [MISSING]/[DIFF] above)" >&2
+        exit 1
+    fi
+    echo "[SYNC] OK: no deploy drift"
+fi
+
 echo ""
-echo "[SYNC] OK | files=${COPIED_FILES} dirs=${COPIED_DIRS} | critical=${#CRITICAL_FILES[@]}/${#CRITICAL_FILES[@]} | target=${TARGET_DIR}"
+echo "[SYNC] OK | files=${COPIED_FILES} dirs=${COPIED_DIRS} | drift=0 | target=${TARGET_DIR}"
 echo ""
 echo "Please restart Kilo in your projects for changes to take effect."
 exit 0

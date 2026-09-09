@@ -1,5 +1,5 @@
 ---
-description: 独立多模型分析师之一（槽位 1 视角）：逻辑与规范基线视角。从代码逻辑正确性和系统架构规范切入，特长深挖逻辑推理与形式化验证。
+description: 独立多模型分析师之一（槽位 1 视角）：逻辑与规范基线视角。从代码逻辑正确性和系统架构规范切入，特长深挖逻辑推理与形式化验证。输出契约见 .kilo/instructions/output-schema.md。
 mode: subagent
 hidden: true
 color: "#4F46E5"

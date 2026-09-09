@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 // delivery-audit.mjs
-// 交付前合规审计器（A 层第一门，机械断言，模型无关）——DELIVERING 阶段 pre_gate
-// 必跑项。读 task_context（$TEMP/kilo/task_context_<id>.json），按 8 个检查项
-// 机械判定定级/意图/流程/派发/验收完备性，输出结果 JSON + 退出码硬门。
+// 交付合规审计器（事后自查，机械断言，模型无关）。读 task_context
+// （$TEMP/kilo/task_context_<id>.json），按 8 个检查项机械判定定级/意图/流程/派发/验收完备性。
 //
-// 定位：与 acceptance-check.mjs / diff-boundary-check.mjs 同一层（机械门），
-// 由 lifecycle/stages/delivering.md pre_gate 在 DELIVERING 阶段入口自动调用。
+// 定位（2026-09 校准）：**不在流转链路上**。transition-check.mjs 已在各跳机械强制了
+// 本审计器的大部分不变量——EXECUTING 出口产物非空（MISSING_EXECUTION_PRODUCT）、
+// QUALITY→DELIVERING verification.forward 非空（MISSING_VERIFICATION_PRODUCT）、
+// INIT 出口 T0/T1 强度合格、DELIVERING→DONE KB 回执。所以本脚本是**人工事后自查 / 排障
+// 入口**（怀疑 task_context 被手工改过、或跳步走完想看全貌），不是交付前置门。
+// 往流转链路里再接一次 = 重复审计已门控的不变量 + 每任务多一个白耗回合，不要接。
+// `lifecycle/stages/delivering.md` 的 pre_gate 段是声明式清单（由 conductor 在入口按清单
+// 手工执行，框架不会在工具调用层自动插门），其中不含本脚本。
+// 被流转链路复用的只有 checkT0Eligibility / checkT1StrengthEligibility（transition-check import）。
 // 仅使用 Node 内置模块（node:fs / node:path / node:os / node:url）。
 //
 // 用法（CLI）：
@@ -16,7 +22,7 @@
 //   1 = 至少一项 FAIL
 //   2 = 参数错误
 //
-// 也可被 import（quality-gate 等聚合器复用）：
+// 也可被 import：
 //   import { checkDeliveryAudit } from './delivery-audit.mjs';
 //   const r = checkDeliveryAudit(taskId); // {results, exitCode}
 
@@ -32,8 +38,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // ============================================================
 
 // 逻辑指示词：T0 任务应只处理机械/单文件改动；命中以下词 → 暗示业务逻辑，疑应升 T1
+// 只收录「不会作为无关词子串出现」的词：裸 includes() 匹配下，单字条目会顺手误命中
+// （旧表里的 '当' 命中 当前/自动/当然/恰当，'if' 命中 config），等于任何技术提问都必命中。
 export const LOGIC_INDICATORS_ZH = [
-  '如果', '当', '条件', '回显', '联动', '判断', '逻辑', '处理', '计算',
+  '如果', '假如', '否则', '若是', '条件', '回显', '联动', '判断', '逻辑', '处理', '计算',
   '匹配', '校验', '验证', '转换', '映射', '调用', '请求', '接口', '方法', '函数',
   '修改', '改', '增加', '删除', '新增', '实现', '重构', '优化', '修复', '调整',
   '替换', '重写', '迁移', '对接', '接入', '配置', '参数', '状态', '流程', '规则',
@@ -44,6 +52,8 @@ export const LOGIC_INDICATORS_ZH = [
   '推送', '消息', '队列', '调度', '定时', '任务', '限流', '重试', '幂等', '降级',
   '熔断', '开关', '补丁', '热更新', '灰度',
 ];
+// 英文词表只用于词边界匹配（见 EN_WORD_RE），因此保留 if / add 等短词不会误命中
+// config / address；但 'routes' 这类复数不再命中 'route'，属可接受的精度优先取舍。
 export const LOGIC_INDICATORS_EN = [
   'change', 'handler', 'method', 'function', 'if', 'when', 'condition',
   'compute', 'filter', 'match', 'validate', 'transform', 'request',
@@ -65,12 +75,35 @@ export const LOGIC_PATH_GLOBS = [
 ];
 
 
-// 各 tier 必经派发角色（T0=极速，T1=fast，T2=full；取自 lifecycle/config.yaml 默认组合）
-const REQUIRED_DISPATCH_ROLES = {
-  T0: ['coder'],
-  T1: ['planner', 'coder', 'verifier'],
-  T2: ['planner', 'coder', 'verifier', 'reviewer'],
+// 期望派发角色按 `lifecycle/stages/init.md` §路由规则 推导。M1 起 intent 与 t1_strength
+// 都参与路由，**只按 tier 判会给出假 FAIL**：INQUIRY T1/T2 经 PLANNING 后直通 DELIVERING
+// （无 coder/verifier）；EXECUTION T1 low/medium 跳过 PLANNING（无 planner）。
+const DISPATCH_REQUIRED = {
+  INQUIRY: { T0: [], T1: ['planner'], T2: ['planner'] },
+  EXECUTION: {
+    T0: ['coder'],
+    T1_DIRECT: ['coder', 'verifier'],           // t1_strength ∈ {low, medium}
+    T1_FULL: ['planner', 'coder', 'verifier'],  // t1_strength == high
+    T2: ['planner', 'coder', 'verifier', 'reviewer'],
+  },
 };
+
+/** 返回该任务形态应有的派发角色；intent/tier 未定时返回 null（调用方出 WARN）。 */
+function requiredDispatchRoles(ctx) {
+  const tier = ctx.sizing && ctx.sizing.tier;
+  const intent = effectiveIntentType(ctx);
+  if (intent === 'INQUIRY') {
+    return Object.prototype.hasOwnProperty.call(DISPATCH_REQUIRED.INQUIRY, tier) ? DISPATCH_REQUIRED.INQUIRY[tier] : null;
+  }
+  if (intent !== 'EXECUTION') return null;
+  if (tier === 'T1') {
+    const strength = ctx.sizing && ctx.sizing.t1_strength;
+    if (strength === 'low' || strength === 'medium') return DISPATCH_REQUIRED.EXECUTION.T1_DIRECT;
+    if (strength === 'high') return DISPATCH_REQUIRED.EXECUTION.T1_FULL;
+    return null; // T1 未定强度：不在这里报错，交由硬规则 6 的 T1 强度出口门判
+  }
+  return Object.prototype.hasOwnProperty.call(DISPATCH_REQUIRED.EXECUTION, tier) ? DISPATCH_REQUIRED.EXECUTION[tier] : null;
+}
 
 const POST_INIT_STAGES = ['EXECUTING', 'QUALITY', 'DELIVERING', 'DONE'];
 
@@ -115,6 +148,10 @@ function effectiveIntentType(ctx) {
 // 8 个检测函数
 // ============================================================
 
+// 英文词边界正则（预编译一次）：\b 在非 ASCII 文本旁同样成立，所以中英混排
+// （如 "kilo 配置"）不会因缺边界而漏判，也不会因词内子串而误判。
+const EN_WORD_RE = new RegExp('\\b(' + LOGIC_INDICATORS_EN.join('|') + ')\\b', 'gi');
+
 // 1. T0_ELIGIBILITY（WARN）：T0 任务意图是否暗示业务逻辑
 // 导出供 transition-check.mjs 复用（INIT 出口 T0 定级合理性校验）
 export function checkT0Eligibility(ctx) {
@@ -122,17 +159,24 @@ export function checkT0Eligibility(ctx) {
   if (tier !== 'T0') {
     return { check: 'T0_ELIGIBILITY', status: 'PASS', ok: true, detail: 'tier=' + (tier || '(空)') + '，跳过', remediation: '(无)' };
   }
+  // INQUIRY 不改文件，「逻辑性修改」在定义上不成立；本门只防「执行类被误定为 T0」。
+  // 不跳过的后果：含「配置/查询/规则」的普通提问全部被强升 T1，M1 问答极速通道形同关闭。
+  if (effectiveIntentType(ctx) === 'INQUIRY') {
+    return { check: 'T0_ELIGIBILITY', status: 'PASS', ok: true, detail: 'intent=INQUIRY（不改文件），逻辑指示词门不适用', remediation: '(无)' };
+  }
   const raw = typeof ctx.intent?.raw === 'string' ? ctx.intent.raw : '';
   if (!raw) {
     return { check: 'T0_ELIGIBILITY', status: 'WARN', ok: false, detail: 'intent.raw 为空，无法证明无逻辑性修改', remediation: '写入 intent.raw 或直接升 T1' };
   }
-  const rawLower = raw.toLowerCase();
   const hits = [];
   for (const w of LOGIC_INDICATORS_ZH) {
     if (raw.includes(w)) hits.push(w);
   }
-  for (const w of LOGIC_INDICATORS_EN) {
-    if (rawLower.includes(w)) hits.push(w);
+  EN_WORD_RE.lastIndex = 0;
+  let em;
+  while ((em = EN_WORD_RE.exec(raw)) !== null) {
+    const w = em[1].toLowerCase();
+    if (hits.indexOf(w) === -1) hits.push(w);
   }
   // U2: key_files 路径启发——路径反斜杠规范化后测 glob，任一命中即 WARN
   const keyFiles = Array.isArray(ctx.sizing?.key_files) ? ctx.sizing.key_files : [];
@@ -151,7 +195,7 @@ export function checkT0Eligibility(ctx) {
       status: 'WARN',
       ok: false,
       detail: 'intent.raw 命中逻辑指示词: [' + hits.join(', ') + ']',
-      remediation: '建议升 T1 或显式声明 custom_overrides.tier=T0 覆盖',
+      remediation: '建议升 T1；确属机械微改则写 config.custom_overrides.tier=T0 覆盖（根级 custom_overrides 不在 WRITE_MATRIX 内，写不进去）',
     };
   }
   return { check: 'T0_ELIGIBILITY', status: 'PASS', ok: true, detail: 'intent.raw 未命中逻辑指示词', remediation: '(无)' };
@@ -216,7 +260,7 @@ export function checkT1StrengthEligibility(ctx) {
       status: 'WARN',
       ok: false,
       detail: '命中强度升级信号词: [' + hits.join(', ') + ']',
-      remediation: '强制升 high 或 custom_overrides.t1_strength=low 显式覆盖',
+      remediation: '强制升 high 或 config.custom_overrides.t1_strength=low 显式覆盖',
     };
   }
   return { check: 'T1_STRENGTH_ELIGIBILITY', status: 'PASS', ok: true, detail: 'intent.raw 未命中强度升级信号词', remediation: '(无)' };
@@ -371,15 +415,15 @@ function checkTransitionLogOrder(_ctx) {
 // 6. DISPATCH_LOG_COMPLETENESS（FAIL/WARN）：必配角色是否都派发过
 function checkDispatchLog(ctx) {
   const tier = ctx.sizing?.tier;
-  if (!REQUIRED_DISPATCH_ROLES[tier]) {
+  const required = requiredDispatchRoles(ctx);
+  if (!required) {
     return {
       check: 'DISPATCH_LOG_COMPLETENESS',
       status: 'WARN',
-      detail: `tier 未知（${tier || '(空)'}），跳过 dispatch_log 校验`,
-      remediation: '补 sizing.tier 设置',
+      detail: `intent/tier/t1_strength 未定齐（intent=${effectiveIntentType(ctx) || '(空)'} tier=${tier || '(空)'}），跳过 dispatch_log 校验`,
+      remediation: '补 sizing.tier / intent.intent_type（T1 还需 sizing.t1_strength）',
     };
   }
-  const required = REQUIRED_DISPATCH_ROLES[tier];
   const log = Array.isArray(ctx.dispatch_log) ? ctx.dispatch_log : [];
   const dispatched = new Set();
   for (const e of log) {

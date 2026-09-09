@@ -80,7 +80,7 @@ grep -n "<keyword>" <file>
 
 ### 8.1 三大陷阱
 
-1. **path.join 反斜杠**:`path.join('scripts','decouple-check.mjs')` Windows = `scripts\decouple-check.mjs`(`\`)
+1. **path.join 反斜杠**:`path.join('scripts','decouple-check.mjs')` Windows = `scripts\decouple-check.mjs`(``)
 2. **EXCLUDES 正斜杠**:`['scripts/decouple-check.mjs']` Windows = `scripts/decouple-check.mjs`(`/`)
 3. **includes 永不匹配**:`'scripts\decouple-check.mjs'.includes('scripts/decouple-check.mjs')` = **false**
 

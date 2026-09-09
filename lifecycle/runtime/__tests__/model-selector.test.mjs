@@ -1,9 +1,9 @@
-// model-selector.test.mjs — U1: model-selector.mjs 单测（node --test，需 Node>=18）
+// model-selector.test.mjs — U1: model-selector.mjs 单测
 // code 升级路径依赖仓库 kilo.json（读 provider.hx.models 找含 code/coder 的 id）——当前仓库
 // 无 code 模型，故 code:true 会落穿 no-change（空模型防线，见 P2-1）。其余覆盖：economy/
 // small_model 降级、passthrough 未知、vision 升级、no-change、缺省 fallback。
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+// 跑法：node lifecycle/runtime/__tests__/model-selector.test.mjs（底座 scripts/lib/test-harness.mjs，Node>=14 可跑）
+import { test, assert } from '../../../scripts/lib/test-harness.mjs';
 import { selectModel } from '../model-selector.mjs';
 
 // 构造预解析 merged map（capability-registry 内部 key = '<alias>/<id>'）。

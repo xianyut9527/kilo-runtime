@@ -34,10 +34,12 @@
 #   - 5 个敏感路径 glob sensitive_path_globs：**/auth/**, **/payment/**, **/crypto/**,
 #     **/security/**, **/pii/**（注意 pii ≠ personal_data 关键词组名）；按 minimatch 语义匹配
 #   - 升级优先级：tier_escalation 命中 > tier_defaults 当前 tier；
-#                 命中后 sizing.tier 强制设为 T2（即使用户声明 T0/T1 也升 T2）
-#   - 与 overrides 关系：本段是声明式规则集（默认机制），overrides 段不直接覆盖本段；
-#     用户如需关闭特定组，可在 prompt 显式声明 custom_overrides.disable_escalation_groups
-#     （黑名单语义，列出要禁用的安全域名）
+#     命中后 sizing.tier 强制设为 T2。**只认 config.custom_overrides.tier 作为跳过出口**：
+#     该键存在（任意合法值）即不升级并记 escalation_reasons=["skipped: custom_overrides.tier=X present"]；
+#     单纯把 sizing.tier 声明成 T0/T1 **不阻升级**（照样被抬到 T2）。
+#   - 与 overrides 关系：本段是声明式规则集（默认机制），overrides 段（disabled_agents / model_overrides）
+#     不覆盖本段；**没有按安全域关单的开关**（旧文档写的 disable_escalation_groups 从未实现，已删除该说法），
+#     要停升级只能整体声明 config.custom_overrides.tier。
 #
 # agents 键命名规则（自动派生，无需手写映射表）：
 #   键 = agent 文件名去 .md 后连字符转下划线
@@ -185,8 +187,13 @@ overrides:
   # 键 = agent 名，值 = 模型 ID（能力倾向参考 docs/model-registry.md 人工维护，无机械校验）
 
 # ============================================================
-# custom_overrides：默认自定义覆盖段（conductor 写入 task_context 的初始值）
-# 预留扩展点；用户在 prompt 显式声明的覆盖项由 conductor 写入此段。
+# custom_overrides：用户显式覆盖项的**键位声明**（默认全空 = 无覆盖）
+# 注意：本段内容不会被代码读取——task_context 的初始 `config.custom_overrides` 由
+# task-context-runtime.mjs#buildInitialContext 固定写成空对象。真正生效的覆盖是 conductor
+# 在 INIT 用一次 batch 写入 `config.custom_overrides.<key>`（根级 custom_overrides 不在 WRITE_MATRIX内，写不进去）。
+# 当前被代码承认的 key 只有两个（其余键写了也无消费方）：
+#   tier         → 存在即跳过 tier_escalation 自动升 T2；等于 T0 时同时作为 T0 出口门的覆盖
+#   t1_strength  → 合法值时作为生效强度覆盖 sizing.t1_strength；等于 low 时免交「防低判强制升 high」
 # ============================================================
 custom_overrides: {}
 
@@ -279,9 +286,12 @@ timeouts:
 
 # ============================================================
 # runtime：AgentRuntime 横切层配置（v1 新增）
-#   economy       - 小任务主动降级到 small_model
-# early_exit_signals: 早退信号词列表（覆盖 default）
-# capability_strict: 严格模式=能力缺失时拒绝 dispatch 并 escalate
+#   调用入口（conductor 铁律 #6a）：
+#     node lifecycle/runtime/index.mjs select --agent <name> --task-id <id> [--cost balanced|quality|economy]
+#   costPriority 由 CLI --cost 传入（默认 balanced），不在本段声明——
+#   旧注释曾列 `economy - 小任务主动降级到 small_model` 但无对应键，属死配置，已删。
+# early_exit_signals: 早退信号词列表（空=用 early-exit.mjs 内置默认）
+# capability_strict: 严格模式=能力缺失时抛 [RUNTIME_STRICT]（CLI exit 1 降级回退）
 # ============================================================
 runtime:
   early_exit_signals: []  # 空=用 early-exit.mjs 内置默认

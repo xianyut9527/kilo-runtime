@@ -262,7 +262,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 
 | 触发源                                 | 信号                                                         | 说明                                                                                                 |
 | -------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| 智能体 wall-clock 超时                 | `[AGENT_TIMEOUT]`                                            | 见 §智能体加载流程 §超时守卫；分启动卡死（agent_startup_s）与执行超时（per_agent_s/stage_default_s） |
+| 智能体 wall-clock 超时                 | `[AGENT_TIMEOUT]`                                            | 见 §智能体加载规则 §超时守卫；分启动卡死（agent_startup_s）与执行超时（per_agent_s/stage_default_s） |
 | `task` 工具抛异常/启动失败/并发调度被中断（`Tool execution aborted` / `Tool execution cancelled`） | `[AGENT_UNAVAILABLE]`                                        | abort 后会话断开几乎无法重试：**前置杜绝**（见铁律 #9），不尝试重试，直接按节点 on_fail 派发或降级 conductor 内建；区别于超时 |
 | 智能体返回 `BLOCKED` / `NEEDS_CONTEXT` | 状态信号                                                     | 需补上下文或升级                                                                                     |
 | 跳步/越界/自验污染                     | `[PROCESS_VIOLATION]` / `[SCOPE_CREEP]` / `[TRUST_TRANSFER]` | 即停，不走 on_fail（见 §流程级即停规则）                                                             |
@@ -319,7 +319,7 @@ conductor 自身模型见 `kilo.json` `agent.conductor.model`。各职能智能�
 
 ## 工具门禁（v6 框架稳定化，2026-08-09）
 
-> 与 `agent/conductor.md` 铁律 #9 step 0c / `.kilo/instructions/workflow-core.md` §PS5.1-Regex-Safety 配套。
+> 与 `agent/conductor.md` 铁律 #9 step 0c / `scripts/bash-guard.mjs` 的 PS5.1 模式配套。
 
 ### 三件套
 

@@ -114,6 +114,13 @@ agent 返回后、下游前，conductor 必须自检：
 
 ## 标记语言
 
+本表是**跨角色常用标记的索引**，不是穷举清单：部分标记按域就近定义（带 `*` 的通配条目已覆盖整族），在对应文档里查其完整语义与处置动作，**不得因为本表没列出就认为该标记不存在**：
+
+- 安全/性能检测项 → `security-checklist.md`（`[SECURITY_GAP_*]` / `[PERF_GAP_*]` 逐项）
+- 知识库命中/未命中 → `reflection.md`（`[KB_HIT]` / `[KB_MISS]`，由 `scripts/kb.mjs` exit code 驱动）
+- 编排异常 → `agent/conductor.md` §异常处理派发表（见本文件末尾「编排异常标记」节）
+- 阶段/定级/意图**前缀标注**（`[STAGE: …]` / `[TIER: Tn]` / `[INTENT: …]`）→ 各自阶段文档；它们是状态声明而非异常标记，不列入下表
+
 | 标记 | 含义 | 使用 agent |
 |------|------|-----------|
 | [PASS]/[FAIL] | 验证通过/失败 | verifier |
@@ -157,9 +164,9 @@ evidence:
   - cmd: "grep -n 'X 风格' agent/coding-engineering.md"
     exit: 1
     stdout_key: ""
-  - cmd: "node scripts/lifecycle-doctor.mjs"
+  - cmd: "node ${KILO_CONFIG_DIR}/scripts/lifecycle-doctor/index.mjs"
     exit: 0
-    stdout_key: "SUMMARY: 60 PASS / 0 FAIL / 0 WARN"
+    stdout_key: "SUMMARY: <n> PASS / 0 FAIL / 0 WARN"
 ```
 
 conductor 拒绝条件：verdict:PASS 但 evidence <1 条→retry；cmd 缺失→[MISSING_CMD]；exit 缺失/非数字→[MISSING_EXIT]；stdout_key 缺失→[MISSING_STDOUT_KEY]。
@@ -232,12 +239,23 @@ transition-check.mjs 在 QUALITY→DELIVERING 边校验 verification.forward.evi
 | hard_limit | 事前（委派 prompt 注入） | 生成时控制长度 | return_contract.hard_limit 存在 |
 | overload_count | 事后（返回后计数） | 超限熔断 | 返回字符 > 角色上限 |
 
-两者互补非替代。conductor 委派包 SOP 见 agent/conductor.md §委派包必含 hard_limit。分档放宽是给 finding 多的审查类留余量，非鼓励写满。
+两者互补非替代。conductor 委派包 SOP 见 .kilo/instructions/conductor-dispatch-sop.md §委派包必含 hard_limit。分档放宽是给 finding 多的审查类留余量，非鼓励写满。
 
 超限后果链：返回 > 上限 → 主会话膨胀 → 后续 task Tool execution aborted（cbbbf83 根因形态）。闭环（conductor 端）：overload_count++（判基=角色上限非全局 4000）；<3 继续用；≥3 先压缩 task_context 仍超限才切 worktree。详细 step 见 agent/conductor.md 铁律 #9。
 
 ## 新增错误标签（v6 框架稳定化，2026-08-09）
 
-- [ENCODING_DRIFT]：文件 GBK 重编码 / U+FFFD / BOM 污染，阻断 dispatch 或 coder 完工。来源 scripts/scan-encoding.mjs + checks/encoding-safety.mjs。处理：coder 重做，必 Set-Content -Encoding UTF8 或 fs.writeFileSync 指定 encoding。验证：node scripts/scan-encoding.mjs <file> all pass。
-- [PS51_REGEX_RISK]：bash 命令含 PS5.1 复杂 regex（-match/-notmatch 后含 ( [ { (? ）。来源 scripts/bash-guard.mjs PS5.1 模式。处理：改 glob/grep（§搜索四层阶梯纪律）。验证：node scripts/bash-guard.mjs "<cmd>" exit 0。
+- [ENCODING_DRIFT]：文件 GBK 重编码 / U+FFFD / BOM 污染，阻断 dispatch 或 coder 完工。来源 scripts/scan-encoding.mjs + checks/encoding-safety.mjs。处理：coder 重做，必 Set-Content -Encoding UTF8 或 fs.writeFileSync 指定 encoding。验证：node "${KILO_CONFIG_DIR}/scripts/scan-encoding.mjs" <file> all pass。
+- [PS51_REGEX_RISK]：bash 命令含 PS5.1 复杂 regex（-match/-notmatch 后含 ( [ { (? ）。来源 scripts/bash-guard.mjs PS5.1 模式。处理：改 glob/grep（.kilo/instructions/workflow-core.md §搜索四层阶梯纪律）。验证：node "${KILO_CONFIG_DIR}/scripts/bash-guard.mjs" "<cmd>" exit 0。
 - [BASH_WRITE_BLOCKED]：bash 命令含文件写入/修改意图（Set-Content/Out-File/git commit/rm -rf/npm publish 等）。来源 scripts/bash-guard.mjs WRITE_PATTERNS。处理：conductor 不直接改文件，改用 task 委派 coder 或 glob/grep 只读工具。
+
+## 编排异常标记（on_fail 派发链，注册于 agent/conductor.md §异常处理派发表）
+
+> 这 6 个标记一直在运行时文档与脚本退出码中使用，但未在本 SSOT 注册——现补齐，禁止再在其它文件发明同义标记。
+
+- [SLOT_ABORT]：节点 `on_fail=abort` 硬停。处理：不再派发，写 `status=FAILED` + 输出已完成部分与失败点。
+- [RETRY]：节点 `on_fail=retry_once`，或 `task-context.mjs post-dispatch` exit 4（timeout 且重试计数 ≤ `timeouts.retry.agent_timeout_max_retries`）。处理：同 agent 新会话重跑，dispatch_log 追加；再失败转 [ESCALATE]。
+- [ESCALATE]：`post-dispatch` exit 5（timeout 超重试配额）或节点 `on_fail=escalate`。处理：补派对应角色或换更强模型；无可用角色转 `pause`（`status=PAUSED`）。
+- [DEGRADED]：节点 `on_fail=degrade`，或装配自检缺件降级（conductor 铁律 #8）。处理：跳过该视角继续流转 + `status=DEGRADED`；DEGRADED 不豁免 permission。
+- [AGENT_TIMEOUT]：wall-clock 超 `timeout_s`（= `per_agent_s × per_tier_multiplier`），或 `agent_startup_s` 内 task 未开始执行。来源 `lifecycle/config.yaml` `timeouts` 段。处理：按**当前节点** `on_fail` 派发。
+- [AGENT_UNAVAILABLE]：`Tool execution aborted`（provider 硬 kill，不可恢复）。来源 FX-001。处理：**不重试**，按当前节点 `on_fail` 派发；EXECUTING/QUALITY 无 subagent 可用时只能 `escalate`/`pause`。

@@ -6,17 +6,21 @@
  */
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..', '..', '..');
+const SELF_ROOT = path.resolve(__dirname, '..', '..', '..');
 
 export function run(ctx) {
   const checkName = 'decouple-audit';
   const cf = ctx.cf;
-  const decoupleScript = path.join(ROOT, 'scripts', 'decouple-check.mjs');
-  const result = spawnSync('node', [decoupleScript], {
-    cwd: ROOT,
+  const root = (ctx && ctx.ROOT) || SELF_ROOT;
+  const decoupleScript = path.join(root, 'scripts', 'decouple-check.mjs');
+  // process.execPath 而非 'node'：保证子进程用与 doctor 相同的解释器
+  // （本机 PATH node 为 v14，IDE 内置为 v22，混用会产生不可复现结果）
+  const result = spawnSync(process.execPath, [decoupleScript], {
+    cwd: root,
     encoding: 'utf8',
     timeout: 30000
   });

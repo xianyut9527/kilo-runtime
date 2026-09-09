@@ -57,10 +57,11 @@ QUALITY 容器内自动循环（hook 类型定义顺序，无绝对编号）：
 
 QUALITY 阶段必跑以下安全 check（与 `agent/conductor.md` 铁律 #9 step 0c 配套）：
 
-- **encoding-safety check**：`lifecycle-doctor/checks/encoding-safety.mjs` 已在 doctor 静态模式自动跑（234+ 项 BOM/U+FFFD/GBK 检测），命中 FAIL → 阻断 QUALITY 进入 DELIVERING
+- **encoding-safety check**：`lifecycle-doctor/checks/encoding-safety.mjs` 在全仓文件上扫 BOM/U+FFFD/GBK 残留（项数以 doctor 输出为准，不在本文档硬编码具体数字），跑点是 **INIT 装配自检**（`init-gate.mjs` 内 doctor --fast，FAIL 则不进入运行）；**QUALITY→DELIVERING 边无脚本 gate**（只有 `when: quality_verdict == 'PASS'`），本阶段的编码兜底靠下项 scan-encoding
 - **bash-guard pre-dispatch**：caller 传 `--bash-cmd` 时自动拦截 PS5.1 复杂 regex（`[PS51_REGEX_RISK]`）+ 写入意图（`[BASH_WRITE_BLOCKED]`），exit 2 阻断
-- **scan-encoding 执行单元自检**：本阶段执行单元完工前必跑 `node scripts/scan-encoding.mjs`（编码角色必跑项）
+- **scan-encoding 执行单元自检**：本阶段执行单元完工前必跑 `node "${KILO_CONFIG_DIR}/scripts/scan-encoding.mjs"`（编码角色必跑项）
 - 反事故：culture-applet 2026-08 任务因 subagent 未跑以上检查导致 GBK 损坏 + PS5.1 死循环
+
 ## 输入
 
 > **视角物理隔离**：verify hooks 只读 `plan + execution.code + forbidden_files + acceptance_criteria`，**禁止读 `execution.quality / fixing_history`**。review hooks 只读 `execution.code + plan + acceptance_criteria + project_context`，**禁止读 `execution.quality` 的报告结论**。fix hooks 读取 `execution.quality.issues + fixing_history`。

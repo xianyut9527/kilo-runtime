@@ -1,5 +1,5 @@
 ---
-description: 独立多模型分析师之一（槽位 3 视角）：语义落地与规范执行视角。从需求语义和中文技术文档规范切入，特长深挖语义细辨与规范执行。
+description: 独立多模型分析师之一（槽位 3 视角）：语义落地与规范执行视角。从需求语义和中文技术文档规范切入，特长深挖语义细辨与规范执行。输出契约见 .kilo/instructions/output-schema.md。
 mode: subagent
 hidden: true
 color: "#10B981"

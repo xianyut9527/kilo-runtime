@@ -1,7 +1,7 @@
 // capability-registry.test.mjs — U2: capability-registry.mjs getCapabilitiesFromMap 单测
 // 覆盖：显式 code:true / 显式 code:false / 缺省默认 true / unknown safe default / vision 推导
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+// 跑法：node lifecycle/runtime/__tests__/capability-registry.test.mjs（底座 scripts/lib/test-harness.mjs）
+import { test, assert } from '../../../scripts/lib/test-harness.mjs';
 import { getCapabilitiesFromMap } from '../capability-registry.mjs';
 
 test('显式 code:true → code=true', () => {

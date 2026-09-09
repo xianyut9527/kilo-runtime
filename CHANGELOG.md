@@ -5,6 +5,65 @@
 
 
 
+## [Unreleased] config-hygiene-001（全仓配置体检：静默失效修复 + 7 道新门禁）
+
+> 目标：高性能 / 高效率 / 一次性输出质量 / 去掉冗余重复硬编码与无意义内容。纪律：**每条判断都实跑取证**、**修复一律机械化**（新门禁 + 反向自测夹具证明「该拦的拦得住、不该拦的不误伤」）。
+
+### Fixed（五类「看着在、其实不生效」的静默失效）
+
+- **`custom_overrides` 覆盖出口结构性死锁**：`transition-check.mjs` 读**根级** `ctx.custom_overrides.*`，但 `buildInitialContext` 只创建 `config.custom_overrides`，WRITE_MATRIX 也不放行根级（实测 `set <id> custom_overrides.tier T0` 直接被拒）——于是 T0 出口门 / T1 防低判门在 remediation 里让用户「显式声明 `custom_overrides.tier` 覆盖」，而照做必然再次 FAIL 的死循环。新增 `readCustomOverride()`（嵌套优先、根级兼容回落）收口 3 处读取点，`delivery-audit.mjs` 2 处 remediation 文案同步；自检补 5 条断言（嵌套生效 / 根级兼容 / 嵌套优先 / absent）。复验：`PASS transition INIT -> EXECUTING`。**旧自检夹具本身用根级形态，这是该 bug 长期无人察觉的原因**。
+- **部署副本从不被校验**：doctor 的 `ROOT` 硬编码为脚本位置 → install 的 post-sync 自检永远只测源码仓库，部署副本漂移全绿假象（曾实际运行拆分前的旧 conductor.md）。落地 `--root <dir>` + `scripts/deploy-drift-check.mjs`（含占位符逆变换比对）+ `install.ps1`/`install.sh` 双端接入。**接线当天就抓到一条仓库侧看不到的死引用**：`core.md:79` 的 `README.md §MCP 扩展` 只存在于仓库根 README（不部署），部署副本里 `README.md` 只能绑到 `lifecycle/stages/README.md` → 悬空锚点；改指 `workflow-core.md §MCP 优先`（同目录、已部署、且确实是同一理由的单源）。
+- **运行时命令在用户项目 cwd 下必然 MODULE_NOT_FOUND**：占位符替换清单只覆盖 `agent/*.md` + `.kilo/instructions/*.md`，而 conductor 每个阶段都要读的 `lifecycle/stages/*.md` 里写的是相对命令——部署副本 `init.md` 实测残留 7 处（INIT 硬规则 1/2/4 全在里面）。全量改 `node "${KILO_CONFIG_DIR}/scripts/..."`（6 个 agent 门禁块 + coder + conductor-dispatch-sop×3 + core + output-schema + init×5 + executing×3 + delivering×2 + quality），替换清单扩面到 `lifecycle/stages`（install 双端 + drift 正则三处同步）。
+- **僵尸单测复活**：`lifecycle/runtime/__tests__/*.test.mjs` 4 个文件 import `node:test` + `node:assert/strict`（本机 Node 14.17 均不可用）→ `ERR_UNKNOWN_BUILTIN_MODULE`，一条都没跑过，且全仓无任何调用方（doctor / hook / CI / README 全无）——「有单测」是纯装饰，改 `model-selector.mjs` 的模型路由判定没有任何回归防线。新增双兼容底座 `scripts/lib/test-harness.mjs`（单源，两处测试目录共用，不得复制）+ 4 处 import 改造 → 实跑全绿；再由 `unit.executed` 门禁把「有人跑一遍」变成机械保证。
+- **假陈述 / 漂移数字清除**：`config.yaml` 声称「即使用户声明 T0/T1 也升 T2」（与代码相反）+ `disable_escalation_groups`（全仓零读取的僵尸声明）；`quality.md` 声称 doctor FAIL 阻断 `QUALITY→DELIVERING`（该边只有 `when`，无脚本 gate）+「234+ 项」；`output-schema.md` 证据示例指向早已拆分掉的 `scripts/lifecycle-doctor.mjs` 且硬编码 `60 PASS`（实际 590+）；`conductor-dispatch-sop.md` 的 `node task-context.mjs`（连目录都没有）；`evolution.md`（整文件死引用）删除并归并；`tier_defaults` / 阈值单源措辞与实况对齐。
+
+### Added（7 道新 doctor 门禁 + 2 个支撑脚本）
+
+| 维度 / 文件 | 拦什么 |
+|---|---|
+| `checks/prompt-sync.mjs`（P1~P5） | `kilo.json agent.*.prompt` 与 `agent/*.md` frontmatter `description` 单源派生关系：块标量指示符、长度上下界、派生漂移、控制字符（立项事故：install 曾派生出 `prompt: "|"` 写坏 deep-analyzer，而 doctor 无 prompt 维度 → 全绿放行） |
+| `scripts/deploy-drift-check.mjs` | 仓库 vs 部署副本逐文件比对（`${KILO_CONFIG_DIR}` 先逆变换再比），漏跑 install / 替换清单不同步直接 FAIL |
+| `checks/anchor-refs.mjs` | 文档里的 `§锚点` / `铁律 #N` / `xxx.md §锚点` 必须真能解析（立项：`铁律 #11`、`§全局默认并行策略` 等被 6 处引用却不存在）。精度优先：剥围栏代码块、标题/粗体双来源、双向 prefix、`.yaml` 按字面命中 |
+| `checks/markdown-hygiene.mjs` | 字面「反斜杠 + 反引号」序列组成的坏 markdown（曾在自动注入的 `core.md` 里累积 16 处，模型每轮读到会照着模仿）；同行 `hygiene-ignore` 显式豁免 |
+| `checks/mcp-sanity.mjs` | `enabled:true` 但命令 PATH 解析不到 → FAIL（每次会话启动静默 spawn 失败）；`enabled:true` 且写机器专属绝对路径 → FAIL；`enabled:false` 一律 PASS；remote 只校 URL 不发网络 |
+| `checks/derivations-freshness.mjs` | `scripts/lib/.generated/derivations.json` 指纹与 `agent/*.md`/graph/config 不一致 → WARN（预生成快路静默退化为 `cachedDerive` 慢路径）。镜像运行时解析规则，不另发明一套 |
+| `checks/command-path-hygiene.mjs`（A~D） | A 被替换集合内不得有相对/无路径 `node` 命令；B 出现占位符的文件必须在替换前缀内；C 命令指向的 `.mjs` 必须存在；D 双端 install 替换清单一致。**前缀清单从 install 脚本解析而非重抄**（防自己变成第二个漂移源） |
+| `checks/unit-tests.mjs`（`unit.executed`） | full/normal 模式真跑两处测试目录（`lifecycle/runtime/__tests__` + `scripts/lifecycle-doctor/checks/__tests__`）：`exit!=0` 或 fail>0 或无 SUMMARY → FAIL；`--fast` 直接跳过（不压 init-gate 热路径）；两处都找不到测试 → WARN 而非静默 PASS。**门禁自身的分支夹具也入网**（`command-path-hygiene.test.mjs` 9 例 + `unit-tests.test.mjs` 8 例 + `install-runtime-data.test.mjs` 9 例，只喂沙箱 ROOT 不递归回扫） |
+| `scripts/lib/install-runtime-data.mjs` | 从 install 脚本**解析**「部署侧自有数据」清单（不重抄）；`deploy-drift-check.mjs` 据此把 `docs/lessons/*`、`kilo.jsonc`、`.bash-permission-migrated` 归为 `[RUNTIME]` 不计漂移——之前每次 install 刷 3 行 `[EXTRA] …需人工确认` 全量误报；而仓库拥有的目录下缺文件（如 `knowledge-base/fixes/FX-999.md`）仍按 `[EXTRA]` 报（那是「运行时新增待回收」信号，不能顺手抹掉） |
+
+### Changed
+
+- **`config.yaml` `tier_escalation` / `custom_overrides` 两段注释重写**：明确升级优先级与「只认 `config.custom_overrides.tier` 作为跳过出口」「单纯声明 `sizing.tier` 不阻升级」；`init.md` 硬规则 4 + `conductor.md` 补「同一 batch 写嵌套覆盖键、根级写不进去、敏感域禁用此出口」。
+- **`delivering.md` pre_gate 注释按真实语义重写**：声明式清单（conductor 入口逐条执行，框架不在工具调用层插门）；明确 `delivery-audit.mjs` 是事后自查器，不在该清单内。
+- **`core.md` 瘦身 + 6 个 agent 门禁块去重 + INIT 串行回合合并**（每任务固定开销：机械回合数 / 注入体积 / 无效调用）。
+- **`CONFIG_CHANGE_CHECKLIST.md`** 补 4 行：占位符替换范围 SSOT、运行时命令写法 SSOT、「改 agent/graph/config 必跑 `build-derivations`」、「新增运行时命令」三道门归属。
+
+### 复核补漏（同一轮的自查第二轮：以审计视角找自己没做到的部分）
+
+首轮收口后做了一遍「哪些声称已完成的其实只做了一半」，每个结论都有实跑证据：
+
+| 遗漏 | 实况与错法 | 修后 |
+|---|---|---|
+| **第二份排除清单仍在** | `deploy-drift-check.mjs` 自己另声明 `EXCLUDE_DIRS/EXCLUDE_FILES/ROOT_ONLY_EXCLUDE`，注释「与 install.ps1 对齐」= 靠人工维持；而 README 里已写「排除清单各维护一份必然漂移已消除」——**实际只消除了 RuntimeData 一份**（假陈述） | lib 新增 `parseInstallExcludes`（含双端 `mismatch`），drift 改为解析驱动；输出行 `[DRIFT] excludes=<来源>@<根> (N names, M root-only)` 使「用了哪份清单」可见 |
+| **回落副本本身是手工镜像** | 为消除镜像而新增的 `FALLBACK_*` 立刻漂了**两次**：① install 侧 RootOnly 加 `reports` 而它没跟；② 清单里含第三方工具名的项触发 `decouple-audit` critical（install 侧有 `BENIGN` 豁免、镜像到 lib 时未同步）——即**镜像不只漂数据，还漂围绕数据的元规则** | 常态路径不再命中它：`resolveInstallExcludes([--repo, 脚本所在树])`（install 本就是传 `--repo` 调的，事实源一直在手边）；`excludes=fallback` 降为异常信号；`present` 字段区分「无脚本」（正常）与「有脚本但解析不出」（必须 FAIL） |
+| **RootOnly 可以是目录** | 清单原本只放根级**文件**，`set.has(rel)` 刚好够用；加入 `reports` 后 git 列表给的 `reports/2026-08-12/x.md` 匹配不中 → 2 行假 MISSING，而 install 侧（根级命中即跳过整目录）是对的——「同一语义两处实现、只有一处对」 | 下沉为 `isRootOnlyExcluded(rel, set)`（按首段匹配整棵子树），drift 的两条并列 filter/walk 判定归一；补 4 例回归夹具（含「深层同名目录不得误伤」） |
+| **替换清单的第三处镜像** | `needsUnsub` 硬编码 `^(agent/|\.kilo/instructions/|lifecycle/stages/)`，注释说「不一致时 hygiene 会先报」——但 hygiene 只校 install 双端，**从不校这份**：install 新增替换目录时它不报错，只是不还原占位符 → 报假 `[DIFF]` | lib 新增 `parseMdSubstDirs/resolveMdSubstDirs` 为唯一解析器，drift 与 `command-path-hygiene` 共用（后者自有的 `parsePs1/parseSh` 删除） |
+| **post-commit hook 黑名单漏项** | 正则 `^(agent/\|lifecycle/\|\.kilo/\|kilo\.json\|AGENTS\.md\|docs/model-registry\.md)` 漏 `scripts/`（顶层确实有 scripts/docs/tools/knowledge-base）→ 改门禁脚本提交后不提醒重部署 = 全局跑旧门禁，**正是该 hook 立项要防的事故形态** | 改白名单反选（只排除 4 个不部署项）；9 例探针实证 + `sh -n` 语法校；同步已装的 `.git/hooks/post-commit`（否则改了个不生效的东西） |
+| **5 道新门禁无长期夹具** | prompt-sync / anchor-refs / markdown-hygiene / mcp-sanity / derivations-freshness 只有已删的一次性探针——违反本轮刚写进 CHECKLIST 的「新门禁必须放分支夹具」 | 补 5 个夹具文件共 51 例；harness 新增 `makeSandbox/testAsync/flushAsyncTests`（含「忘 flush 判失败」防护）并收敛 3 处重复的沙箱构造 |
+| **文档假陈述** | `agent-mount-guide.md` 声称脚本会替换 `${HOME}`，而 install 两侧明确注释「按设计不替换」，且仓内 `${HOME}` 使用点为 0；CHECKLIST 两条引用已不存在的对象（「README 里 diff 命令的排除参数」「drift 的 needsUnsub 正则」） | 均改为真实故障形态与当前链条；`reports/`（仓库根历史归档、全仓零读取方）加入双端 RootOnly，不再拷入全局配置根 |
+
+**夹具不是装饰的证据（变异测试 3 次）**：M1 破坏 `blankFences` → 围栏例精确变红（给出 2 处假阳性与正确行号）；M2 破坏 `ref.length < 2` → 3 条检出例同时变红；M3 把「解析不出必须 FAIL」分支短路 → 仅该新例变红（`'PASS' !== 'FAIL'`）。均当场还原（`MUTATION-PROBE` 残留 0）。
+
+**夹具自身的两个坑**（都是“看着在守其实没守”）：① `probeCtx` 把 `ROOT` 写成 `root` → 沙箱静默失效、用例回落到真实仓库；② 3 条交叉校验用例隐含假设「所在树 == 源仓库」，但测试文件会被部署：部署树里一条 FAIL、更阴的是「DRIFT_ONLY 与 install 清单无交集」在空清单上**恒真假绿**。修法：无事实源时显式早退（不拿假 PASS 自得），覆盖由 install 的**仓库侧完整 doctor**（先于拷贝、非 `--fast`）保证。
+
+### Verified
+
+- `node scripts/lifecycle-doctor/index.mjs --verbose` → **0 FAIL / 0 WARN**（默认模式 ~5s；PASS 条数随扫描文件数浮动，不往文档里写具体数字）。`--fast` → `CACHE_HIT`（`unit.executed` 走 skip 分支，不压会话热路径）。
+- 行为回归网：**12 个测试文件 / 127 用例全绿**（runtime 34 + 门禁夹具 93），且**仓库侧与部署副本侧跑同一套**（两侧 `unit.executed` 均为 12 文件 / 127 用例，不是部署侧 skip）。反向自测：往测试目录注入必失败用例 → `FAIL unit.executed` + `exit=1`；求值期崩溃（SUMMARY 仍打 0/0）→ 靠 exit 码拦住。其他：`transition-check --self-check` → `ALL SELF-CHECK PASS`。
+- `sync-agent-prompt --check` → `scanned=14 updated=0 drift=0 sanitized=14`；`deploy-drift-check` → `missing=0 diff=0 extra=0 runtime_data=3`，且 `excludes`/`subst-dirs` 两行均显示 `install.ps1+install.sh@<仓库根>`（= 走事实源，未命中回落副本）。
+- 部署副本不再生成 `reports/`、不再有 `install.ps1`（`Test-Path` 均为 False）；清理探针后 `.tmp/` 不污染仓库。
+
+
 ## [Unreleased] scan-fixes（提交前扫描修复批次）
 
 ### Fixed

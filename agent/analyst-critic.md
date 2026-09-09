@@ -1,5 +1,5 @@
 ---
-description: 多模型分析反向审计器。在 synthesizer 产出 synthesis 后，反向审计其结论的偏误、遗漏与过度自信。
+description: 多模型分析反向审计器。在 synthesizer 产出 synthesis 后，反向审计其结论的偏误、遗漏与过度自信。输出契约见 .kilo/instructions/output-schema.md。
 mode: subagent
 hidden: true
 color: "#EF4444"

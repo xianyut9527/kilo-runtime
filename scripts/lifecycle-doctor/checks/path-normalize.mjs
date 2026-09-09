@@ -15,8 +15,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..', '..', '..');
-const SELF_PATH = path.join(ROOT, 'scripts', 'lifecycle-doctor', 'checks', 'path-normalize.mjs');
+const SELF_ROOT = path.resolve(__dirname, '..', '..', '..');
+const SELF_REL = path.join('scripts', 'lifecycle-doctor', 'checks', 'path-normalize.mjs');
 
 const PATTERNS = [
   {
@@ -27,13 +27,16 @@ const PATTERNS = [
   },
   {
     name: 'hardcoded-backslash',
-    // 找硬编码反斜杠路径 `'a\\b'` 或 `"a\\b"`
-    regex: /['"][^'"]*\\\\[^'"]*['"]/g,
+    // 真陷阱形态：引号内路径串把 `\\` 夹在两个路径字符之间（'scripts\\lib'、'C:\\Users'）。
+    // 必须要求反斜杠前后都是路径字符才匹配——否则正则转义（'\\n' / '\\s*' / /\\/g /
+    // c === '\\' / '.+^$()|{}[]\\'）全部误报：旧写法在 55 个脚本上报 13 处，13/13 均为假阳性，
+    // 零信号（这也是它长期被当成噪声断开的原因）。
+    regex: /['"][^'"\n]*[A-Za-z0-9_.]\\\\[A-Za-z0-9_.][^'"\n]*['"]/g,
     exclude: /^\s*\*|^\s*\/\//  // 注释豁免
   }
 ];
 
-function scanFile(filePath) {
+function scanFile(filePath, root) {
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split('\n');
   const issues = [];
@@ -43,7 +46,7 @@ function scanFile(filePath) {
       if (p.regex.test(lines[i])) {
         if (p.exclude && p.exclude.test(lines[i])) continue;
         issues.push({
-          file: filePath.replace(ROOT + path.sep, ''),
+          file: path.relative(root, filePath).replace(/\\/g, '/'),
           line: i + 1,
           pattern: p.name,
           text: lines[i].trim().slice(0, 80)
@@ -54,18 +57,13 @@ function scanFile(filePath) {
   return issues;
 }
 
-function getAllScripts(dir, files = []) {
+function getAllScripts(dir, selfPath, files = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === 'lifecycle-doctor' && full.includes('lifecycle-doctor')) {
-        // 跳过自身目录(子目录脚本)
-        getAllScripts(full, files);
-        continue;
-      }
-      getAllScripts(full, files);
+      getAllScripts(full, selfPath, files);
     } else if (entry.name.endsWith('.mjs')) {
-      if (full === SELF_PATH) continue;  // 自身豁免
+      if (full === selfPath) continue;  // 自身豁免（本文件的 PATTERNS 定义会被自己的正则命中）
       files.push(full);
     }
   }
@@ -74,20 +72,33 @@ function getAllScripts(dir, files = []) {
 
 export function run(ctx) {
   const checkName = 'path-normalize';
-  const scriptsDir = path.join(ROOT, 'scripts');
+  const cf = ctx && ctx.cf;
+  const root = (ctx && ctx.ROOT) || SELF_ROOT;
+  const scriptsDir = path.join(root, 'scripts');
   if (!fs.existsSync(scriptsDir)) {
+    if (cf) cf.pass(checkName, 'scripts/ not found, skipped');
     return { name: checkName, status: 'PASS', detail: 'scripts/ not found, skipped' };
   }
-  const files = getAllScripts(scriptsDir);
+  const files = getAllScripts(scriptsDir, path.join(root, SELF_REL));
   const allIssues = [];
   for (const f of files) {
-    const issues = scanFile(f);
+    const issues = scanFile(f, root);
     allIssues.push(...issues);
+  }
+  // 历史缺陷：本 check 只 return 结果、从不调 cf.*，而 index.mjs 又丢弃返回值
+  // → 扫描照跑、判定永远不进 SUMMARY（静默 no-op 门禁，等于没有这道门）。
+  // 现按其它 check 的契约落 cf，使其真正可阻断。
+  const detail = `scanned=${files.length} issues=${allIssues.length}`;
+  if (allIssues.length === 0) {
+    if (cf) cf.pass(checkName, detail);
+  } else {
+    const head = allIssues.slice(0, 6).map((i) => `${i.file}:L${i.line} ${i.pattern}`).join(' | ');
+    if (cf) cf.fail(checkName, `${detail} -> ${head}`);
   }
   return {
     name: checkName,
     status: allIssues.length === 0 ? 'PASS' : 'FAIL',
-    detail: `scanned=${files.length} issues=${allIssues.length}`,
+    detail,
     issues: allIssues
   };
 }

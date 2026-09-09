@@ -1,5 +1,5 @@
 ---
-description: 多模型分析融合汇总器。在三路 analyst（analyst-1/analyst-2/analyst-3）全部完成后，读取三份独立 trials 并融合成统一 synthesis。
+description: 多模型分析融合汇总器。在三路 analyst（analyst-1/analyst-2/analyst-3）全部完成后读取三份独立 trials，去重、求同、标异，融合成统一 synthesis。输出契约见 .kilo/instructions/output-schema.md。
 mode: subagent
 hidden: true
 color: "#8B5CF6"

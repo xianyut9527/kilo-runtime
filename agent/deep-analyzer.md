@@ -1,10 +1,5 @@
 ---
-description: |
-  独立多模型深度分析器（deep-analyzer）。
-  不参与任务生命周期，作为独立能力按需调用。
-  内部封装 3 路 analyst 三角验证 + synthesizer 融合 + critic 反向审计，
-  用于分析复杂问题（架构评审/根因分析/方案对比/技术选型/代码审查/配置审计）。
-  触发：用户直接 invoke（"用多模型分析 X" / "深度分析 X" / "多角度审查 X"）。
+description: 独立多模型深度分析器（deep-analyzer）。不参与任务生命周期，作为独立能力按需调用。内部封装 3 路 analyst 三角验证 + synthesizer 融合 + critic 反向审计，用于分析复杂问题（架构评审/根因分析/方案对比/技术选型/代码审查/配置审计）。触发：用户直接 invoke（用多模型分析 X / 深度分析 X / 多角度审查 X）。输出契约见 .kilo/instructions/output-schema.md。
 mode: subagent
 hidden: true
 color: "#7C3AED"

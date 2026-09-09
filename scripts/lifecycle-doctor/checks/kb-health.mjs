@@ -17,14 +17,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..', '..', '..');
-const KB = path.join(ROOT, 'scripts', 'kb.mjs');
+const SELF_ROOT = path.resolve(__dirname, '..', '..', '..');
 const SPAWN_TIMEOUT_MS = 30000;
 const MAX_BUFFER = 4 * 1024 * 1024;
 
 export function run(ctx) {
   const cf = ctx && ctx.cf;
-  const root = (ctx && ctx.ROOT) || ROOT;
+  const root = (ctx && ctx.ROOT) || SELF_ROOT;
+  // kb.mjs 必须取自被校验根（--root 部署副本时不能用本仓库的副本，
+  // 否则部署侧 kb.mjs 自身的缺陷永远检不到）。
+  const KB = path.join(root, 'scripts', 'kb.mjs');
   const checkName = 'kb.health';
 
   const result = spawnSync('node', [KB, 'doctor'], {

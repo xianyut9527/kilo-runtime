@@ -27,7 +27,7 @@ required_roles: [coder]
    - 重复模式扫描：用 grep/glob 扫描本次改动模式在代码库的同类实现（UI 与非 UI 同等适用，不限于样式/布局/交互）；命中 ≥2 处必须走组件化/共享抽象方案。
 3. **编码**：按 conductor 派发的当前 unit_id 编码，不跨单元改动；最小改动原则，遵循现有代码风格，修改后搜索调用方确认兼容性。
 4. **自测自修**：改代码 → 跑测试 → 修复 → 再跑。TDD 模板：红→绿→重构。
-5. **运行验证**：测试、构建、类型检查、Lint、编码扫描（`node scripts/scan-encoding.mjs`）。
+5. **运行验证**：测试、构建、类型检查、Lint、编码扫描（`node "${KILO_CONFIG_DIR}/scripts/scan-encoding.mjs"`）。
 6. **输出**：变更摘要、验收映射表、验证结果（含命令+exit code+关键输出片段）、遗留风险。
 
 ## 输出信号
@@ -47,7 +47,7 @@ quality_gate:
 
 ## 路由规则（边定义见 graph.yaml）
 
-- `DONE` → T1+ 进入 `QUALITY`；T0 直达 `DELIVERING`（**T0 交付前置硬门**：直达 DELIVERING 前必须完成轻量验证——`node scripts/scan-encoding.mjs` 通过 + `encoding_clean: true` + `no_debug_leftovers: true`，否则输出 `DONE_WITH_CONCERNS` 进 QUALITY 兜底）
+- `DONE` → T1+ 进入 `QUALITY`；T0 直达 `DELIVERING`（**T0 交付前置硬门**：直达 DELIVERING 前必须完成轻量验证——`node "${KILO_CONFIG_DIR}/scripts/scan-encoding.mjs"` 通过 + `encoding_clean: true` + `no_debug_leftovers: true`，否则输出 `DONE_WITH_CONCERNS` 进 QUALITY 兜底）
 - `DONE_WITH_CONCERNS` → 附带风险说明进入 `QUALITY`
 - `NEEDS_CONTEXT` / `BLOCKED` → 停止并回传，不推进
 
@@ -55,6 +55,6 @@ quality_gate:
 
 - **完成声明三件套**：每条"通过/修复/完成"声明 MUST 同时附：完整命令字符串、数字 exit code、stdout/stderr 关键行截取 ≤5 行。
 - **禁止信任传递**：不得以"agent X 报告成功"替代独立验证。
-- **编码健康度扫描**：对修改过的文件跑 `node scripts/scan-encoding.mjs`。
+- **编码健康度扫描**：对修改过的文件跑 `node "${KILO_CONFIG_DIR}/scripts/scan-encoding.mjs"`。
 - **架构意识（编码前必过）**：落点识别（目标文件所属层，不越层）→ 依赖方向（符合项目既有分层方向）→ 影响面分析（高扇入符号改动列影响清单）→ 复用优先（先扫描同类抽象再新建）→ 扩展点评估（高频变更领域留扩展点/slot/策略接口/配置驱动）→ 组件化前摄扫描（grep/glob 同类实现 ≥1 处命中需评估）。违反任一项 → 输出 `BLOCKED`/`NEEDS_CONTEXT`，由 conductor 判断是否回流 PLANNING 阶段。
 

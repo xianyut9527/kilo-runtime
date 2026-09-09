@@ -41,7 +41,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   │   ├── reflection.md          # 反思与错误恢复规则
 │   │   ├── security-checklist.md  # 安全/性能检查清单（由 verifier 在 L3 调用）
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
-│   │   ├── evolution.md           # 自进化闭环（执行→反思→提炼→固化写入规则）
+│   │   ├── conductor-dispatch-sop.md # conductor 委派调度 SOP（铁律 #9 完整展开，按需读取）
 │   │   ├── byte-level-verify.md   # byte-level 验证 SOP（委派包/证据契约/路径陷阱）
 │   │   ├── coding-engineering.md  # 编码工程化标准（设计模式/组件化/反模式）
 │   │   ├── workflow-detail.md     # 工作流细则（§A 两阶段定级决策树/单元闭环）
@@ -59,7 +59,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   └── (新增智能体 = 丢一个 <name>.md + kilo.json 绑模型，零改框架)
 ├── lifecycle/                    # 生命周期（5 阶段：INIT→PLANNING→EXECUTING→QUALITY→DELIVERING）
 │   ├── graph.yaml                # 主 DAG 单一真相来源（节点 INIT/PLANNING/.../DONE + 边 + 流转条件）
-│   ├── config.yaml               # 定级默认智能体组合 tier_defaults + 用户覆盖 overrides + hooks 熔断阈值（唯一真相）
+│   ├── config.yaml               # 按定级的差异化开关与 model_overrides（tier_defaults）+ overrides + hooks 熔断阈值 + timeouts + tier_escalation（唯一真相）
 │   ├── stages/                   # 阶段执行逻辑（语义命名，文件名派生节点 ID，插入中间阶段无占号问题）
 │   │   ├── README.md             # 阶段索引 + 扩展指南（插拔式注册）
 │   │   ├── init.md               # INIT 意图判定+定级 [conductor 内建]
@@ -100,7 +100,7 @@ chmod +x install.sh
 
 安装脚本会将本仓库的内容复制到对应的全局配置目录：
 
-- **Windows**：`C:\Users\<用户名>\.config\kilo\`
+- **Windows**：`C:\Users\<用户名>\.config\kilo`
 - **macOS / Linux**：`~/.config/kilo/`
 - 安装脚本将本仓库内容同步到全局配置目录，不再创建 `agents/` 兼容副本。
 
@@ -161,23 +161,13 @@ Test-Path "$env:USERPROFILE\.config\kilo\kilo.json"
 test -f ~/.config/kilo/kilo.json && echo "OK"
 ```
 
-对比仓库与全局配置差异（Windows）：
-
-```powershell
-robocopy . "$env:USERPROFILE\.config\kilo" /E /XJ /XD .git node_modules .tmp worktrees .pytest_cache __pycache__ .kilo_tmp .playwright-mcp /XF install.ps1 install.sh README.md LICENSE .gitignore package.json package-lock.json pnpm-lock.yaml bun.lock yarn.lock agent-manager.json /L /NS /NC /NP /NDL
-```
-
-对比仓库与全局配置差异（macOS / Linux）：
+对比仓库与全局配置差异（跨平台，已机械化）：
 
 ```bash
-diff -rq . ~/.config/kilo \
-  --exclude=.git --exclude=node_modules --exclude=.tmp --exclude=worktrees --exclude=.pytest_cache --exclude=__pycache__ --exclude=.kilo_tmp --exclude=.playwright-mcp \
-  --exclude=install.ps1 --exclude=install.sh \
-  --exclude=README.md --exclude=LICENSE --exclude=.gitignore \
-  --exclude=package.json --exclude=package-lock.json \
-  --exclude=pnpm-lock.yaml --exclude=bun.lock --exclude=yarn.lock \
-  --exclude=agent-manager.json
+node scripts/deploy-drift-check.mjs
 ```
+
+该脚本逐文件比对仓库与部署副本（自动处理 `${KILO_CONFIG_DIR}` 占位符替换、保护运行时数据），exit 0 = 0 drift。install 双脚本已内置该门禁，**不需再手拼 robocopy / diff 排除参数**（旧写法的排除清单与安装器各维护一份，必然漂移）。
 
 ### 给真实项目接入项目级 context pack
 
@@ -188,9 +178,11 @@ diff -rq . ~/.config/kilo \
 
 ## MCP 扩展
 
-本配置仅启用本地代码图谱类 MCP（gitnexus / codegraph，`enabled: true`），其余（context7 / playwright 等）默认 `enabled: false` 占位；需用时手动启用。
+`kilo.json` 的 `mcp` 节是**占位配置**（通用类别：远程文档检索 / 代码图谱索引 / 浏览器自动化），**默认全部 `enabled: false`**。具体启用哪些、共几条由机器决定，清单以 `kilo.json` 的 `mcp` 节为准，不在本文档里写死。
 
-- **可选 MCP 工具**：通用类别包括远程文档检索、代码图谱索引、浏览器自动化等。具体 MCP 由 IDE 运行时注入决定；本仓库在 `kilo.json` 的 `mcp` 节维护启用清单与占位配置。启用时按所选工具官方文档配置（如部分工具需全局安装 CLI 客户端、设置环境变量等）。
+- **为何默认关闭**：`enabled: true` 但命令不在 PATH 会让**每次会话启动都 spawn 失败**。已踩过这个坑：配置开着、工具未装，而运行时文档又把它写成「必须调用」，结果每个 ≥3 文件任务都卡在无法满足的强制项上。启用前先 `Get-Command <cmd>` / `command -v <cmd>` 确认可执行。
+- **禁止写机器专属绝对路径**：`command` 只写可从 PATH 解析的命令名（旧配置里图谱类写的是某台机器的 `E:/...` 绝对路径，换机即失效）。
+- **运行时规则不得假定 MCP 存在**：一律写「优先能力 + 回退」双列，且优先列按**能力**而非厂商工具名描述（见 `.kilo/instructions/core.md` §Context Engine 查询规则）——写死厂商名会在换工具后失效，并诱导模型去调未安装的工具。
 
 
 ## Skills 跨项目复用

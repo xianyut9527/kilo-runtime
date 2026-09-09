@@ -324,15 +324,26 @@ export function resolveVars(ctx) {
 // T1 强度校验纯函数（供 INIT 出口门禁 + 自检复用）
 // ============================================================
 
+// custom_overrides 读取收口（2026-09 修复覆盖出口不可达）：唯一的可写路径是
+// `config.custom_overrides`——buildInitialContext 只创建该嵌套对象，且 WRITE_MATRIX 未放行根级
+// `custom_overrides`（实测 `set <id> custom_overrides.tier` 被直接拒绝）。旧代码只读根级，
+// 于是门禁一边在 remediation 里让用户「显式声明 custom_overrides.tier 覆盖」、一边没有任何
+// 合法写法，照做必然再次 FAIL 死循环。嵌套优先，根级保留为兼容回落（历史快照与本文件自检夹具）。
+function readCustomOverride(ctx, key) {
+  const nested = ctx.config && ctx.config.custom_overrides ? ctx.config.custom_overrides[key] : undefined;
+  if (nested !== undefined) return nested;
+  return ctx.custom_overrides ? ctx.custom_overrides[key] : undefined;
+}
+
 // T1 强度合法性校验：tier!=='T1' 跳过；T1 时 t1_strength 必填 ∈ {low,medium,high}
-// custom_overrides.t1_strength 显式声明时作为生效值（覆盖 sizing.t1_strength）
+// config.custom_overrides.t1_strength 显式声明时作为生效值（覆盖 sizing.t1_strength）
 export function validateT1Strength(ctx) {
   const tier = ctx.sizing?.tier;
   if (tier !== 'T1') {
     return { ok: true, effective: undefined, reason: 'tier=' + (tier || '(空)') + '，非 T1 跳过' };
   }
   const strength = ctx.sizing?.t1_strength;
-  const override = ctx.custom_overrides?.t1_strength;
+  const override = readCustomOverride(ctx, 't1_strength');
   const effective = ['low', 'medium', 'high'].includes(override) ? override : strength;
   if (!['low', 'medium', 'high'].includes(effective)) {
     return { ok: false, effective, reason: 't1_strength=' + JSON.stringify(strength) + ' 非法/缺失（合法值 low/medium/high）' };
@@ -562,27 +573,27 @@ function main() {
       dieMsg(`[PROCESS_VIOLATION] INIT 阶段未写入合法 tier（当前=${JSON.stringify(vars.tier)}）。必须执行 task-context.mjs set <task_id> sizing.tier '<T0|T1|T2>' --agent conductor`);
     }
   }
-  // T0 定级合理性校验：INIT 出口 tier=T0 时，intent.raw 命中逻辑指示词且无 custom_overrides.tier 覆盖 → 拒绝 T0 直通
+  // T0 定级合理性校验：INIT 出口 tier=T0 时，intent.raw 命中逻辑指示词且无 config.custom_overrides.tier 覆盖 → 拒绝 T0 直通
   if (FROM === 'INIT' && vars.tier === 'T0') {
     const t0 = checkT0Eligibility(ctx);
     if (t0.ok === false || t0.status === 'WARN') {
-      const override = ctx.custom_overrides?.tier;
+      const override = readCustomOverride(ctx, 'tier');
       if (override !== 'T0') {
-        dieMsg(`[PROCESS_VIOLATION] T0 定级不合理：${t0.detail}。建议升 T1 或显式声明 custom_overrides.tier=T0 覆盖。`);
+        dieMsg(`[PROCESS_VIOLATION] T0 定级不合理：${t0.detail}。建议升 T1；确属机械微改则在同一 batch 内写入 config.custom_overrides.tier=T0 覆盖（该键存在即跳过升级判定）。`);
       }
     }
   }
   // T1 强度合法性校验：INIT 出口 tier=T1 时 t1_strength 必填 ∈ {low, medium, high}
-  // custom_overrides.t1_strength 显式声明时作为生效值（不阻断）
+  // config.custom_overrides.t1_strength 显式声明时作为生效值（不阻断）
   if (FROM === 'INIT' && vars.tier === 'T1') {
     const v = validateT1Strength(ctx);
     if (!v.ok) {
-      dieMsg('[INVALID_T1_STRENGTH] INIT 阶段 T1 任务未写入合法 t1_strength（' + v.reason + '）。按 init.md §2b 四维度写入 sizing.t1_strength \'<low|medium|high>\' 或 custom_overrides.t1_strength 显式覆盖。');
+      dieMsg('[INVALID_T1_STRENGTH] INIT 阶段 T1 任务未写入合法 t1_strength（' + v.reason + '）。按 init.md §2b 四维度写入 sizing.t1_strength \'<low|medium|high>\'，或 config.custom_overrides.t1_strength 显式覆盖。');
     }
     // T1 low 强度 + 命中升级信号词 → 强制升 high（防该走规划被跳过）
     const t1 = checkT1StrengthEligibility({ ...ctx, sizing: { ...(ctx.sizing || {}), t1_strength: v.effective } });
     if (t1.ok === false || t1.status === 'WARN') {
-      if (ctx.custom_overrides?.t1_strength !== 'low') {
+      if (readCustomOverride(ctx, 't1_strength') !== 'low') {
         dieMsg('[PROCESS_VIOLATION] T1 强度低判: intent.raw 命中升级信号词, t1_strength 强制升 high。' + t1.detail + '。由 conductor 重写 sizing.t1_strength=high 后重新流转。');
       }
     }
@@ -889,7 +900,7 @@ function main() {
   process.stdout.write(`PASS transition ${FROM} -> ${TO} (when=${edge.when || 'none'}${edge.gate ? ` gate=${edge.gate}` : ''} | quality_round=${quality.round}/${maxR})\n`);
   // T1 强度显式展示（避免用户疑惑"没走规划"）：INIT 出口时直观标出强度档位与去向
   if (FROM === 'INIT' && vars.tier === 'T1' && (TO === 'EXECUTING' || TO === 'PLANNING')) {
-    // effective 复用 validateT1Strength：custom_overrides.t1_strength 显式覆盖时显示生效值，不重建逻辑
+    // effective 复用 validateT1Strength：config.custom_overrides.t1_strength 显式覆盖时显示生效值，不重建逻辑
     const eff = validateT1Strength(ctx).effective || vars.t1_strength;
     if (eff === 'high') {
       process.stdout.write('  T1 强度(t1_strength)=high → 去向: INIT→PLANNING 走完整设计门\n');
@@ -945,8 +956,12 @@ async function runSelfCheck() {
   // ③ 非法值/缺失阻断
   assertEq('validateT1Strength invalid value blocks', validateT1Strength({ sizing: { tier: 'T1', t1_strength: 'super' } }).ok, false);
   assertEq('validateT1Strength missing blocks', validateT1Strength({ sizing: { tier: 'T1' } }).ok, false);
-  // ① custom_overrides 显式覆盖生效
-  assertEq('custom_overrides.t1_strength overrides invalid', validateT1Strength({ sizing: { tier: 'T1', t1_strength: 'bad' }, custom_overrides: { t1_strength: 'low' } }).effective, 'low');
+  // ① custom_overrides 显式覆盖生效：**嵌套路径是运行时真实可写路径**（优先断言），根级仅作兼容回落
+  assertEq('config.custom_overrides.t1_strength overrides invalid', validateT1Strength({ sizing: { tier: 'T1', t1_strength: 'bad' }, config: { custom_overrides: { t1_strength: 'low' } } }).effective, 'low');
+  assertEq('custom_overrides.t1_strength (legacy root) still read', validateT1Strength({ sizing: { tier: 'T1', t1_strength: 'bad' }, custom_overrides: { t1_strength: 'low' } }).effective, 'low');
+  assertEq('nested overrides root (precedence)', validateT1Strength({ sizing: { tier: 'T1', t1_strength: 'bad' }, config: { custom_overrides: { t1_strength: 'high' } }, custom_overrides: { t1_strength: 'low' } }).effective, 'high');
+  assertEq('readCustomOverride nested-first', readCustomOverride({ config: { custom_overrides: { tier: 'T0' } } }, 'tier'), 'T0');
+  assertEq('readCustomOverride absent', readCustomOverride({ config: {} }, 'tier'), undefined);
   // ④ low + 信号词 → WARN
   const warnR = checkT1StrengthEligibility({ intent: { raw: '需要设计契约与并发机制' }, sizing: { tier: 'T1', t1_strength: 'low' } });
   assertEq('low + escalation word -> WARN', warnR.status === 'WARN' && warnR.ok === false, true);

@@ -384,7 +384,7 @@ foreach ($f in $files) {
 | `[ASSEMBLY_FAIL]` 角色无人履行 | 某 `required_roles` 角色无智能体在主槽注册 | 创建 `agent/<role>.md` 并挂载到对应主槽 |
 | `[SLOT_ABORT]` | `post:PLANNING` 的 `on_fail: abort` 触发 | 检查方案审查输出，修复方案后重试 |
 | `[AGENT_TIMEOUT]` | wall-clock 超过 `timeout_s` | 检查 `config.yaml timeouts.per_agent_s` 是否过小 |
-| `${HOME}` 占位符残留 | `install.ps1`/`install.sh` 替换不完整 | 确保脚本替换 `${KILO_CONFIG_DIR}` 和 `${HOME}` |
+| `${KILO_CONFIG_DIR}` 未替换 | 该文件不在 install 的替换清单内（`$MdFilePatterns` / `md_dir`） | 把文件目录补进**两端**清单，再把内容里的相对命令写成 `node "${KILO_CONFIG_DIR}/scripts/…"`；`${HOME}` 按设计**不替换**（留给 shell 运行时解析），它出现在文档里不是故障 |
 | 全局未同步 | 提交后漏跑 install | 提交后执行 `./install.ps1` 或 `./install.sh`，重启 Kilo |
 
 ---

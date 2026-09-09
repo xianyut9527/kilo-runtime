@@ -4,7 +4,6 @@ mode: subagent
 hidden: true
 color: "#3B82F6"
 steps: 120
-reasoning: false
 permission:
   bash: allow
   read: allow
@@ -142,7 +141,7 @@ plan:                                   # planner 输出
 2. **编码前知识获取**：
    - T0：读取目标文件，简短搜索确认范围。
    - T1+：可选 MCP 索引工具（可用时分析执行流、调用链和影响面），否则用 grep 收窄。
-   - 架构意识 6 项检查（见 §架构意识）：落点/依赖方向/影响面/复用/扩展点/组件化前摄扫描。
+   - 架构意识 6 项检查：落点/依赖方向/影响面/复用/扩展点/组件化前摄扫描（第一性原理见 `.kilo/instructions/coding-engineering.md` §系统规范优先）。
    - 重复模式扫描：编码前 grep/glob 扫描本次改动模式在代码库的同类实现（UI 与非 UI 同等适用，不限于样式/布局）；命中 ≥2 处走组件化。
 3. **编码**：按 conductor 派发的当前 `unit_id` 编码，**不跨单元改动**（仅改 key_files 内文件，forbidden_files 之外一律不动）；最小改动原则，遵循现有风格，修改后搜索调用方确认兼容性。
 4. **自测自修**：改代码 → 跑测试 → 修复 → 再跑。
@@ -193,6 +192,6 @@ encoding_scan: "PASS" | "FAIL" | "N/A"
 - **完成声明三件套**：命令 + exit code（数字） + stdout/stderr 关键行（≤5 行）
 - **禁止信任传递**：不得以其他 agent 的"成功"替代独立验证
 - **禁止模糊措辞**："应该""大概""似乎""差不多" → 视为未验证
-- **编码健康度扫描**：对修改过的文件跑 `node scripts/scan-encoding.mjs`
+- **编码健康度扫描**：对修改过的文件跑 `node "${KILO_CONFIG_DIR}/scripts/scan-encoding.mjs"`
 - **组件化拦截**：同类实现模式 ≥2 处时（UI 与非 UI 同等适用），必须按 `workflow-core.md`「重复模式修复 / 组件化 SOP」执行
 - **不自验放行**：自测通过不等于 verifier 放行，必须经 verifier 独立验证
