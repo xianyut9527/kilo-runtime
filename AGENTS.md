@@ -17,7 +17,6 @@
 > - `.kilo/instructions/reflection.md` — 反思与错误恢复规则
 > - `.kilo/instructions/coding-engineering.md` — 编码工程化标准（设计模式、组件化、反模式检测、落地流程；按需引用）
 > - `.kilo/instructions/byte-level-verify.md` — byte-level 验证 SOP（反 subagent 虚报）
-> - `.kilo/instructions/workflow-reference.md` — 工作流参考（small_model 触发、需求扩散与同类点扫描）
 > - `.kilo/instructions/output-schema.md` — 统一交付输出规范（最小公共字段、PASS/FAIL 结论、覆盖矩阵与标记语言）
 > - `.kilo/instructions/security-checklist.md` — 安全与性能检测项清单（SECURITY_GAP 标记）
 > - `agent/*.md` — 各智能体工作说明书 + frontmatter 生命周期声明（v6 单源：mount/task_context/isolation/gate 合入 frontmatter）。**不在此枚举智能体清单**——新增智能体 = 丢 `agent/<name>.md` + `kilo.json` 绑模型，零改框架。注册清单见 `node scripts/lifecycle-doctor/index.mjs`

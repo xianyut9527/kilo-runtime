@@ -55,14 +55,9 @@
       "model": "hx/deepseek-v4-flash",
       "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
-    "deep-analyzer": {
-      "mode": "subagent",
-      "model": "hx/kimi-k2.6",
-      "prompt": "独立多模型深度分析器（deep-analyzer）。不参与任务生命周期，作为独立能力按需调用。内部封装 3 路 analyst 三角验证 + synthesizer 融合 + critic 反向审计，用于分析复杂问题（架构评审/根因分析/方案对比/技术选型/代码审查/配置审计）。触发：用户直接 invoke（用多模型分析 X / 深度分析 X / 多角度审查 X）。输出契约见 .kilo/instructions/output-schema.md。"
-    },
     "analyst-1": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
+      "model": "hx/minimax-m3",
       "prompt": "独立多模型分析师之一（槽位 1 视角）：逻辑与规范基线视角。从代码逻辑正确性和系统架构规范切入，特长深挖逻辑推理与形式化验证。输出契约见 .kilo/instructions/output-schema.md。"
     },
     "analyst-2": {
@@ -113,13 +108,10 @@
     },
     "codegraph": {
       "type": "local",
-      "command": [
-        "codegraph",
-        "serve",
-        "--mcp"
-      ],
-      "enabled": false,
-      "timeout": 30000
+      "command": ["codegraph", "serve", "--mcp"],
+      "enabled": true,
+      "timeout": 30000,
+      "cwd": "${workspaceFolder}"
     }
   },
   "provider": {

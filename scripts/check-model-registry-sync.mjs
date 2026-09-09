@@ -40,7 +40,7 @@ const AGENT_KEY_MAP = {
 
 // 自动派生：从 agent/*.md 动态读取（U3 恢复），过滤未绑定决策表的 agent
 const AGENTS_DIR = path.join(ROOT, 'agent');
-const UNBOUND_AGENTS = new Set(['analyst-1', 'analyst-2', 'analyst-3', 'analyst-critic', 'analyst-synthesizer', 'deep-analyzer']);
+const UNBOUND_AGENTS = new Set(['analyst-1', 'analyst-2', 'analyst-3', 'analyst-critic', 'analyst-synthesizer']);
 const REQUIRED_AGENTS = fs.readdirSync(AGENTS_DIR)
   .filter((f) => f.endsWith('.md'))
   .map((f) => f.replace(/\.md$/, ''))

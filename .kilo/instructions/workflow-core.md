@@ -1,7 +1,7 @@
 ---
 name: workflow-core
-description: 编排核心规则 — 搜索纪律、需求扩散、闭环门禁、验证修复（精简注入版）
-keywords: workflow, orchestration, 搜索纪律, 需求扩散, 闭环, 验证修复
+description: 编排核心规则 — 搜索纪律、需求扩散、闭环门禁、验证修复、small_model 触发（精简注入版）
+keywords: workflow, orchestration, 搜索纪律, 需求扩散, 闭环, 验证修复, small_model
 ---
 
 # Workflow Core Rules（精简注入版）
@@ -60,6 +60,17 @@ keywords: workflow, orchestration, 搜索纪律, 需求扩散, 闭环, 验证修
 ### 未形成不得编码硬门
 
 命中扩散触发词时，未形成需求扩散包前不得编码。缺失由 `transition-check.mjs` 在 PLANNING→EXECUTING 边拦截。
+
+## small_model 触发规则
+
+small_model 是可选降级路由入口，仅在以下条件**全部满足**时使用：
+
+1. 任务为 1-2 文件的纯表面修改（文案/格式/命名/注释）
+2. 无逻辑变更、无跨模块依赖
+3. 不需要推理链（搜索、读取确认、机械替换）
+4. 不属于安全敏感模块
+
+任一不满足 → 使用 gent.model 或更强模型。禁止把 verifier/fixer/reviewer 等质量门禁角色路由到 small_model。
 
 ## 门禁与闭环
 

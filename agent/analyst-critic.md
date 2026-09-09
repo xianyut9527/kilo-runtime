@@ -46,7 +46,7 @@ output_schema:
 
 ## 输入
 
-- synthesizer 产出的统一 synthesis（由 deep-analyzer 传入）
+- synthesizer 产出的统一 synthesis（由 conductor 传入）
 
 ## 输出
 

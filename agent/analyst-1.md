@@ -53,7 +53,7 @@ output_schema:
 
 ## 输入
 
-- 用户提供的复杂问题 / 对象（由 deep-analyzer 传入）
+- 用户提供的复杂问题 / 对象（由 conductor 传入）
 - 分析目标说明
 
 ## 输出

@@ -180,12 +180,6 @@ verifier 接收委派包后必:
 
 ## MMO 编排 SOP
 
-> **多模型分析编排，独立能力，不进入任务生命周期。**
-> deep-analyzer 是独立智能体，不挂载任何 stage，不写 task_context。
-> 但 conductor 是唯一编排者——识别到多模型触发词后，由 conductor 直接编排
-> 3 analyst + synthesizer + critic 流水线（类比 dispatch planner/coder/verifier，
-> 都是编排，不违反"不亲为"铁律）。
-> deep-analyzer.md 保留为编排描述文档，实际编排由 conductor 执行。
 
 ### 触发词识别
 
@@ -256,6 +250,20 @@ Step 4: conductor 整合三阶段输出，直接输出分析报告给用户
 - forbidden_files: ["agent/", "lifecycle/", "docs/", "scripts/"]（只分析不修改）
 - return_contract.hard_limit: 4000（analyst/synthesizer/critic 均为 4000）
 - verification_command: "无（分析任务，无机械验证命令）"
+
+### 正例委派包（conductor 直接 dispatch 三 analyst）
+
+> 用户输入"多模型分析 agent/conductor.md 的铁律设计"时，conductor 单条响应并行发起 3 个 task。委派包公共字段（forbidden_files / return_contract / verification_command）见上节 §委派包，以下只列各角色 goal 增量。
+
+**analyst-1 goal**：从逻辑与规范基线视角分析 <对象>——聚焦逻辑正确性（边界条件/状态机完整性）、系统规范（接口契约/数据流/分层合规）、跨文件影响。
+**analyst-2 goal**：从全局关联与一致性视角分析 <对象>——聚焦跨模块依赖、全局一致性、调用链完整性。
+**analyst-3 goal**：从语义落地与规范执行视角分析 <对象>——聚焦命名语义、文档一致性、阈值偏差。
+
+**synthesizer goal**（串行，等三路全返回）：融合三路独立结论，产出 5 维 × 3 视角一致性矩阵（一致 ≥2 路共识 / 冲突保留分歧 / 单路仅 1 路提出）。context_anchor 传三路返回的摘要指针，**不传全文**。
+
+**critic goal**（串行，等 synthesizer 返回）：反向审计 synthesis 的偏误、遗漏与过度自信——核验幸存者偏差、单路结论被过度采信、冲突被掩盖。
+
+**反模式**：禁止把 analyst 返回全文塞进 synthesizer 的 context_anchor——只传指针与结论摘要（verdict + 关键 findings top3）。
 
 ### 成本声明
 
