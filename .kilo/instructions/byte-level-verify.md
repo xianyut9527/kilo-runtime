@@ -21,13 +21,13 @@ description: byte-level 验证 SOP — 反 subagent 虚报(010/010b/011 三次�
 4. **grep 严格匹配**:`grep -n "关键词" <files>` 命中数与预期一致(0 命中/≥n 命中)
 5. **二次读确认**:改后再读 L 行,确保实际落盘非缓存
 
-## §3 反模式(禁止)
+## §3 反模式(禁止)（6 条）
 - ❌ "grep 0 命中 → PASS"
 - ❌ "doctor 57 PASS → PASS"
 - ❌ "verifier 已确认" 无 byte-level 证据
 - ❌ "改 3 文件" 实际未改(010 U1 虚报)
 - ❌ "任务清单已覆盖" 漏列间接影响(011 漏 .gitignore)
-- ❌ 报告 PASS 时 evidence < 3 条
+- ❌ byte-level 模式报告 PASS 时 evidence < 3 条（byte-level 质量强化门，仅 PASS verdict 额外要求；通用 ≥1 硬门见 output-schema §transition-check）
 
 ## §4 输出:8 元组 evidence
 

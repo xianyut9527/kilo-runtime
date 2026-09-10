@@ -18,7 +18,7 @@
 | 调整定级默认加载哪些智能体 | `lifecycle/config.yaml` `tier_defaults` | `agent/*.md`、`graph.yaml` |
 | 新增一个模型 | `kilo.json` `provider.hx.models`（能力倾向可同步记入 `docs/model-registry.md` 供人类参考） | `agent/*.md` |
 | 临时禁用某智能体 | `lifecycle/config.yaml` `overrides.disabled_agents` | `agent/*.md`、`kilo.json` |
-| 改熔断阈值 | `lifecycle/config.yaml` `convergence`（**唯一真相**） | 其他全不动 |
+| 改熔断阈值 | `lifecycle/config.yaml` `hooks.quality.max_total_cycles`（**唯一真相**） | 其他全不动 |
 
 ---
 
@@ -58,7 +58,7 @@ kilo_config/
 │   ├── configuration-guide.md             # ← 本文件
 │   ├── conductor-full-spec.md             # conductor 完整设计规范（多智能体架构历史）
 │   ├── model-registry.md                  # 模型能力倾向人类可读版（人工维护）
-└── lifecycle-doctor/index.mjs             # 配置校验脚本（300+ 项检查）
+└── lifecycle-doctor/index.mjs             # 配置校验脚本（590+ 项检查）
 ```
 
 ### 信息归属表（单一真相原则）
@@ -70,7 +70,7 @@ kilo_config/
 | 模型能力倾向 | `docs/model-registry.md`（人类维护） | 无机器可读副本（v6.1 删除 `capabilities.yaml`，无机械校验） |
 | 图结构（节点/边/流转） | `lifecycle/graph.yaml` | `stages/*.md` 只写执行逻辑，不重复图结构 |
 | 定级→智能体组合 | `lifecycle/config.yaml` `tier_defaults` | `conductor.md` 不硬编码组合 |
-| 熔断阈值 | `lifecycle/config.yaml` `convergence`（唯一真相） | `graph.yaml` 不再重复声明 |
+| 熔断阈值 | `lifecycle/config.yaml` `hooks.quality.max_total_cycles`（唯一真相） | `graph.yaml` 不再重复声明 |
 
 ---
 
@@ -354,7 +354,7 @@ hooks:
     max_total_cycles: 3          # ← 从 7 改为 3（唯一熔断阈值，替代原 max_verify_retries/max_review_retries 死配置）
 ```
 
-`graph.yaml` 不再重复声明 convergence（v6.1 删除展示副本）。
+`graph.yaml` 不再重复声明 `hooks.quality.max_total_cycles`（v6.1 删除展示副本）。
 
 ---
 
@@ -401,12 +401,12 @@ edges:
 # 注意：当前架构 agents 表为空 {}（恒定挂载由图拓扑限定，tier 差异化用 mount[].tiers）；以下仅展示字段结构
 # tier_defaults：按定级 T0/T1/T2 声明加载哪些智能体
 # conductor 在 INIT 阶段把对应 tier 的 agents 表写入 task_context.config.agents
-# agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值；定级挂载可用 mount[].tiers（如 plan-reviewer tiers:[T2]）替代 when 开关，按 sizing.tier 过滤
+# agent frontmatter 的 mount[].when 对照 config.agents.<key> 求值；定级挂载可用 mount[].tiers（如 plan-reviewer tiers:[T1,T2]）替代 when 开关，按 sizing.tier 过滤
 tier_defaults:
   T0:
     agents: {}                 # 恒定挂载由图拓扑限定（T0 极速通道：INIT→EXECUTING→DELIVERING）
   T1:
-    agents: {}                 # 恒定挂载：planner/coder/verifier/reviewer/fixer（拓扑可达即加载）
+    agents: {}                 # 恒定挂载：planner/coder/verifier/fixer（拓扑可达即加载）；plan-reviewer post:PLANNING（T1/T2）；reviewer/reverse-auditor 仅 T2 加载
     model_overrides:
       verifier: "hx/deepseek-v4-flash"   # T1 快通道 verifier 降级（保留 reasoning）
   T2:
@@ -416,12 +416,12 @@ tier_defaults:
 overrides:
   disabled_agents: []          # 全局禁用的智能体名列表
   model_overrides: {}          # 覆盖 kilo.json 模型绑定
-  condition_overrides: {}      # 覆盖 config.agents 布尔值（挂载由 tiers 决定）
+#   condition_overrides 已废弃：挂载由 tiers 决定，不再提供布尔覆盖
 
 # hooks.quality：响应式 Hooks 熔断阈值（v2 唯一真相）
 hooks:
   quality:
-    max_total_cycles: 3        # QUALITY 总轮次上限（唯一熔断阈值，3 轮修不好=方案/需求有问题）
+    max_total_cycles: 3        # 来源 config.yaml hooks.quality.max_total_cycles（QUALITY 总轮次上限，唯一熔断阈值，3 轮修不好=方案/需求有问题）
 ```
 
 ### tier_defaults.agents 的 key 命名规则（自动派生）
@@ -477,7 +477,7 @@ hooks:
 node scripts/lifecycle-doctor/index.mjs
 ```
 
-300+ 项检查覆盖：
+590+ 项检查覆盖：
 - graph.yaml 节点/边引用完整性
 - agent frontmatter 字段完整性 + mount 挂载点存在性
 - graph 节点 required 角色被 agent mount 覆盖

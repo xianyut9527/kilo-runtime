@@ -81,9 +81,9 @@ DELIVERING
 |--------|--------------|-------|---------|------|------|
 | **conductor** | —（内建） | — | — | — | 编排者：意图判定→定级→挂载调度→流转裁判 |
 | **planner** | `PLANNING` | — | — | 恒定 | 设计门、DAG、验收点、全网旧措辞扫描 |
-| **plan-reviewer** | `post:PLANNING` | ‒ | ‒ | `tiers:[T2]` | 方案审查（on_fail:abort，verdict=FAIL 回流 planner 重做） |
+| **plan-reviewer** | `post:PLANNING` | ‒ | ‒ | `tiers:[T1,T2]` | 方案审查（on_fail:abort，verdict=FAIL 回流 planner 重做） |
 | **coder** | `EXECUTING` | — | — | 恒定 | 编码实现、三件套 |
-| **verifier** | `QUALITY hook:verify` | ‒ | deps | 恒定 | 正向验证（L1-L3，5 元组证据，唯一可写 execution.verification） |
+| **verifier** | `QUALITY hook:verify` | ‒ | deps | 恒定 | 正向验证（L1-L3，8 元组证据（含 3 必填），唯一可写 execution.verification） |
 | **reviewer** | `QUALITY hook:review` | — | deps | `tiers:[T2]` | 代码审查（安全/架构/简化/SCOPE_CREEP 四视角） |
 | **reverse-auditor** | `QUALITY hook:verify` | ‒ | deps | `tiers:[T2]` | 反向验证（diff 反向核对验收/设计门一致性） |
 | **fixer** | `QUALITY hook:fix` | — | `onFail` | 恒定 | 定向修复（auto-trigger，任一 verify/review FAIL 触发） |
@@ -222,7 +222,7 @@ tier_defaults:
 # lifecycle/config.yaml（唯一真相）
 hooks:
   quality:
-    max_total_cycles: 3       # QUALITY 总轮次上限（唯一熔断阈值，3 轮修不好=方案/需求有问题）
+    max_total_cycles: 3       # 来源 config.yaml hooks.quality.max_total_cycles（QUALITY 总轮次上限，唯一熔断阈值）
     auto_fix: true
 ```
 

@@ -138,8 +138,10 @@ edges:
     to: DELIVERING
     when: "intent_type == 'INQUIRY' and tier == 'T0'"
 
-  # 设计门完成 → 进入编码（EXECUTION 经 EXECUTING）
-  - { from: PLANNING, to: EXECUTING }
+  # 设计门完成 → 进入编码（EXECUTION 经 EXECUTING；INQUIRY 直通互斥，见下）
+  - from: PLANNING
+    to: EXECUTING
+    when: "intent_type == 'EXECUTION'"
 
   # 设计门完成 → 直通交付（INQUIRY T1+ M1：planner 检索后省 coder/verifier/reviewer）
   - from: PLANNING

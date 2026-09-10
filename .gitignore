@@ -59,7 +59,7 @@ kilo.json.bak.*
 # 多模型审计临时产物
 .kilo_tmp/
 
-# 多模型 worktree 隔离产物（T3 产物级聚合，见 multimodel-graph.yaml:33 路径模板）
+# 多模型 worktree 隔离产物（agent_manager worktree 产物，规则保留兼容历史 worktree）
 .worktrees/
 
 # MCP 运行时产物（本地 MCP 生成的临时目录,与 install 同步）

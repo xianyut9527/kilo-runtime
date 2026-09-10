@@ -18,6 +18,7 @@ models:
     vendor: minimax
     architecture: minimax-m3
 ---
+> **SSOT 声明**：kilo.json 为模型清单 SSOT，本表为人类可读副本，漂移以 doctor D6 校验为准。
 
 # docs/model-registry
 
@@ -29,7 +30,7 @@ models:
 
 1. **模型是资源，不是角色**：`kilo.json` `agent.<name>.model` 字段统一声明每个智能体绑定哪个模型 ID；本文档**不绑定模型 ID**，只描述能力倾向供人类参考。
 2. **能力倾向优先**：按智能体的能力倾向选模型，而非按 agent 名称硬编码。选模型时对照本文档的能力倾向列。
-4. **单一真相来源**：模型 ID 变更只在 `kilo.json` 一处修改；能力倾向描述只在本文档一处维护。
+3. **单一真相来源**：模型 ID 变更只在 `kilo.json` 一处修改；能力倾向描述只在本文档一处维护。
 
 ## 模型能力矩阵（参考，实际选择见 kilo.json）
 
@@ -90,10 +91,15 @@ models:
 | coder | hx/deepseek-v4-flash | 编码 ★★★★☆ + 200K 上下文；flash 档兼顾速度与编码能力 |
 | fixer | hx/deepseek-v4-flash | 最小修复场景同 coder，复用绑定降低切换成本 |
 | planner | hx/glm-5.2 | 规划需深推理，glm-5.2（reasoning ★★★★★）对稳定性与深推理要求最高 |
-| verifier | hx/glm-5.3-flash | 正向验证快通道：保留 reasoning 的 flash 档，低延迟；与 L124 T1 model_overrides 覆盖(deepseek-v4-flash)分层——kilo.json 基础绑定=glm-5.3-flash |
+| verifier | hx/glm-5.3-flash | 正向验证快通道：保留 reasoning 的 flash 档，低延迟；与 tier_defaults.T1.model_overrides 覆盖(deepseek-v4-flash)分层——kilo.json 基础绑定=glm-5.3-flash |
 | plan-reviewer/reviewer | hx/kimi-k2.6 | 多模态输入(image) + 强 reasoning，方案/代码审查需深度推理 |
 | reverse-auditor | hx/glm-5.2 | 反向核对需强推理，glm-5.2 深推理档与 planner 同族 |
 | small_model | hx/minimax-m3 | economy 降级目标，轻量任务省成本 |
+| analyst-1 | hx/minimax-m3 | MMO 槽位 1 逻辑与规范基线视角；minimax-m3 economy 档省成本 |
+| analyst-2 | hx/kimi-k2.6 | MMO 槽位 2 全局关联视角；kimi-k2.6 强 reasoning + 广度扫描 |
+| analyst-3 | hx/glm-5.2 | MMO 槽位 3 语义落地视角；glm-5.2 深推理 + 中文语义细辨 |
+| analyst-synthesizer | hx/kimi-k2.6 | MMO 融合汇总器；kimi-k2.6 长 context 聚合三路 trials |
+| analyst-critic | hx/glm-5.2 | MMO 反向审计器；glm-5.2 深推理反查 synthesis 偏误 |
 ## Tier 级模型覆盖（model_overrides）
 
 > lifecycle/config.yaml tier_defaults[Tn].model_overrides 字段，由 apply-tier-auto 机械写入 task_context.config.model_overrides。conductor dispatch 时若该字段存在，覆盖 kilo.json 的 agent 模型绑定。优先级：config.model_overrides.<agent> > runtime_decision > kilo.json agent.<name>.model。
@@ -103,7 +109,7 @@ models:
 | T1 | verifier | hx/deepseek-v4-flash | 保留 reasoning，比 glm-5.2 轻量；机械门托底 L2 风险 |
 | T2 | (无覆盖) | — | 保留 glm-5.2 全视角验证 |
 
-> 设计约束：T2 不覆盖（保留最稳定模型）；方案 B 用 deepseek-v4-flash（保留 reasoning），不用 flash-noreason（SCOPE_CREEP 漏报风险）。
+> 设计约束：T2 不覆盖（保留最稳定模型）；方案 B 用 deepseek-v4-flash（保留 reasoning）。
 
 
 **改绑检查**：改任一 agent 模型前，对照本表理由列评估是否仍成立；模型切换 commit 须在 message 说明新理由，避免无记录回摆。

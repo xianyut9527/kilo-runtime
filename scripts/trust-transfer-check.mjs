@@ -29,16 +29,13 @@ import path from 'node:path';
 import os from 'node:os';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { contextPath } from './lib/task-context-io.mjs';
 
 // 信任传递措辞正则（case-insensitive，跨多行）
 // 矩阵源：conductor.md §交叉验证组合判定 — convergence-auditor 段
 const TRUST_TRANSFER_RE = /(coder 说的对|verifier 已 PASS|正向已验证|按 coder 结论|信任传递)/i;
 
 const PERSPECTIVES = ['forward', 'reverse', 'side', 'review'];
-
-function contextPath(taskId) {
-  return path.join(os.tmpdir(), 'kilo', `task_context_${taskId}.json`);
-}
 
 // 白名单校验 taskId：仅允许字母数字下划线连字符，长度 1-64
 function assertValidTaskId(taskId) {

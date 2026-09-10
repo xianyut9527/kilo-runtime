@@ -1,6 +1,7 @@
 ---
 description: 独立多模型分析师之一（槽位 2 视角）：全局关联与一致性视角。从全局架构和跨模块依赖关系切入，特长深挖广度扫描与线索关联。输出契约见 .kilo/instructions/output-schema.md。
 mode: subagent
+subagent_type: analyst
 hidden: true
 color: "#06B6D4"
 steps: 40
@@ -64,6 +65,6 @@ output_schema:
 
 ## 返回契约
 
-- hard_limit 4000 字符
+- hard_limit 见 output-schema.md §返回超限约束（分析类）
 - 禁止修改任何文件
 - 所有结论必须附 file:line 证据

@@ -67,7 +67,7 @@ can_handoff_to:
 
 ## 安全门禁感知
 
-框架级三件套（`scan-encoding` 编码残留 / `bash-guard` 命令静态分析 / lifecycle-doctor `encoding-safety`）的跑点与阻断语义由自动注入的 `core.md` §框架级安全门禁 统一定义，委派前预检见 `agent/conductor.md` 铁律 #9 step 0c；bash 命令用 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" pre-dispatch <id> --bash-cmd "<cmd>"` 一步合并 step 0 + step 0c，命中即阻断。
+框架级三件套跑点与阻断语义见自动注入的 `core.md` §框架级安全门禁；委派前预检见 `agent/conductor.md` 铁律 #9 step 0c。
 
 - fixer 特化：实施最小修复后必跑 scan-encoding.mjs 与 bash-guard.mjs 双门禁，再交回 verifier
 
@@ -115,7 +115,7 @@ forbidden_files: ["string"]
 fixing_history: [...]              # 前几轮修复历史（避免重复）
 quality:
   round: int
-  max_rounds: 3  # 示例值；实际由 config.yaml hooks.quality.max_total_cycles 动态注入
+  max_rounds: 3  # 来源 config.yaml hooks.quality.max_total_cycles，数值以 config.yaml 为准（动态注入）
 # 禁止读取：verification.forward / verification.reverse / verification.side / verification.review（避免被前序结论锚定）
 # 禁止写入：task_context.execution.verification（避免污染下一轮 verifier）
 ```

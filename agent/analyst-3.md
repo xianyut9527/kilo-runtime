@@ -1,6 +1,7 @@
 ---
 description: 独立多模型分析师之一（槽位 3 视角）：语义落地与规范执行视角。从需求语义和中文技术文档规范切入，特长深挖语义细辨与规范执行。输出契约见 .kilo/instructions/output-schema.md。
 mode: subagent
+subagent_type: analyst
 hidden: true
 color: "#10B981"
 steps: 40
@@ -64,6 +65,6 @@ output_schema:
 
 ## 返回契约
 
-- hard_limit 4000 字符
+- hard_limit 见 output-schema.md §返回超限约束（分析类）
 - 禁止修改任何文件
 - 所有结论必须附 file:line 证据

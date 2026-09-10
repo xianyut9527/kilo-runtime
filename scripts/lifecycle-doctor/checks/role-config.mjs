@@ -3,10 +3,11 @@
 // 拆分自 scripts/lifecycle-doctor.mjs L1290-1503
 
 import path from 'node:path';
-import { extractFrontmatter, parseStageFrontmatter, parseTierEscalationCfg, globToRegexLocal, readText } from '../lib/parse.mjs';
+import { extractFrontmatter, parseStageFrontmatter, parseTierEscalationCfg, globToRegexLocal, readText, parseKiloJson } from '../lib/parse.mjs';
+import { parseTierDefaults } from '../../lib/config-parser.mjs';
 
 export function run(ctx) {
-  const { cf, graph, agents, cfg, cfgText, VERBOSE, STAGES_DIR, TIERS } = ctx;
+  const { cf, graph, agents, cfg, cfgText, VERBOSE, STAGES_DIR, TIERS, KILO_JSON_PATH } = ctx;
 
   // 智能体角色：frontmatter role ?? 文件名
   function roleOf(name) {
@@ -104,6 +105,18 @@ export function run(ctx) {
     }
   }
 
+  // C5. mode:subagent 必须声明 subagent_type（conductor mode:primary 豁免；只查存在性，不校验值与 role 对齐）
+  {
+    for (const [name, a] of agents) {
+      if (a.mode !== 'subagent') continue;
+      if (a.subagent_type) {
+        cf.pass(`agent.${name}.subagent_type`, `mode:subagent 已声明 subagent_type=${a.subagent_type}`);
+      } else {
+        cf.fail(`agent.${name}.subagent_type`, 'mode:subagent 缺 subagent_type 声明');
+      }
+    }
+  }
+
   // ============================================================
   // D. 配置校验
   // ============================================================
@@ -197,11 +210,40 @@ export function run(ctx) {
     // D5. pre-dispatch 安全门阈值
     {
       for (const key of ['size_check_threshold', 'dispatch_prompt_threshold', 'max_files_per_task']) {
-        const m = cfgText.match(new RegExp(key + ':\\s*(\\d+)'));
+        const m = cfgText.match(new RegExp(key + '\\:\\s*(\\d+)'));
         if (m && parseInt(m[1], 10) > 0) {
           cf.pass('config.' + key, key + '=' + m[1]);
         } else {
           cf.fail('config.' + key, key + ' 缺失或非正整数（pre-dispatch 安全门将无法求值）');
+        }
+      }
+    }
+
+    // D6. model_overrides 值 ⊆ kilo.json provider.*.models（模型清单 SSOT 机械校验）
+    {
+      const kjText = readText(KILO_JSON_PATH);
+      if (!kjText) {
+        cf.fail('config.model_overrides.ssot', '无法读取 kilo.json: ' + KILO_JSON_PATH);
+      } else {
+        let models = null;
+        try { models = parseKiloJson(kjText).models; }
+        catch (e) { cf.fail('config.model_overrides.ssot', 'kilo.json 解析失败: ' + e.message); }
+        if (models) {
+          const td = parseTierDefaults(cfgText);
+          let bad = 0;
+          for (const [tier, entry] of Object.entries(td.execution)) {
+            const mo = entry.model_overrides;
+            if (!mo) continue;
+            for (const [agent, v] of Object.entries(mo)) {
+              if (models.has(v)) {
+                cf.pass('config.model_overrides.' + tier + '.' + agent, '值 "' + v + '" ∈ kilo.json provider.*.models');
+              } else {
+                cf.fail('config.model_overrides.' + tier + '.' + agent, '值 "' + v + '" ∉ kilo.json provider.*.models');
+                bad++;
+              }
+            }
+          }
+          if (!bad) cf.pass('config.model_overrides.ssot', '所有 model_overrides 值 ⊆ kilo.json provider.*.models');
         }
       }
     }

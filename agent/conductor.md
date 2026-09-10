@@ -206,4 +206,4 @@ SOP:
 - `[AGENT_TIMEOUT]`（wall-clock 超 `timeout_s`，或 `agent_startup_s` 内 task 未开始执行）与 `[AGENT_UNAVAILABLE]`（`Tool execution aborted`，不可恢复、不重试）一律按**当前节点** `on_fail` 派发。
 - conductor 不接管 coder/reviewer 的写码与审查职责（`permission.edit: deny`）：EXECUTING/QUALITY 无 subagent 可用时只能 `escalate`/`pause`；仅 INIT 内建阶段允许降级为 conductor 内建处理。
 
-> 委派包 SOP（6 字段 / hard_limit / 反模式 / 正例 / T1 直通 minimal_gate）、路径规范（path.resolve + verifier 6 必做路径断言 + WRITE_MATRIX 三角验证）、MMO 编排 SOP、铁律 #9 完整展开——四者均仅在 `.kilo/instructions/conductor-dispatch-sop.md`，本文件不重复列指针。
+> 委派包 SOP（6 字段 / hard_limit / 反模式 / 正例 / T1 直通 minimal_gate）、路径规范（path.resolve + verifier 特有增量 2 条（byte-level-verify.md §2 5必做之后）+ WRITE_MATRIX 三角验证）、MMO 编排 SOP、铁律 #9 完整展开——四者均仅在 `.kilo/instructions/conductor-dispatch-sop.md`，本文件不重复列指针。

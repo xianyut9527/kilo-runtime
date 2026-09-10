@@ -13,6 +13,8 @@ import os from 'node:os';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { cachedDerive } from './lib/derived-cache.mjs';
+import { parseTierDefaults, parseTimeouts, parseTierEscalation } from './lib/config-parser.mjs';
+import { contextPath, readContextOptional } from './lib/task-context-io.mjs';
 
 // 脚本所在目录（ESM 无 __dirname）
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -70,12 +72,6 @@ function extractFrontmatter(text) {
   return m ? m[1] : null;
 }
 
-// 文件位置：$env:TEMP/kilo/task_context_<task_id>.json（Windows）
-//          /tmp/kilo/task_context_<task_id>.json（Unix）
-function contextPath(taskId) {
-  return path.join(os.tmpdir(), 'kilo', `task_context_${taskId}.json`);
-}
-
 // 白名单校验 taskId：仅允许字母数字下划线连字符，长度 1-64
 function assertValidTaskId(taskId) {
   if (typeof taskId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(taskId)) {
@@ -108,113 +104,8 @@ function readConvergenceFromConfig() {
 }
 
 // ============================================================
-// 从 lifecycle/config.yaml 解析 tier_defaults
-// 返回 { execution: { T0: {agents, provider?}, ... } }
-// conductor 在 INIT 阶段调用 readTierDefaults().execution[tier] 取默认组合，
-// 消除"手工 set config.agents 容易漏写/写错"的根因（mm-eval-20260731 全 false bug）。
-// 复用 lifecycle-doctor.mjs 的 yaml 子集解析器（脚本自包含）。
+// 从 lifecycle/config.yaml 解析 tier_defaults（实现见 scripts/lib/config-parser.mjs）
 // ============================================================
-function parseTierDefaults(text) {
-  const result = { execution: {} };
-  const lines = text.split(/\r?\n/);
-  let section = null;      // 'execution' | null
-  let curTier = null;
-  let inAgents = false;
-  let curAgents = null;
-  let curProvider = null;
-  let curModelOverrides = null;
-
-  function flush() {
-    if (curTier && section) {
-      const entry = { agents: curAgents || {} };
-      if (curProvider) entry.provider = curProvider;
-      if (curModelOverrides) entry.model_overrides = curModelOverrides;
-      result[section][curTier] = entry;
-    }
-    curAgents = null;
-    curProvider = null;
-    curModelOverrides = null;
-  }
-
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
-    // strip inline comment (preserve # inside quotes — none expected here)
-    const hashIdx = raw.search(/\s#/);
-    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
-    if (!line.trim()) continue;
-
-    // top-level keys we care about
-    if (/^tier_defaults\s*:/.test(line)) { flush(); section = 'execution'; curTier = null; inAgents = false; continue; }
-    if (/^(overrides|convergence|hooks|timeouts|tier_escalation)\s*:/.test(line)) { flush(); section = null; curTier = null; inAgents = false; continue; }
-
-    if (!section) continue;
-
-    // tier key: "  T0:" / "  T1:" (2-space indent under tier_defaults)
-    const tierM = line.match(/^  (T[0-3])\s*:\s*$/);
-    if (tierM) {
-      flush();
-      curTier = tierM[1];
-      inAgents = false;
-      curModelOverrides = null;
-      continue;
-    }
-
-    if (!curTier) continue;
-
-    // agents: (key under tier, 4-space indent)
-    const agentsStart = line.match(/^    agents\s*:\s*$/);
-    if (agentsStart) {
-      inAgents = true;
-      curAgents = {};
-      continue;
-    }
-    const agentsInline = line.match(/^    agents\s*:\s*\{(.*)\}\s*$/);
-    if (agentsInline) {
-      inAgents = false;
-      curAgents = {};
-      // inline empty {} → keep empty; inline {} with content not expected in this file
-      continue;
-    }
-
-    if (inAgents) {
-      // agent entry: "      key: true" (6-space indent)
-      const agentM = line.match(/^      ([a-z_]+)\s*:\s*(true|false)\s*$/);
-      if (agentM) {
-        curAgents[agentM[1]] = agentM[2] === 'true';
-        continue;
-      }
-      // leaving agents block (indent < 6)
-      if (!/^ {6,}/.test(line) && line.trim()) {
-        inAgents = false;
-      }
-    }
-
-    // model_overrides (4-space indent, sibling of agents)
-    const moStart = line.match(/^    model_overrides\s*:\s*$/);
-    if (moStart) {
-      inAgents = false;
-      curModelOverrides = {};
-      continue;
-    }
-    if (curModelOverrides) {
-      // entry: "      verifier: \"hx/deepseek-v4-flash\"" (6-space indent)
-      const moM = line.match(/^      ([a-z_]+)\s*:\s*["']?([^"']+)["']?\s*$/);
-      if (moM) { curModelOverrides[moM[1]] = moM[2]; continue; }
-      // leaving model_overrides block (indent < 6)
-      if (!/^ {6,}/.test(line) && line.trim()) { curModelOverrides = null; }
-    }
-
-    // provider (T3 only, 4-space indent)
-    const provM = line.match(/^    provider\s*:\s*(\w+)\s*$/);
-    if (provM) {
-      curProvider = provM[1];
-      continue;
-    }
-  }
-  flush();
-  return result;
-}
-
 function readTierDefaults() {
   return cachedDerive('tierDefaults', [CONVERGENCE_SOURCE], () => {
     const text = readConfigText();
@@ -224,25 +115,25 @@ function readTierDefaults() {
 }
 
 // 从 lifecycle/config.yaml 读取 size-check 阈值（conductor pre-dispatch 硬门依据）
-// 缺省 120000 字符（约 30K token，主会话 context 安全水位）
+// 缺省 150000 字符（约 30K token，主会话 context 安全水位）
 function readSizeCheckThreshold() {
   const text = readConfigText();
-  if (!text) return 120000;
+  if (!text) return 150000;
   const m = text.match(/size_check_threshold:\s*(\d+)/);
-  return m ? parseInt(m[1], 10) : 120000;
+  return m ? parseInt(m[1], 10) : 150000;
 }
 
 // 从 lifecycle/config.yaml 读取 dispatch-prompt-check 阈值（conductor pre-dispatch 硬门依据）
-// 缺省 3000 字符：单次 task prompt 字符数上限（小任务上限 ×1.5 安全系数）
+// 缺省 4000 字符：单次 task prompt 字符数上限（小任务上限 ×1.5 安全系数，与 lifecycle/config.yaml 对齐）
 function readDispatchPromptThreshold() {
   const text = readConfigText();
-  if (!text) return 3000;
+  if (!text) return 4000;
   const m = text.match(/dispatch_prompt_threshold:\s*(\d+)/);
-  return m ? parseInt(m[1], 10) : 3000;
+  return m ? parseInt(m[1], 10) : 4000;
 }
 
 // 从 lifecycle/config.yaml 读取单次 task 委派涉及文件数上限（dispatch-prompt-check 依据）
-// 缺省 3；配置缺失时返回 null（表示不限制）
+// 缺省 5；配置缺失时返回 null（表示不限制）
 function readMaxFilesPerTask() {
   const text = readConfigText();
   if (!text) return null;
@@ -272,80 +163,8 @@ function readRecoveryConfig() {
 }
 
 // ============================================================
-// 从 lifecycle/config.yaml 解析 timeouts 段
-// 返回：
-//   { agent_startup_s, stage_default_s, per_agent_s, per_tier_multiplier,
-//     agent_timeout_max_retries }
-// 无 timeouts 顶层段 -> 返回 null（调用方按 exit 2 处理）。
-// 迁移自 agent-timeout-guard.mjs，统一到 configText 缓存（消除双份解析）；
-// agent-timeout-guard.mjs 与 task-context.mjs（pre-dispatch/post-dispatch 合并）
-// 共用本实现。
+// 从 lifecycle/config.yaml 解析 timeouts（实现见 scripts/lib/config-parser.mjs）
 // ============================================================
-function parseTimeouts(text) {
-  const lines = text.split(/\r?\n/);
-  let inTimeouts = false;
-  let inPerAgent = false;
-  let inPerTier = false;
-  let inRetry = false;
-  const t = {
-    agent_startup_s: null,
-    stage_default_s: null,
-    per_agent_s: {},
-    per_tier_multiplier: {},
-    agent_timeout_max_retries: null,
-  };
-
-  for (const raw of lines) {
-    // strip inline comment（保留值内 #，timeouts 段无引号值）
-    const hashIdx = raw.search(/\s#/);
-    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
-    if (!line.trim()) continue;
-
-    // 顶层键切换
-    if (/^timeouts\s*:/.test(line)) { inTimeouts = true; inPerAgent = false; inPerTier = false; inRetry = false; continue; }
-    if (/^[a-z_]+\s*:/.test(line) && !/^\s/.test(line)) {
-      inTimeouts = false; inPerAgent = false; inPerTier = false; inRetry = false;
-      continue;
-    }
-    if (!inTimeouts) continue;
-
-    // 2-space keys under timeouts
-    const sub = line.match(/^  ([a-z_]+)\s*:\s*(.*)$/);
-    if (sub) {
-      const key = sub[1];
-      const val = sub[2].trim();
-      if (key === 'per_agent_s') { inPerAgent = true; inPerTier = false; inRetry = false; continue; }
-      if (key === 'per_tier_multiplier') { inPerTier = true; inPerAgent = false; inRetry = false; continue; }
-      if (key === 'retry') { inRetry = true; inPerAgent = false; inPerTier = false; continue; }
-      inPerAgent = false; inPerTier = false; inRetry = false;
-      if (key === 'agent_startup_s' && /^\d+$/.test(val)) t.agent_startup_s = parseInt(val, 10);
-      if (key === 'stage_default_s' && /^\d+$/.test(val)) t.stage_default_s = parseInt(val, 10);
-      continue;
-    }
-
-    // per_agent_s: 4-space indent key -> integer
-    if (inPerAgent) {
-      const m = line.match(/^    ([a-z_]+)\s*:\s*(\d+)\s*$/);
-      if (m) { t.per_agent_s[m[1]] = parseInt(m[2], 10); continue; }
-      if (/^\S/.test(line) || !/^\s{4}/.test(line)) { inPerAgent = false; }
-    }
-    // per_tier_multiplier: 4-space indent T0/T1/T2 -> float
-    if (inPerTier) {
-      const m = line.match(/^    (T[0-3])\s*:\s*([\d.]+)\s*$/);
-      if (m) { t.per_tier_multiplier[m[1]] = parseFloat(m[2]); continue; }
-      if (/^\S/.test(line) || !/^\s{4}/.test(line)) { inPerTier = false; }
-    }
-    // retry.agent_timeout_max_retries: 4-space indent
-    if (inRetry) {
-      const m = line.match(/^    agent_timeout_max_retries\s*:\s*(\d+)\s*$/);
-      if (m) { t.agent_timeout_max_retries = parseInt(m[1], 10); continue; }
-      if (/^\S/.test(line) || !/^\s{4}/.test(line)) { inRetry = false; }
-    }
-  }
-
-  return t;
-}
-
 // 读取 config.yaml timeouts；文件缺失或缺少 timeouts 段 -> null。
 // 复用 readConfigText（已 mtime 缓存）+ cachedDerive 跨 start/check/pre-dispatch/post-dispatch 命中缓存。
 function readTimeouts() {
@@ -413,30 +232,6 @@ function readContext(taskId) {
     die(1, `Error: cannot read task_context for task_id=${taskId}: ${e.message}`);
   }
   // 剥离 UTF-8 BOM（外部工具可能以 UTF-8 with BOM 写入）
-  if (raw.charCodeAt(0) === 0xFEFF) {
-    raw = raw.slice(1);
-  }
-  try {
-    return { ctx: JSON.parse(raw), path: p };
-  } catch (e) {
-    die(1, `Error: invalid JSON in task_context for task_id=${taskId}: ${e.message}`);
-  }
-}
-
-// readContextOptional(taskId)：task_context 可选读（MMO 多模型路径 pre/post-dispatch --ephemeral 用）。
-// 文件不存在 -> 返回 {ctx: null, path: null}（不 die）；文件存在但 JSON 损坏/读取失败 -> 维持
-// readContext 严格校验语义（die 1）。readContext 原语义不动：普通 dispatch 在 ctx 缺失时仍 die 阻断。
-function readContextOptional(taskId) {
-  const p = contextPath(taskId);
-  if (!fs.existsSync(p)) {
-    return { ctx: null, path: null };
-  }
-  let raw;
-  try {
-    raw = fs.readFileSync(p, 'utf8');
-  } catch (e) {
-    die(1, `Error: cannot read task_context for task_id=${taskId}: ${e.message}`);
-  }
   if (raw.charCodeAt(0) === 0xFEFF) {
     raw = raw.slice(1);
   }
@@ -621,48 +416,8 @@ function parseValue(rawValue) {
 }
 
 // ============================================================
+// 从 lifecycle/config.yaml 解析 tier_escalation（实现见 scripts/lib/config-parser.mjs）
 // ============================================================
-// 从 lifecycle/config.yaml 解析 tier_escalation（定级自动升级触发器）
-// 返回 { mode: 'any'|'all', keyword_groups: {auth: [...], ...}, sensitive_path_globs: [...] }
-// apply-escalation 子命令的扫描依据。
-// ============================================================
-function parseTierEscalation(text) {
-  const result = { mode: 'any', keyword_groups: {}, sensitive_path_globs: [] };
-  let inEscalation = false;
-  let inKeywordGroups = false;
-  let inGlobs = false;
-  let curGroup = null;
-  const lines = text.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
-    const hashIdx = raw.search(/\s#/);
-    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
-    if (!line.trim()) continue;
-    if (/^tier_escalation\s*:/.test(line)) {
-      inEscalation = true; inKeywordGroups = false; inGlobs = false; curGroup = null; continue;
-    }
-    if (!inEscalation) continue;
-    if (/^[^\s#]/.test(line) && !/^tier_escalation/.test(line)) { inEscalation = false; break; }
-    const modeM = line.match(/^  mode\s*:\s*(\w+)\s*$/);
-    if (modeM) { result.mode = modeM[1]; continue; }
-    if (/^  keyword_groups\s*:\s*$/.test(line)) { inKeywordGroups = true; inGlobs = false; curGroup = null; continue; }
-    if (/^  sensitive_path_globs\s*:\s*$/.test(line)) { inGlobs = true; inKeywordGroups = false; curGroup = null; continue; }
-    if (inKeywordGroups) {
-      const gm = line.match(/^    ([a-z_]+)\s*:\s*$/);
-      if (gm) { curGroup = gm[1]; if (!result.keyword_groups[curGroup]) result.keyword_groups[curGroup] = []; continue; }
-      if (curGroup) {
-        const km = line.match(/^      -\s+(.+?)\s*$/);
-        if (km) { result.keyword_groups[curGroup].push(km[1]); continue; }
-      }
-    }
-    if (inGlobs) {
-      const gm = line.match(/^    -\s+"(.+?)"\s*$/);
-      if (gm) { result.sensitive_path_globs.push(gm[1]); continue; }
-    }
-  }
-  return result;
-}
-
 function readTierEscalation() {
   return cachedDerive('tierEscalation', [CONVERGENCE_SOURCE], () => {
     const text = readConfigText();

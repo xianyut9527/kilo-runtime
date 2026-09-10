@@ -26,10 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-
-function contextPath(taskId) {
-  return path.join(os.tmpdir(), 'kilo', `task_context_${taskId}.json`);
-}
+import { contextPath } from './lib/task-context-io.mjs';
 
 function die(code, msg) {
   process.stderr.write(msg + '\n');

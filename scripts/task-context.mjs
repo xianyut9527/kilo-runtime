@@ -1012,7 +1012,7 @@ function cmdAssert(taskId, assertionType, args) {
 
 // ============================================================
 // size-check 子命令：返回 task_context 文件字符数
-// conductor pre-dispatch 硬门：超 config.size_check_threshold（缺省 120000）时 exit 2
+// conductor pre-dispatch 硬门：超 config.size_check_threshold（缺省 150000）时 exit 2
 // 强制切 agent_manager，禁止 task dispatch（防主会话 context 撑爆 abort）
 // ============================================================
 
@@ -1359,7 +1359,7 @@ function cmdArchive(taskId) {
 // conductor dispatch 前用 `set <task_id> dispatch_pending.prompt_chars <N> --agent conductor` 写入 pending 信息
 // （file_count 可选），随后调用本子命令校验：
 //   - dispatch_pending.prompt_chars 未设置/非法 → exit 1（审计失败：conductor 未写入 pending 信息）
-//   - prompt_chars > dispatch_prompt_threshold（config.yaml，缺省 3000）→ exit 2（超限，阻断 dispatch）
+//   - prompt_chars > dispatch_prompt_threshold（config.yaml，缺省 4000（与 lifecycle/config.yaml 对齐））→ exit 2（超限，阻断 dispatch）
 //   - file_count > max_files_per_task（若设置）→ exit 2（超限）
 //   - 全部通过 → exit 0（输出 PASS）
 // 输出格式参照 size-check：PASS dispatch-prompt-check (prompt_chars=N threshold=M file_count=F max_files=G)

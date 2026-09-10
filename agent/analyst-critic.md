@@ -1,6 +1,7 @@
 ---
 description: 多模型分析反向审计器。在 synthesizer 产出 synthesis 后，反向审计其结论的偏误、遗漏与过度自信。输出契约见 .kilo/instructions/output-schema.md。
 mode: subagent
+subagent_type: critic
 hidden: true
 color: "#EF4444"
 steps: 40
@@ -58,9 +59,9 @@ output_schema:
 
 - PASS：分析可信
 - FAIL：有偏误/遗漏
-- CIRCUIT_BREAKER：已达 max_total_cycles(3) 轮，降级为单模型结论
+- CIRCUIT_BREAKER：已达 max_total_cycles(3) 轮（来源 config.yaml hooks.quality.max_total_cycles，数值以 config.yaml 为准），降级为单模型结论
 
 ## 返回契约
 
-- hard_limit 4000 字符
+- hard_limit 见 output-schema.md §返回超限约束（分析类）
 - 只审计不修复

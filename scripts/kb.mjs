@@ -41,11 +41,13 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { readLessonsFile, resolveLessonsDir } from './lessons-recorder.mjs';
+import { globalRoot } from './lib/global-root.mjs';
 
 // 跨平台 __dirname：从 import.meta.url 解析，避免依赖 cwd
 const __filename = fileURLToPath(import.meta.url);
 const DEFAULT_ROOT = path.resolve(path.dirname(__filename), '../knowledge-base');
-const DEFAULT_SYNC_ROOT = path.join(os.homedir(), '.config', 'kilo', 'knowledge-base');
+const DEFAULT_SYNC_ROOT = path.join(globalRoot(), 'knowledge-base');
+const TMP = os.tmpdir();
 
 const CATEGORIES = ['编排', '方法', '执行', '需求'];
 const CONFIDENCES = ['high', 'medium', 'low'];
@@ -752,7 +754,7 @@ function cmdSelftest() {
   const check = (name, cond, detail) => {
     checks.push({ name, ok: !!cond, detail: detail || '' });
   };
-  const sandbox = path.join(os.tmpdir(), 'kilo', `kb-selftest-${process.pid}`);
+  const sandbox = path.join(TMP, 'kilo', `kb-selftest-${process.pid}`);
   fs.rmSync(sandbox, { recursive: true, force: true });
   fs.mkdirSync(path.join(sandbox, 'fixes'), { recursive: true });
   // 主进程 LESSONS_DIR 指向沙箱空目录，避免任何直接 add 误读真实 cwd 的 lessons（交叉查重隔离）
@@ -823,7 +825,7 @@ function cmdSelftest() {
     check('archive moved file', fs.existsSync(path.join(sandbox, 'fixes', 'archive', 'FX-001.md')), '');
 
     // 11) 同步：add 镜像到伪全局根（--sync-root 指向 TEMP 伪全局）
-    const pseudoGlobal = path.join(os.tmpdir(), 'kilo', `kb-syncroot-${process.pid}`);
+    const pseudoGlobal = path.join(TMP, 'kilo', `kb-syncroot-${process.pid}`);
     fs.rmSync(pseudoGlobal, { recursive: true, force: true });
     fs.mkdirSync(pseudoGlobal, { recursive: true });
     r = runKb(sandbox, ['add', '--symptoms', 'sync test', '--name', 'Sync entry', '--category', '方法', '--sync-root', pseudoGlobal]);
@@ -832,7 +834,7 @@ function cmdSelftest() {
     check('sync index rebuilt', fs.existsSync(path.join(pseudoGlobal, 'index.md')), '');
 
     // 12) --no-sync 全局禁用：伪全局根零写入
-    const pseudoGlobal2 = path.join(os.tmpdir(), 'kilo', `kb-nosync-${process.pid}`);
+    const pseudoGlobal2 = path.join(TMP, 'kilo', `kb-nosync-${process.pid}`);
     fs.rmSync(pseudoGlobal2, { recursive: true, force: true });
     fs.mkdirSync(pseudoGlobal2, { recursive: true });
     r = runKb(sandbox, ['add', '--symptoms', 'nosync test', '--name', 'NoSync entry', '--category', '方法', '--force', '--no-sync', '--sync-root', pseudoGlobal2]);
@@ -895,8 +897,8 @@ function cmdSelftest() {
     check('lessons isolation exit 0', r.code === 0, `code=${r.code} stderr=${r.stderr.trim()}`);
   } finally {
     fs.rmSync(sandbox, { recursive: true, force: true });
-    fs.rmSync(path.join(os.tmpdir(), 'kilo', `kb-syncroot-${process.pid}`), { recursive: true, force: true });
-    fs.rmSync(path.join(os.tmpdir(), 'kilo', `kb-nosync-${process.pid}`), { recursive: true, force: true });
+    fs.rmSync(path.join(TMP, 'kilo', `kb-syncroot-${process.pid}`), { recursive: true, force: true });
+    fs.rmSync(path.join(TMP, 'kilo', `kb-nosync-${process.pid}`), { recursive: true, force: true });
   }
 
   const failed = checks.filter((c) => !c.ok);

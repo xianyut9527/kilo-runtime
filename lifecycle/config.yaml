@@ -95,20 +95,17 @@ tier_defaults:
   # T0 极速通道：INIT → EXECUTING → DELIVERING
   # 无可选视角；恒定挂载智能体（coder）由图拓扑限定自动加载
   T0:
-    agents: {}
 
   # T1 标准闭环
-  # 恒定挂载：planner/coder/verifier/reviewer/fixer（拓扑可达即加载）
-  # model_overrides：T1 快通道 verifier 降级到 deepseek-v4-flash（保留 reasoning，不用 flash-noreason）
+  # 恒定挂载：planner/coder/verifier/fixer（拓扑可达即加载）；plan-reviewer post:PLANNING（T1/T2）；reviewer/reverse-auditor 仅 T2 加载
+  # model_overrides：T1 快通道 verifier 降级到 deepseek-v4-flash（保留 reasoning）
   T1:
-    agents: {}
     model_overrides:
       verifier: "hx/deepseek-v4-flash"
 
   # T2 全视角验证：正向+审查全开
   # 适合复杂任务：架构变更、跨多文件重构、安全敏感改动
   T2:
-    agents: {}
 
 # ============================================================
 # tier_escalation：定级自动升级触发器
@@ -209,11 +206,11 @@ hooks:
 # ============================================================
 # pre-dispatch 安全门阈值（conductor 委派前 size-check 依据）
 # 阈值语义：task_context 文件字符数 > 阈值 → [CONTEXT_UNSAFE] → 强制切 agent_manager worktree
-# 字符单位说明：当前是字符（char）workaround，非真实 token；中英混合场景下约 1.5 char/token
-# 安全系数：阈值已含 1x 缓冲（实测主会话 ~120k 字符仍可承载，120k 触发前有充足预警）
+# 字符单位说明：当前是字符（char）workaround，非真实 token；中英混合场景下约 1.5 char/token；150K 字符 = 200K token 上下文的 50% 保守线（÷1.5 char/token），实测 120K 可承载，150K 留余量
+# 安全系数：阈值已含 1x 缓冲（实测主会话 ~120k 字符仍可承载，150k 留余量）
 # worktree 兜底保留：超过阈值 → 强制 worktree 而非主会话；该兜底防线不主动禁用
 # ============================================================
-size_check_threshold: 120000
+size_check_threshold: 150000
 dispatch_prompt_threshold: 4000   # dispatch-prompt-check 阈值：单次 task prompt 字符数上限（小任务上限 ×1.5 安全系数，可调）
 max_files_per_task: 5             # 单次 task 委派涉及文件数上限（3→5：清理 lessons 时多文件 batch 编辑需求；超 5 应回流 PLANNING 拆单元）
 dedup_unit_dispatch: true   # 单元级去重门禁：同一 unit 未 post-dispatch 前禁止重复 pre-dispatch（防并发写冲突 + token 浪费）
@@ -223,6 +220,7 @@ dedup_unit_dispatch: true   # 单元级去重门禁：同一 unit 未 post-dispa
 # max_write_retry     — agent 返回未落盘 execution 时，conductor 自动触发重写的最大次数
 # overload_threshold  — 单任务触发 CONTEXT_UNSAFE 次数上限；超 → escalate（避免无限 worktree 切分）
 # circuit_breaker_overload — 全局 overload 累计阈值；超 → 整体熔断（与 hooks.quality 联动）
+# 预算可见化：运行时消耗（overload++/write_retry/cycle）计入 dispatch_log budget 条目 + 返回摘要 recovery_budget 单行
 # ============================================================
 recovery:
   max_write_retry: 1

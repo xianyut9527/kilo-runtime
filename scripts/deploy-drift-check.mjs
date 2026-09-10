@@ -36,6 +36,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { parseRuntimeOwn, classifyExtra, buildDriftExcludes, resolveMdSubstDirs,
   isRootOnlyExcluded } from './lib/install-runtime-data.mjs';
+import { globalRoot } from './lib/global-root.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SELF_ROOT = path.resolve(__dirname, '..');
@@ -95,7 +96,7 @@ function parseArgs(argv) {
     else if (a === '--quiet') out.quiet = true;
   }
   if (!out.target) {
-    out.target = path.resolve(process.env.KILO_INSTALL_TARGET || path.join(os.homedir(), '.config', 'kilo'));
+    out.target = path.resolve(process.env.KILO_INSTALL_TARGET || globalRoot());
   }
   return out;
 }

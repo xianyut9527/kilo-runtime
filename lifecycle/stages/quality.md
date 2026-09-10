@@ -221,7 +221,7 @@ quality:
 # lifecycle/config.yaml hooks 段
 hooks:
   quality:
-    max_total_cycles: 3        # QUALITY 总轮次上限（唯一熔断阈值；3 轮修不好=方案/需求有问题，escalate 到人）
+    max_total_cycles: 3        # QUALITY 总轮次上限；来源 config.yaml hooks.quality.max_total_cycles，数值以 config.yaml 为准（唯一熔断阈值；3 轮修不好=方案/需求有问题，escalate 到人）
     auto_fix: true             # 自动触发 fix hooks（false = 人工确认后修复）
 ```
 
@@ -262,4 +262,12 @@ quality_gate:
 5. **不跳过 review**：即使 verify 连续 FAIL 后最终 PASS，也必须经过 review hooks 才能离开 QUALITY
 6. **CIRCUIT_BREAKER 不阻塞交付**：熔断后流转到 DELIVERING，但标记 `[QUALITY_CB]`，由用户决策是否继续
 7. **离开 QUALITY 硬门**：进入下阶段前必须写入 `quality.verdict` ∈ {PASS, CIRCUIT_BREAKER}。缺 verdict 时 transition-check.mjs 报 `[MISSING_QUALITY_VERDICT]` 拒绝流转，确保 T1/T2 不能绕过 QUALITY。
+
+## 并行调度（v6.1 调度策略，2026-09-09）
+
+> 本段只约定**调度策略**（何时并行、何时作废），**不改变** verify→fix(onFail)→verify 循环与 review afterPass 触发语义。graph.yaml 拓扑不动，hook 类型定义顺序与保留串行场景（见上方「Hooks 挂载」）仍为唯一执行顺序真相。
+
+- **verify 组内多 verifier 必选并行**：同 hook 类型（verify）无 `after` 依赖时，单条响应末尾并行发起多个 task（共享一个零输出硬门，同铁律 #11 全局默认并行策略）。视角隔离不变，各 verifier 独立读 `execution.code + plan + forbidden_files + acceptance_criteria`。
+- **审查智能体（review hook）乐观预取为可选路径**：审查智能体可与首轮 verify 同响应并行发起（乐观预取，缩短串行等待）。若 verify 返回 FAIL → **作废预取结果**（review 结论不进入 `execution.quality`，不触发 review 侧 fix），回到 verify→fix(onFail)→verify 循环；仅当 verify 全 PASS 时预取结果才生效（review afterPass 语义不变）。
+- **边界**：本段不改变「fix 后必须重 verify」「不跳过 review」等硬规则（见上方「硬规则」）；乐观预取仅缩短 wall-clock，不改变判定顺序与触发条件。
 

@@ -51,10 +51,10 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   ├── conductor.md           # 工作流编排者（type: primary，内建执行 INIT/DELIVERING）
 │   ├── planner.md                # 规划智能体（mount: PLANNING；设计门、DAG、验收点）
 │   ├── coder.md                  # 编码智能体（mount: EXECUTING；实现、自测、三件套）
-│   ├── verifier.md               # 正向验证（mount: QUALITY hook:verify；L1/L2/L3、5 元组证据）
+│   ├── verifier.md               # 正向验证（mount: QUALITY hook:verify；L1/L2/L3、8 元组证据（含 3 必填））
 │   ├── reviewer.md               # 静态审查（mount: QUALITY hook:review；安全编码模式/架构/简化/SCOPE_CREEP 四视角）
 │   ├── fixer.md                  # 修复智能体（mount: QUALITY hook:fix, auto-trigger；定向修复阻塞问题）
-│   ├── plan-reviewer.md          # 方案审查（mount: PLANNING post；tiers: [T2]）
+│   ├── plan-reviewer.md          # 方案审查（mount: PLANNING post；tiers: [T1,T2]）
 │   ├── reverse-auditor.md        # 反向验证审查（mount: QUALITY post；反向核对 diff）
 │   └── (新增智能体 = 丢一个 <name>.md + kilo.json 绑模型，零改框架)
 ├── lifecycle/                    # 生命周期（5 阶段：INIT→PLANNING→EXECUTING→QUALITY→DELIVERING）

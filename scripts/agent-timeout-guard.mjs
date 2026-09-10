@@ -21,7 +21,7 @@
 //          / 5=[ESCALATE]（timeout 且计数 > agent_timeout_max_retries）
 //          / 1=参数或权限错 / 2=config.yaml 缺 timeouts 段
 //
-// agent-timeout-guard.mjs（降级独立调用）
+// agent-timeout-guard.mjs（降级独立调用入口，主路径已合并 pre/post-dispatch）
 //   { start_time_ms, budget_s, deadline_ms, status:'running'|'timeout'|'cleared',
 //     agent, tier, timed_out_at_ms?, actual_duration_s? }
 //

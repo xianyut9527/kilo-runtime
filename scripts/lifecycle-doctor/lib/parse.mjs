@@ -152,7 +152,7 @@ export function extractFrontmatter(text) {
 }
 
 export function parseAgentFrontmatter(fm) {
-  const agent = { mount: [], role: null, writes: [], type: null };
+  const agent = { mount: [], role: null, writes: [], type: null, mode: null, subagent_type: null };
   const lines = fm.split(/\r?\n/);
   let section = null;
   let curMount = null;
@@ -167,6 +167,8 @@ export function parseAgentFrontmatter(fm) {
         if (key === 'mount') { section = 'mount'; continue; }
         if (key === 'task_context') { section = 'task_context'; continue; }
         if (key === 'role' && val) { agent.role = val.trim(); continue; }
+        if (key === 'mode' && val) { agent.mode = val.trim().replace(/\s+#.*$/, ''); continue; }
+        if (key === 'subagent_type' && val) { agent.subagent_type = val.trim().replace(/\s+#.*$/, ''); continue; }
         if (key === 'type' && val) { agent.type = val.trim().replace(/\s+#.*$/, ''); continue; }
       }
       continue;

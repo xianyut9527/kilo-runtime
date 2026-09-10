@@ -1,5 +1,5 @@
 ---
-description: conductor 委派调度 SOP 独立文件。含 §委派包 SOP（6 字段/hard_limit/反模式/正例/T1 直通 minimal_gate）、§路径规范（path.resolve + verifier 6 必做路径断言 + WRITE_MATRIX 三角验证）、§铁律 #9 完整展开（pre/post-dispatch step0-2 + shell-guard/encoding-prescan/timeout-guard + 并行安全边界 + abort 不可恢复）、§MMO 编排 SOP（多模型分析 3 analyst + synthesizer + critic）。由 conductor.md 引用，降低注入单体体积。
+description: conductor 委派调度 SOP 独立文件。含 §委派包 SOP（6 字段/hard_limit/反模式/正例/T1 直通 minimal_gate）、§路径规范（path.resolve + verifier 特有增量 2 条（byte-level-verify.md §2 5必做之后）+ WRITE_MATRIX 三角验证）、§铁律 #9 完整展开（pre/post-dispatch step0-2 + shell-guard/encoding-prescan/timeout-guard + 并行安全边界 + abort 不可恢复）、§MMO 编排 SOP（多模型分析 3 analyst + synthesizer + critic）。由 conductor.md 引用，降低注入单体体积。
 ---
 
 # conductor-dispatch-sop.md
@@ -13,7 +13,7 @@ description: conductor 委派调度 SOP 独立文件。含 §委派包 SOP（6 �
    - **unit 派发必带标识（单元去重门禁前置）**：EXECUTING 每单元派发必带 `--unit-id <id>`（涉及显式文件清单时加 `--key-files <a,b>`），否则 dedup_unit_dispatch 门禁不生效（unitId 为空跳过去重，去重防线失电）。
      - exit 0 → 全通过，正常 task dispatch。
      - exit 1（`dispatch_pending` 非法，审计失败）→ 阻断 dispatch，检查 prompt-chars/file-count 参数。
-     - exit 2 → 阻断 dispatch。**区分来源看 stdout**：`FAIL dispatch-prompt-check` = prompt 字符数 > `config.dispatch_prompt_threshold`（缺省 4000）或 file_count > max_files_per_task → 压缩 prompt/文件后重试；size 行字符数 > `config.size_check_threshold`（缺省 120000）= task_context 超限 → **自动 archive 归档优先，不机械删除素材**：
+     - exit 2 → 阻断 dispatch。**区分来源看 stdout**：`FAIL dispatch-prompt-check` = prompt 字符数 > `config.dispatch_prompt_threshold`（以 lifecycle/config.yaml dispatch_prompt_threshold 为准）或 file_count > max_files_per_task → 压缩 prompt/文件后重试；size 行字符数 > `config.size_check_threshold`（以 lifecycle/config.yaml 为准）= task_context 超限 → **自动 archive 归档优先，不机械删除素材**：
        1. **pre-dispatch 收到 size 超限自动调用 archive 子命令**：把 `execution / verification / plan / fixing_history` 细节字段原子转储到 sidecar `$TEMP/kilo/tasks/<id>/<id>.archive-<ts>.json`，主 ctx 这些字段替换为 `{archived:true, path, summary, archived_at_ms}`；**保留 intent / sizing / config / current_stage / quality.verdict / dispatch_log / status**（交付素材归档保护，不删除）。sidecar 写入失败则保持原样、维持 exit 2 阻断，不误归档。
        2. pre-dispatch 内建重测 size。exit 0 → 归档成功，继续 task dispatch。
        3. 仍 exit 2（不可归档字段如 dispatch_log 膨胀导致）→ `[CONTEXT_UNSAFE]` → 强制切 agent_manager worktree（独立 context，不占主会话）。
@@ -31,16 +31,16 @@ description: conductor 委派调度 SOP 独立文件。含 §委派包 SOP（6 �
         - exit 5 → `[ESCALATE]`（timeout 且计数 > agent_timeout_max_retries，按节点 on_fail:escalate）。
         - exit 1/2 → 参数/权限错，检查 --dispatch-seq/--result/--agent/--mode/--stage。
         - abort（provider 硬 kill）→ 同 timeout 路径处理（--result timeout）。
-        - **overload_count 判断由 conductor 基于 task 返回长度直接计算**（量字符数 vs 角色 upper-bound，见 output-schema §返回超限约束分档），无需额外脚本：返回 >角色上限 → `[RETURN_OVER_LIMIT]` + `set overload_count +1`；`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先按上述摘要压缩步骤处理，仍超限才切 agent_manager worktree。size-check 过关 + `set overload_count 0` 清零后回退 task。
+        - **overload_count 判断由 conductor 基于 task 返回长度直接计算**（量字符数 vs 角色 upper-bound，见 output-schema §返回超限约束分档），无需额外脚本：返回 >角色上限 → `[RETURN_OVER_LIMIT]` + `set overload_count +1`；`overload_count >= 3` → `[CONTEXT_UNSAFE]`，先按上述摘要压缩步骤处理，仍超限才切 agent_manager worktree。size-check 过关 + `set overload_count 0` 清零后回退 task。 **recovery 预算可见化**：每次 overload++ / write_retry / cycle 消耗时，dispatch_log 追加 budget 条目，返回摘要附单行 `recovery_budget:{overload:n/3,retry:n/1,cycles:n/3}`（n 为当前累计值，分母为 config.yaml recovery 阈值）。
         - **retry_once 超时重试数据流**：start→post-dispatch 超时 exit4 RETRY 首次（EXECUTING/PLANNING on_fail:retry_once 由此接线生效）；同 agent 新会话重跑仍超时→exit5 ESCALATE 二次，交由节点 on_fail:escalate，不再重试（retry.agent_timeout_max_retries=1）——ESCALATE 终止于 retry.agent_timeout_max_retries=1，同节点不再二次 RETRY。
         - **transition-check 保留为阶段级独立调用**（不合并进 pre-dispatch/post-dispatch，provenance 语义冲突）：跨节点流转前仍执行 `transition-check.mjs <task_id> --from <当前> --to <目标>`，其内置 provenance gate 校验 dispatch_log 是否包含必经智能体。
-   - **并行 dispatch 安全边界**（配合铁律 #11 全局默认并行策略）：对每个待 dispatch 的 task——1. pre-dispatch 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >角色上限（见 output-schema §返回超限约束分档） → `overload_count +1`；`>=3` → 摘要压缩→仍超限切 worktree。
+   - **并行 dispatch 安全边界**（配合铁律 #11 全局默认并行策略）：对每个待 dispatch 的 task——1. pre-dispatch 逐个先行（超限→摘要压缩→仍超限 `[CONTEXT_UNSAFE]`）；2. 同一条消息并行 dispatch（多个 task 调用在同一响应末尾发出，共享一个零输出硬门）；3. 结果返回后逐个 log-dispatch；4. 任一并行 task 返回 >角色上限（见 output-schema §返回超限约束分档） → `overload_count +1`；`>=3` → 摘要压缩→仍超限切 worktree。QUALITY 阶段并行调度策略（verify 组内必并行 / reviewer 乐观预取可选）见 `lifecycle/stages/quality.md` §并行调度。
    - **abort 不可恢复**：`Tool execution aborted` 出现即视为会话断开，不尝试重试。标 `[AGENT_UNAVAILABLE]` 按节点 on_fail 派发，或降级为 conductor 内建处理（仅限 INIT 内建阶段——conductor 不接管 coder/reviewer 等角色的写代码/审查工作；EXECUTING/QUALITY 阶段 subagent 不可用只能 escalate/pause，因 conductor `edit: deny` 无法代为编码）。
 
     - **CU-2b: 微任务派发边界（wall-clock 击杀防护，2026-09 实证）**：`chunkTimeout` 收紧后，长思考/长编辑的 subagent 在静默窗口超阈值即被断连（`Tool execution aborted`）。本会话实证规律：微任务（1-2 步轻操作 + ≤500 字符返回）11/11 成功跨三模型；真实编码/多步编辑任务 3/3 被杀，且击杀发生在写入中途会留下半成品破坏文件。**委派包必须控制任务规模**：
       - **大范围审计/扫描类**：拆为 ≤3 文件/单视角微任务，每任务返回 ≤800 字符；禁止单任务覆盖全仓
       - **编码类**：单次编辑 ≤3 文件、明确行号区间；复杂单元拆为 CU-1a/1b/1c 子单元串行
-      - **返回长度红线**：planner ≤800、coder ≤1800、verifier ≤1500、reviewer ≤1200——超长生成即超 `chunkTimeout` 风险区
+      - **返回长度红线（微任务场景建议值，非硬上限；角色硬上限见 output-schema.md §返回超限约束）**：planner ≤800、coder ≤1800、verifier ≤1500、reviewer ≤1200——超长生成即超 `chunkTimeout` 风险区
       - **降级出口**：subagent 连续 abort 时 conductor 内建执行（`[DEGRADED]`，保视角框架失模型多样性），或调大 `chunkTimeout`（`kilo.json provider.options.chunkTimeout`，重启生效）
 
 ## 委派包 SOP
@@ -60,11 +60,7 @@ description: conductor 委派调度 SOP 独立文件。含 §委派包 SOP（6 �
 
 ### 委派包必含 hard_limit 硬指令（防 abort 事前门禁）
 
-每次 task 委派必含 `return_contract.hard_limit: <N>` 字段，N 取自 output-schema §返回超限约束角色分档:
-- 执行类(coder/fixer): 4000
-- 规划类(planner/plan-reviewer): 4000
-- 验证类(verifier): 6000
-- 审查类(reviewer/reverse-auditor): 8000
+每次 task 委派必含 `return_contract.hard_limit: <N>` 字段，N 取自 output-schema §返回超限约束角色分档（分档上限见 output-schema.md §返回超限约束，本文件不复制数值，避免双源漂移）。
 
 **与 overload_count 的关系**: hard_limit 是事前注入（subagent prompt 里就看到上限），overload_count 是事后计数（返回后 conductor 量字符数）。两者互补:
 - hard_limit 事前: 让 subagent 在生成时就控制长度，减少超限概率
@@ -73,7 +69,7 @@ description: conductor 委派调度 SOP 独立文件。含 §委派包 SOP（6 �
 
 委派包示例:
 return_contract:
-  hard_limit: 4000  # coder 角色上限
+  hard_limit: <按 output-schema §返回超限约束 角色分档>  # coder 角色上限
   overflow_instruction: "返回超过 hard_limit 时，只保留 verdict + 证据 file:line + 1 句关键结论，其余落 task_context 后只返回指针"
 
 ### 委派包按角色差异化传递上下文
@@ -154,7 +150,7 @@ return_contract.byte_level: {path_normalized: true}
 verification_command: "Test-Path scripts/lifecycle-doctor/checks/decouple-audit.mjs"
 ```
 
-### 6 必做 verifier 路径断言
+### verifier 特有增量 2 条（byte-level-verify.md §2 5必做之后）
 
 verifier 接收委派包后必:
 1. `path.resolve()` 规范化 key_files
@@ -248,7 +244,7 @@ Step 4: conductor 整合三阶段输出，直接输出分析报告给用户
 - context_anchor: 用户输入对象（文件路径 / 代码片段 / 架构描述）
 - acceptance_criteria: ["产出 verdict + 5 维度覆盖 + file:line 证据"]
 - forbidden_files: ["agent/", "lifecycle/", "docs/", "scripts/"]（只分析不修改）
-- return_contract.hard_limit: 4000（analyst/synthesizer/critic 均为 4000）
+- return_contract.hard_limit: <按 output-schema §返回超限约束 分析类分档>
 - verification_command: "无（分析任务，无机械验证命令）"
 
 ### 正例委派包（conductor 直接 dispatch 三 analyst）
@@ -268,3 +264,4 @@ Step 4: conductor 整合三阶段输出，直接输出分析报告给用户
 ### 成本声明
 
 多模型分析涉及 6 次模型调用（3 analyst + 1 synthesizer + 1 critic + conductor 编排），token 成本约为普通任务的 3-4 倍。**只在用户显式 invoke 时执行，不自动触发**。
+

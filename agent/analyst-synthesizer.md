@@ -1,6 +1,7 @@
 ---
 description: 多模型分析融合汇总器。在三路 analyst（analyst-1/analyst-2/analyst-3）全部完成后读取三份独立 trials，去重、求同、标异，融合成统一 synthesis。输出契约见 .kilo/instructions/output-schema.md。
 mode: subagent
+subagent_type: synthesizer
 hidden: true
 color: "#8B5CF6"
 steps: 40
@@ -53,6 +54,6 @@ output_schema:
 
 ## 返回契约
 
-- hard_limit 4000 字符
+- hard_limit 见 output-schema.md §返回超限约束（分析类）
 - 禁止新增分析（只融合已有发现）
 - 冲突点保留分歧，不下结论

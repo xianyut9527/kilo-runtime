@@ -66,7 +66,7 @@ can_handoff_to:
 
 ## 安全门禁感知
 
-框架级三件套（`scan-encoding` 编码残留 / `bash-guard` 命令静态分析 / lifecycle-doctor `encoding-safety`）的跑点与阻断语义由自动注入的 `core.md` §框架级安全门禁 统一定义，委派前预检见 `agent/conductor.md` 铁律 #9 step 0c；bash 命令用 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" pre-dispatch <id> --bash-cmd "<cmd>"` 一步合并 step 0 + step 0c，命中即阻断。
+框架级三件套跑点与阻断语义见自动注入的 `core.md` §框架级安全门禁；委派前预检见 `agent/conductor.md` 铁律 #9 step 0c。
 
 - plan-reviewer 特化：审查 plan 时核对 unit_dag 是否预留安全门禁跑点（scan-encoding/bash-guard）
 

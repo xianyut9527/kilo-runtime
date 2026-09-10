@@ -30,6 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { contextPath } from './lib/task-context-io.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -110,10 +111,6 @@ const POST_INIT_STAGES = ['EXECUTING', 'QUALITY', 'DELIVERING', 'DONE'];
 // ============================================================
 // 工具
 // ============================================================
-
-function contextPath(taskId) {
-  return path.join(os.tmpdir(), 'kilo', `task_context_${taskId}.json`);
-}
 
 function die(code, msg) {
   process.stderr.write(msg + '\n');

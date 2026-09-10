@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseTierDefaults, parseTimeouts } from './lib/config-parser.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -173,104 +174,8 @@ function deriveGraph() {
 
 // ============================================================
 // config.yaml 派生数据：tier_defaults / timeouts / hooks / size_check_threshold 等
-// 复用 task-context-runtime.mjs 的解析语义（自包含，不 import 运行时层）
+// 解析器复用 scripts/lib/config-parser.mjs（单一来源，消除双份复制）
 // ============================================================
-function parseTierDefaults(text) {
-  const result = { execution: {} };
-  const lines = text.split(/\r?\n/);
-  let section = null;
-  let curTier = null;
-  let inAgents = false;
-  let curAgents = null;
-  let curProvider = null;
-
-  function flush() {
-    if (curTier && section) {
-      const entry = { agents: curAgents || {} };
-      if (curProvider) entry.provider = curProvider;
-      result[section][curTier] = entry;
-    }
-    curAgents = null;
-    curProvider = null;
-  }
-
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
-    const hashIdx = raw.search(/\s#/);
-    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
-    if (!line.trim()) continue;
-    if (/^tier_defaults\s*:/.test(line)) { flush(); section = 'execution'; curTier = null; inAgents = false; continue; }
-    if (/^(overrides|convergence|hooks|timeouts|tier_escalation)\s*:/.test(line)) { flush(); section = null; curTier = null; inAgents = false; continue; }
-    if (!section) continue;
-    const tierM = line.match(/^  (T[0-3])\s*:\s*$/);
-    if (tierM) { flush(); curTier = tierM[1]; inAgents = false; continue; }
-    if (!curTier) continue;
-    const agentsStart = line.match(/^    agents\s*:\s*$/);
-    if (agentsStart) { inAgents = true; curAgents = {}; continue; }
-    const agentsInline = line.match(/^    agents\s*:\s*\{(.*)\}\s*$/);
-    if (agentsInline) { inAgents = false; curAgents = {}; continue; }
-    if (inAgents) {
-      const agentM = line.match(/^      ([a-z_]+)\s*:\s*(true|false)\s*$/);
-      if (agentM) { curAgents[agentM[1]] = agentM[2] === 'true'; continue; }
-      if (!/^ {6,}/.test(line) && line.trim()) inAgents = false;
-    }
-    const provM = line.match(/^    provider\s*:\s*(\w+)\s*$/);
-    if (provM) { curProvider = provM[1]; continue; }
-  }
-  flush();
-  return result;
-}
-
-function parseTimeouts(text) {
-  const lines = text.split(/\r?\n/);
-  let inTimeouts = false;
-  let inPerAgent = false;
-  let inPerTier = false;
-  let inRetry = false;
-  const t = {
-    agent_startup_s: null,
-    stage_default_s: null,
-    per_agent_s: {},
-    per_tier_multiplier: {},
-    agent_timeout_max_retries: null,
-  };
-  for (const raw of lines) {
-    const hashIdx = raw.search(/\s#/);
-    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
-    if (!line.trim()) continue;
-    if (/^timeouts\s*:/.test(line)) { inTimeouts = true; inPerAgent = false; inPerTier = false; inRetry = false; continue; }
-    if (/^[a-z_]+\s*:/.test(line) && !/^\s/.test(line)) { inTimeouts = false; inPerAgent = false; inPerTier = false; inRetry = false; continue; }
-    if (!inTimeouts) continue;
-    const sub = line.match(/^  ([a-z_]+)\s*:\s*(.*)$/);
-    if (sub) {
-      const key = sub[1];
-      const val = sub[2].trim();
-      if (key === 'per_agent_s') { inPerAgent = true; inPerTier = false; inRetry = false; continue; }
-      if (key === 'per_tier_multiplier') { inPerTier = true; inPerAgent = false; inRetry = false; continue; }
-      if (key === 'retry') { inRetry = true; inPerAgent = false; inPerTier = false; continue; }
-      inPerAgent = false; inPerTier = false; inRetry = false;
-      if (key === 'agent_startup_s' && /^\d+$/.test(val)) t.agent_startup_s = parseInt(val, 10);
-      if (key === 'stage_default_s' && /^\d+$/.test(val)) t.stage_default_s = parseInt(val, 10);
-      continue;
-    }
-    if (inPerAgent) {
-      const m = line.match(/^    ([a-z_]+)\s*:\s*(\d+)\s*$/);
-      if (m) { t.per_agent_s[m[1]] = parseInt(m[2], 10); continue; }
-      if (/^\S/.test(line) || !/^\s{4}/.test(line)) inPerAgent = false;
-    }
-    if (inPerTier) {
-      const m = line.match(/^    (T[0-3])\s*:\s*([\d.]+)\s*$/);
-      if (m) { t.per_tier_multiplier[m[1]] = parseFloat(m[2]); continue; }
-      if (/^\S/.test(line) || !/^\s{4}/.test(line)) inPerTier = false;
-    }
-    if (inRetry) {
-      const m = line.match(/^    agent_timeout_max_retries\s*:\s*(\d+)\s*$/);
-      if (m) { t.agent_timeout_max_retries = parseInt(m[1], 10); continue; }
-      if (/^\S/.test(line) || !/^\s{4}/.test(line)) inRetry = false;
-    }
-  }
-  return t;
-}
 
 function deriveConfig() {
   let text;
@@ -282,9 +187,9 @@ function deriveConfig() {
   const cfg = {
     tier_defaults: text ? parseTierDefaults(text) : { execution: {} },
     timeouts: text && /^\s*timeouts\s*:/m.test(text) ? parseTimeouts(text) : null,
-    hooks: { max_total_cycles: 7, auto_fix: true },
-    size_check_threshold: 120000,
-    dispatch_prompt_threshold: 3000,
+    hooks: { max_total_cycles: 3, auto_fix: true },
+    size_check_threshold: 150000,
+    dispatch_prompt_threshold: 4000,
     max_files_per_task: null,
     recovery: { max_write_retry: 1, overload_threshold: 3, circuit_breaker_overload: 5 },
   };

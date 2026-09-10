@@ -2,6 +2,9 @@
 
 本文件记录 `kilo_config` 全局配置仓库的演进。遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
+## [Unreleased] mmo-optimize-001（非模型配置优化）
+
+> 目标：非模型配置优化，阈值单源化 / compaction 调优 / size_check_threshold 120000→150000 / codegraph enabled→false / commit_message 极简 / build-derivations 对齐 / 证据字符预算 / QUALITY 并行调度 / recovery 预算可见化，涉及 7 文件。
 
 
 
@@ -230,6 +233,7 @@ intent 在 M1 后**参与路由**（INQUIRY 跳过 EXECUTING/QUALITY）+ **仍�
 - **改 `lifecycle-doctor.mjs` S8 ironclad coverage check**：6 条纯文字软铁律（#1 #2 #5 #7 #10 #11）标 INFO（soft 透明化），不报 WARN；剩余 7 条硬铁律（有脚本门禁）标 PASS
 - **改 `lifecycle-doctor.mjs` H3 check**：删除 lessons.store 检查（C 层不存在）
 - **bump `max_files_per_task: 3 → 8`**：清理 lessons 时多文件 batch 编辑需求；超 8 应回流 PLANNING 拆单元
+- **订正（2026-09-09）：** 上条 `3 → 8` 记录与当前数值 SSOT（`lifecycle/config.yaml:218` `max_files_per_task: 5`）不符；后修订为 **5**，本条历史记录保留并加此订正声明
 - **清理 8 agent frontmatter coding-engineering.md 引用**：B 层独立保留（仍自动注入），frontmatter 末尾"通用规则由运行时注入"行只保留 core.md + workflow-core.md
 - **清理 6 处 lessons 引用**：conductor.md 铁律 #14 / AGENTS.md 知识沉淀 / quality.md:52 / workflow-core.md:244 / acceptance-check.mjs:20 / coding-engineering.md:12
 - **同步 sync-agent-prompt**：conductor prompt 末尾"能力沉淀闭环"句从 kilo.json 删除
@@ -305,7 +309,7 @@ intent 在 M1 后**参与路由**（INQUIRY 跳过 EXECUTING/QUALITY）+ **仍�
 
 - **2026-08-04**: 工程化防 abort 门禁升级——dispatch-prompt-check 事前审计门禁引入（三连→四连）。
   - **新增 step 0b dispatch-prompt-check**：conductor dispatch 前写入 `dispatch_pending.prompt_chars`（留痕）→ `task-context.mjs dispatch-prompt-check <task_id>` 校验——未写入/非法 exit 1（审计失败）；超限 exit 2（阻断）；通过 exit 0。替代“大任务 prompt 事后补救”模式，事前拦截大任务 abort 复发（根因：单次委派 8 文件 prompt 过大）。
-  - **阈值字段**：`lifecycle/config.yaml` 新增 `dispatch_prompt_threshold: 3000`（小任务上限 ×1.5 安全系数，可调）+ `max_files_per_task: 3`；`lifecycle-doctor.mjs` D5 校验两字段存在性（缺失 FAIL，与 size_check_threshold 同硬门模式）。
+  - **阈值字段**：`lifecycle/config.yaml` 新增 `dispatch_prompt_threshold: 3000`（小任务上限 ×1.5 安全系数，可调）+ `max_files_per_task: 5`（订正：原 3 与 SSOT `lifecycle/config.yaml:218` 不符，见 :236）；`lifecycle-doctor.mjs` D5 校验两字段存在性（缺失 FAIL，与 size_check_threshold 同硬门模式）。
   - **四连结构**：step 0b dispatch-prompt-check（事前）→ step 0a size-check（事前）→ step 1 log-dispatch（事后 provenance）→ step 2 overload_count（事后累计）。
   - **同步范围**：`agent/conductor.md`（铁律 #9 三连→四连 + frontmatter task_context.write 加 dispatch_pending + description）、`AGENTS.md`（锚点 13 三连→四连）、`docs/conductor-full-spec.md`（L158/221-226/258 三处）、`lifecycle/config.yaml`（阈值字段）、`scripts/task-context.mjs`（dispatch-prompt-check 子命令）、`scripts/task-context-runtime.mjs`（readDispatchPromptThreshold/readMaxFilesPerTask）、`scripts/lifecycle-doctor.mjs`（D5 校验）。
   - **验证**：lifecycle-doctor 51 PASS；`set dispatch_pending.prompt_chars 2000` → dispatch-prompt-check exit 0；`set 4000` → exit 2；未设置 → exit 1；grep “工程化三连” 清零（CHANGELOG 历史条目除外）。

@@ -79,7 +79,7 @@ can_handoff_to:
 
 ## 安全门禁感知
 
-框架级三件套（`scan-encoding` 编码残留 / `bash-guard` 命令静态分析 / lifecycle-doctor `encoding-safety`）的跑点与阻断语义由自动注入的 `core.md` §框架级安全门禁 统一定义，委派前预检见 `agent/conductor.md` 铁律 #9 step 0c；bash 命令用 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" pre-dispatch <id> --bash-cmd "<cmd>"` 一步合并 step 0 + step 0c，命中即阻断。
+框架级三件套跑点与阻断语义见自动注入的 `core.md` §框架级安全门禁；委派前预检见 `agent/conductor.md` 铁律 #9 step 0c。
 
 - planner 特化：方案设计阶段对 pre-dispatch --bash-cmd 的预期命令模板做编码/PS5.1 自检
 
@@ -216,4 +216,4 @@ forbidden_files: ["string"]
 - T2+ 必须包含单元 DAG + 依赖关系 + 风险应对
 - 跨层 unit 必须显式标注理由，不得默认放行
 - 命中扩散触发词时 requirement_spread 必填，未形成不得进入 DAG；触发词清单见 workflow-core.md
-- 每单元 key_files 数 ≤ config.max_files_per_task（缺省 3）；超过则 planner 自行拆分为子单元（planner 有 plan 写权限）；输出 DAG 前自检 key_files 数量，超过 3 的 unit 必须拆分后再输出
+- 每单元 key_files 数 ≤ config.max_files_per_task（缺省 5）；超过则 planner 自行拆分为子单元（planner 有 plan 写权限）；输出 DAG 前自检 key_files 数量，超过 5 的 unit 必须拆分后再输出

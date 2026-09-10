@@ -145,6 +145,8 @@ agent 返回后、下游前，conductor 必须自检：
 
 指针化位置（9 处 frontmatter description 末 + 8 处 body ## 返回契约 段 → 指向 .kilo/instructions/output-schema.md §返回契约）。
 
+可选字段 **recovery_budget**（单行 JSON，非必填）：仅在有 retry/overload 活动时附，格式 `recovery_budget:{"overload":n,"retry":n,"cycles":n}`，供 conductor 事后计数与 dispatch_log budget 条目对齐。
+
 ### §证据契约（必填，机械可回放）
 
 > LLM 的"X 完成"必须配可机械回放证据，不接受纯 narrative。verdict: PASS 无 evidence[] 视为 [INSUFFICIENT_EVIDENCE]，conductor 拒绝流转。
@@ -205,9 +207,9 @@ conductor 拒绝条件：verdict:PASS 但 evidence <1 条→retry；cmd 缺失�
 
 ### 5 必做（违反任 1 → verdict 必 FAIL）
 
-1. Get-Content L 行精确索引 2. git diff --stat 3. SHA256 before/after 对比 4. grep 严格匹配 5. ≥3 条 evidence 8 元组
+1. Get-Content L 行精确索引 2. git diff --stat 3. SHA256 before/after 对比 4. grep 严格匹配 5. 二次读确认（SSOT 全 5 必做见 `.kilo/instructions/byte-level-verify.md §2`）；8 元组 evidence 见 §4
 
-### 7 反模式（禁）
+### 6 反模式（禁）
 
 见 .kilo/instructions/byte-level-verify.md §3。
 
@@ -219,7 +221,7 @@ conductor 拒绝条件：verdict:PASS 但 evidence <1 条→retry；cmd 缺失�
 
 transition-check.mjs 在 QUALITY→DELIVERING 边校验 verification.forward.evidence，每条必含 3 字段，缺则 [MISSING_EVIDENCE_FIELD] exit 1：
 - cmd 必非空字符串；exit 必为数字（0/非0）；stdout_key 必非空字符串。
-- evidence 数组必 ≥1 条，否则 [INSUFFICIENT_EVIDENCE]。
+- evidence 数组必 ≥1 条，否则 [INSUFFICIENT_EVIDENCE]（任何 verdict 的最低机械硬门）。byte-level 验证场景（byte_level_required: true）建议 ≥3 条以覆盖 5 必做步骤。
 
 ## §返回超限约束（返回契约 §防 abort）
 
@@ -231,6 +233,23 @@ transition-check.mjs 在 QUALITY→DELIVERING 边校验 verification.forward.evi
 | 规划类 | planner, plan-reviewer | 4000 |
 | 验证类 | verifier | 6000 |
 | 审查类 | reviewer, reverse-auditor | 8000 |
+| 分析类 | analyst-1, analyst-2, analyst-3, analyst-synthesizer, analyst-critic | 4000 |
+
+本表是角色返回硬上限的唯一真相源（single source of truth），其他文档引用本表不得复制数值。
+
+
+### 证据字符预算（证据要求 vs 返回红线 的物理解）
+
+> 证据契约（3 必填）+ byte-level（8 元组）+ 验收映射表（5 列）叠加后，单条返回易超角色上限。本小节给各证据元素设字符预算，保证最小合法展开远低于 6000 上限。
+
+| 证据元素 | 字符预算 |
+|---------|---------|
+| evidence 单条 | ≤300（cmd ≤80 + stdout_key ≤200 封顶） |
+| byte-level 8 元组 note | ≤100 |
+| 验收映射表矩阵行 | ≤80 |
+| verdict 段 | ≤200 |
+
+最小合法展开（verifier）≈1600-2200 字符 vs 6000 上限 = 2.7x 余量。证据全文超预算时落 task_context，返回只留指针（file:line）。
 
 ### hard_limit 事前注入（与 overload_count 事后计数互补）
 

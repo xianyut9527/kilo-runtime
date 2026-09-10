@@ -173,7 +173,7 @@ mount:
 ```yaml
 mount:
   - at: post:PLANNING
-    tiers: [T2]        # 仅 T2 加载（T1 关闭、T2 开启方案审查）
+    tiers: [T1,T2]      # T1/T2 加载（方案审查）
     on_fail: abort
 ```
 

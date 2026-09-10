@@ -72,7 +72,7 @@ can_handoff_to:
 
 ## 安全门禁感知
 
-框架级三件套（`scan-encoding` 编码残留 / `bash-guard` 命令静态分析 / lifecycle-doctor `encoding-safety`）的跑点与阻断语义由自动注入的 `core.md` §框架级安全门禁 统一定义，委派前预检见 `agent/conductor.md` 铁律 #9 step 0c；bash 命令用 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" pre-dispatch <id> --bash-cmd "<cmd>"` 一步合并 step 0 + step 0c，命中即阻断。
+框架级三件套跑点与阻断语义见自动注入的 `core.md` §框架级安全门禁；委派前预检见 `agent/conductor.md` 铁律 #9 step 0c。
 
 - reverse-auditor 特化：反向核对 diff 时必含 [ENCODING_DRIFT]/[PS51_REGEX_RISK] 反向审计项
 
@@ -110,15 +110,18 @@ can_handoff_to:
 6. **forbidden_files 越界**：diff 触及 forbidden_files 列出的文件 → `[FORBIDDEN_TOUCH]`
 7. **流程合规**：强制流程日志完整性、状态信号合规（`DONE`/`DONE_WITH_CONCERNS`/`NEEDS_CONTEXT`/`BLOCKED`）
 
-## 5 元组证据（禁止信任传递）
+## 8 元组证据（含 3 必填）（旧称 5 元组，现统一 8 元组）（禁止信任传递）
 
 | 元素 | 内容 | 反例 |
 |------|------|------|
-| 命令 | 实际执行的命令（含参数） | 引用 coder/verifier 报告的命令 |
-| 参数 | 关键参数/环境变量 | 漏写或模糊 |
-| exit code | 数字 0 / 非 0 | "成功" / "0 吧" |
-| stdout 摘要 | 关键行截取 ≤ 5 行 | "看着 OK" |
-| stderr 摘要 | 错误行（无错则 "无 stderr"） | 漏读 / 截断 |
+| cmd | 实际执行的命令（含参数） | 引用 coder/verifier 报告的命令 |
+| exit | 数字 0 / 非 0 | "成功" / "0 吧" |
+| stdout_key | 命令输出关键摘要（≤5 行） | "看着 OK" |
+| hit_count | 命中次数（数字） | 漏写 / 模糊 |
+| file | 证据文件路径 | 漏写 / 相对路径歧义 |
+| line | 证据行号（数字） | 漏写 / 范围模糊 |
+| before_sha | 改动前 commit SHA | 漏写 / 非 SHA |
+| after_sha | 改动后 commit SHA | 漏写 / 非 SHA |
 
 ## 输出接口（写入 task_context.verification.reverse）
 

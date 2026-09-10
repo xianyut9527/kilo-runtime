@@ -166,7 +166,7 @@ function resolveFile(refPath, fromFile, targets, root, fileIndex) {
 /**
  * 无扩展名引用解析：`见 output-schema §返回超限约束` → .kilo/instructions/output-schema.md。
  * 仅当 stem **紧邻** § 时才生效（调用方已用尾部锚定正则保证），否则散文里随便出现的
- * agent 名（`派发 coder 的委派包仍按 §委派包 SOP`、`verifier 6 必做路径断言）、§铁律 #9`）
+ * agent 名（`派发 coder 的委派包仍按 §委派包 SOP`、`verifier 8 元组 evidence 路径断言）、§铁律 #9`）
  * 会把引用劫持到错文件。
  */
 function resolveStem(stem, targets) {

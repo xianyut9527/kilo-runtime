@@ -32,7 +32,7 @@
 
 2. **读注册**：扫描 `agent/*.md` 全部 frontmatter（YAML 头），按 `mount[].at` 把智能体注册进对应挂载点（携带 `hook`/`after`/`when`/`on_fail`）——**文件制自动注册，丢一个 .md 文件即挂载**（manifest 与行为文件合二为一，单源无冗余）。
 3. **读契约**：扫描 `lifecycle/stages/*.md` frontmatter 的 `required_roles`（阶段必配角色契约，阶段语义内聚）。
-4. **读配置**：`lifecycle/config.yaml`（tier_defaults 差异化开关 + overrides + convergence + timeouts）。
+4. **读配置**：`lifecycle/config.yaml`（tier_defaults 差异化开关 + overrides + timeouts；熔断参考 `hooks.quality.max_total_cycles`）。
 5. **校验**（任一失败 → 启动报错 `[ASSEMBLY_FAIL]`，不进入运行；doctor 脚本可独立预检）：
    - graph.yaml 每条 edge 的 from/to 必须引用已声明 node
    - 每个 frontmatter `mount[].at` 必须命中派生挂载点；`on_fail` ∈ {abort,warn,skip,degrade}
@@ -172,7 +172,7 @@ INIT（conductor 内建）→ INIT（conductor 内建）
 
 单个智能体的加载流程（每个挂载条目）：
 
-1. 求值挂载条件：先 `tiers`（`sizing.tier ∈ mount[].tiers`，命中才加载），再 `when`（对照 `task_context.config.agents` + `config.yaml overrides.condition_overrides`，非 tier 条件）；无 `when` 且无 `tiers` = 恒定加载
+1. 求值挂载条件：先 `tiers`（`sizing.tier ∈ mount[].tiers`，命中才加载），再 `when`（对照 `task_context.config.agents`，非 tier 条件）；无 `when` 且无 `tiers` = 恒定加载
 2. 取 frontmatter 所在的 `agent/<name>.md` 行为文件 + 模型（kilo.json 绑定）
 3. 按 frontmatter `task_context.read` 注入上下文切片，按 `isolation.forbid_read` 执行视角隔离
 4. 查 resolved 视图取 `timeout_s = per_agent_s[<name>] × per_tier_multiplier[<tier>]`（缺 per_agent_s 回退 `stage_default_s`）；`task` 工具启动，记录 start_time
