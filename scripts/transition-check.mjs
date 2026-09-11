@@ -786,6 +786,11 @@ function main() {
           dieMsg(codeMsg('MISSING_EVIDENCE_FIELD', `evidence[${i}].stdout_key 缺失或非字符串(≤200字关键输出)`));
         }
       }
+      // U-W7: verification.forward.byte_level 对象存在性校验（只校验存在性，不校验内部字段）
+      const bl = ctx.verification.forward.byte_level;
+      if (bl == null || typeof bl !== 'object' || Array.isArray(bl)) {
+        dieMsg('[MISSING_BYTE_LEVEL] QUALITY -> DELIVERING: verification.forward.byte_level 缺失或非对象（undefined/null/非对象/数组均不合法）。verifier 必须产出 byte_level 对象（byte-level 验证 SOP 产物），禁止 conductor 假写 verdict=PASS。');
+      }
     }
   }
   // INIT→EXECUTING 直通边（T1 low/medium）minimal_gate 门禁：

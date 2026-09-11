@@ -179,6 +179,31 @@ try {
         }
     }
 
+    # ---- 动态 PATH 兜底（防精简 PATH 环境导致 MCP 命令解析失败）----
+    # 立项根因：codegraph 等 MCP 命令是 npm 全局安装，位于 npm 全局 bin 目录。
+    # 若 install 从 PATH 被精简的 shell 启动（IDE 内嵌终端/快捷方式/非交互式），
+    # 该目录不在 PATH 中，lifecycle-doctor 的 mcp-sanity 会误报 unresolvable-command。
+    # 这里动态解析 npm 全局 bin 目录（不硬编码任何机器专属路径）并临时并入 PATH，
+    # 仅对本次 install 进程生效，不污染用户全局环境。
+    # 解析优先级：node 自身（process.execPath 目录 = Windows npm 全局 bin）> npm prefix -g。
+    # 用 node 解析最稳：只要 node 在 PATH（Kilo 运行前提），即使 npm 命令缺失也能定位。
+    $NpmBin = $null
+    try {
+        $NodeDir = (& node -p "require('path').dirname(process.execPath)" 2>$null | Select-Object -First 1).Trim()
+        if ($NodeDir -and (Test-Path $NodeDir)) { $NpmBin = $NodeDir }
+    } catch { $NpmBin = $null }
+    if (-not $NpmBin) {
+        try {
+            $NpmBin = (& npm prefix -g 2>$null | Select-Object -First 1).Trim()
+        } catch { $NpmBin = $null }
+    }
+    if ($NpmBin -and (Test-Path $NpmBin) -and ($env:PATH -notlike "*$NpmBin*")) {
+        $env:PATH = "$NpmBin;$env:PATH"
+        Write-Host "[PATH] 已并入 npm 全局 bin: $NpmBin" -ForegroundColor Gray
+    } elseif (-not $NpmBin) {
+        Write-Host "[PATH] WARN: 无法解析 npm 全局 bin（node/npm 均不可用），MCP 命令可能解析失败" -ForegroundColor Yellow
+    }
+
     # Post-sync 框架健康度自检（仓库侧；部署副本侧见本脚本末尾 --root $Target 门禁）
     & node "$Source\scripts\lifecycle-doctor\index.mjs" 2>&1 | Tee-Object -FilePath "$Target\.sync-doctor.log" | Out-Null
     if ($LASTEXITCODE -ne 0) {

@@ -114,6 +114,7 @@ function cmdStart(taskId, agent, tier, seq) {
   const baseS = (perAgentS !== null) ? perAgentS : stageDefault;
   const mult = (to.per_tier_multiplier && typeof to.per_tier_multiplier[tier] === 'number')
     ? to.per_tier_multiplier[tier] : 1.0;
+  // fallback 路径也乘 per_tier_multiplier，T0/T1/T2 均覆盖
   const budgetS = baseS * mult;
 
   const { ctx } = readContext(taskId);

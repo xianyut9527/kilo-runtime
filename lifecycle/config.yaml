@@ -85,6 +85,7 @@ t1_strength_signals:
   #   high   = 任一维度命中机制信号（分支>=3 / 跨组件状态耦合 / 契约变更 / 新增机制）
   #   medium = 1-2 分支单模块、无契约影响
   #   low    = "非常明确任务"：改动点唯一 + 验收标准用户显式给出 + 无信号词命中
+  # 无机械消费方：本表纯人工参考维度，实际判定由 strength_escalation_words 信号词驱动
   strength_dimensions:
     decision_branches: "high>=3 / medium 1-2 / low 0"
     state_coupling: "跨组件状态依赖 = high"
@@ -201,7 +202,6 @@ custom_overrides: {}
 hooks:
   quality:
     max_total_cycles: 3          # QUALITY 总轮次上限（唯一熔断阈值，3轮修不好=方案/需求有问题，escalate到人）
-    auto_fix: true              # 自动触发 fix hooks（false = 人工确认后修复）
 
 # ============================================================
 # pre-dispatch 安全门阈值（conductor 委派前 size-check 依据）
@@ -250,7 +250,7 @@ recovery:
 #     卡住无自动守卫，用户 Ctrl-C 即手动 teardown——开发工具用户在场，不自动销毁）
 # ============================================================
 timeouts:
-  agent_startup_s: 90      # task 工具启动智能体，90s 未响应 → [AGENT_TIMEOUT]
+  agent_startup_s: 120     # task 工具启动智能体，120s 未响应 → [AGENT_TIMEOUT]（reasoning 模型首 token 延迟高，90s 过紧）
   stage_default_s: 600     # 单阶段默认预算（主槽执行时间上限；内建阶段守卫值）
   per_agent_s:
     coder: 1800            # coder 写代码可能较长，给 30min

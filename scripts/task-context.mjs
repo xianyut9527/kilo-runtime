@@ -1244,6 +1244,7 @@ function cmdPreDispatch(taskId, promptCharsArg, fileCountArg, bashCmd, agent, ti
     const baseS = (perAgentS !== null) ? perAgentS : stageDefault;
     const mult = (to.per_tier_multiplier && typeof to.per_tier_multiplier[tier] === 'number')
       ? to.per_tier_multiplier[tier] : 1.0;
+    // fallback 路径也乘 per_tier_multiplier，T0/T1/T2 均覆盖
     const budgetS = baseS * mult;
     // timeout_guard 存独立数组，不污染 dispatch_log（provenance 只存正式条目）
     if (!Array.isArray(ctx.timeout_guards)) ctx.timeout_guards = [];

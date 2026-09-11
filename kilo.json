@@ -38,7 +38,7 @@
     "verifier": {
       "mode": "subagent",
       "model": "hx/glm-5.3-flash",
-      "prompt": "正向验证智能体。按验收标准逐条验证、L1-L3 分层、5 元组证据、独立重跑。只验证不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
+      "prompt": "正向验证智能体。按验收标准逐条验证、L1-L3 分层、8 元组证据（含 3 必填）、独立重跑。只验证不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "reviewer": {
       "mode": "subagent",
@@ -82,33 +82,22 @@
     }
   },
   "skills": {
-    "paths": ["~/.config/kilo/.kilo/skills", "~/.agents/skills"]
+    "paths": [
+      "~/.config/kilo/.kilo/skills",
+      "~/.agents/skills"
+    ]
   },
   "permission": {
     "bash": "allow"
   },
   "mcp": {
-    "context7": {
-      "type": "remote",
-      "url": "https://mcp.context7.com/mcp",
-      "enabled": false,
-      "timeout": 6000
-    },
-    "gitnexus": {
-      "type": "local",
-      "command": ["gitnexus", "mcp"],
-      "enabled": false,
-      "timeout": 30000
-    },
-    "playwright": {
-      "type": "local",
-      "command": ["npx", "@playwright/mcp"],
-      "enabled": false,
-      "timeout": 120000
-    },
     "codegraph": {
       "type": "local",
-      "command": ["codegraph", "serve", "--mcp"],
+      "command": [
+        "codegraph",
+        "serve",
+        "--mcp"
+      ],
       "enabled": true,
       "timeout": 30000,
       "cwd": "${workspaceFolder}"
@@ -144,8 +133,13 @@
           "name": "glm-5.3-flash",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -156,8 +150,13 @@
           "name": "kimi-k2.6",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -168,8 +167,13 @@
           "name": "minimax-m3",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,

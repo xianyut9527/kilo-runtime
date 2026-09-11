@@ -72,7 +72,7 @@ DELIVERING
 
 ---
 
-## 2. 智能体清单（7 个职能智能体 + conductor 编排者）
+## 2. 智能体清单（13 个职能智能体 + conductor 编排者）
 
 > 模型统一在 `kilo.json` `agent.<name>.model` 配置（单源真相），能力倾向参考 `docs/model-registry.md`。
 > 下表不硬编码模型，避免配置漂移。
@@ -87,6 +87,11 @@ DELIVERING
 | **reviewer** | `QUALITY hook:review` | — | deps | `tiers:[T2]` | 代码审查（安全/架构/简化/SCOPE_CREEP 四视角） |
 | **reverse-auditor** | `QUALITY hook:verify` | ‒ | deps | `tiers:[T2]` | 反向验证（diff 反向核对验收/设计门一致性） |
 | **fixer** | `QUALITY hook:fix` | — | `onFail` | 恒定 | 定向修复（auto-trigger，任一 verify/review FAIL 触发） |
+| **analyst-1** | MMO（conductor 派发） | — | — | — | MMO 槽位 1：逻辑与规范基线视角 |
+| **analyst-2** | MMO（conductor 派发） | — | — | — | MMO 槽位 2：全局关联视角 |
+| **analyst-3** | MMO（conductor 派发） | — | — | — | MMO 槽位 3：语义落地视角 |
+| **analyst-synthesizer** | MMO（conductor 派发） | — | — | — | MMO 融合汇总器：三路 trials 去重求同标异 |
+| **analyst-critic** | MMO（conductor 派发） | — | — | — | MMO 反向审计器：反查 synthesis 偏误/遗漏 |
 
 ---
 
@@ -133,7 +138,7 @@ DELIVERING
 **熔断**：
 - `quality.round`（每次进入 QUALITY 时 +1）
 - `quality.max_rounds = hooks.quality.max_total_cycles`（当前值 3）
-- `quality.round ≥ 3` → `[CIRCUIT_BREAKER]` → PAUSED 等用户决策
+- `quality.round ≥ 3` → `[CIRCUIT_BREAKER]` → DELIVERING（带降级标记）
 
 ---
 
@@ -212,8 +217,7 @@ mount:
 # lifecycle/config.yaml
 tier_defaults:
   T1:
-    agents:
-      my_agent: true        # ← 加这一行
+    tiers: [T1]            # 定级挂载用 tiers（无 agents 键；恒定挂载由图拓扑限定）
 ```
 
 ### 4.4 改熔断阈值
@@ -264,7 +268,7 @@ hooks:
 
 | 文件 | 用途 |
 |------|------|
-| `scripts/lifecycle-doctor/index.mjs` | 全量装配校验（51 项）：图/挂载/契约/配置/矩阵 |
+| `scripts/lifecycle-doctor/index.mjs` | 全量装配校验（558 项）：图/挂载/契约/配置/矩阵 |
 | `scripts/task-context.mjs` | task_context 读写 + 权限硬门 |
 | `scripts/transition-check.mjs` | 状态流转裁判 + 熔断判定 |
 
@@ -283,7 +287,7 @@ hooks:
 ## 6. 验证命令
 
 ```powershell
-# 全量装配校验（51 项）
+# 全量装配校验（558 项）
 node scripts/lifecycle-doctor/index.mjs --verbose
 
 # 视角物理隔离校验（T2+）
