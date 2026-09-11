@@ -21,6 +21,11 @@
 | FILE_CONFLICT unit=(unknown),timeout_guard 残留 running 等 | [FX-013.md](fixes/FX-013.md) | 编排 | reviewer-post-dispatch-role-gate-deadlock |
 | 清理空目录误删,已跟踪文件被删 等 | [FX-014.md](fixes/FX-014.md) | 执行 | 清理垃圾目录前未查 git 跟踪状态，误删历史产物 |
 | install排除清单不同步,RootOnly目录项假MISSING 等 | [FX-015.md](fixes/FX-015.md) | 执行 | 回落镜像清单会同时漂数据与漂豁免规则，须让常态路径不命中它 |
+| prompt-sync 派生漂移 ASSEMBLY_FAIL verifier prompt 5元组 8元组 等 | [FX-018.md](fixes/FX-018.md) | 执行 | 改 agent/*.md frontmatter description 后必须跑 sync-agent-prompt.mjs 同步 kilo.json agent.prompt，否则 lifecycle-doctor prompt-sync ASSEMBLY_FAIL |
+| task 派发中止,Tool execution aborted 等 | [FX-020.md](fixes/FX-020.md) | 编排 | task 派发被中止后先勘定文件系统落盘再决定补派范围：产物已验证有效时按证据降级补派而非全量重跑 |
+| coder 批量注释订正中单处编辑遗漏,acceptance_map 全 PASS 掩盖未改文件 等 | [FX-022.md](fixes/FX-022.md) | 执行 | 多编辑单元必须逐文件 SHA256 前后对比验收,单条 grep 命中数校验防局部遗漏 |
+| i18n字典key数量超plan上限,U4文件清单误列 等 | [FX-023.md](fixes/FX-023.md) | 编排 | i18n字典key计数应基于实际.vue文件扫描而非估量;planner任务清单文件需 Glob 验证存在性(本任务 ChatPanel→ApiUsage 误判) |
+| verifier FAIL: context_anchor 行号代码不在工作区; fixer 声明 PASS 但磁盘无修复代码 等 | [FX-026.md](fixes/FX-026.md) | 编排 | staged-worktree-dual-version-baseline-reset |
 
 > **ID 跳号说明**：FX-006 ~ FX-009 从未入库。它们是运行时在部署副本侧重复生成的草稿（同一条经验被反复 add，且正文因含引号/`##` 被段落解析器切错），已作为垃圾丢弃；FX-010 ~ FX-013 是从部署副本回收并重排四段结构后的正式条目。保留跳号以保持事故溯源，不补号。
 >

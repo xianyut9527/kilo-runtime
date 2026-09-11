@@ -11,6 +11,9 @@ models:
   "hx/deepseek-v4-flash":
     vendor: deepseek
     architecture: deepseek-v4-flash
+  "hx/deepseek-v4.1-flash":
+    vendor: deepseek
+    architecture: deepseek-v4.1-flash
   "hx/kimi-k2.6":
     vendor: moonshot
     architecture: kimi-k2.6
@@ -18,7 +21,7 @@ models:
     vendor: minimax
     architecture: minimax-m3
 ---
-> **SSOT 声明**：kilo.json 为模型清单 SSOT，本表为人类可读副本，漂移以 doctor D6 校验为准。
+> **说明**：kilo.json 为模型清单唯一 SSOT（改模型只改 kilo.json）。本文档为人类选模型的能力倾向参考，不参与任何机械校验；内容允许与 kilo.json 存在差异而不阻塞安装。
 
 # docs/model-registry
 
@@ -42,6 +45,7 @@ models:
 | `hx/kimi-k2.6` | moonshot | kimi-k2.6 | ★★★★★ | ★★★★☆ | 200K | ★★★★☆ | 2 |
 | `hx/minimax-m3` | minimax | minimax-m3 | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 3 |
 | `hx/deepseek-v4-flash` | deepseek | deepseek-v4-flash | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 4 |
+| `hx/deepseek-v4.1-flash` | deepseek | deepseek-v4.1-flash | ★★★★☆ | ★★★★☆ | 200K | ★★★★☆ | 4 |
 | `hx/glm-5.3-flash` | zhipu | glm-5.3-flash | ★★★★☆ | ★★★☆☆ | 200K | ★★★★☆ | 5 |
 
 > **稳定性排序用途**：`kilo.json` 中关键路径模型优先选用稳定性排序靠前的模型，当前默认 `glm-5.2` > `kimi-k2.6` > `minimax-m3` > `deepseek-v4-flash` > `glm-5.3-flash`。
@@ -87,9 +91,9 @@ models:
 
 | 智能体 | 当前模型(kilo.json) | 决策理由 |
 |--------|---------------------|----------|
-| conductor(默认主) | hx/deepseek-v4-flash | reasoning + 低延迟编排判定；conductor edit:deny 不写代码，flash 档够用且省成本；deepseek-v4-flash 兼顾速度与稳定性 |
-| coder | hx/deepseek-v4-flash | 编码 ★★★★☆ + 200K 上下文；flash 档兼顾速度与编码能力 |
-| fixer | hx/deepseek-v4-flash | 最小修复场景同 coder，复用绑定降低切换成本 |
+| conductor(默认主) | hx/deepseek-v4.1-flash | reasoning + 低延迟编排判定；conductor edit:deny 不写代码，flash 档够用且省成本；deepseek-v4.1-flash 兼顾速度与稳定性 |
+| coder | hx/deepseek-v4.1-flash | 编码 ★★★★☆ + 200K 上下文；flash 档兼顾速度与编码能力 |
+| fixer | hx/deepseek-v4.1-flash | 最小修复场景同 coder，复用绑定降低切换成本 |
 | planner | hx/glm-5.2 | 规划需深推理，glm-5.2（reasoning ★★★★★）对稳定性与深推理要求最高 |
 | verifier | hx/glm-5.3-flash | 正向验证快通道：保留 reasoning 的 flash 档，低延迟；与 tier_defaults.T1.model_overrides 覆盖(deepseek-v4-flash)分层——kilo.json 基础绑定=glm-5.3-flash |
 | plan-reviewer/reviewer | hx/kimi-k2.6 | 多模态输入(image) + 强 reasoning，方案/代码审查需深度推理 |
@@ -110,6 +114,7 @@ models:
 | T2 | (无覆盖) | — | 保留 glm-5.2 全视角验证 |
 
 > 设计约束：T2 不覆盖（保留最稳定模型）；方案 B 用 deepseek-v4-flash（保留 reasoning）。
+> 升级记录：conductor/coder/fixer 已升级绑定 hx/deepseek-v4.1-flash；T1 verifier 覆盖仍用 hx/deepseek-v4-flash。
 
 
 **改绑检查**：改任一 agent 模型前，对照本表理由列评估是否仍成立；模型切换 commit 须在 message 说明新理由，避免无记录回摆。

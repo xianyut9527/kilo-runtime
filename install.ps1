@@ -39,7 +39,7 @@ $RecursiveExclude = @(
     ".mcp-tmp"
 )
 
-# Runtime data owned by the DEPLOYED copy, not by the repo (must stay in sync with install.sh;
+# Runtime data owned by the GLOBAL CONFIG DIR, not by this repo (must stay in sync with install.sh;
 # scripts/deploy-drift-check.mjs parses these two arrays through scripts/lib/install-runtime-data.mjs
 # instead of re-declaring them, so a path added here is auto-classified as [RUNTIME] not [EXTRA]).
 #
@@ -178,6 +178,20 @@ try {
             Write-Host "[RESTORE] $Restored runtime-only file(s) preserved (KB / lessons / markers)" -ForegroundColor Green
         }
     }
+    # Rebuild deployed knowledge-base index: backup/restore keeps runtime-only FX files that the repo
+    # does not own, but install overwrites the deployed index.md from repo, leaving "FX file without index
+    # row" → deploy-doctor kb.health FAIL. Rebuild on deployed side so index and files stay consistent.
+    $KbRebuildScript = Join-Path $Target "scripts\kb.mjs"
+    $KbRoot = Join-Path $Target "knowledge-base"
+    if ((Test-Path $KbRebuildScript) -and (Test-Path $KbRoot)) {
+        Write-Host "[KB] Rebuilding knowledge-base index on target..." -ForegroundColor Cyan
+        & node $KbRebuildScript rebuild --root $KbRoot 2>&1 | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[KB] WARN: kb.mjs rebuild exited $LASTEXITCODE (non-blocking)" -ForegroundColor Yellow
+        } else {
+            Write-Host "[KB] knowledge-base index rebuilt on target" -ForegroundColor Green
+        }
+    }
 
     # ---- 动态 PATH 兜底（防精简 PATH 环境导致 MCP 命令解析失败）----
     # 立项根因：codegraph 等 MCP 命令是 npm 全局安装，位于 npm 全局 bin 目录。
@@ -204,10 +218,12 @@ try {
         Write-Host "[PATH] WARN: 无法解析 npm 全局 bin（node/npm 均不可用），MCP 命令可能解析失败" -ForegroundColor Yellow
     }
 
-    # Post-sync 框架健康度自检（仓库侧；部署副本侧见本脚本末尾 --root $Target 门禁）
-    & node "$Source\scripts\lifecycle-doctor\index.mjs" 2>&1 | Tee-Object -FilePath "$Target\.sync-doctor.log" | Out-Null
+    # Post-sync 框架健康度自检（本仓库侧；全局配置目录侧见本脚本末尾 --root $Target 门禁）
+    $SyncDoctorLog = & node "$Source\scripts\lifecycle-doctor\index.mjs" 2>&1
+    $SyncDoctorLog | Tee-Object -FilePath "$Target\.sync-doctor.log" | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[SYNC] FAIL: post-sync lifecycle-doctor exited $LASTEXITCODE. See $Target\.sync-doctor.log" -ForegroundColor Red
+        Write-Host "[SYNC] FAIL: post-sync lifecycle-doctor exited $LASTEXITCODE. 错误明细如下（完整日志: $Target\.sync-doctor.log）:" -ForegroundColor Red
+        $SyncDoctorLog | Where-Object { $_ -match "FAIL|SUMMARY|ASSEMBLY" } | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
         exit 1
     }
     Write-Host "[SYNC] OK: post-sync lifecycle-doctor passed (repo)" -ForegroundColor Green
@@ -343,14 +359,16 @@ try {
         Write-Host "[WARN]   sync-agent-prompt.mjs not found at $SyncScript, skip" -ForegroundColor Yellow
     }
 
-    # ---- 部署副本侧门禁（必须在占位符替换 + prompt 同步之后跑，二者会改写 target 内容）----
+    # ---- 全局配置目录侧门禁（必须在占位符替换 + prompt 同步之后跑，二者会改写 target 内容）----
     # 历史缺陷：此前只有 L180 的 $Source（仓库）自检，且 lifecycle-doctor 的 ROOT 硬编码为
-    # 脚本自身位置，部署副本从不被校验 → 漂移全绿假象（运行时长期跑拆分前的旧 conductor.md）。
+    # 脚本自身位置，全局配置目录从不被校验 → 漂移全绿假象（运行时长期跑拆分前的旧 conductor.md）。
     Write-Host ""
-    Write-Host "Validating deployed copy (doctor --root target)..." -ForegroundColor Cyan
-    & node "$Target\scripts\lifecycle-doctor\index.mjs" --root $Target 2>&1 | Tee-Object -FilePath "$Target\.deploy-doctor.log" | Out-Null
+    Write-Host "Validating global config copy (doctor --root target)..." -ForegroundColor Cyan
+    $DeployDoctorLog = & node "$Target\scripts\lifecycle-doctor\index.mjs" --root $Target 2>&1
+    $DeployDoctorLog | Tee-Object -FilePath "$Target\.deploy-doctor.log" | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[SYNC] FAIL: deployed-copy lifecycle-doctor exited $LASTEXITCODE. See $Target\.deploy-doctor.log" -ForegroundColor Red
+        Write-Host "[SYNC] FAIL: deployed-copy lifecycle-doctor exited $LASTEXITCODE. 错误明细如下（完整日志: $Target\.deploy-doctor.log）:" -ForegroundColor Red
+        $DeployDoctorLog | Where-Object { $_ -match "FAIL|SUMMARY|ASSEMBLY" } | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
         exit 1
     }
     Write-Host "[SYNC] OK: deployed-copy lifecycle-doctor passed" -ForegroundColor Green
@@ -360,10 +378,10 @@ try {
     Write-Host "Checking deploy drift (repo vs target)..." -ForegroundColor Cyan
     & node (Join-Path $Target "scripts\deploy-drift-check.mjs") --repo $Source --target $Target 2>&1 | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[SYNC] FAIL: deploy-drift-check exited $LASTEXITCODE (see [MISSING]/[DIFF] above)" -ForegroundColor Red
+        Write-Host "[SYNC] FAIL: deploy-drift-check exited $LASTEXITCODE. 漂移明细([MISSING]=target 缺失 repo 文件 / [DIFF]=内容不一致)已列于上方失败输出。" -ForegroundColor Red
         exit 1
     }
-    Write-Host "[SYNC] OK: no deploy drift" -ForegroundColor Green
+    Write-Host "[SYNC] OK: 全局配置目录与本仓库一致（无漂移）" -ForegroundColor Green
 
     Write-Host ""
     Write-Host "[SYNC] OK | files=$CopiedFiles dirs=$CopiedDirs | drift=0 | target=$Target" -ForegroundColor Green
@@ -373,6 +391,7 @@ try {
     exit 0
 }
 catch {
-    Write-Host "[SYNC] FAIL: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "[SYNC] FAIL: [$($_.Exception.GetType().Name)] $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "  建议: 若为 doctor/检查脚本报错，先查 $Target\.sync-doctor.log 与 $Target\.deploy-doctor.log；若为文件复制/写入报错，请检查目标目录 $Target 的写权限。" -ForegroundColor Yellow
     exit 1
 }

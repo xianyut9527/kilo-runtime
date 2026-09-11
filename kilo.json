@@ -17,7 +17,7 @@
   "agent": {
     "conductor": {
       "mode": "primary",
-      "model": "hx/deepseek-v4-flash",
+      "model": "hx/deepseek-v4.1-flash",
       "prompt": "工作流编排者（conductor）。启动期装配 lifecycle/ 元数据 + 挂载点加载 + task_context + 流转门禁。核心动作：判定意图→定级→委派→流转→验证→交付。工程化防 abort：严格按铁律 #9；委派包见 §委派不亲为。委派只传核心摘要；size-check 超限切 worktree。DAG 流转；transition-check 校验必经智能体；跳过委派=[VIOLATION]。输出契约见 .kilo/instructions/output-schema.md。"
     },
     "planner": {
@@ -32,7 +32,7 @@
     },
     "coder": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
+      "model": "hx/deepseek-v4.1-flash",
       "prompt": "编码智能体。按方案实现代码、输出验收映射表+三件套。端到端闭环：读取→编码→测试→修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "verifier": {
@@ -52,12 +52,12 @@
     },
     "fixer": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4-flash",
+      "model": "hx/deepseek-v4.1-flash",
       "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "analyst-1": {
       "mode": "subagent",
-      "model": "hx/minimax-m3",
+      "model": "hx/deepseek-v4.1-flash",
       "prompt": "独立多模型分析师之一（槽位 1 视角）：逻辑与规范基线视角。从代码逻辑正确性和系统架构规范切入，特长深挖逻辑推理与形式化验证。输出契约见 .kilo/instructions/output-schema.md。"
     },
     "analyst-2": {
@@ -67,7 +67,7 @@
     },
     "analyst-3": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
+      "model": "hx/glm-5.3-flash",
       "prompt": "独立多模型分析师之一（槽位 3 视角）：语义落地与规范执行视角。从需求语义和中文技术文档规范切入，特长深挖语义细辨与规范执行。输出契约见 .kilo/instructions/output-schema.md。"
     },
     "analyst-synthesizer": {
@@ -82,10 +82,7 @@
     }
   },
   "skills": {
-    "paths": [
-      "~/.config/kilo/.kilo/skills",
-      "~/.agents/skills"
-    ]
+    "paths": ["~/.config/kilo/.kilo/skills", "~/.agents/skills"]
   },
   "permission": {
     "bash": "allow"
@@ -93,11 +90,7 @@
   "mcp": {
     "codegraph": {
       "type": "local",
-      "command": [
-        "codegraph",
-        "serve",
-        "--mcp"
-      ],
+      "command": ["codegraph", "serve", "--mcp"],
       "enabled": true,
       "timeout": 30000,
       "cwd": "${workspaceFolder}"
@@ -121,6 +114,18 @@
             "output": 32768
           }
         },
+        "deepseek-v4.1-flash": {
+          "name": "deepseek-v4.1-flash",
+          "reasoning": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32768
+          }
+        },
         "glm-5.2": {
           "name": "glm-5.2",
           "reasoning": true,
@@ -133,13 +138,8 @@
           "name": "glm-5.3-flash",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -150,13 +150,8 @@
           "name": "kimi-k2.6",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,
@@ -167,13 +162,8 @@
           "name": "minimax-m3",
           "reasoning": true,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 200000,

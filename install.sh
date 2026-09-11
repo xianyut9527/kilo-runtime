@@ -53,7 +53,7 @@ RECURSIVE_EXCLUDE=(
     ".mcp-tmp/"
 )
 
-# Runtime data owned by the DEPLOYED copy, not by the repo. Keep in sync with install.ps1
+# Runtime data owned by the global config dir, not by the repo. Keep in sync with install.ps1
 # ($RuntimeDataDirs / $RuntimeDataFiles) and scripts/deploy-drift-check.mjs.
 #
 # Why this exists: the installer purges TARGET before copying, while kb.mjs add and
@@ -217,14 +217,25 @@ else
     copy_source_tree "${SOURCE_DIR}" "${TARGET_DIR}" 0
 fi
 restore_runtime_data
+# Rebuild deployed knowledge-base index: backup/restore keeps runtime-only FX files that the repo
+# does not own, but install overwrites the deployed index.md from repo, leaving "file without index
+# row" → deploy-doctor kb.health FAIL. Rebuild on the deployed side to keep index/files consistent.
+KB_REBUILD_SCRIPT="${TARGET_DIR}/scripts/kb.mjs"
+KB_ROOT="${TARGET_DIR}/knowledge-base"
+if [ -f "${KB_REBUILD_SCRIPT}" ] && [ -d "${KB_ROOT}" ]; then
+    echo "[KB] Rebuilding knowledge-base index on target..."
+    if node "${KB_REBUILD_SCRIPT}" rebuild --root "${KB_ROOT}" 2>&1; then
+        echo "[KB] knowledge-base index rebuilt on target"
+    else
+        echo "[KB] WARN: kb.mjs rebuild exited $? (non-blocking)" >&2
+    fi
+fi
 
-# Post-sync framework health self-check (repo side; the deployed copy is gated at the end of this
-# script with `--root ${TARGET_DIR}`). Historical defect: only ${SOURCE_DIR} was checked while
-# lifecycle-doctor's ROOT was hardcoded to the script location, so the deployed copy was never
-# validated and drift looked green.
+# Post-sync 框架健康度自检（本仓库侧；全局配置目录侧见本脚本末尾 --root ${TARGET_DIR} 门禁）
 if command -v node >/dev/null 2>&1; then
   if ! node "${SOURCE_DIR}/scripts/lifecycle-doctor/index.mjs" > "${TARGET_DIR}/.sync-doctor.log" 2>&1; then
-    echo "[SYNC] FAIL: post-sync lifecycle-doctor (repo) failed. See ${TARGET_DIR}/.sync-doctor.log" >&2
+    echo "[SYNC] FAIL: post-sync lifecycle-doctor (repo) exited. 错误明细如下（完整日志: ${TARGET_DIR}/.sync-doctor.log）:" >&2
+    grep -E "FAIL|SUMMARY|ASSEMBLY" "${TARGET_DIR}/.sync-doctor.log" 2>/dev/null | sed "s/^/  /" >&2 || true
     exit 1
   fi
   echo "[SYNC] OK: post-sync lifecycle-doctor passed (repo)"
@@ -237,7 +248,7 @@ fi
 
 # Critical file existence check removed: the hand-maintained CRITICAL_FILES list silently missed
 # entries (.kilo/instructions/conductor-dispatch-sop.md was never listed, so its absence in the
-# deployed copy went unnoticed). Superseded by scripts/deploy-drift-check.mjs at the end of this
+# global config copy went unnoticed). Superseded by scripts/deploy-drift-check.mjs at the end of this
 # script, which compares every file (strictly stronger).
 
 # UTF-8 note: bash inherits locale from the environment; if you see CJK mojibake,
@@ -319,24 +330,25 @@ else
     echo "[WARN] sync-agent-prompt.mjs not found at ${SYNC_SCRIPT}, skip"
 fi
 
-# ---- Deployed-copy gates: must run after placeholder substitution + prompt sync (both rewrite
+# ---- Global config copy gates: must run after placeholder substitution + prompt sync (both rewrite
 # target content). Mirrors install.ps1.
 if command -v node >/dev/null 2>&1; then
     echo ""
-    echo "Validating deployed copy (doctor --root target)..."
+    echo "Validating global config copy (doctor --root target)..."
     if ! node "${TARGET_DIR}/scripts/lifecycle-doctor/index.mjs" --root "${TARGET_DIR}" > "${TARGET_DIR}/.deploy-doctor.log" 2>&1; then
-        echo "[SYNC] FAIL: deployed-copy lifecycle-doctor failed. See ${TARGET_DIR}/.deploy-doctor.log" >&2
+        echo "[SYNC] FAIL: global-config-copy lifecycle-doctor failed. 错误明细如下（完整日志: ${TARGET_DIR}/.deploy-doctor.log）:" >&2
+        grep -E "FAIL|SUMMARY|ASSEMBLY" "${TARGET_DIR}/.deploy-doctor.log" 2>/dev/null | sed "s/^/  /" >&2 || true
         exit 1
     fi
-    echo "[SYNC] OK: deployed-copy lifecycle-doctor passed"
+    echo "[SYNC] OK: global-config-copy lifecycle-doctor passed"
 
     echo ""
-    echo "Checking deploy drift (repo vs target)..."
+    echo "Checking config drift (repo vs target)..."
     if ! node "${TARGET_DIR}/scripts/deploy-drift-check.mjs" --repo "${SOURCE_DIR}" --target "${TARGET_DIR}"; then
-        echo "[SYNC] FAIL: deploy drift detected (see [MISSING]/[DIFF] above)" >&2
+        echo "[SYNC] FAIL: config drift detected. 漂移明细([MISSING]=target 缺失 repo 文件 / [DIFF]=内容不一致)已列于上方失败输出。" >&2
         exit 1
     fi
-    echo "[SYNC] OK: no deploy drift"
+    echo "[SYNC] OK: 全局配置目录与本仓库一致（无漂移）"
 fi
 
 echo ""

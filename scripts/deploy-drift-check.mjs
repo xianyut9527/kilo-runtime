@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 // deploy-drift-check.mjs
-// 部署漂移校验器：逐文件比对「源码仓库」与「已部署的全局配置副本」，任一不一致即阻断。
+// 部署漂移校验器：逐文件比对「本仓库」与「已部署的全局配置目录」，任一不一致即阻断。
 //
 // 存在动机（真实事故）：
-//   install.ps1 的 post-sync doctor 跑的是 $Source（仓库），而 lifecycle-doctor 的 ROOT
-//   又硬编码为脚本自身位置——两者叠加使部署副本永不被校验。结果运行时长期跑的是拆分前的
+//   install.ps1 的 post-sync doctor 跑的是 $Source（本仓库），而 lifecycle-doctor 的 ROOT
+//   又硬编码为脚本自身位置——两者叠加使全局配置目录永不被校验。结果运行时长期跑的是拆分前的
 //   旧 conductor.md（37.9KB 单体）、缺 conductor-dispatch-sop.md、kilo.json 被压成 1 行且
 //   deep-analyzer prompt="|"，而 doctor 一律报全绿。
-//   本脚本把「部署副本 == 仓库」变成机械门禁，并取代 install 脚本里手维护的 CriticalFiles
+//   本脚本把「全局配置目录 == 本仓库」变成机械门禁，并取代 install 脚本里手维护的 CriticalFiles
 //   硬编码清单（清单会漏项：conductor-dispatch-sop.md 从未被列进去）。
 //
-// 归一化规则（比对前对部署副本内容做逆变换，消除安装期的合法改写）：
+// 归一化规则（比对前对全局配置目录内容做逆变换，消除安装期的合法改写）：
 //   1. 占位符：install 把 agent/*.md + .kilo/instructions/*.md + lifecycle/stages/*.md
 //      里的 ${KILO_CONFIG_DIR} 替换成目标绝对路径；比对时把目标路径还原回 ${KILO_CONFIG_DIR}。
 //   2. BOM：两侧统一去 BOM 后比对（编码安全由 lifecycle-doctor encoding-safety 负责）。
@@ -18,8 +18,8 @@
 //
 // 用法：
 //   node scripts/deploy-drift-check.mjs [--repo <dir>] [--target <dir>] [--json] [--quiet]
-//     --repo    源码仓库根，默认脚本所在仓库
-//     --target  部署副本根，默认 $KILO_INSTALL_TARGET 或 ~/.config/kilo
+//     --repo    本仓库根，默认脚本所在仓库
+//     --target  全局配置目录根，默认 $KILO_INSTALL_TARGET 或 ~/.config/kilo
 //     --json    输出单行 JSON（供 CI/hook 消费）
 //     --quiet   只输出 FAIL 明细与 SUMMARY
 //
@@ -48,7 +48,7 @@ const SELF_ROOT = path.resolve(__dirname, '..');
 // 回落清单与 DRIFT_ONLY_NAMES 均在 lib 里 export，由夹具跟真实清单交叉校验。
 //
 // 候选根按序首个命中：`--repo`（install 双脚本就是这么调的，事实源一直在手边）→ 脚本所在树。
-// 上一版只读 SELF_ROOT，导致从部署副本跑时（那树里按设计没有 install.ps1）必然回落 fallback
+// 上一版只读 SELF_ROOT，导致从全局配置目录跑时（那树里按设计没有 install.ps1）必然回落 fallback
 // ——把一份只在极端场景才该用的手工镜像当成了常态路径，而它确实已经漂过两次。
 let EXCLUDE_NAMES, ROOT_ONLY_EXCLUDE, EXCLUDE_SOURCE, INSTALL_MISMATCH;
 let MD_SUBST_DIRS, MD_SUBST_SOURCE;
@@ -78,7 +78,7 @@ function initMdSubst(candidateRoots) {
 
 const EXCLUDE_SUFFIX = ['.bak', '.bak2', '.orig', '.old', '.tmp', '.log', '.diff', '.patch'];
 // 路径前缀级排除（不能用裸目录名：'archive' 同时是仓库拥有的 docs/archive/）。
-// knowledge-base/fixes/archive/ = kb.mjs add 重写同 ID 时的旧版本归档，只在部署副本侧累积，
+// knowledge-base/fixes/archive/ = kb.mjs add 重写同 ID 时的旧版本归档，只在全局配置目录侧累积，
 // 仓库不拥有（详见 knowledge-base/index.md §ID 跳号说明）。
 const EXCLUDE_PATH_PREFIXES = ['knowledge-base/fixes/archive/'];
 // 备份文件前缀（kilo.json.bak.*）
@@ -132,7 +132,7 @@ function walk(absRoot, dir, out) {
 /**
  * 仓库侧期望文件集：优先用 git 列举（tracked + 未忽略的 untracked）。
  * 这样自动排除 .gitignore 里的运行时产物（docs/lessons/、.tmp/、kilo.json.bak.* 等）——
- * 它们在仓库与部署副本两侧各自独立累积，纳入比对只会产生漂移噪声。
+ * 它们在仓库与全局配置目录两侧各自独立累积，纳入比对只会产生漂移噪声。
  * git 不可用时回退到目录遍历（仍受 EXCLUDE_* 约束）。
  * @returns {{files:string[], via:string}}
  */
@@ -164,7 +164,7 @@ function readNormalized(absPath) {
 
 function sha(buf) { return createHash('sha256').update(buf).digest('hex'); }
 
-/** 部署副本逆变换：把目标绝对路径还原为 ${KILO_CONFIG_DIR} 占位符 */
+/** 全局配置目录逆变换：把目标绝对路径还原为 ${KILO_CONFIG_DIR} 占位符 */
 function unsubstitute(text, target) {
   const variants = [target, target.replace(/\\/g, '/'), target.replace(/\//g, '\\')];
   let out = text;
@@ -184,7 +184,7 @@ if (!fs.existsSync(args.repo) || !fs.statSync(args.repo).isDirectory()) {
 }
 if (!fs.existsSync(args.target) || !fs.statSync(args.target).isDirectory()) {
   process.stderr.write(`[FAIL] target 目录不存在: ${args.target}\n`);
-  process.stderr.write('       先跑 install.ps1 / install.sh 部署，或用 --target 指定部署副本根。\n');
+  process.stderr.write('       先跑 install.ps1 / install.sh 同步全局配置，或用 --target 指定全局配置目录根。\n');
   process.exit(2);
 }
 
@@ -198,8 +198,8 @@ const targetFiles = walk(args.target, '', []);
 const repoSet = new Set(repoFiles);
 const targetSet = new Set(targetFiles);
 
-const missing = [];  // 仓库有、部署副本无 → 运行时读不到（最危险）
-const extra = [];    // 部署副本有、仓库无且非运行时自有数据 → 陈旧残留 / 待回收
+const missing = [];  // 本仓库有、全局配置目录无 → 运行时读不到（最危险）
+const extra = [];    // 全局配置目录有、本仓库无且非运行时自有数据 → 陈旧残留 / 待回收
 const runtimeData = []; // install 声明的部署侧自有数据（仓库不拥有该路径）→ 不计漂移
 const runtimeOwn = parseRuntimeOwn(args.repo);
 const repoPrefixCache = new Map();
@@ -296,9 +296,9 @@ if (!args.quiet && runtimeData.length) {
 }
 
 if (drifted === 0) {
-  say('[OK] 部署副本与仓库一致（无 MISSING / DIFF）');
+  say('[OK] 全局配置目录与本仓库一致（无 MISSING / DIFF）');
   process.exit(0);
 }
-process.stderr.write(`[DEPLOY_DRIFT] 部署副本与仓库不一致：missing=${missing.length} diff=${diff.length}\n`);
+process.stderr.write(`[DEPLOY_DRIFT] 全局配置目录与本仓库不一致：missing=${missing.length} diff=${diff.length}\n`);
 process.stderr.write('               重跑 install.ps1 / install.sh 后复验；[EXTRA] 为部署侧残留或运行时新增待回收项（install 声明的自有数据已归入 [RUNTIME]，不在此列），需人工确认。\n');
 process.exit(1);
