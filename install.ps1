@@ -1,4 +1,4 @@
-# Kilo Global Config Installer (Windows)
+﻿# Kilo Global Config Installer (Windows)
 # Syncs this repo to: $env:USERPROFILE\.config\kilo\
 # IMPORTANT: EXCLUDE lists must be kept in sync with install.sh
 #
