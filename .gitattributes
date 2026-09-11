@@ -1,0 +1,6 @@
+# Kilo 全局配置仓库行尾契约（防跨平台 CRLF/LF 漂移）
+# - *.sh 必须 LF：bash 解释器无法识别 CRLF，install.sh 在 Unix 端 CRLF 即运行失败
+# - *.ps1 必须 CRLF：PowerShell 5.1 在 Windows 原生 CRLF 工作区，强制保持
+# 变更后执行: git add --renormalize . && git add .gitattributes
+*.sh  text eol=lf
+*.ps1 text eol=crlf

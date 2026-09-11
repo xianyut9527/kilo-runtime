@@ -22,7 +22,7 @@
     },
     "planner": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
+      "model": "hx/qwen3.8-max",
       "prompt": "规划智能体。分析需求、调研代码、输出设计方案、定义验收点。只设计不写代码。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "plan-reviewer": {
@@ -37,17 +37,17 @@
     },
     "verifier": {
       "mode": "subagent",
-      "model": "hx/glm-5.3-flash",
+      "model": "hx/qwen3.8-max",
       "prompt": "正向验证智能体。按验收标准逐条验证、L1-L3 分层、8 元组证据（含 3 必填）、独立重跑。只验证不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6",
+      "model": "hx/qwen3.8-flash",
       "prompt": "静态代码审查智能体。从安全、架构、简化、SCOPE_CREEP 四视角审查代码质量。只审查不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "reverse-auditor": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
+      "model": "hx/glm-5.3-flash",
       "prompt": "反向验证审查智能体。从反向视角独立审查 diff：反向核对验收标准/设计门 DAG 一致性、SCOPE_CREEP、调试残留、重复实现 LOCAL_PATCH/COPY_PASTE_FIX、FAKE_CONTEXT、越界改动。只审查不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
     },
     "fixer": {
@@ -62,7 +62,7 @@
     },
     "analyst-2": {
       "mode": "subagent",
-      "model": "hx/kimi-k2.6",
+      "model": "hx/qwen3.8-max",
       "prompt": "独立多模型分析师之一（槽位 2 视角）：全局关联与一致性视角。从全局架构和跨模块依赖关系切入，特长深挖广度扫描与线索关联。输出契约见 .kilo/instructions/output-schema.md。"
     },
     "analyst-3": {
@@ -77,7 +77,7 @@
     },
     "analyst-critic": {
       "mode": "subagent",
-      "model": "hx/glm-5.2",
+      "model": "hx/qwen3.8-max",
       "prompt": "多模型分析反向审计器。在 synthesizer 产出 synthesis 后，反向审计其结论的偏误、遗漏与过度自信。输出契约见 .kilo/instructions/output-schema.md。"
     }
   },
@@ -160,6 +160,30 @@
         },
         "minimax-m3": {
           "name": "minimax-m3",
+          "reasoning": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32768
+          }
+        },
+        "qwen3.8-max": {
+          "name": "qwen3.8-max",
+          "reasoning": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32768
+          }
+        },
+        "qwen3.8-flash": {
+          "name": "qwen3.8-flash",
           "reasoning": true,
           "modalities": {
             "input": ["text", "image"],

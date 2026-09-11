@@ -50,7 +50,7 @@ RECURSIVE_EXCLUDE=(
     ".claude"
     ".playwright-mcp"
     "_test_target_orig"
-    ".mcp-tmp/"
+    ".mcp-tmp"
 )
 
 # Runtime data owned by the global config dir, not by the repo. Keep in sync with install.ps1
