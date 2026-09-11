@@ -226,7 +226,7 @@ T1+ 任务加载 coder 智能体时，委派包仍必须包含（**核心摘要*
 - **验证命令**：每条验收标准对应的可执行验证命令
 - **返回契约（按角色分档上限）**：subagent 只返回核心摘要（verdict + 证据 file:line + 关键结论），禁止完整报告/长表/复述文件内容（角色分档见 .kilo/instructions/output-schema.md §返回超限约束）
 
-> **token_budget 单列（单元级调度参数，不进委派包六条）**：每单元 token 预算由 conductor 在逐单元派发时单列（与铁律 #6 六条标准一致）。
+> **token_budget 单列（单元级调度参数，不进委派包六条）**：每单元 token 预算由 conductor 在逐单元派发时单列（与铁律 #6 委派包六字段规范一致）。
 
 委派前安全门见 `agent/conductor.md` 铁律 #9。
 

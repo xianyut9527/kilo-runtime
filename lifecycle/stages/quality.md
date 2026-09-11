@@ -222,7 +222,7 @@ quality:
 hooks:
   quality:
     max_total_cycles: 3        # QUALITY 总轮次上限；来源 config.yaml hooks.quality.max_total_cycles，数值以 config.yaml 为准（唯一熔断阈值；3 轮修不好=方案/需求有问题，escalate 到人）
-    auto_fix: true             # 自动触发 fix hooks（false = 人工确认后修复）
+    # 注：fix hooks 为无条件自动触发（hooks 返回 FAIL 即触发，无开关）；见下方硬规则 1。
 ```
 
 **熔断规则**：
@@ -233,11 +233,10 @@ hooks:
 
 ```yaml
 status_signal: "PASS" | "FAIL" | "CIRCUIT_BREAKER"
-transition_context:
-  unit_id: "string"
-  quality_round: int
-  verify_pass: true | false
-  review_pass: true | false
+unit_id: "string"
+quality_round: int                       # 顶层字段；熔断判定读 quality.round
+verify_pass: true | false
+review_pass: true | false
 quality_gate:
   verdict: "PASS" | "FAIL" | "CIRCUIT_BREAKER"
   forward_result: "PASS" | "FAIL"
@@ -259,7 +258,7 @@ quality_gate:
 2. **deps 变化才触发**：verify hooks 只在 `execution.code` 或 `plan` 变化时重新执行；无变化时不重复浪费 token
 3. **视角隔离不变**：verify hooks 不见 review hooks 结论，review hooks 不见 verify hooks 结论，fix hooks 只读 issues 不读结论
 4. **fix 后必须重 verify**：fix hooks 产出新 code 后，必须重新经过 verify hooks，不可直接跳到 review
-5. **不跳过 review**：即使 verify 连续 FAIL 后最终 PASS，也必须经过 review hooks 才能离开 QUALITY
+5. **T2 不跳过 review**：T2 下即使 verify 连续 FAIL 后最终 PASS，也必须经过 review hooks 才能离开 QUALITY；T1 走机械门+正向验证快通道（审查角色经 `tiers:[T2]` 仅 T2 加载，见 :51）
 6. **CIRCUIT_BREAKER 不阻塞交付**：熔断后流转到 DELIVERING，但标记 `[QUALITY_CB]`，由用户决策是否继续
 7. **离开 QUALITY 硬门**：进入下阶段前必须写入 `quality.verdict` ∈ {PASS, CIRCUIT_BREAKER}。缺 verdict 时 transition-check.mjs 报 `[MISSING_QUALITY_VERDICT]` 拒绝流转，确保 T1/T2 不能绕过 QUALITY。
 

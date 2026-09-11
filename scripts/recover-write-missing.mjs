@@ -35,6 +35,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { readContext } from './task-context-runtime.mjs';
 import { verifyFields } from './lib/byte-verify.mjs';
+import { extractFrontmatter, extractTaskContextWrite } from './lib/frontmatter.mjs';
 import os from 'node:os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -93,53 +94,7 @@ function parseArgs(argv) {
   return out;
 }
 
-// ============================================================
-// frontmatter 解析（与 task-context.mjs extractTaskContextWrite 同源逻辑；
-// 复制在此避免循环依赖，task-context.mjs 是 CLI 而非 lib）
-// 支持行内数组（write: [a, b]）与多行列表（write:\n  - a\n  - b）两种 YAML 子集。
-// ============================================================
-
-function extractFrontmatter(text) {
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  return m ? m[1] : null;
-}
-
-function extractTaskContextWrite(frontmatter) {
-  const lines = frontmatter.split(/\r?\n/);
-  let inTaskContext = false;
-  let inWrite = false;
-  const items = [];
-  for (const line of lines) {
-    if (/^[^\s#]/.test(line)) {
-      if (inTaskContext) break;
-      inTaskContext = /^task_context\s*:/.test(line);
-      continue;
-    }
-    if (!inTaskContext) continue;
-    const inline = line.match(/^\s+write\s*:\s*\[(.*)\]\s*(?:#.*)?$/);
-    if (inline) {
-      for (const part of inline[1].split(',')) {
-        const v = part.trim();
-        if (v) items.push(v);
-      }
-      inWrite = false;
-      continue;
-    }
-    if (/^\s+write\s*:\s*$/.test(line)) {
-      inWrite = true;
-      continue;
-    }
-    if (inWrite) {
-      const li = line.match(/^\s+-\s+(.+?)\s*(?:#.*)?$/);
-      if (li) {
-        items.push(li[1]);
-        continue;
-      }
-      inWrite = false;
-    }
-  }
-  return items;
-}
+// frontmatter 解析与 task_context.write 提取统一走 scripts/lib/frontmatter.mjs（canonical）
 
 // 从 agent/<name>.md 派生期望字段集
 // 失败原因分两类：agent 文件不存在 / agent 文件无 task_context.write 声明

@@ -61,7 +61,11 @@ function countTopLevelPipe(s) {
     if (c === '[') { inClass = true; continue; }
     if (c === '(') { depth++; continue; }
     if (c === ')') { if (depth > 0) depth--; continue; }
-    if (c === '|' && depth === 0) count++;
+    if (c === '|' && depth === 0) {
+      // 逻辑或 || 不是正则 alternation：成对跳过，不计数
+      if (s[i + 1] === '|') { i++; continue; }
+      count++;
+    }
   }
   return count;
 }

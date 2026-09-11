@@ -31,6 +31,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { contextPath } from './lib/task-context-io.mjs';
+import { parseT1StrengthSignals } from './lib/config-parser.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -209,24 +210,7 @@ function readStrengthEscalationWords() {
   } catch {
     return null;
   }
-  const words = [];
-  let inSignals = false;
-  let inWords = false;
-  for (const raw of text.split(/\r?\n/)) {
-    const hashIdx = raw.search(/\s#/);
-    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
-    if (!line.trim()) continue;
-    if (/^t1_strength_signals\s*:/.test(line)) { inSignals = true; inWords = false; continue; }
-    if (!inSignals) continue;
-    if (/^[^\s#]/.test(line) && !/^t1_strength_signals/.test(line)) { inSignals = false; break; }
-    if (/^  strength_escalation_words\s*:\s*$/.test(line)) { inWords = true; continue; }
-    if (/^  [a-z_]+\s*:/.test(line) && !/^  strength_escalation_words/.test(line)) { inWords = false; continue; }
-    if (inWords) {
-      const m = line.match(/^    -\s+(.+?)\s*$/);
-      if (m) words.push(m[1]);
-    }
-  }
-  return words.length > 0 ? words : null;
+  return parseT1StrengthSignals(text);
 }
 
 // T1_STRENGTH_ELIGIBILITY（WARN）：T1 low 强度任务 intent.raw 是否命中强度升级信号词

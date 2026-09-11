@@ -62,7 +62,7 @@ function rtCheckBreaker(ctx, env, rtCheck) {
   const q = ctx.quality || {};
   const c = ctx.convergence || {};
   const qr = q.round || 0;
-  const qm = q.max_rounds || 7;
+  const qm = q.max_rounds || 3;
   const fr = c.mm_fusion_rounds || 0;
   const fm = c.mm_fusion_max_rounds || 3;
   const qPct = Math.round((qr / qm) * 100);

@@ -7,7 +7,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 
 ## 当前设计
 
-- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow-core.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`workflow-reference.md` / `skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 conductor 在需要时主动读取。`security-checklist.md` 作为 verifier 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按智能体按需加载，不作为通用上下文全量注入。
+- **运行时指令轻量化**：真正注入模型上下文的是 `./.kilo/instructions/core.md`、`workflow-core.md`、`reflection.md`，避免把长篇设计文档整份塞进每个 session。`skills-lifecycle.md` 不在自动注入列表中，作为按需引用的参考文档，由 conductor 在需要时主动读取。`security-checklist.md` 作为 verifier 在 L3 安全/性能阶段调用的检查清单，`output-schema.md` 作为统一交付输出规范，二者按智能体按需加载，不作为通用上下文全量注入。
 - **长文档转为参考资料**：`AGENTS.md` 保留为设计标准和人工维护参考，不再承担高频运行时注入职责。
 - **默认路由**：模型选择只在 `kilo.json` 中维护；运行规则按角色和任务复杂度路由，不硬编码具体模型名。
 - **扩展入口可选**：Kilo 框架默认零耦合运行，需要时按需启用第三方 MCP（通用名称：远程文档检索 / 代码图谱索引 / 浏览器自动化等）。
@@ -23,7 +23,7 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 1. 编排/实现优先稳定性（长上下文主控模型族，temperature 0）。
 2. 规划/合并保留适度发散（推理深度模型族，temperature 0.1-0.2）。
 3. 审查/对抗低发散（严谨判断模型族，temperature 0-0.1）。
-4. `small_model` 是可选降级路由入口，适用场景见 `.kilo/instructions/workflow-reference.md`「small_model 触发规则」。
+4. `small_model` 是可选降级路由入口，适用场景见 `.kilo/instructions/workflow-core.md`「small_model 触发规则」。
 
 ## 目录结构
 
@@ -37,7 +37,6 @@ Kilo 全局配置骨架仓库。负责通用 agent 编排、默认模型路由�
 │   ├── instructions/
 │   │   ├── core.md                # 运行时核心规则
 │   │   ├── workflow-core.md       # 运行时工作流规则（自动注入）
-│   │   ├── workflow-reference.md  # 工作流参考内容（按需读取，不自动注入）
 │   │   ├── reflection.md          # 反思与错误恢复规则
 │   │   ├── security-checklist.md  # 安全/性能检查清单（由 verifier 在 L3 调用）
 │   │   ├── output-schema.md       # 统一交付输出规范（供下游 agent 解析）
@@ -117,16 +116,16 @@ node scripts/agents-smoke-test.mjs --help
 # 单跑：指定 agent + 自定义 prompt + 短超时（适合 401/超时快速失败场景）
 node scripts/agents-smoke-test.mjs --agent planner --prompt ping --timeout 30s
 
-# 全跑：8 个 agent 顺序调度，进度走 stderr，结构化结果走 stdout
+# 全跑：7 个 agent 顺序调度，进度走 stderr，结构化结果走 stdout
 node scripts/agents-smoke-test.mjs --full --timeout 60s --json
 ```
 
-`--timeout` 支持 `30s` / `500ms` / `1m` / 纯数字（毫秒）。`--json` 模式下单跑输出 1 元素数组，`--full` 输出 8 元素 + 1 summary 元素。进度/进度信息走 stderr，结构化输出走 stdout，避免污染 JSON 解析。
+`--timeout` 支持 `30s` / `500ms` / `1m` / 纯数字（毫秒）。`--json` 模式下单跑输出 1 元素数组，`--full` 输出 7 元素 + 1 summary 元素。进度/进度信息走 stderr，结构化输出走 stdout，避免污染 JSON 解析。
 
 ### PASS 判据
 
 - **单跑（`--agent`）**：`ok=true` 且 `error=null` → exit `0`；`http:401` / `timeout` / `parse` 等任意失败 → exit `1`。
-- **全跑（`--full`）**：8 个 agent 全部 `ok=true` → exit `0`；至少 1 个 `ok=false` → exit `1`。
+- **全跑（`--full`）**：7 个 agent 全部 `ok=true` → exit `0`；至少 1 个 `ok=false` → exit `1`。
 - **用法错误**：未知 flag / 缺值 / 未知 agent / `--agent` 与 `--full` 互斥 → exit `2`（含 stderr 错误信息）。
 
 ### 与其他诊断脚本的定位区分

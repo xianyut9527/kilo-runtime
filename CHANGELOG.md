@@ -2,9 +2,43 @@
 
 本文件记录 `kilo_config` 全局配置仓库的演进。遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
+## [Unreleased] config-gapfill-002（上轮查漏补缺 + 并行测试沙箱撞车修复）
+
+> 目标：修复 mmo-optimize-001 残留的 8 项真实遗漏（G1-G7+U8）+ 补 1 处测试基建潜伏 bug。
+
+### Fixed
+
+- **并行 node --test 间歇性假 FAIL（沙箱目录跨进程撞车）**：`scripts/lib/test-harness.mjs` `makeSandbox` 沙箱路径仅用进程内自增 `_seq`（`s1`、`s2`…），并行 `--test` 下每个子进程 `_seq` 都从 0 起 → 跨进程撞同一 `tmpdir/kilo-gate-sandbox/s1`，先退出的进程 `rmSync` 误删兄弟进程沙箱（实测：8 文件并行 6/8~7/8 pass 抖动；`--test-concurrency=1` 与 `--experimental-test-isolation=none` 均稳定全绿，证明非用例缺陷而是路径碰撞）。修复：沙箱目录名加 `pid` + 时间戳（`s<pid>-<t36>-<seq>`），跨进程唯一。复验：并行 3 连跑 8/8 全 PASS；concurrency=1 亦绿；doctor 650/0/0。
+- **KB FX-015 结构段 TODO 占位**：`knowledge-base/fixes/FX-015.md` 症状段内嵌了根因/修复/复验全文，但 `## 根因`/`## 修复`/`## 复验` 三段仍是 `- TODO:` 占位（`kb.mjs doctor` 只查 frontmatter 七字段不查正文结构段，故全绿放行）。已从症状段拆出三段正文回填，双库镜像同步，`kb.mjs rebuild` + `doctor` 全绿（19 entries）。
+
+### Related
+
+- 上轮 G1-G7+U8 八项查漏补缺（config-parser 纯函数抽取 / coder risks 清理 / init 口径 / output-schema 计数 / fallback 7→3 / transition_context 死清理 / 墓碑行+CHANGELOG / planning-executing-quality 清理）已于 T20260911-002 全部落地，doctor 641→650 PASS。
+
 ## [Unreleased] mmo-optimize-001（非模型配置优化）
 
 > 目标：非模型配置优化，阈值单源化 / compaction 调优 / size_check_threshold 120000→150000 / codegraph enabled→false / commit_message 极简 / build-derivations 对齐 / 证据字符预算 / QUALITY 并行调度 / recovery 预算可见化，涉及 7 文件。
+
+### Fixed
+
+- **`build-derivations.mjs` 派生数据 `model_overrides` 静默丢失**：`scripts/lib/config-parser.mjs` 抽取 `parseTierDefaults` / `parseTimeouts` 纯函数（零副作用），消除 `build-derivations.mjs` 与 `task-context-runtime.mjs` 的双份复制；修复派生数据中 `model_overrides` 静默丢失。
+
+### Changed
+
+- **阈值单源化**：`dispatch_prompt_threshold` 3000→4000（`lifecycle/config.yaml`，与小任务上限 ×1.5 安全系数对齐）；`output-schema.md` §返回超限约束表确立为「角色返回硬上限唯一真相源」，其他文档只引用不复制数值；`conductor-dispatch-sop.md` 返回长度红线降级为「微任务场景建议值，非硬上限」。
+- **`size_check_threshold` 120000→150000**：`lifecycle/config.yaml` 注释同步换算口径（150K 字符 = 200K token 上下文 50% 保守线，÷1.5 char/token；实测 120K 可承载，150K 留余量）。
+- **`build-derivations` 缺省值对齐**：`hooks.max_total_cycles` 7→3、`size_check_threshold` 120000→150000、`dispatch_prompt_threshold` 3000→4000，与 `config.yaml` SSOT 一致。
+- **证据字符预算**：`output-schema.md` 新增 §证据字符预算——单条 evidence ≤300（cmd ≤80 + stdout_key ≤200 封顶）、8 元组 note ≤100、验收映射表行 ≤80、verdict 段 ≤200；最小合法展开 ≈1600-2200 字符 vs 6000 上限 = 2.7x 余量。
+- **QUALITY 并行调度**：`lifecycle/stages/quality.md` 新增 §并行调度——verify 组内多 verifier 必选并行；审查智能体乐观预取，verify 返回 FAIL 时作废预取、仅全 PASS 时生效；不改变 verify→fix(onFail)→verify 循环与 review afterPass 触发语义。
+- **recovery 预算可见化**：`lifecycle/config.yaml` recovery 段注释 + `conductor-dispatch-sop.md` + `output-schema.md` §返回契约 三处落地——运行时消耗（overload++ / write_retry / cycle）计入 dispatch_log budget 条目，返回摘要附单行 `recovery_budget:{overload:n/3,retry:n/1,cycles:n/3}`（分母为 config.yaml recovery 阈值）。
+
+### 未落地（目标描述与实际交付差异，如实记录）
+
+> 本批实际交付 7 文件；目标描述中以下 3 项经当前工作树实测**未落地**，不作已完成记录：
+
+- **compaction 调优**：`kilo.json` `compaction` 未改动，实测仍为 `tail_turns: 4` / `preserve_recent_tokens: 40000` / `reserved: 32000`。
+- **codegraph enabled→false**：`kilo.json` `mcp.codegraph.enabled` 实测仍为 `true`（历史 `00dc712` 曾置 false，`a640836` 重新启用）。
+- **commit_message 极简**：`kilo.json` `commit_message.prompt` 实测仍为多行长模板，未压缩。
 
 
 

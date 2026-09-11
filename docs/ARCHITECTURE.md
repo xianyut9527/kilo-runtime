@@ -227,7 +227,6 @@ tier_defaults:
 hooks:
   quality:
     max_total_cycles: 3       # 来源 config.yaml hooks.quality.max_total_cycles（QUALITY 总轮次上限，唯一熔断阈值）
-    auto_fix: true
 ```
 
 ### 4.5 改模型绑定

@@ -119,8 +119,8 @@ function _writeRel(root, rel, text) {
  */
 export function makeSandbox(files, label) {
   const tag = label ? '-' + String(label).replace(/[^A-Za-z0-9_.-]+/g, '_').slice(0, 40) : '';
-  const root = path.join(os.tmpdir(), 'kilo-gate-sandbox', `s${++_seq}${tag}`);
-  fs.mkdirSync(root, { recursive: true });
+  const uniq = `s${process.pid}-${Date.now().toString(36)}-${++_seq}${tag}`; // 进程级唯一：并行 --test 下每个子进程 _seq 从 0 起，仅用 seq 会跨进程撞同一 tmpdir 目录（2026-09-11 并行 flake 根因），exit 清理 rmSync 会误删兄弟进程沙箱
+  const root = path.join(os.tmpdir(), 'kilo-gate-sandbox', uniq);
   _sandboxRoots.push(root);
   if (files) for (const [rel, text] of Object.entries(files)) _writeRel(root, rel, asText(text));
   return root;

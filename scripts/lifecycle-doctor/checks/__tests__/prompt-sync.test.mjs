@@ -20,6 +20,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SANITIZE_SRC = fs.readFileSync(
   path.resolve(__dirname, '..', '..', '..', '..', 'scripts', 'sanitize-agent-description.mjs'), 'utf8'
 );
+// U1b：sanitize 模块现 import 本地 scripts/lib/frontmatter.mjs（非 node 内置），
+// 沙箱只搬 sanitize 源码会解析失败 → 必须一并复制该依赖，否则 8 条派生用例全退化为 unloadable。
+const FRONTMATTER_SRC = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', '..', '..', 'scripts', 'lib', 'frontmatter.mjs'), 'utf8'
+);
 
 const DESC = '这是一个足够长的智能体描述，用来验证 prompt 与 description 的单源派生关系是否成立。';
 const EXPECTED = sanitize.sanitizeDescription(DESC, 'tester').sanitized;
@@ -32,6 +37,7 @@ function sandboxAgent(opts) {
   const files = {
     'agent/tester.md': ['---', 'name: tester', 'description: ' + DESC, '---', '', '# tester', ''].join('\n'),
     'scripts/sanitize-agent-description.mjs': SANITIZE_SRC,
+    'scripts/lib/frontmatter.mjs': FRONTMATTER_SRC,
   };
   if (o.kiloText !== undefined) files['kilo.json'] = o.kiloText;
   else if (o.kilo === false) { /* 不放 kilo.json */ }

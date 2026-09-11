@@ -26,6 +26,9 @@
 | coder 批量注释订正中单处编辑遗漏,acceptance_map 全 PASS 掩盖未改文件 等 | [FX-022.md](fixes/FX-022.md) | 执行 | 多编辑单元必须逐文件 SHA256 前后对比验收,单条 grep 命中数校验防局部遗漏 |
 | i18n字典key数量超plan上限,U4文件清单误列 等 | [FX-023.md](fixes/FX-023.md) | 编排 | i18n字典key计数应基于实际.vue文件扫描而非估量;planner任务清单文件需 Glob 验证存在性(本任务 ChatPanel→ApiUsage 误判) |
 | verifier FAIL: context_anchor 行号代码不在工作区; fixer 声明 PASS 但磁盘无修复代码 等 | [FX-026.md](fixes/FX-026.md) | 编排 | staged-worktree-dual-version-baseline-reset |
+| QUALITY误判,FORBIDDEN_TOUCH误报 等 | [FX-027.md](fixes/FX-027.md) | 编排 | QUALITY 反向审计以 git diff 为基线，误判任务前既有未提交改动 |
+| 列定义遗漏,ellipsisTitleField 缺失 等 | [FX-028.md](fixes/FX-028.md) | 执行 | 共享组件新增列级契约后须逐页核对 slot 显示字段≠col.key 的列补标注，否则 title 回退不存在的 key 致 hover 空 |
+| acceptance_map overwrite,stale verify_command 等 | [FX-029.md](fixes/FX-029.md) | 执行 | acceptance_map per-batch overwrite + verify_command stale + pipe-pipe false positive |
 
 > **ID 跳号说明**：FX-006 ~ FX-009 从未入库。它们是运行时在部署副本侧重复生成的草稿（同一条经验被反复 add，且正文因含引号/`##` 被段落解析器切错），已作为垃圾丢弃；FX-010 ~ FX-013 是从部署副本回收并重排四段结构后的正式条目。保留跳号以保持事故溯源，不补号。
 >

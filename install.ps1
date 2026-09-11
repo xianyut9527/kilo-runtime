@@ -101,7 +101,19 @@ try {
         if ($HasBackup) {
             Write-Host "[BACKUP] runtime data ($($RuntimeDataDirs -join ', ') + markers) -> $BackupDir" -ForegroundColor Cyan
         }
-        Remove-Item -Path "$Target\*" -Recurse -Force -ErrorAction Stop
+        # Atomic switch (U4): rename the whole target aside to <Target>.old instead of purging
+        # its contents. The old purge-then-copy window was non-atomic: an interrupt between purge
+        # and restore permanently lost runtime KB/lessons. rename is atomic within the same volume;
+        # the stale copy is removed only after copy+restore succeed (commit below), with catch rollback.
+        # 同卷假设：Rename-Item 仅在同卷原子；Target 与 Target.old 同父目录，跨卷概率极低
+        # 且跨卷时 Rename-Item 抛异常由 catch 捕获回滚（不做复杂运行时校验，最小修复）。
+        $TargetOld = "$Target.old"
+        if (Test-Path $TargetOld) {
+            Write-Host "[CLEAN] Removing stale previous target: $TargetOld" -ForegroundColor Yellow
+            Remove-Item -Path $TargetOld -Recurse -Force -ErrorAction Stop
+        }
+        Write-Host "[CLEAN] Renaming target aside (atomic): $Target -> $TargetOld" -ForegroundColor Yellow
+        Rename-Item -Path $Target -NewName (Split-Path -Leaf $TargetOld) -ErrorAction Stop
     }
 
     if (-not (Test-Path $Target)) {
@@ -177,6 +189,11 @@ try {
         if ($Restored -gt 0) {
             Write-Host "[RESTORE] $Restored runtime-only file(s) preserved (KB / lessons / markers)" -ForegroundColor Green
         }
+    }
+    # Atomic switch commit (U4): copy + restore succeeded, so the renamed-aside copy (Target.old) is stale.
+    if ($TargetOld -and (Test-Path $TargetOld)) {
+        Write-Host "[CLEAN] Commit: removing stale previous target $TargetOld" -ForegroundColor Gray
+        Remove-Item -Path $TargetOld -Recurse -Force -ErrorAction SilentlyContinue
     }
     # Rebuild deployed knowledge-base index: backup/restore keeps runtime-only FX files that the repo
     # does not own, but install overwrites the deployed index.md from repo, leaving "FX file without index
@@ -391,6 +408,16 @@ try {
     exit 0
 }
 catch {
+    # Atomic switch rollback (U4): if the new target was not fully built, rename Target.old back.
+    if ($TargetOld -and (Test-Path $TargetOld)) {
+        try {
+            if (Test-Path $Target) { Remove-Item -Path $Target -Recurse -Force -ErrorAction SilentlyContinue }
+            Rename-Item -Path $TargetOld -NewName (Split-Path -Leaf $Target) -ErrorAction Stop
+            Write-Host "[CLEAN] Rollback: restored previous target from $TargetOld" -ForegroundColor Yellow
+        } catch {
+            Write-Host "[CLEAN] WARN: rollback failed; previous target preserved at $TargetOld" -ForegroundColor Red
+        }
+    }
     Write-Host "[SYNC] FAIL: [$($_.Exception.GetType().Name)] $($_.Exception.Message)" -ForegroundColor Red
     Write-Host "  建议: 若为 doctor/检查脚本报错，先查 $Target\.sync-doctor.log 与 $Target\.deploy-doctor.log；若为文件复制/写入报错，请检查目标目录 $Target 的写权限。" -ForegroundColor Yellow
     exit 1

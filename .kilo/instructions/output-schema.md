@@ -143,7 +143,7 @@ agent 返回后、下游前，conductor 必须自检：
 
 > 8 agent description/body 末尾"输出契约..."句唯一源。契约：返回 ≤ 角色上限结构化摘要（verdict + 证据 file:line + 关键结论，分档见 §返回超限约束）；禁止 完整报告/长表格/复述文件内容——完整 finding 落 task_context（verification.forward/review/reverse），返回只放摘要+指针；超限处理见 §返回超限约束。
 
-指针化位置（9 处 frontmatter description 末 + 8 处 body ## 返回契约 段 → 指向 .kilo/instructions/output-schema.md §返回契约）。
+指针化位置（实测 16 处指向 .kilo/instructions/output-schema.md §返回契约：7 处 frontmatter description 末 + 9 处 body 内；实测 11 处 body ## 返回契约 段）。
 
 可选字段 **recovery_budget**（单行 JSON，非必填）：仅在有 retry/overload 活动时附，格式 `recovery_budget:{"overload":n,"retry":n,"cycles":n}`，供 conductor 事后计数与 dispatch_log budget 条目对齐。
 

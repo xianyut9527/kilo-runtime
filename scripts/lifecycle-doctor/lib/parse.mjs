@@ -3,6 +3,7 @@
 // 拆分自 scripts/lifecycle-doctor.mjs L44-501 + L1513-1527
 
 import fs from 'node:fs';
+import { parseTierEscalation } from '../../lib/config-parser.mjs';
 
 // ============================================================
 // 解析 kilo.json（标准 JSON，Node 内置）
@@ -146,10 +147,8 @@ export function parseGraphFile(text) {
   return { nodes, edges, top };
 }
 
-export function extractFrontmatter(text) {
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  return m ? m[1] : null;
-}
+// U1b：收敛到 canonical；re-export 保持 export 语义（下游从 parse.mjs import 不断裂）。
+export { extractFrontmatter } from '../../lib/frontmatter.mjs';
 
 export function parseAgentFrontmatter(fm) {
   const agent = { mount: [], role: null, writes: [], type: null, mode: null, subagent_type: null };
@@ -213,6 +212,8 @@ export function parseStageFrontmatter(fm) {
   return m[1].split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+// 注意：本函数返回 Map/Set 结构（tierAgents: Map<string,Set>），与 config-parser.mjs 的
+// parseTierDefaults 返回 Object 结构异构，有意不合并（收敛会破坏 role-config 消费方契约）。
 export function parseConfig(text) {
   const cfg = {
     tierAgents: new Map(),
@@ -280,40 +281,12 @@ export function parseConfig(text) {
   return cfg;
 }
 
+// 收敛至 config-parser.mjs 单一解析器；仅补 present 字段保持返回结构兼容
+// （role-config.mjs D5 依赖 esc.present 判定 tier_escalation 顶层段存在性）。
 export function parseTierEscalationCfg(text) {
-  const result = { present: false, mode: 'any', keyword_groups: {}, sensitive_path_globs: [] };
-  if (!text) return result;
-  const lines = text.split(/\r?\n/);
-  let inEsc = false, inKG = false, inGlobs = false, curGroup = null;
-  for (const raw of lines) {
-    const hashIdx = raw.search(/\s#/);
-    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
-    if (!line.trim()) continue;
-    if (/^tier_escalation\s*:/.test(line)) {
-      inEsc = true; inKG = false; inGlobs = false; curGroup = null;
-      result.present = true;
-      continue;
-    }
-    if (!inEsc) continue;
-    if (/^[^\s#]/.test(line) && !/^tier_escalation/.test(line)) { inEsc = false; break; }
-    const modeM = line.match(/^\s{2}mode\s*:\s*(\w+)\s*$/);
-    if (modeM) { result.mode = modeM[1]; continue; }
-    if (/^\s{2}keyword_groups\s*:\s*$/.test(line)) { inKG = true; inGlobs = false; curGroup = null; continue; }
-    if (/^\s{2}sensitive_path_globs\s*:\s*$/.test(line)) { inGlobs = true; inKG = false; curGroup = null; continue; }
-    if (inKG) {
-      const gm = line.match(/^\s{4}([a-z_]+)\s*:\s*$/);
-      if (gm) { curGroup = gm[1]; if (!result.keyword_groups[curGroup]) result.keyword_groups[curGroup] = []; continue; }
-      if (curGroup) {
-        const km = line.match(/^\s{6}-\s+(.+?)\s*$/);
-        if (km) { result.keyword_groups[curGroup].push(km[1]); continue; }
-      }
-    }
-    if (inGlobs) {
-      const glm = line.match(/^\s{4}-\s+"(.+?)"\s*$/);
-      if (glm) { result.sensitive_path_globs.push(glm[1]); continue; }
-    }
-  }
-  return result;
+  const base = parseTierEscalation(text || '');
+  const present = !!text && /^tier_escalation\s*:/m.test(text);
+  return { present, ...base };
 }
 
 export function globToRegexLocal(glob) {

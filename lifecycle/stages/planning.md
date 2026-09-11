@@ -33,10 +33,10 @@ required_roles: [planner]
 
 ```yaml
 status_signal: "DONE" | "DONE_WITH_CONCERNS" | "NEEDS_CONTEXT"
-transition_context:
-  tier: "T1" | "T2"
-  design_gate_type: "short" | "full"
-  units: [{ unit_id, goal, key_files, forbidden_files, token_budget, dependencies, acceptance_criteria, verification_method }]
+tier: "T1" | "T2"                        # 顶层字段；transition-check 读 sizing.tier
+design_gate_type: "short" | "full"       # 顶层字段；与 agent/planner.md 输出接口一致
+units: [{ unit_id, goal, key_files, forbidden_files, token_budget, dependencies, acceptance_criteria, verification_method }]
+                                         # 顶层字段；DAG 产物写 task_context.plan.task_dag.units
 scan_coverage: "full" | "partial" | "N/A"
 componentization_plan: "yes" | "no" | "N/A"
 extension_points:

@@ -113,7 +113,7 @@ const EXPECTED_SUBAGENTS = [
 // ---------- loadAgents() ----------
 
 /**
- * 同步读 kilo.json，过滤 mode==='subagent' 的智能体，校验 EXPECTED_SUBAGENTS 全部存在。
+ * 同步读 kilo.json，过滤 mode==='subagent' 且 ∈ EXPECTED_SUBAGENTS 的智能体（MMO analyst 等非冒烟角色不混入），校验 7 个全部存在。
  * @returns {Array<{name:string, model:string, prompt:string, mode:string}>}
  * @throws {Error} 缺任一 EXPECTED_SUBAGENTS 时抛出，错误信息含 'FAIL loadAgents'。
  */
@@ -125,7 +125,7 @@ export function loadAgents() {
   const cfg = JSON.parse(raw);
   const agentMap = cfg.agent || {};
   const subagents = Object.entries(agentMap)
-    .filter(([, v]) => v && v.mode === 'subagent')
+    .filter(([name, v]) => v && v.mode === 'subagent' && EXPECTED_SUBAGENTS.includes(name))
     .map(([name, v]) => ({
       name,
       model: String(v.model || ''),
@@ -330,7 +330,7 @@ export async function dispatchOne(agentName, userPrompt, timeoutMs) {
 //   1 = ok=false（单跑）/ --full 至少 1 个 fail
 //   2 = 用法错误（未知 flag、缺值、未知 agent、--agent 与 --full 互斥等）
 // 人类可读模式列：agent | model | ok | http | len | ms | err，最后 1 行 Total: N pass / M fail。
-// JSON 模式：单跑输出 [result] 1 元素；--full 输出 7 元素 + 1 summary 元素（共 9）。
+// JSON 模式：单跑输出 [result] 1 元素；--full 输出 7 元素 + 1 summary 元素（共 8）。
 // 进度信息走 stderr，结构化输出走 stdout，避免污染 JSON 解析。
 
 function usage() {

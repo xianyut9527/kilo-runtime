@@ -53,7 +53,9 @@ T2: 跨模块 / 5+ 文件 / 规则扩散 / 安全敏感词 / 机制·契约变�
 
 ### 2b. T1 强度判定（EXECUTION + tier==T1 时必做）
 
-按 `lifecycle/config.yaml` 的 `t1_strength_signals` 四维度判定表输出三档 `sizing.t1_strength`：
+判定维度定义见 `lifecycle/config.yaml` `t1_strength_signals.strength_dimensions`（人工参考维度，无机械消费方；实际判定由 strength_escalation_words 信号词驱动，本表仅保留操作性三档定义）。
+
+按下表四维度输出三档 `sizing.t1_strength`：
 
 | 维度 | high | medium | low |
 | --- | --- | --- | --- |
@@ -85,12 +87,11 @@ INIT 阶段必跑：
 
 ```yaml
 status_signal: "DONE" | "NEEDS_CONTEXT"
-transition_context:
-  intent_type: "INQUIRY" | "EXECUTION"
-  tier: "T0" | "T1" | "T2"
-  t1_strength: "low" | "medium" | "high"  # T1 EXECUTION 必填；T0/T2/INQUIRY 可缺省
-  project: "string"
-  keywords: ["string"]
+intent_type: "INQUIRY" | "EXECUTION"    # 顶层字段；transition-check 读 intent.intent_type
+tier: "T0" | "T1" | "T2"
+t1_strength: "low" | "medium" | "high"  # T1 EXECUTION 必填；T0/T2/INQUIRY 可缺省
+project: "string"
+keywords: ["string"]
 quality_gate:
   intent_clear: true | false  # 是否已明确区分咨询/执行
   sizing_rationale: "string"  # 定级理由（强制输出）

@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { extractFrontmatter } from './lib/frontmatter.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -51,11 +52,6 @@ function die(code, msg) {
   process.exit(code);
 }
 
-// 提取 frontmatter 块（--- ... ---）
-function extractFrontmatter(text) {
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  return m ? m[1] : null;
-}
 
 // 行级解析 frontmatter models: 键集合（支持无引号/带引号键，2 空格缩进）
 function parseFrontmatterModels(fmText) {

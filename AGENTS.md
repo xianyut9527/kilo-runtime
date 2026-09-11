@@ -34,7 +34,6 @@
 
 1. **意图判定优先**：先按 `lifecycle/stages/init.md` §1 意图判定 判定「咨询类 / 执行类」；intent 参与路由与产物形态标记。
 2. **执行类两阶段定级**：阶段 A 预估 → planner 设计门 → 阶段 B 校准 → 强制流程日志（T0=2 节点；T1+=5 阶段；T1 按强度分流，判定见 `init.md §2b`）。
-3. ~~定级两阶段化~~：已并入锚点 2。
 4. **单元闭环**：T1+ 拆可验证小单元，每单元独立 implementation → verification → repair 闭环（来源 `workflow-detail.md §A`）。
 5. **验收必附映射表 + 已读取文件清单**：缺则 `[MISSING_ACCEPTANCE_MAP]` / `[FAKE_CONTEXT]` FAIL（标记见 `output-schema.md §标记语言`）。
 6. **SCOPE_CREEP**：verification 能力 L2 反向核对 diff，命中即 `[SCOPE_CREEP]` FAIL（标记见 `output-schema.md §标记语言`）。

@@ -19,7 +19,7 @@
 //   3 = [CIRCUIT_BREAKER] 熔断（计数已持久化）
 //
 // when 变量 → task_context 路径映射（按序取首个非 undefined/null）：
-//   intent_type     → intent.intent_type ?? intent.transition_context.intent_type
+//   intent_type     → intent.intent_type
 //   tier            → sizing.tier
 //   quality_verdict → quality.verdict
 //   forward_result  → verification.forward.forward_result ?? verification.forward.verdict
@@ -748,6 +748,28 @@ function main() {
       dieMsg(codeMsg('MISSING_EXECUTION_PRODUCT', `INIT -> DELIVERING: EXECUTION 直通无可交付产物（execution/plan/verification 全空）。EXECUTION T0 极速通道必须由 coder 产出 execution 产物，禁止空转。`));
     }
   }
+  // PLANNING→DELIVERING INQUIRY 直通边产物门禁（U6）：
+  //   INQUIRY T1/T2 经 PLANNING 直通 DELIVERING（M1 省 coder/verifier/reviewer），
+  //   planner 必须产出分析方案产物（plan.scheme_summary / plan.task_dag / 分析结论字段
+  //   之一非空）；全空即形式 dispatch 空转 → [MISSING_INQUIRY_PRODUCT] 阻断。
+  //   仅命中 intent_type==='INQUIRY' 边，不影响 PLANNING→EXECUTING（EXECUTION）边。
+  if (FROM === 'PLANNING' && TO === 'DELIVERING' && vars.intent_type === 'INQUIRY') {
+    const plan = ctx.plan;
+    const nonEmpty = (v) => {
+      if (v == null) return false;
+      if (typeof v === 'string') return v.trim().length > 0;
+      if (Array.isArray(v)) return v.length > 0;
+      if (typeof v === 'object') return Object.keys(v).some((k) => v[k] != null);
+      return true;
+    };
+    const isPlanObj = !!(plan && typeof plan === 'object' && !Array.isArray(plan));
+    const analysisFields = ['scheme_summary', 'core_conclusion', 'analysis_conclusion', 'analysis_summary', 'conclusion', 'dimensions', 'evidence'];
+    const hasAnalysis = isPlanObj && analysisFields.some((k) => nonEmpty(plan[k]));
+    const hasTaskDag = isPlanObj && nonEmpty(plan.task_dag);
+    if (!hasAnalysis && !hasTaskDag) {
+      dieMsg(codeMsg('MISSING_INQUIRY_PRODUCT', `PLANNING -> DELIVERING: INQUIRY 直通边 plan 产物全空（planner 未产出分析方案 scheme_summary/结论/检索维度，禁止空转流转）`));
+    }
+  }
   // plan / verification.forward 校验：T1/T2 非 CB 出口
   if (!isExempt && !isCircuitBreakerExit) {
     if (FROM === 'PLANNING' && TO === 'EXECUTING') {
@@ -888,7 +910,7 @@ function main() {
   if (TO === 'QUALITY') quality.round += 1;
 
   // 熔断判定（先持久化再退出）
-  const maxR = typeof quality.max_rounds === 'number' ? quality.max_rounds : 7;
+  const maxR = typeof quality.max_rounds === 'number' ? quality.max_rounds : 3;
   if (quality.round >= maxR) {
     quality.status = 'tripped';
     quality.verdict = 'CIRCUIT_BREAKER';

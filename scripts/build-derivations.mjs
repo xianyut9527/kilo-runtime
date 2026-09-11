@@ -17,7 +17,8 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseTierDefaults, parseTimeouts } from './lib/config-parser.mjs';
+import { parseTierDefaults, parseTimeouts, parseHooks, parseThresholds, parseRecovery } from './lib/config-parser.mjs';
+import { extractFrontmatter, extractTaskContextWrite } from './lib/frontmatter.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -48,50 +49,7 @@ function sourceFingerprint(files) {
   return parts.join('|');
 }
 
-// ============================================================
-// frontmatter 提取 + task_context.write 解析（与 task-context.mjs 语义一致）
-// ============================================================
-function extractFrontmatter(text) {
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  return m ? m[1] : null;
-}
-
-function extractTaskContextWrite(frontmatter) {
-  const lines = frontmatter.split(/\r?\n/);
-  let inTaskContext = false;
-  let inWrite = false;
-  const items = [];
-  for (const line of lines) {
-    if (/^[^\s#]/.test(line)) {
-      if (inTaskContext) break;
-      inTaskContext = /^task_context\s*:/.test(line);
-      continue;
-    }
-    if (!inTaskContext) continue;
-    const inline = line.match(/^\s+write\s*:\s*\[(.*)\]\s*(?:#.*)?$/);
-    if (inline) {
-      for (const part of inline[1].split(',')) {
-        const v = part.trim().replace(/^["']|["']$/g, '');
-        if (v) items.push(v);
-      }
-      inWrite = false;
-      continue;
-    }
-    if (/^\s+write\s*:\s*$/.test(line)) {
-      inWrite = true;
-      continue;
-    }
-    if (inWrite) {
-      const li = line.match(/^\s+-\s+(.+?)\s*(?:#.*)?$/);
-      if (li) {
-        items.push(li[1]);
-        continue;
-      }
-      inWrite = false;
-    }
-  }
-  return items;
-}
+// frontmatter 解析与 task_context.write 提取统一走 scripts/lib/frontmatter.mjs（canonical）
 
 function deriveWriteMatrix() {
   const matrix = {};
@@ -187,29 +145,20 @@ function deriveConfig() {
   const cfg = {
     tier_defaults: text ? parseTierDefaults(text) : { execution: {} },
     timeouts: text && /^\s*timeouts\s*:/m.test(text) ? parseTimeouts(text) : null,
-    hooks: { max_total_cycles: 3, auto_fix: true },
+    hooks: { max_total_cycles: 3 },
     size_check_threshold: 150000,
     dispatch_prompt_threshold: 4000,
     max_files_per_task: null,
     recovery: { max_write_retry: 1, overload_threshold: 3, circuit_breaker_overload: 5 },
   };
   if (text) {
-    const mtc = text.match(/max_total_cycles:\s*(\d+)/);
-    if (mtc) cfg.hooks.max_total_cycles = parseInt(mtc[1], 10);
-    const af = text.match(/auto_fix:\s*(true|false)/);
-    if (af) cfg.hooks.auto_fix = af[1] === 'true';
-    const sct = text.match(/size_check_threshold:\s*(\d+)/);
-    if (sct) cfg.size_check_threshold = parseInt(sct[1], 10);
-    const dpt = text.match(/dispatch_prompt_threshold:\s*(\d+)/);
-    if (dpt) cfg.dispatch_prompt_threshold = parseInt(dpt[1], 10);
-    const mf = text.match(/max_files_per_task:\s*(\d+)/);
-    if (mf) cfg.max_files_per_task = parseInt(mf[1], 10);
-    const mw = text.match(/max_write_retry:\s*(\d+)/);
-    const ot = text.match(/overload_threshold:\s*(\d+)/);
-    const cb = text.match(/circuit_breaker_overload:\s*(\d+)/);
-    if (mw) cfg.recovery.max_write_retry = parseInt(mw[1], 10);
-    if (ot) cfg.recovery.overload_threshold = parseInt(ot[1], 10);
-    if (cb) cfg.recovery.circuit_breaker_overload = parseInt(cb[1], 10);
+    // hooks/thresholds/recovery 解析统一走 scripts/lib/config-parser.mjs（单一来源）
+    cfg.hooks = { max_total_cycles: parseHooks(text, 3).max_total_cycles };
+    const th = parseThresholds(text);
+    cfg.size_check_threshold = th.size_check_threshold;
+    cfg.dispatch_prompt_threshold = th.dispatch_prompt_threshold;
+    cfg.max_files_per_task = th.max_files_per_task;
+    cfg.recovery = parseRecovery(text);
   }
   return cfg;
 }

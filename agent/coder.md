@@ -152,9 +152,9 @@ plan:                                   # planner 输出
 
 ## 输出接口（完工即写 task_context.execution）
 
-> **完工即写硬门**：完工返回前必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> --batch - --agent coder` 写入 `execution.diffs/changes/acceptance_map/risks/encoding_scan`；未写即返回 → conductor 标 `[WRITE_MISSING]` 重派；返回消息只留指针与结论。
+> **完工即写硬门**：完工返回前必须执行 `node "${KILO_CONFIG_DIR}/scripts/task-context.mjs" set <task_id> --batch - --agent coder` 写入 `execution.diffs/changes/acceptance_map`；未写即返回 → conductor 标 `[WRITE_MISSING]` 重派；返回消息只留指针与结论。
 
-> **写入边界**：coder 只写入 `execution.diffs/changes/acceptance_map/risks/encoding_scan`，**不写入 `execution.verification`**——自验声明会污染 verifier 的独立重跑。coder 自验结果只保留在智能体本地输出供 conductor 参考，不进入 task_context。
+> **写入边界**：coder 只写入 `execution.diffs/changes/acceptance_map`，**不写入 `execution.verification`**——自验声明会污染 verifier 的独立重跑；`risks`/`encoding_scan` 为返回摘要可选字段，不写入 task_context。coder 自验结果只保留在智能体本地输出供 conductor 参考，不进入 task_context。
 
 ```yaml
 status_signal: "DONE" | "DONE_WITH_CONCERNS" | "NEEDS_CONTEXT" | "BLOCKED"

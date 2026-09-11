@@ -43,6 +43,9 @@
 #             挂载点 mount[].on_fail（abort|warn|skip|degrade）覆盖 pre:/post:/on:/可选视角失败：
 #               abort 中止流转 / warn 告警放行 / skip 静默跳过 / degrade 跳过+标 DEGRADED。
 #             二者互不干涉。
+#             advisory：on_fail 是 conductor 按 agent/conductor.md §异常处理派发表 执行的声明式策略；
+#               其中 retry_once/escalate 由 task-context.mjs post-dispatch 的 exit 4/5 机械覆盖，
+#               abort/degrade/pause 为 human-in-loop 决策，无独立脚本执行器（有意设计，非缺失）。
 #
 # 边字段说明：
 #   from / to    起止节点 ID

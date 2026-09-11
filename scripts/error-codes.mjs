@@ -62,6 +62,11 @@ export const ERROR_CODES = {
     msg: 'EXECUTING 产物全空（coder 未产出 diffs/changes/acceptance_map）',
     see: 'lifecycle/stages/executing.md',
   },
+  MISSING_INQUIRY_PRODUCT: {
+    code: 'MISSING_INQUIRY_PRODUCT',
+    msg: 'PLANNING -> DELIVERING: INQUIRY 直通边 plan 产物全空（planner 未产出分析方案）',
+    see: 'lifecycle/stages/planning.md §INQUIRY 直通边',
+  },
   MISSING_QUALITY_VERDICT: {
     code: 'MISSING_QUALITY_VERDICT',
     msg: 'QUALITY 阶段未写入合法 verdict',

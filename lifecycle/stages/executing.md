@@ -34,10 +34,9 @@ required_roles: [coder]
 
 ```yaml
 status_signal: "DONE" | "DONE_WITH_CONCERNS" | "NEEDS_CONTEXT" | "BLOCKED"
-transition_context:
-  unit_id: "string"
-  files_modified: ["string"]
-  tests_run: ["string"]
+unit_id: "string"
+files_modified: ["string"]
+tests_run: ["string"]
 quality_gate:
   acceptance_map_complete: true | false
   verification_fresh: true | false   # 是否本轮 fresh 证据

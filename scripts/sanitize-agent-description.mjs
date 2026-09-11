@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { extractFrontmatter } from './lib/frontmatter.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const ROOT = path.resolve(path.dirname(__filename), '..');
@@ -157,26 +158,11 @@ export function sanitizeDescription(desc, agentName) {
 }
 
 // ============================================================
-// Frontmatter 解析（支持 .md YAML 和 .mjs JS 注释块）
+// Frontmatter 解析（canonical 单一来源：scripts/lib/frontmatter.mjs）
 // ============================================================
 
-/**
- * 提取 frontmatter 块。
- *   .md：标准 YAML frontmatter（首行 `---` 起，至下一个 `---` 止）
- *   .mjs：JS 注释块 frontmatter（shebang 后 `/* --- ... --- *\/`，让 Node 仍可解析文件）
- * @param {string} text 文件全文
- * @returns {string|null} frontmatter 块内容（不含 --- 标记）
- */
-export function extractFrontmatter(text) {
-  // .md YAML
-  let m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (m) return m[1];
-  // .mjs JS 注释块（在文件头部 10KB 内搜索 /* --- ... --- */）
-  const _head = text.slice(0, 10000);
-  m = _head.match(/\/\* ---\r?\n([\s\S]*?)\r?\n--- \*\//);
-  if (m) return m[1];
-  return null;
-}
+// U1b：收敛到 canonical；re-export 保持 export 语义，避免下游 import 断裂。
+export { extractFrontmatter };
 
 /**
  * 从 frontmatter 块提取 description 字段（单行 / 字面块 `|` / 折叠块 `>`）。

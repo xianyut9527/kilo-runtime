@@ -13,8 +13,9 @@ import os from 'node:os';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { cachedDerive } from './lib/derived-cache.mjs';
-import { parseTierDefaults, parseTimeouts, parseTierEscalation } from './lib/config-parser.mjs';
+import { parseTierDefaults, parseTimeouts, parseTierEscalation, parseHooks, parseConvergence, parseThresholds, parseRecovery } from './lib/config-parser.mjs';
 import { contextPath, readContextOptional } from './lib/task-context-io.mjs';
+import { extractFrontmatter } from './lib/frontmatter.mjs';
 
 // 脚本所在目录（ESM 无 __dirname）
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -66,12 +67,6 @@ function die(code, msg) {
   process.exit(code);
 }
 
-// 从 agent .md 全文提取 frontmatter 块（首个 --- ... --- 之间）
-function extractFrontmatter(text) {
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  return m ? m[1] : null;
-}
-
 // 白名单校验 taskId：仅允许字母数字下划线连字符，长度 1-64
 function assertValidTaskId(taskId) {
   if (typeof taskId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(taskId)) {
@@ -80,7 +75,7 @@ function assertValidTaskId(taskId) {
 }
 
 // 从 lifecycle/config.yaml 读取响应式 Hooks 阈值（v2：hooks.quality.max_total_cycles）
-// 失败降级到 7
+// 失败降级到 3
 function readConfigText() {
   return cachedDerive('configText', [CONVERGENCE_SOURCE], () => {
     try { return fs.readFileSync(CONVERGENCE_SOURCE, 'utf8'); }
@@ -90,17 +85,15 @@ function readConfigText() {
 
 function readHooksFromConfig() {
   const text = readConfigText();
-  if (!text) return { max_total_cycles: 7 };
-  const mtc = text.match(/max_total_cycles:\s*(\d+)/);
-  return { max_total_cycles: mtc ? parseInt(mtc[1], 10) : 7 };
+  if (!text) return { max_total_cycles: 3 };
+  return { max_total_cycles: parseHooks(text).max_total_cycles };
 }
 
 // 从 lifecycle/config.yaml 读取子图融合阈值（保留 convergence.mm_fusion_max_rounds）
 function readConvergenceFromConfig() {
   const text = readConfigText();
   if (!text) return { mm_fusion_max_rounds: 3 };
-  const mm = text.match(/mm_fusion_max_rounds:\s*(\d+)/);
-  return { mm_fusion_max_rounds: mm ? parseInt(mm[1], 10) : 3 };
+  return { mm_fusion_max_rounds: parseConvergence(text).mm_fusion_max_rounds };
 }
 
 // ============================================================
@@ -119,8 +112,7 @@ function readTierDefaults() {
 function readSizeCheckThreshold() {
   const text = readConfigText();
   if (!text) return 150000;
-  const m = text.match(/size_check_threshold:\s*(\d+)/);
-  return m ? parseInt(m[1], 10) : 150000;
+  return parseThresholds(text).size_check_threshold;
 }
 
 // 从 lifecycle/config.yaml 读取 dispatch-prompt-check 阈值（conductor pre-dispatch 硬门依据）
@@ -128,8 +120,7 @@ function readSizeCheckThreshold() {
 function readDispatchPromptThreshold() {
   const text = readConfigText();
   if (!text) return 4000;
-  const m = text.match(/dispatch_prompt_threshold:\s*(\d+)/);
-  return m ? parseInt(m[1], 10) : 4000;
+  return parseThresholds(text).dispatch_prompt_threshold;
 }
 
 // 从 lifecycle/config.yaml 读取单次 task 委派涉及文件数上限（dispatch-prompt-check 依据）
@@ -137,29 +128,16 @@ function readDispatchPromptThreshold() {
 function readMaxFilesPerTask() {
   const text = readConfigText();
   if (!text) return null;
-  const m = text.match(/max_files_per_task:\s*(\d+)/);
-  return m ? parseInt(m[1], 10) : null;
+  return parseThresholds(text).max_files_per_task;
 }
 
 // 从 lifecycle/config.yaml 读取 recovery 引擎阈值（U6 新增）
 // 缺省回退与 config.yaml 中显式值一致；任意字段缺失时该字段回退到缺省
 // max_write_retry=1, overload_threshold=3, circuit_breaker_overload=5
 function readRecoveryConfig() {
-  const defaults = {
-    max_write_retry: 1,
-    overload_threshold: 3,
-    circuit_breaker_overload: 5,
-  };
   const text = readConfigText();
-  if (!text) return defaults;
-  const mw = text.match(/max_write_retry:\s*(\d+)/);
-  const ot = text.match(/overload_threshold:\s*(\d+)/);
-  const cb = text.match(/circuit_breaker_overload:\s*(\d+)/);
-  return {
-    max_write_retry: mw ? parseInt(mw[1], 10) : defaults.max_write_retry,
-    overload_threshold: ot ? parseInt(ot[1], 10) : defaults.overload_threshold,
-    circuit_breaker_overload: cb ? parseInt(cb[1], 10) : defaults.circuit_breaker_overload,
-  };
+  if (!text) return { max_write_retry: 1, overload_threshold: 3, circuit_breaker_overload: 5 };
+  return parseRecovery(text);
 }
 
 // ============================================================

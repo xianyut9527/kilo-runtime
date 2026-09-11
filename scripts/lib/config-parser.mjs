@@ -183,42 +183,188 @@ export function parseTimeouts(text) {
 }
 
 // ============================================================
+// 共享守卫：仅接受非空字符串（truthy 非字符串如 123 会在 .split 抛 TypeError）
+// ============================================================
+function hasText(text) {
+  return typeof text === 'string' && text.length > 0;
+}
+
+// ============================================================
+// 共享子例程：逐行解析顶层 YAML 块（注释剥离 + 段进入/退出 + 逐行回调）
+// 消除 parseTierEscalation / parseT1StrengthSignals 的状态机重复。
+//   - text      : 原始 YAML 文本
+//   - blockName : 顶层块名（如 tier_escalation），行匹配 ^<blockName>\s*:
+//   - visit     : (line) => void，line 已剥离行内注释；块外/空行不回调
+// 返回是否命中该块（未命中/空文本 → false）。
+// ============================================================
+function parseYamlBlock(text, blockName, visit) {
+  if (!hasText(text)) return false;
+  const enterRe = new RegExp('^' + blockName + '\\s*:');
+  const exitRe = new RegExp('^' + blockName + '\\s*:');
+  let inBlock = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const hashIdx = raw.search(/\s#/);
+    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
+    if (!line.trim()) continue;
+    if (!inBlock) {
+      if (enterRe.test(line)) inBlock = true;
+      continue;
+    }
+    // 顶层键（非缩进）出现且非本块名 → 块结束
+    if (/^[^\s#]/.test(line) && !exitRe.test(line)) break;
+    visit(line);
+  }
+  return inBlock;
+}
+
+// ============================================================
+// 块内首个整数值子例程：限定顶层 YAML 块 + 指定缩进键，剥离注释
+// 消除 parseHooks/parseConvergence/parseThresholds/parseRecovery 的裸 match 重复。
+//   - text      : 原始 YAML 文本（null 安全）
+//   - blockName : 顶层块名
+//   - key       : 目标键名（YAML 路径最后一段）
+//   - indent    : 该键相对顶层的空格缩进（顶层键 = 0）
+// 返回 number 或 null（块/键缺失）。
+// ============================================================
+function firstIntInBlock(text, blockName, key, indent = 2) {
+  let found = null;
+  parseYamlBlock(text, blockName, (line) => {
+    if (found !== null) return;
+    const m = line.match(new RegExp('^ {' + indent + '}' + key + '\\s*:\\s*(\\d+)\\s*$'));
+    if (m) found = parseInt(m[1], 10);
+  });
+  return found;
+}
+
+// ============================================================
+// 顶层整数键子例程：全文件剥离行内注释后匹配非缩进 ^key:\s*(\d+)$
+// 用于 config.yaml 顶层键（size_check_threshold / dispatch_prompt_threshold /
+// max_files_per_task）。限定顶层（无前导空格）避免命中块内同名键。
+// 返回 number 或 null。
+// ============================================================
+function firstIntTopLevel(text, key) {
+  if (!text) return null;
+  for (const raw of text.split(/\r?\n/)) {
+    const hashIdx = raw.search(/\s#/);
+    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
+    const m = line.match(new RegExp("^" + key + "\\s*:\\s*(\\d+)\\s*$"));
+    if (m) return parseInt(m[1], 10);
+  }
+  return null;
+}
+
+// ============================================================
 // 从 lifecycle/config.yaml 解析 tier_escalation（定级自动升级触发器）
 // 返回 { mode: 'any'|'all', keyword_groups: {auth: [...], ...}, sensitive_path_globs: [...] }
 // ============================================================
 export function parseTierEscalation(text) {
   const result = { mode: 'any', keyword_groups: {}, sensitive_path_globs: [] };
-  let inEscalation = false;
   let inKeywordGroups = false;
   let inGlobs = false;
   let curGroup = null;
-  const lines = text.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
-    const hashIdx = raw.search(/\s#/);
-    const line = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
-    if (!line.trim()) continue;
-    if (/^tier_escalation\s*:/.test(line)) {
-      inEscalation = true; inKeywordGroups = false; inGlobs = false; curGroup = null; continue;
-    }
-    if (!inEscalation) continue;
-    if (/^[^\s#]/.test(line) && !/^tier_escalation/.test(line)) { inEscalation = false; break; }
+  parseYamlBlock(text, 'tier_escalation', (line) => {
     const modeM = line.match(/^  mode\s*:\s*(\w+)\s*$/);
-    if (modeM) { result.mode = modeM[1]; continue; }
-    if (/^  keyword_groups\s*:\s*$/.test(line)) { inKeywordGroups = true; inGlobs = false; curGroup = null; continue; }
-    if (/^  sensitive_path_globs\s*:\s*$/.test(line)) { inGlobs = true; inKeywordGroups = false; curGroup = null; continue; }
+    if (modeM) { result.mode = modeM[1]; return; }
+    if (/^  keyword_groups\s*:\s*$/.test(line)) { inKeywordGroups = true; inGlobs = false; curGroup = null; return; }
+    if (/^  sensitive_path_globs\s*:\s*$/.test(line)) { inGlobs = true; inKeywordGroups = false; curGroup = null; return; }
     if (inKeywordGroups) {
       const gm = line.match(/^    ([a-z_]+)\s*:\s*$/);
-      if (gm) { curGroup = gm[1]; if (!result.keyword_groups[curGroup]) result.keyword_groups[curGroup] = []; continue; }
+      if (gm) { curGroup = gm[1]; if (!result.keyword_groups[curGroup]) result.keyword_groups[curGroup] = []; return; }
       if (curGroup) {
         const km = line.match(/^      -\s+(.+?)\s*$/);
-        if (km) { result.keyword_groups[curGroup].push(km[1]); continue; }
+        if (km) { result.keyword_groups[curGroup].push(km[1]); return; }
       }
     }
     if (inGlobs) {
       const gm = line.match(/^    -\s+"(.+?)"\s*$/);
-      if (gm) { result.sensitive_path_globs.push(gm[1]); continue; }
+      if (gm) { result.sensitive_path_globs.push(gm[1]); return; }
     }
-  }
+  });
   return result;
+}
+
+// ============================================================
+// 从 lifecycle/config.yaml 解析 t1_strength_signals.strength_escalation_words
+// 返回 string[]；段缺失/词表为空 → null（调用方按不阻断处理）
+// 与 parseTierEscalation 共用 parseYamlBlock 子例程，单一来源。
+// ============================================================
+export function parseT1StrengthSignals(text) {
+  const words = [];
+  let inWords = false;
+  parseYamlBlock(text, 't1_strength_signals', (line) => {
+    if (/^  strength_escalation_words\s*:\s*$/.test(line)) { inWords = true; return; }
+    if (/^  [a-z_]+\s*:/.test(line) && !/^  strength_escalation_words/.test(line)) { inWords = false; return; }
+    if (inWords) {
+      const m = line.match(/^    -\s+(.+?)\s*$/);
+      if (m) words.push(m[1]);
+    }
+  });
+  return words.length > 0 ? words : null;
+}
+// ============================================================
+// 从 lifecycle/config.yaml 解析 hooks.quality.max_total_cycles
+// 返回 { max_total_cycles }；缺失回退 fallback（默认 3，响应式熔断总轮次上限）。
+// 单一来源：task-context-runtime.mjs / build-derivations.mjs 共用。
+// 限定 hooks 块内（缩进 4：hooks.quality）且已剥离注释，避免误配注释键/同名顶层键。
+// ============================================================
+export function parseHooks(text, fallback = 3) {
+  if (!hasText(text)) return { max_total_cycles: fallback };
+  const v = firstIntInBlock(text, 'hooks', 'max_total_cycles', 4);
+  return { max_total_cycles: v === null ? fallback : v };
+}
+
+// ============================================================
+// 从 lifecycle/config.yaml 解析 convergence.mm_fusion_max_rounds
+// 返回 { mm_fusion_max_rounds }；缺失回退 3（子图融合最大轮次）。
+// 限定 convergence 块内（缩进 2）且已剥离注释。
+// ============================================================
+export function parseConvergence(text) {
+  if (!hasText(text)) return { mm_fusion_max_rounds: 3 };
+  const v = firstIntInBlock(text, 'convergence', 'mm_fusion_max_rounds', 2);
+  return { mm_fusion_max_rounds: v === null ? 3 : v };
+}
+
+// ============================================================
+// 从 lifecycle/config.yaml 解析 pre-dispatch 安全门阈值（顶层键）
+// 返回 { size_check_threshold, dispatch_prompt_threshold, max_files_per_task }
+// 缺省 150000 / 4000 / null（不限制）。
+// 三键均为 config.yaml 顶层键，限定非缩进 + 剥离注释，避免命中块内同名键。
+// ============================================================
+export function parseThresholds(text) {
+  const defaults = {
+    size_check_threshold: 150000,
+    dispatch_prompt_threshold: 4000,
+    max_files_per_task: null,
+  };
+  if (!hasText(text)) return { ...defaults };
+  const sct = firstIntTopLevel(text, 'size_check_threshold');
+  const dpt = firstIntTopLevel(text, 'dispatch_prompt_threshold');
+  const mf = firstIntTopLevel(text, 'max_files_per_task');
+  return {
+    size_check_threshold: sct === null ? defaults.size_check_threshold : sct,
+    dispatch_prompt_threshold: dpt === null ? defaults.dispatch_prompt_threshold : dpt,
+    max_files_per_task: mf === null ? defaults.max_files_per_task : mf,
+  };
+}
+
+// ============================================================
+// 从 lifecycle/config.yaml 解析 recovery 自愈引擎阈值
+// 返回 { max_write_retry, overload_threshold, circuit_breaker_overload }
+// 缺省 1 / 3 / 5。限定 recovery 块内（缩进 2）且已剥离注释。
+// ============================================================
+export function parseRecovery(text) {
+  const defaults = {
+    max_write_retry: 1,
+    overload_threshold: 3,
+    circuit_breaker_overload: 5,
+  };
+  if (!hasText(text)) return { ...defaults };
+  const mw = firstIntInBlock(text, 'recovery', 'max_write_retry', 2);
+  const ot = firstIntInBlock(text, 'recovery', 'overload_threshold', 2);
+  const cb = firstIntInBlock(text, 'recovery', 'circuit_breaker_overload', 2);
+  return {
+    max_write_retry: mw === null ? defaults.max_write_retry : mw,
+    overload_threshold: ot === null ? defaults.overload_threshold : ot,
+    circuit_breaker_overload: cb === null ? defaults.circuit_breaker_overload : cb,
+  };
 }
