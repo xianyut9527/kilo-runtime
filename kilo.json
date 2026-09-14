@@ -138,7 +138,11 @@
     "webfetch": "allow",
     "websearch": "allow",
     "kilo_memory_save": "allow",
-    "kilo_memory_recall": "allow"
+    "kilo_memory_recall": "allow",
+    "lsp": "allow",
+    "skill": "allow",
+    "semantic_search": "allow",
+    "playwright_*": "ask"
   },
   "mcp": {
     "playwright": {
@@ -186,9 +190,9 @@
         "timeout": 300000,
         "chunkTimeout": 120000,
         "failover": {
-          "cooldownMs": 60000,
           "chain": {
             "models": [
+              "glm-5.3-flash",
               "kimi-k2.6",
               "deepseek-v4.1-flash",
               "glm-5.2"
