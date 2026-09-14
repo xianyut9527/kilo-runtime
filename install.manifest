@@ -1,0 +1,22 @@
+# kilo_config 下发清单（SSOT 单一真源）
+#
+# 格式：每行一条  <路径模式>[ -> <目标相对路径>]
+#   - 路径模式以 / 结尾表示整目录递归下发，逐文件比对
+#   - 未写 "-> 目标" 时，目标与源路径相同
+#   - 行首 # 为注释，空行忽略
+# 由 install.sh / install.ps1 共同解析；改配置只改这里 + 文件本身。
+#
+# 注意：kilo.json 与 INSTRUCTIONS.md 是「模板」，其中 __KILO_HOME__ 会被替换为
+#       本机家目录（正斜杠）。其余文件原样拷贝。
+
+kilo.json
+INSTRUCTIONS.md
+agent/
+plugin/
+scripts/
+knowledge-base/
+docs/templates/
+provider/hx-failover/src/
+provider/hx-failover/dist/
+provider/hx-failover/package.json
+provider/hx-failover/build.mjs

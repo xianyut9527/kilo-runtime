@@ -2,28 +2,73 @@
   "$schema": "https://app.kilo.ai/config.json",
   "model": "hx/glm-5.3-flash",
   "small_model": "hx/minimax-m3",
+  "subagent_model": "hx/glm-5.3-flash",
+  "subagent_depth": 2,
+  "default_agent": "code",
   "snapshot": true,
   "autoupdate": true,
   "share": "disabled",
   "privacy_mode": true,
   "web_search": true,
-  "subagent_depth": 2,
-  "default_agent": "code",
   "formatter": true,
   "lsp": true,
+  "instructions": [
+    "__KILO_HOME__/.config/kilo/INSTRUCTIONS.md"
+  ],
+  "skills": {
+    "paths": [
+      "__KILO_HOME__/.agents/skills"
+    ]
+  },
+  "agent": {
+    "code": {
+      "model": "hx/glm-5.3-flash"
+    },
+    "plan": {
+      "model": "hx/kimi-k2.6"
+    },
+    "general": {
+      "model": "hx/glm-5.2"
+    },
+    "explore": {
+      "model": "hx/minimax-m3"
+    },
+    "orchestrator": {
+      "model": "hx/deepseek-v4.1-flash"
+    },
+    "verify": {
+      "mode": "subagent",
+      "model": "hx/deepseek-v4.1-flash",
+      "description": "独立验证视角（异源模型复核高风险改动，只读不改动）。仅在认证/权限/支付/数据迁移/公共契约等高风险改动时按需调用。",
+      "permission": {
+        "edit": "deny"
+      }
+    }
+  },
   "compaction": {
     "auto": true,
     "prune": true,
-    "tail_turns": 4,
+    "tail_turns": 6,
     "preserve_recent_tokens": 40000,
-    "reserved": 32000
+    "reserved": 32000,
+    "threshold_percent": 85
   },
   "tool_output": {
     "max_lines": 2000,
     "max_bytes": 51200
   },
   "watcher": {
-    "ignore": ["node_modules/**", "dist/**", ".git/**", "**/*.log"]
+    "ignore": [
+      "node_modules/**",
+      "dist/**",
+      ".git/**",
+      "**/*.log",
+      "**/__pycache__/**",
+      "**/coverage/**",
+      ".venv/**",
+      "build/**",
+      "target/**"
+    ]
   },
   "commit_message": {
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
@@ -31,12 +76,49 @@
   "permission": {
     "bash": {
       "*": "ask",
-      "git *": "allow",
-      "npm *": "allow",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git show*": "allow",
+      "git branch*": "allow",
+      "git add*": "allow",
+      "git commit*": "allow",
+      "git stash*": "allow",
+      "git fetch*": "allow",
+      "git remote*": "allow",
+      "git tag*": "allow",
+      "git rev-parse*": "allow",
+      "git check-ignore*": "allow",
+      "git ls-files*": "allow",
+      "git describe*": "allow",
+      "git blame*": "allow",
+      "git config --get*": "allow",
+      "git push*": "ask",
+      "git merge*": "ask",
+      "git rebase*": "ask",
+      "git reset*": "ask",
+      "git checkout*": "ask",
+      "git restore*": "ask",
+      "git revert*": "ask",
+      "git clean*": "deny",
+      "npm run*": "allow",
+      "npm test*": "allow",
+      "npm install*": "allow",
+      "npm ci*": "allow",
+      "npm ls*": "allow",
+      "npm view*": "allow",
+      "npm outdated*": "allow",
+      "npm publish*": "deny",
+      "npm unpublish*": "deny",
+      "npm pack*": "deny",
       "Get-ChildItem *": "allow",
       "Get-Content *": "allow",
       "Get-Item *": "allow",
       "Get-FileHash *": "allow",
+      "Select-String *": "allow",
+      "Test-Path *": "allow",
+      "Measure-Object *": "allow",
+      "Get-Process *": "allow",
       "node *": "allow",
       "rg *": "allow",
       "rm -rf *": "deny",
@@ -46,6 +128,7 @@
     "glob": "allow",
     "grep": "allow",
     "list": "allow",
+    "task": "allow",
     "edit": {
       "src/**": "allow",
       "*.lock": "deny",
@@ -58,31 +141,65 @@
   "mcp": {
     "playwright": {
       "type": "local",
-      "command": ["npx", "-y", "@playwright/mcp@latest"],
+      "command": [
+        "npx",
+        "-y",
+        "@playwright/mcp@0.0.38"
+      ],
       "enabled": true,
       "timeout": 10000
     },
     "context7": {
       "type": "local",
-      "command": ["npx", "-y", "@upstash/context7-mcp"],
+      "command": [
+        "npx",
+        "-y",
+        "@upstash/context7-mcp"
+      ],
       "enabled": true,
       "timeout": 10000
     },
     "gitnexus": {
       "type": "local",
-      "command": ["gitnexus", "mcp"],
+      "command": [
+        "gitnexus",
+        "mcp"
+      ],
       "enabled": true,
       "timeout": 30000
     }
   },
+  "experimental": {
+    "task_model_selection": true,
+    "shared_agent_board": true,
+    "batch_tool": true,
+    "openTelemetry": false
+  },
   "provider": {
     "hx": {
       "name": "hx",
-      "npm": "@ai-sdk/openai-compatible",
+      "npm": "file:///__KILO_HOME__/provider/hx-failover",
       "options": {
         "baseURL": "https://xianyu1.natapp4.cc/v1",
-        "timeout": 600000,
-        "chunkTimeout": 600000
+        "timeout": 300000,
+        "chunkTimeout": 120000,
+        "failover": {
+          "cooldownMs": 60000,
+          "chain": {
+            "models": [
+              "kimi-k2.6",
+              "deepseek-v4.1-flash",
+              "glm-5.2"
+            ]
+          }
+        },
+        "moa": {
+          "references": [
+            "glm-5.2",
+            "deepseek-v4.1-flash"
+          ],
+          "aggregator": "kimi-k2.6"
+        }
       },
       "models": {
         "deepseek-v4-flash": {
@@ -97,8 +214,13 @@
           "name": "deepseek-v4.1-flash",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -117,8 +239,13 @@
           "name": "glm-5.3-flash",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -129,8 +256,13 @@
           "name": "kimi-k2.6",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,
@@ -141,8 +273,13 @@
           "name": "minimax-m3",
           "reasoning": true,
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "limit": {
             "context": 200000,

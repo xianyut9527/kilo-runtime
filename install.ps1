@@ -1,48 +1,127 @@
-$ErrorActionPreference = "Stop"
+<#
+  kilo_config 全量下发器（PowerShell 原生版，与 install.sh 行为一致）
 
-$Source = Join-Path $PSScriptRoot "kilo.json"
-$TargetDir = if ($env:KILO_SYNC_TARGET) { $env:KILO_SYNC_TARGET } else { Join-Path $env:USERPROFILE ".config\kilo" }
-$Target = Join-Path $TargetDir "kilo.json"
+  用法：
+    .\install.ps1              下发（改动前对目标做一次性备份）
+    .\install.ps1 -DryRun      只打印将发生的变更，不写盘
+    .\install.ps1 -Check       只检测漂移，有漂移则退出码 1
+    .\install.ps1 -Target D:\x 覆盖目标目录（默认 $HOME\.config\kilo）
 
-if (-not (Test-Path -LiteralPath $Source)) {
-    Write-Host "[INSTALL] FAIL: source not found: $Source" -ForegroundColor Red
-    exit 1
+  设计要点：与 install.sh 相同 —— 清单驱动、__KILO_HOME__ 占位符替换、
+  幂等（内容一致跳过）、可回滚（首次写入前打包备份）。
+#>
+[CmdletBinding()]
+param(
+    [switch]$DryRun,
+    [switch]$Check,
+    [string]$Target
+)
+
+$ErrorActionPreference = 'Stop'
+
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Manifest  = Join-Path $ScriptDir 'install.manifest'
+$TargetDir = if ($Target) { $Target } else { Join-Path $HOME '.config\kilo' }
+$HomeSlash = ($HOME -replace '\\', '/').TrimEnd('/')
+
+if (-not (Test-Path $Manifest)) { Write-Error "[INSTALL] FAIL: 清单缺失 $Manifest"; exit 1 }
+
+function Get-Sha256([string]$Path) {
+    if (-not (Test-Path $Path)) { return '' }
+    return (Get-FileHash -Algorithm SHA256 -Path $Path).Hash
 }
 
+function Test-NeedsSubst([string]$Path) {
+    $n = Split-Path -Leaf $Path
+    return ($n -eq 'kilo.json' -or $n -eq 'INSTRUCTIONS.md')
+}
+
+# 展开清单 -> @{ Src; Dst }
+$pairs = @()
+foreach ($raw in Get-Content $Manifest) {
+    $line = ($raw -split '#')[0].Trim()
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+
+    $parts = $line -split '->'
+    $src = $parts[0].Trim()
+    $dst = if ($parts.Count -gt 1) { $parts[1].Trim() } else { $src }
+
+    $srcPath = Join-Path $ScriptDir $src
+    if ($src.EndsWith('/')) {
+        $root = $src.TrimEnd('/')
+        $rootPath = Join-Path $ScriptDir $root
+        if (-not (Test-Path $rootPath)) { Write-Warning "[INSTALL] WARN: 清单目录不存在，跳过 $root"; continue }
+        foreach ($f in Get-ChildItem -Recurse -File -Path $rootPath | Sort-Object FullName) {
+            $rel = $f.FullName.Substring($rootPath.Length).TrimStart('\', '/')
+            $pairs += [pscustomobject]@{ Src = $f.FullName; Dst = ((Join-Path $dst $rel) -replace '\\', '/') }
+        }
+    }
+    else {
+        if (-not (Test-Path $srcPath)) { Write-Warning "[INSTALL] WARN: 清单文件不存在，跳过 $src"; continue }
+        $pairs += [pscustomobject]@{ Src = $srcPath; Dst = $dst }
+    }
+}
+
+# 渲染内容（含占位符替换）
+function Render-Content([string]$SrcPath) {
+    $text = [System.IO.File]::ReadAllText($SrcPath, [System.Text.UTF8Encoding]::new($false))
+    if (Test-NeedsSubst $SrcPath) { $text = $text.Replace('__KILO_HOME__', $HomeSlash) }
+    return $text
+}
+
+# 校验：渲染后的 kilo.json 必须是合法 JSON
 try {
-    $Config = Get-Content -LiteralPath $Source -Raw -Encoding UTF8 | ConvertFrom-Json
-} catch {
-    Write-Host "[INSTALL] FAIL: kilo.json is not valid JSON: $($_.Exception.Message)" -ForegroundColor Red
+    $null = (Render-Content (Join-Path $ScriptDir 'kilo.json')) | ConvertFrom-Json
+}
+catch {
+    Write-Error "[INSTALL] FAIL: kilo.json 渲染后不是合法 JSON（占位符替换可能破坏结构）：$($_.Exception.Message)"
     exit 1
 }
 
-if (-not (Test-Path -LiteralPath $TargetDir)) {
-    New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
-    Write-Host "[CREATE] $TargetDir" -ForegroundColor Green
+# 备份（仅真实写盘且目标存在）
+if (-not $DryRun -and -not $Check -and (Test-Path $TargetDir)) {
+    $bk = "$TargetDir.backup-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
+    try {
+        Compress-Archive -Path (Join-Path $TargetDir '*') -DestinationPath $bk -Force
+        Write-Host "[BACKUP] $bk"
+    }
+    catch { Write-Warning "[INSTALL] WARN: 备份失败（继续下发）：$($_.Exception.Message)" }
 }
 
-if (Test-Path -LiteralPath $Target) {
-    $Backup = "$Target.bak.$(Get-Date -Format yyyyMMdd-HHmmss)"
-    Copy-Item -LiteralPath $Target -Destination $Backup -Force
-    Write-Host "[BACKUP] $Backup" -ForegroundColor Cyan
+$changed = 0; $same = 0; $wrote = 0
+foreach ($p in $pairs) {
+    $dstPath = Join-Path $TargetDir $p.Dst
+    $newText = Render-Content $p.Src
+
+    $oldText = ''
+    if (Test-Path $dstPath) { $oldText = [System.IO.File]::ReadAllText($dstPath, [System.Text.UTF8Encoding]::new($false)) }
+
+    if ($oldText -eq $newText) { $same++; continue }
+
+    $changed++
+    if ($DryRun -or $Check) { continue }
+
+    $dstDir = Split-Path -Parent $dstPath
+    if (-not (Test-Path $dstDir)) { $null = New-Item -ItemType Directory -Path $dstDir -Force }
+    [System.IO.File]::WriteAllText($dstPath, $newText, [System.Text.UTF8Encoding]::new($false))
+    $wrote++
 }
 
-Copy-Item -LiteralPath $Source -Destination $Target -Force
+$cfg = (Render-Content (Join-Path $ScriptDir 'kilo.json')) | ConvertFrom-Json
+$mode = if ($Check) { 'check' } elseif ($DryRun) { 'dry-run' } else { 'install' }
 
-if ((Get-FileHash -LiteralPath $Source).Hash -ne (Get-FileHash -LiteralPath $Target).Hash) {
-    Write-Host "[INSTALL] FAIL: hash mismatch after copy" -ForegroundColor Red
+Write-Host ''
+Write-Host "[$mode] 目标: $TargetDir"
+Write-Host "  清单条目 : $($pairs.Count)"
+Write-Host "  未变化   : $same"
+Write-Host "  差异/写入: $changed"
+Write-Host "  model    : $($cfg.model)"
+Write-Host "  small    : $($cfg.small_model)"
+Write-Host "  agents   : $((($cfg.agent.PSObject.Properties.Name) -join ', '))"
+
+if ($Check -and $changed -gt 0) {
+    Write-Host ''
+    Write-Host "[check] 检测到漂移 $changed 处 —— 执行 .\install.ps1 同步。"
     exit 1
 }
-
-$Model = if ($Config.model) { $Config.model } else { "(none)" }
-$Small = if ($Config.small_model) { $Config.small_model } else { "(none)" }
-$Providers = if ($Config.provider) { ($Config.provider.PSObject.Properties.Name -join ", ") } else { "(none)" }
-$Agents = if ($Config.agent) { ($Config.agent.PSObject.Properties.Name -join ", ") } else { "(none)" }
-
-Write-Host ""
-Write-Host "[INSTALL] OK: $Source -> $Target" -ForegroundColor Green
-Write-Host "  model        : $Model"
-Write-Host "  small_model  : $Small"
-Write-Host "  providers    : $Providers"
-Write-Host "  agents       : $Agents"
 exit 0

@@ -1,0 +1,21 @@
+{
+  "name": "kilo-provider-hx-failover",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@ai-sdk/openai-compatible": "^1.0.54",
+    "@ai-sdk/provider": "^2.0.0",
+    "esbuild": "^0.25.0"
+  }
+}

@@ -1,27 +1,42 @@
 # kilo_config 仓库忽略规则
 
-# 运行时生成文件（个人数据，不应在团队间共享）
-**/.kilo/agent-manager.json
-
-# 依赖目录
+# 依赖目录（所有子包共用）
 node_modules/
 
-# 包管理文件（install 脚本已排除，Git 层面也忽略以防误提交）
+# 包管理文件（仓库根与各子包；install 脚本不依赖它们，Git 层面忽略以防误提交）
 package.json
 package-lock.json
 pnpm-lock.yaml
 bun.lock
 yarn.lock
 
-# 操作系统/编辑器临时文件
+# ⚠️ 例外：provider/hx-failover 是自研包的源码载体，其 package.json 与 lock 必须入库
+# （构建与依赖版本可复现）。node_modules/ 仍被上面的规则忽略。
+!provider/hx-failover/package.json
+!provider/hx-failover/package-lock.json
+
+# 运行时生成文件（个人数据，不应在团队间共享）
+**/.kilo/agent-manager.json
+.kilo/metrics/
+.kilo/task_context/
+.kilo/skills/
+.kilo_tmp/
+.worktrees/
+
+# IDE / MCP 运行时产物
+.playwright-mcp/
+.mcp-tmp/
+
+# 操作系统 / 编辑器临时文件
 .DS_Store
 Thumbs.db
 *.tmp
 *.swp
 *.swo
 __pycache__/
+.pytest_cache/
 
-# 通用备份/临时/对比文件（防 LLM 修复流程产生的中间产物污染仓库）
+# 通用备份 / 临时 / 对比文件（防 LLM 修复流程产生的中间产物污染仓库）
 *.bak
 *.bak2
 *.orig
@@ -35,47 +50,6 @@ __pycache__/
 scripts/_*.mjs
 temp_*
 
-# kilo.json 备份文件（install 脚本修改前自动生成，不应提交）
+# 下发器产生的目标目录备份（默认在 ~/.config/ 下，若改为仓内目标则忽略）
+kilo.backup-*.tar
 kilo.json.bak.*
-
-# skill 运行时产物（项目级 .kilo/skills/ 下生成，仓库不预置 skill 源；
-# 通用缓存已在上方 __pycache__/ 覆盖，项目级 skill 产物由各项目 .gitignore 自行管理）
-.kilo/skills/
-.kilo/skills/**
-
-
-# task_context 运行时产物（conductor 写 task_context_*.json 到 .kilo/task_context/，与 .kilo/skills/ 同类运行时产物，不入版本库；已 tracked 历史文件需 git rm --cached）
-.kilo/task_context/
-.kilo/task_context/**
-
-# 多模型审计产物（mmo.mjs 每次执行落盘的 JSON，运行时数据不入库）
-.kilo/mmo-audit/
-.kilo/mmo-audit/**
-
-# IDE 注入的 MCP 运行时产物
-.playwright-mcp/
-.playwright-mcp/**
-
-# 多模型审计临时产物
-.kilo_tmp/
-
-# 多模型 worktree 隔离产物（agent_manager worktree 产物，规则保留兼容历史 worktree）
-.worktrees/
-
-# MCP 运行时产物（本地 MCP 生成的临时目录,与 install 同步）
-.mcp-tmp/
-
-# 临时目录（kilo 运行时）
-.tmp/
-.tmp/**
-
-# 测试残留目录防护（不应进入 git 或被 install 同步）
-_test_target_orig/
-
-# pytest 缓存
-.pytest_cache/
-# 编译时预生成静态派生数据（build-derivations.mjs 产物，不入版本库；缺失时 task-context.mjs 透明回退 cachedDerive）
-scripts/lib/.generated/
-# lessons 失败教训运行时回写产物（kb.mjs 交叉查重读取，仅本地运行时数据，不入库；与 task_context/mmo-audit 同性质）
-docs/lessons/
-docs/lessons/**
