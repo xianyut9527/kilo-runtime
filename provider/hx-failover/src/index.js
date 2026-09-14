@@ -22,7 +22,7 @@ const BACKOFF_MS = [500, 1500];
 const DEFAULT_CHAIN = ["glm-5.3-flash", "kimi-k2.6", "deepseek-v4.1-flash", "glm-5.2"];
 
 // 降级记录：事件发生在 provider 内，Kilo 感知不到（不会触发 session.next.retried），
-// 因此包自己写本地 JSONL，供 scripts/metrics-report.mjs 合并统计。与 telemetry-local 同目录同格式。
+// 因此包自己写本地 JSONL 便于事后排查（纯追加，失败不影响模型调用）。
 // 位置优先 XDG_DATA_HOME（与 auth.json 同根），保证跨项目汇总。
 function failoverLogPath() {
   const dataHome = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
@@ -134,8 +134,6 @@ export function createHxFailover(options) {
           return await run(model, id, hop);
         } catch (err) {
           lastError = err;
-          // 流已开始后无法换模型（语义与 Kilo 一致）：直接抛出，避免重复输出
-          if (err?.hxFailoverStreamStarted) throw err;
           if (!isRetryable(err)) throw err;
 
           if (attempt < MAX_RETRIES_PER_HOP) {
@@ -172,15 +170,17 @@ export function createHxFailover(options) {
         return withFailover(modelId, (m) => m.doGenerate(callOptions));
       },
       async doStream(callOptions) {
-        let switchedTo = null;
         return withFailover(modelId, async (m, id, hop) => {
-          if (hop > 0) switchedTo = id;
           const result = await m.doStream(callOptions);
           if (hop === 0) return result;
 
           // 切换通知（legacy 语义③）：在流首插入一行可见提示。
           // 必须保持 ReadableStream 语义（Kilo 会对 stream 调 pipeThrough），
           // 且 text-delta 必须配套 text-start/text-end（否则 Kilo 报 "text part ... not found"）。
+          //
+          // 注意：此处的 hop>0 意味着「切换在 doStream 建流之前完成」（上游在返回 stream 前就失败了），
+          // 因此插入通知不会与已输出内容冲突。若失败发生在流读取过程中，异常由读取方抛出，
+          // 不会回到本函数的重试逻辑 —— 即不存在「流中途换模型导致重复输出」的路径。
           const noticeId = "hx-failover-notice";
           const prepend = new TransformStream({
             start(controller) {
@@ -199,7 +199,7 @@ export function createHxFailover(options) {
           return { ...result, stream: result.stream.pipeThrough(prepend) };
         });
       },
-      // 供 telemetry/诊断读取（非官方字段，Kilo 忽略）
+      // 供诊断读取（非官方字段，Kilo 忽略）
       hxFailoverChain: chainOf(options, modelId),
     };
   }

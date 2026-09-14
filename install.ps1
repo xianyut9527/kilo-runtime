@@ -23,6 +23,9 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Manifest  = Join-Path $ScriptDir 'install.manifest'
 $TargetDir = if ($Target) { $Target } else { Join-Path $HOME '.config\kilo' }
 $HomeSlash = ($HOME -replace '\\', '/').TrimEnd('/')
+# 部署目录的原生正斜杠路径（供 provider.npm 的 file:// URL 使用）。
+# Kilo 是原生程序：file:///C:/... 有效，file:///c/... 与 ~ 均无效（实测）。
+$TargetNative = ($TargetDir -replace '\\', '/').TrimEnd('/')
 
 if (-not (Test-Path $Manifest)) { Write-Error "[INSTALL] FAIL: 清单缺失 $Manifest"; exit 1 }
 
@@ -65,16 +68,24 @@ foreach ($raw in Get-Content $Manifest) {
 # 渲染内容（含占位符替换）
 function Render-Content([string]$SrcPath) {
     $text = [System.IO.File]::ReadAllText($SrcPath, [System.Text.UTF8Encoding]::new($false))
-    if (Test-NeedsSubst $SrcPath) { $text = $text.Replace('__KILO_HOME__', $HomeSlash) }
+    if (Test-NeedsSubst $SrcPath) {
+        $text = $text.Replace('__KILO_CONFIG__', $TargetNative)
+        $text = $text.Replace('__KILO_HOME__', $HomeSlash)
+    }
     return $text
 }
 
-# 校验：渲染后的 kilo.json 必须是合法 JSON
+# 校验：渲染后的 kilo.json 必须是合法 JSON，且不得残留未替换的占位符
 try {
-    $null = (Render-Content (Join-Path $ScriptDir 'kilo.json')) | ConvertFrom-Json
+    $rendered = Render-Content (Join-Path $ScriptDir 'kilo.json')
+    $null = $rendered | ConvertFrom-Json
 }
 catch {
     Write-Error "[INSTALL] FAIL: kilo.json 渲染后不是合法 JSON（占位符替换可能破坏结构）：$($_.Exception.Message)"
+    exit 1
+}
+if ($rendered -match '__KILO_(HOME|CONFIG)__') {
+    Write-Error "[INSTALL] FAIL: kilo.json 渲染后仍残留占位符（provider 将初始化失败）。"
     exit 1
 }
 

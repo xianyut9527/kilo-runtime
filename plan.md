@@ -63,6 +63,15 @@ Kilo 7.6.2 内置**按项目根的本地记忆系统**，比自建 knowledge-bas
 
 ## 稳定性运维
 
-- `db-maintain.sh`：kilo.db 体检/清理（当前 13.2GB：event 表 202 万行占大头，98.3 万 parts 早于 2026-09）。
-  **必须在 Kilo 关闭时运行**（独占锁）。用法：`--status` 体检 / `--days N` 保留 N 天会话。
-  保护项：memory/、credential、project 表不碰。
+- `db-maintain.sh`：kilo.db 体检/清理。实测体积构成（2026-09-14）：
+  `event` 202 万行 / 3.78GB（事件溯源日志，全清）+ 30 天前 `message` 3.58GB + `part` 1.36GB ≈ 可回收 8.7GB，
+  余下有效数据不到 1GB。**必须在 Kilo/VS Code 关闭时运行**（独占锁）。用法：`--status` 体检 / `--days N` 保留天数。
+  保护项：`memory/`、`credential`、`project` 表不碰；`part` 靠 `message` 外键 CASCADE 级联删除（`PRAGMA foreign_keys=1` 已确认）。
+
+## 下发器一致性（易踩）
+
+- `install.sh` 与 `install.ps1` **必须同时替换两个占位符**。ps1 曾只替换 `__KILO_HOME__`，
+  导致它渲染出 `file:///__KILO_CONFIG__/provider/hx-failover` —— 按提示跑 ps1 会让 provider 初始化失败、
+  降级链整体失效。两版都加了「渲染后残留占位符即 FAIL」的硬校验。
+- `build.mjs` 的入口/产物路径必须基于脚本自身位置（`import.meta.url`）解析；
+  用相对路径时只有 cwd 正好是包目录才能构建成功。

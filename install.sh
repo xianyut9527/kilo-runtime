@@ -130,10 +130,14 @@ done < "$MANIFEST"
 
 TOTAL="$(wc -l < "$PAIRS" | tr -d ' ')"
 
-# ---------- 校验：kilo.json 渲染后必须是合法 JSON ----------
+# ---------- 校验：kilo.json 渲染后必须是合法 JSON，且不得残留占位符 ----------
+RENDERED_JSON="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json")"
+if printf '%s' "$RENDERED_JSON" | grep -q '__KILO_\(HOME\|CONFIG\)__'; then
+  echo "[INSTALL] FAIL: kilo.json 渲染后仍残留占位符（provider 将初始化失败）" >&2
+  exit 1
+fi
 if [ -n "$PY" ]; then
-  if ! sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json" \
-      | "$PY" -c "import json,sys; json.load(sys.stdin)" >/dev/null 2>&1; then
+  if ! printf '%s' "$RENDERED_JSON" | "$PY" -c "import json,sys; json.load(sys.stdin)" >/dev/null 2>&1; then
     echo "[INSTALL] FAIL: kilo.json 渲染后不是合法 JSON（占位符替换可能破坏了结构）" >&2
     exit 1
   fi
