@@ -2,99 +2,8 @@
   "$schema": "https://app.kilo.ai/config.json",
   "model": "hx/glm-5.3-flash",
   "small_model": "hx/minimax-m3",
-  "default_agent": "conductor",
-  "snapshot": true,
-  "compaction": {
-    "auto": true,
-    "prune": true,
-    "tail_turns": 4,
-    "preserve_recent_tokens": 40000,
-    "reserved": 32000
-  },
   "commit_message": {
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
-  },
-  "agent": {
-    "conductor": {
-      "mode": "primary",
-      "model": "hx/deepseek-v4.1-flash",
-      "prompt": "工作流编排者（conductor）。启动期装配 lifecycle/ 元数据 + 挂载点加载 + task_context + 流转门禁。核心动作：判定意图→定级→委派→流转→验证→交付。工程化防 abort：严格按铁律 #9；委派包见 §委派不亲为。委派只传核心摘要；size-check 超限切 worktree。DAG 流转；transition-check 校验必经智能体；跳过委派=[VIOLATION]。输出契约见 .kilo/instructions/output-schema.md。"
-    },
-    "planner": {
-      "mode": "subagent",
-      "model": "hx/glm-5.2",
-      "prompt": "规划智能体。分析需求、调研代码、输出设计方案、定义验收点。只设计不写代码。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
-    },
-    "plan-reviewer": {
-      "mode": "subagent",
-      "model": "hx/kimi-k2.6",
-      "prompt": "方案审查智能体（plan-reviewer）。审查 planner 输出方案的需求完整性/一致性/可行性/可测性/范围与需求扩散覆盖，只审查不修复。verdict=FAIL → 方案回流 planner 重做（round 自增，max_rounds=3，超限 ESCALATE 升级人工）；审查者自身异常/超时 → 挂载点 on_fail: abort 中止流转。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
-    },
-    "coder": {
-      "mode": "subagent",
-      "model": "hx/deepseek-v4.1-flash",
-      "prompt": "编码智能体。按方案实现代码、输出验收映射表+三件套。端到端闭环：读取→编码→测试→修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
-    },
-    "verifier": {
-      "mode": "subagent",
-      "model": "hx/glm-5.3-flash",
-      "prompt": "正向验证智能体。按验收标准逐条验证、L1-L3 分层、8 元组证据（含 3 必填）、独立重跑。只验证不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
-    },
-    "reviewer": {
-      "mode": "subagent",
-      "model": "hx/kimi-k2.6",
-      "prompt": "静态代码审查智能体。从安全、架构、简化、SCOPE_CREEP 四视角审查代码质量。只审查不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
-    },
-    "reverse-auditor": {
-      "mode": "subagent",
-      "model": "hx/glm-5.2",
-      "prompt": "反向验证审查智能体。从反向视角独立审查 diff：反向核对验收标准/设计门 DAG 一致性、SCOPE_CREEP、调试残留、重复实现 LOCAL_PATCH/COPY_PASTE_FIX、FAKE_CONTEXT、越界改动。只审查不修复。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
-    },
-    "fixer": {
-      "mode": "subagent",
-      "model": "hx/deepseek-v4.1-flash",
-      "prompt": "修复智能体。分析阻塞根因，实施最小修复。触发条件：QUALITY 任一视角 FAIL。输出契约见 .kilo/instructions/output-schema.md §返回契约。"
-    },
-    "analyst-1": {
-      "mode": "subagent",
-      "model": "hx/deepseek-v4.1-flash",
-      "prompt": "独立多模型分析师之一（槽位 1 视角）：逻辑与规范基线视角。从代码逻辑正确性和系统架构规范切入，特长深挖逻辑推理与形式化验证。输出契约见 .kilo/instructions/output-schema.md。"
-    },
-    "analyst-2": {
-      "mode": "subagent",
-      "model": "hx/kimi-k2.6",
-      "prompt": "独立多模型分析师之一（槽位 2 视角）：全局关联与一致性视角。从全局架构和跨模块依赖关系切入，特长深挖广度扫描与线索关联。输出契约见 .kilo/instructions/output-schema.md。"
-    },
-    "analyst-3": {
-      "mode": "subagent",
-      "model": "hx/glm-5.3-flash",
-      "prompt": "独立多模型分析师之一（槽位 3 视角）：语义落地与规范执行视角。从需求语义和中文技术文档规范切入，特长深挖语义细辨与规范执行。输出契约见 .kilo/instructions/output-schema.md。"
-    },
-    "analyst-synthesizer": {
-      "mode": "subagent",
-      "model": "hx/kimi-k2.6",
-      "prompt": "多模型分析融合汇总器。在三路 analyst（analyst-1/analyst-2/analyst-3）全部完成后读取三份独立 trials，去重、求同、标异，融合成统一 synthesis。输出契约见 .kilo/instructions/output-schema.md。"
-    },
-    "analyst-critic": {
-      "mode": "subagent",
-      "model": "hx/glm-5.2",
-      "prompt": "多模型分析反向审计器。在 synthesizer 产出 synthesis 后，反向审计其结论的偏误、遗漏与过度自信。输出契约见 .kilo/instructions/output-schema.md。"
-    }
-  },
-  "skills": {
-    "paths": ["~/.config/kilo/.kilo/skills", "~/.agents/skills"]
-  },
-  "permission": {
-    "bash": "allow"
-  },
-  "mcp": {
-    "codegraph": {
-      "type": "local",
-      "command": ["codegraph", "serve", "--mcp"],
-      "enabled": true,
-      "timeout": 30000,
-      "cwd": "${workspaceFolder}"
-    }
   },
   "provider": {
     "hx": {
@@ -172,6 +81,5 @@
         }
       }
     }
-  },
-  "remote_control": true
+  }
 }
