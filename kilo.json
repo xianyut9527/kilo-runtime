@@ -2,8 +2,78 @@
   "$schema": "https://app.kilo.ai/config.json",
   "model": "hx/glm-5.3-flash",
   "small_model": "hx/minimax-m3",
+  "snapshot": true,
+  "autoupdate": true,
+  "share": "disabled",
+  "privacy_mode": true,
+  "web_search": true,
+  "subagent_depth": 2,
+  "default_agent": "code",
+  "formatter": true,
+  "lsp": true,
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "tail_turns": 4,
+    "preserve_recent_tokens": 40000,
+    "reserved": 32000
+  },
+  "tool_output": {
+    "max_lines": 2000,
+    "max_bytes": 51200
+  },
+  "watcher": {
+    "ignore": ["node_modules/**", "dist/**", ".git/**", "**/*.log"]
+  },
   "commit_message": {
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
+  },
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "git *": "allow",
+      "npm *": "allow",
+      "Get-ChildItem *": "allow",
+      "Get-Content *": "allow",
+      "Get-Item *": "allow",
+      "Get-FileHash *": "allow",
+      "node *": "allow",
+      "rg *": "allow",
+      "rm -rf *": "deny",
+      "Remove-Item -Recurse -Force *": "deny"
+    },
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "edit": {
+      "src/**": "allow",
+      "*.lock": "deny",
+      "*": "ask"
+    },
+    "external_directory": "ask",
+    "webfetch": "allow",
+    "websearch": "allow"
+  },
+  "mcp": {
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp@latest"],
+      "enabled": true,
+      "timeout": 10000
+    },
+    "context7": {
+      "type": "local",
+      "command": ["npx", "-y", "@upstash/context7-mcp"],
+      "enabled": true,
+      "timeout": 10000
+    },
+    "gitnexus": {
+      "type": "local",
+      "command": ["gitnexus", "mcp"],
+      "enabled": true,
+      "timeout": 30000
+    }
   },
   "provider": {
     "hx": {
