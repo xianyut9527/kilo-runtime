@@ -134,10 +134,18 @@ fi
 
 # ---------- 备份（仅真实写盘且首次写入前） ----------
 if [ "$DRY_RUN" = "0" ] && [ "$CHECK" = "0" ] && [ -d "$TARGET_DIR" ]; then
-  BK="$TARGET_DIR.backup-$(date +%Y%m%d-%H%M%S).tar"
+  # 备份路径必须转成 MSYS 形式（/c/...）：tar 是原生程序，收到 "C:/..." 会把它当远程主机而静默失败。
+  BK_PARENT="$(dirname "$TARGET_DIR")"
+  if command -v cygpath >/dev/null 2>&1; then
+    BK_PARENT="$(cygpath -u "$BK_PARENT" 2>/dev/null || echo "$BK_PARENT")"
+  fi
+  BK="$BK_PARENT/$(basename "$TARGET_DIR").backup-$(date +%Y%m%d-%H%M%S).tar"
   # 排除 node_modules：本机依赖动辄几十 MB，备份里没有价值
-  ( cd "$(dirname "$TARGET_DIR")" && tar cf "$BK" --exclude='node_modules' "$(basename "$TARGET_DIR")" 2>/dev/null ) || true
-  [ -f "$BK" ] && echo "[BACKUP] $BK"
+  if ( cd "$BK_PARENT" && tar cf "$BK" --exclude='node_modules' "$(basename "$TARGET_DIR")" 2>/dev/null ); then
+    echo "[BACKUP] $BK"
+  else
+    echo "[BACKUP] WARN: 备份失败（继续下发）" >&2
+  fi
 fi
 
 # ---------- 下发 ----------
