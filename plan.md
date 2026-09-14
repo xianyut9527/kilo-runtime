@@ -50,7 +50,19 @@ E:\AI\agent\kilo_config（SSOT）
 8. MSYS 与原生路径不互认：写进配置的用 `C:/...`，shell 操作用 `/c/...`（`cygpath` 互转）。
 9. 本机双 CLI：扩展内嵌 7.6.2（日用）vs 全局 npm 7.4.16（旧，读同份配置会报 Unrecognized keys——不是配置坏了）。
 
-## 精简原则（为什么删了 knowledge-base 等）
+## 自我进化（原生记忆，2026-09-14 确认）
 
-只留**改变运行时行为**的资产。经验类知识固化为 `INSTRUCTIONS.md` 的策略条目（每会话注入，检索率 100%），
-优于独立知识库（agent 需主动检索，实际命中率低）。被动诊断件（遥测）在没接告警时是纯负担。
+Kilo 7.6.2 内置**按项目根的本地记忆系统**，比自建 knowledge-base 正确：
+
+- 物理位置：`~/.local/share/kilo/memory/<项目hash>/`（project.md / environment.md / corrections.md + 注入式索引 index.kmem + state.json）
+- 激活条件：项目根存在记忆目录即激活（`state.json: enabled=true`）；**首次在项目里让 agent "记住xxx" 即创建**
+- 工具：`kilo_memory_recall`（检索，会话自动注入摘要）+ `kilo_memory_save`（remember/correct/forget/skip）
+- 权限：已在 kilo.json 放开为 allow（默认 ask 会锁死自主沉淀）
+- 策略：INSTRUCTIONS.md「自我进化」节 —— 会话结束自省三类必沉淀场景（用户纠正 / 高成本发现的非显然事实 / 反复故障与修复）
+- 实测：fed-cfba 项目记忆 5 条命中，路径知识准确复述；capture.turnClose=true 自动沉淀在工作
+
+## 稳定性运维
+
+- `db-maintain.sh`：kilo.db 体检/清理（当前 13.2GB：event 表 202 万行占大头，98.3 万 parts 早于 2026-09）。
+  **必须在 Kilo 关闭时运行**（独占锁）。用法：`--status` 体检 / `--days N` 保留 N 天会话。
+  保护项：memory/、credential、project 表不碰。

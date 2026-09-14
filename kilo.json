@@ -136,7 +136,9 @@
     },
     "external_directory": "ask",
     "webfetch": "allow",
-    "websearch": "allow"
+    "websearch": "allow",
+    "kilo_memory_save": "allow",
+    "kilo_memory_recall": "allow"
   },
   "mcp": {
     "playwright": {
