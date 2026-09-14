@@ -34,7 +34,8 @@
 3. **`kilo.json` 不允许任何自定义键**（含 `"//"` 注释）→ 整份配置失效。字段说明写文档。
 4. **`provider.npm` 必须 `file:///`（三斜杠）**。
 5. **本地 `plugin/*.ts` 自动加载**，不必登记进 `plugin` 数组。
-6. **不要在内置 agent 名下放同名 `.md`**（整体覆盖内置提示词）。内置：`code/plan/build/debug/orchestrator/ask/general/explore/scout/title/summary/compaction`。
+6. **不要在内置 agent 名下放同名 `.md`**（整体覆盖内置提示词）。内置（`kilo agent list` 实测）：`ask / code / compaction / debug / explore / general / orchestrator / plan / summary / title`。自定义 agent（`verify` 等）才用 `.md`。
+   ⚠️ 别照抄 `kilo.json` schema 注解里的 agent 键名 —— 那里含已过期的 `build` / `scout`，实测不存在；判定内置与否只认 `kilo agent list`。
 7. **改配置后必须真跑一次任务**（`kilo run --dir <d> --auto "..."`）——`debug config` 通过 ≠ 能执行任务（踩过：provider 路径错导致所有任务失败，debug 不报错）。
 
 ## 验收

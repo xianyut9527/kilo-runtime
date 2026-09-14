@@ -45,7 +45,7 @@ E:\AI\agent\kilo_config（SSOT）
 3. `kilo.json` 拒绝自定义键（含 `"//"`）→ 整份失效。
 4. `provider.npm` 必须三斜杠 `file:///C:/...`。
 5. 本地 `plugin/*.ts` 自动加载，无需登记。
-6. 内置 agent 名下放 `.md` 会整体覆盖其提示词。
+6. 内置 agent 名下放 `.md` 会整体覆盖其提示词。内置清单只认 `kilo agent list`（实测：ask/code/compaction/debug/explore/general/orchestrator/plan/summary/title）；`kilo.json` schema 注解里的 `build`/`scout` 已过期，实测不存在。
 7. **改配置后必须真跑任务验证**（`debug config` 通过 ≠ 能执行）。
 8. MSYS 与原生路径不互认：写进配置的用 `C:/...`，shell 操作用 `/c/...`（`cygpath` 互转）。
 9. 本机双 CLI：扩展内嵌 7.6.2（日用）vs 全局 npm 7.4.16（旧，读同份配置会报 Unrecognized keys——不是配置坏了）。
