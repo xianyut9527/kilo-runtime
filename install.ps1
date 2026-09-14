@@ -118,6 +118,20 @@ foreach ($p in $pairs) {
     $wrote++
 }
 
+# ---------- 多余文件检测（漂移的另一面：部署目录里清单管不到的文件） ----------
+# 白名单：Kilo 运行时自建（package.json/plugin 编译依赖、.gitignore、迁移标记、旧备份）
+$whitelist = '^(\.gitignore|\.bash-permission-migrated|package(-lock)?\.json|kilo\.json\.bak\..*)$|^(\.kilo|node_modules)(/|$)|^provider/hx-failover/node_modules(/|$)'
+$strayList = @()
+if (Test-Path $TargetDir) {
+    $expected = $pairs | ForEach-Object { ($_.Dst -replace '\\', '/') } | Sort-Object
+    $present = Get-ChildItem -Recurse -File -Path $TargetDir |
+        Where-Object { $_.FullName -notmatch '[\\/]node_modules[\\/]' -and $_.FullName -notmatch '[\\/]\.kilo[\\/]' } |
+        ForEach-Object { $_.FullName.Substring($TargetDir.Length).TrimStart('\', '/') -replace '\\', '/' } | Sort-Object
+    $strayList = @(Compare-Object -ReferenceObject $expected -DifferenceObject $present |
+        Where-Object { $_.SideIndicator -eq '=>' -and $_.InputObject -notmatch $whitelist } |
+        ForEach-Object { $_.InputObject })
+}
+
 $cfg = (Render-Content (Join-Path $ScriptDir 'kilo.json')) | ConvertFrom-Json
 $mode = if ($Check) { 'check' } elseif ($DryRun) { 'dry-run' } else { 'install' }
 
@@ -126,13 +140,17 @@ Write-Host "[$mode] 目标: $TargetDir"
 Write-Host "  清单条目 : $($pairs.Count)"
 Write-Host "  未变化   : $same"
 Write-Host "  差异/写入: $changed"
+if ($strayList.Count -gt 0) {
+    Write-Host "  多余文件 : $($strayList.Count)（清单外，白名单外）"
+    $strayList | ForEach-Object { Write-Host "    $_" }
+}
 Write-Host "  model    : $($cfg.model)"
 Write-Host "  small    : $($cfg.small_model)"
-Write-Host "  agents   : $((($cfg.agent.PSObject.Properties.Name) -join ', '))"
+Write-Host "  agents   : $(($cfg.agent.PSObject.Properties.Name) -join ', ')"
 
-if ($Check -and $changed -gt 0) {
+if ($Check -and ($changed -gt 0 -or $strayList.Count -gt 0)) {
     Write-Host ''
-    Write-Host "[check] 检测到漂移 $changed 处 —— 执行 .\install.ps1 同步。"
+    Write-Host "[check] 漂移：内容差异 $changed 处 + 多余文件 $($strayList.Count) 个 —— 执行 .\install.ps1 同步（多余文件需人工确认后删除）。"
     exit 1
 }
 exit 0

@@ -115,9 +115,10 @@ while IFS= read -r raw; do
   if [ -d "$SCRIPT_DIR/$src" ] || [ "${src%/}" != "$src" ]; then
     root="${src%/}"
     [ -d "$SCRIPT_DIR/$root" ] || { echo "[INSTALL] WARN: 清单目录不存在，跳过 $root" >&2; continue; }
+    dstbase="${dst%/}"
     while IFS= read -r f; do
       rel="${f#$SCRIPT_DIR/$root/}"
-      printf '%s\t%s\n' "$f" "$dst/$rel" >> "$PAIRS"
+      printf '%s\t%s\n' "$f" "$dstbase/$rel" >> "$PAIRS"
     done < <(find "$SCRIPT_DIR/$root" -type f | sort)
   else
     if [ -f "$SCRIPT_DIR/$src" ]; then
@@ -172,6 +173,21 @@ while IFS=$'\t' read -r src dst; do
   esac
 done < "$PAIRS"
 
+# ---------- 多余文件检测（漂移的另一面：部署目录里清单管不到的文件） ----------
+# 白名单：Kilo 运行时自建（package.json/plugin 编译依赖、.gitignore、迁移标记、旧备份）
+WHITELIST='^(\.gitignore|\.bash-permission-migrated|package(-lock)?\.json|kilo\.json\.bak\..*)$|^(\.kilo|node_modules)(/|$)|^provider/hx-failover/node_modules(/|$)'
+STRAYS=0
+STRAY_LIST=""
+if [ -d "$TARGET_DIR" ]; then
+  TMPD="$(mktemp -d)"
+  # 从 PAIRS 生成期望文件集合（dst 列）
+  cut -f2 "$PAIRS" | sort > "$TMPD/expected.txt"
+  ( cd "$TARGET_DIR" && find . -type f -not -path './node_modules/*' -not -path './.kilo/*' -not -path './provider/hx-failover/node_modules/*' ) | sed 's|^\./||' | sort > "$TMPD/present.txt"
+  STRAY_LIST="$(comm -23 "$TMPD/present.txt" "$TMPD/expected.txt" | grep -Ev "$WHITELIST" || true)"
+  [ -n "$STRAY_LIST" ] && STRAYS=$(printf '%s\n' "$STRAY_LIST" | wc -l | tr -d ' ')
+  rm -rf "$TMPD"
+fi
+
 # ---------- 摘要 ----------
 MODE="install"; [ "$DRY_RUN" = "1" ] && MODE="dry-run"; [ "$CHECK" = "1" ] && MODE="check"
 echo ""
@@ -179,6 +195,10 @@ echo "[$MODE] 目标: $TARGET_DIR"
 echo "  清单条目 : $TOTAL"
 echo "  未变化   : $SAME"
 echo "  差异/写入: $CHANGED"
+if [ "$STRAYS" -gt 0 ]; then
+  echo "  多余文件 : $STRAYS（清单外，白名单外）"
+  printf '%s\n' "$STRAY_LIST" | sed 's/^/    /'
+fi
 if [ -n "$PY" ]; then
   MODEL="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('model','(none)'))")"
   SMALL="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('small_model','(none)'))")"
@@ -188,9 +208,11 @@ if [ -n "$PY" ]; then
   echo "  agents   : $AGENTS"
 fi
 
-if [ "$CHECK" = "1" ] && [ "$CHANGED" -gt 0 ]; then
-  echo ""
-  echo "[check] 检测到漂移 $CHANGED 处 —— 执行 ./install.sh 同步。"
-  exit 1
+if [ "$CHECK" = "1" ]; then
+  if [ "$CHANGED" -gt 0 ] || [ "$STRAYS" -gt 0 ]; then
+    echo ""
+    echo "[check] 漂移：内容差异 $CHANGED 处 + 多余文件 $STRAYS 个 —— 执行 ./install.sh 同步（多余文件需人工确认后删除）。"
+    exit 1
+  fi
 fi
 exit 0

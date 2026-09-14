@@ -17,4 +17,5 @@ plugin/
 provider/hx-failover/src/
 provider/hx-failover/dist/
 provider/hx-failover/package.json
+provider/hx-failover/package-lock.json
 provider/hx-failover/build.mjs

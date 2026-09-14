@@ -16,7 +16,11 @@
 #         kilo.db 被 Kilo 进程独占锁，运行中执行会失败 —— 先关 VS Code/Kilo。
 set -euo pipefail
 
-EXT="${KILO_EXE:-$HOME/.vscode/extensions/kilocode.kilo-code-7.6.2-win32-x64/bin/kilo.exe}"
+EXT="${KILO_EXE:-}"
+if [ -z "$EXT" ] || [ ! -x "$EXT" ]; then
+  # 自动发现最新扩展内嵌 CLI（不再硬编码版本号：扩展升级后旧路径失效）
+  EXT="$(ls -d "$HOME"/.vscode/extensions/kilocode.kilo-code-*/bin/kilo.exe 2>/dev/null | sort -V | tail -1)"
+fi
 DB="$HOME/.local/share/kilo/kilo.db"
 DAYS=30
 MODE=run
