@@ -24,7 +24,40 @@ const SECRET_PATH = [
   /(^|[\\/])\.netrc$/i,
   /(^|[\\/])auth\.json$/i,
   /(^|[\\/])id_(rsa|ed25519|ecdsa)(\.pub)?$/i,
+  /(^|[\\/])\.env(\.[\w.-]+)?$/i, // .env / .env.local / .env.production
 ];
+
+// 受保护文件：静态 permission.edit 的 deny 只拦 edit 工具，模型改走 bash 就绕过了
+// （实测：--auto 下 `permission.edit: {"*":"deny"}` 仍被 sed -i / node 脚本改写成功）。
+// 因此在 hook 层按「路径 × 写操作」双重判定，两条通道一起堵。
+const PROTECTED_PATH = [
+  /(^|[\\/])package-lock\.json$/i,
+  /(^|[\\/])npm-shrinkwrap\.json$/i,
+  /(^|[\\/])pnpm-lock\.ya?ml$/i,
+  /(^|[\\/])yarn\.lock$/i,
+  /(^|[\\/])bun\.lockb?$/i,
+  /(^|[\\/])Cargo\.lock$/i,
+  /(^|[\\/])composer\.lock$/i,
+  /(^|[\\/])poetry\.lock$/i,
+  /(^|[\\/])Gemfile\.lock$/i,
+  /(^|[\\/])Pipfile\.lock$/i,
+  /(^|[\\/])uv\.lock$/i,
+  /\.lock$/i, // 兜底：任意 .lock 后缀
+  /(^|[\\/])\.kilo[\\/]agent-manager\.json$/i,
+];
+
+// bash 写操作的判定（含 shell 重定向与常见写入器）
+const WRITE_CMD = [
+  /\bsed\b[^\n]*\s-i(\s|$)/i,
+  /\b(tee|truncate|dd)\b/i,
+  /\b(node|deno|bun|python3?|pwsh|powershell)\b[^\n]*(writeFileSyn?c?|writeFile|appendFile|open\s*\(|Set-Content|Out-File|Add-Content|>)/i,
+  /\b(rm|mv|cp|del|erase|chmod|attrib|icacls)\b/i,
+  />>?\s*\S/,
+];
+
+function isProtected(p) {
+  return PROTECTED_PATH.some((re) => re.test(p));
+}
 
 function bashString(args) {
   if (!args) return "";
@@ -46,6 +79,20 @@ function pathsFrom(args) {
   return out;
 }
 
+// 从 shell 命令行里抽取可能的文件路径（引号包裹、含盘符/斜杠/点的 token）
+function pathsInCommand(cmd) {
+  if (!cmd) return [];
+  const out = [];
+  const re = /"([^"]+)"|'([^']+)'|([^\s"'|;&<>()]+)/g;
+  let m;
+  while ((m = re.exec(cmd)) !== null) {
+    const t = m[1] ?? m[2] ?? m[3];
+    if (!t) continue;
+    if (/[\\/]/.test(t) || /^[\w.-]+\.[A-Za-z0-9]{1,6}$/.test(t)) out.push(t);
+  }
+  return out;
+}
+
 export const PermissionGuard = async () => {
   return {
     "tool.execute.before": async (input, output) => {
@@ -61,15 +108,38 @@ export const PermissionGuard = async () => {
             );
           }
         }
+        // 受保护文件 × 写操作：堵住「edit deny 被 bash 绕过」的通道
+        const writes = WRITE_CMD.some((re) => re.test(cmd));
+        if (writes) {
+          for (const p of pathsInCommand(cmd)) {
+            if (isProtected(p)) {
+              throw new Error(
+                `blocked by permission-guard: 受保护文件 ${p} 不允许通过 shell 改写（锁文件/agent 状态应由包管理器维护）。`
+              );
+            }
+          }
+        }
       }
 
       // 敏感凭证目录：只读亦不放开（避免被读取后写入上下文/外发）
-      if (tool === "read" || tool === "edit" || tool === "write" || tool === "list") {
-        for (const p of pathsFrom(args)) {
+      // 路径匹配同时覆盖工具参数与 bash 命令行（cp ~/.ssh/id_rsa 这类）
+      if (tool === "read" || tool === "edit" || tool === "write" || tool === "list" || tool === "bash" || tool === "shell") {
+        const cands = tool === "bash" || tool === "shell" ? pathsInCommand(bashString(args)) : pathsFrom(args);
+        for (const p of cands) {
           for (const re of SECRET_PATH) {
             if (re.test(p)) {
               throw new Error(
                 `blocked by permission-guard: 拒绝访问凭证/密钥路径 ${p}（动态守护）。`
+              );
+            }
+          }
+        }
+        // 受保护文件的 read 不禁（允许查看），但 edit/write 一律拒绝
+        if (tool === "edit" || tool === "write") {
+          for (const p of pathsFrom(args)) {
+            if (isProtected(p)) {
+              throw new Error(
+                `blocked by permission-guard: 受保护文件 ${p} 不允许直接改写（锁文件/agent 状态）。`
               );
             }
           }
