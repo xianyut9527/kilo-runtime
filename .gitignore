@@ -53,3 +53,5 @@ temp_*
 # 下发器产生的目标目录备份（默认在 ~/.config/ 下，若改为仓内目标则忽略）
 kilo.backup-*.tar
 kilo.json.bak.*
+
+# provider 包的测试脚本随源码入库（非运行时产物）

@@ -178,7 +178,7 @@
   "provider": {
     "hx": {
       "name": "hx",
-      "npm": "file:///__KILO_HOME__/provider/hx-failover",
+      "npm": "file:///__KILO_CONFIG__/provider/hx-failover",
       "options": {
         "baseURL": "https://xianyu1.natapp4.cc/v1",
         "timeout": 300000,

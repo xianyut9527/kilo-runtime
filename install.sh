@@ -43,6 +43,15 @@ fi
 case "$HOME_SLASH" in
   /[a-zA-Z]/*) HOME_SLASH="$(echo "$HOME_SLASH" | sed 's|^/\([a-zA-Z]\)/|\1:/|')" ;;
 esac
+# 目标目录的「原生」形式（C:/...）：只有它才能写进 provider.npm（native 程序不认 MSYS 的 /c/...）
+if command -v cygpath >/dev/null 2>&1; then
+  TARGET_NATIVE="$(cygpath -m "$TARGET_DIR")"
+else
+  TARGET_NATIVE="$TARGET_DIR"
+fi
+case "$TARGET_NATIVE" in
+  /[a-zA-Z]/*) TARGET_NATIVE="$(echo "$TARGET_NATIVE" | sed 's|^/\([a-zA-Z]\)/|\1:/|')" ;;
+esac
 
 [ -f "$MANIFEST" ] || { echo "[INSTALL] FAIL: 清单缺失 $MANIFEST" >&2; exit 1; }
 
@@ -70,7 +79,7 @@ render_file() { # $1=src $2=dst
   local src="$1" dst="$2" tmp
   tmp="$(mktemp)"
   if needs_subst "$1"; then
-    sed "s|__KILO_HOME__|$HOME_SLASH|g" "$src" > "$tmp"
+    sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$src" > "$tmp"
   else
     cp -f "$src" "$tmp"
   fi
@@ -123,7 +132,7 @@ TOTAL="$(wc -l < "$PAIRS" | tr -d ' ')"
 
 # ---------- 校验：kilo.json 渲染后必须是合法 JSON ----------
 if [ -n "$PY" ]; then
-  if ! sed "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json" \
+  if ! sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json" \
       | "$PY" -c "import json,sys; json.load(sys.stdin)" >/dev/null 2>&1; then
     echo "[INSTALL] FAIL: kilo.json 渲染后不是合法 JSON（占位符替换可能破坏了结构）" >&2
     exit 1
@@ -167,9 +176,9 @@ echo "  清单条目 : $TOTAL"
 echo "  未变化   : $SAME"
 echo "  差异/写入: $CHANGED"
 if [ -n "$PY" ]; then
-  MODEL="$(sed "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('model','(none)'))")"
-  SMALL="$(sed "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('small_model','(none)'))")"
-  AGENTS="$(sed "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(', '.join(c.get('agent',{}).keys()) or '(none)')")"
+  MODEL="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('model','(none)'))")"
+  SMALL="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('small_model','(none)'))")"
+  AGENTS="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(', '.join(c.get('agent',{}).keys()) or '(none)')")"
   echo "  model    : $MODEL"
   echo "  small    : $SMALL"
   echo "  agents   : $AGENTS"

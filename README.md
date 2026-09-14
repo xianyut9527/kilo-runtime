@@ -83,3 +83,17 @@ node scripts/kb.mjs list
 3. `./install.sh --dry-run` 看差异 → `./install.sh` 下发。
 4. 跑上面「验收」三条命令。
 5. 提交仓库。
+
+## 行为验证（不只是「配置能加载」）
+
+配置加载 ≠ 任务执行正确。以下为已实测通过的行为项（7.6.2，真实 `kilo run` 会话）：
+
+| 能力 | 验证方式 | 结果 |
+|------|----------|------|
+| 端到端低风险任务 | `kilo run --dir <d> --auto --agent code "创建 hello.txt 并 git status 后汇报"` | 模型 `glm-5.3-flash`；文件写入 `hi`；git status 真实执行；汇报准确 |
+| 模型故障自动降级 | 用注入的假 fetch 驱动真实 provider 代码路径（`provider/hx-failover/test-failover.mjs`） | hop0 失败 → 切到 `kimi-k2.6`，注入 `⚠️ [failover]` 通知，由后继模型作答 |
+| 动态权限守护（插件） | 真实会话中要求 agent 读 `.kube/canary.txt` | 被 `permission-guard` 否决；agent 如实报告「无法读取」而非编造内容 |
+| 本地遥测 | 真实会话后检查 `.kilo/metrics/telemetry-*.jsonl` | 落盘正常；`metrics-report.mjs` 可汇总（工具分布/会话事件/降级计数） |
+
+**未验证项**（保持诚实）：MoA 工具的真实多模型调用未跑（需消耗 3+1 次真实模型调用）；
+长会话的压缩锚点行为未跑。这两项见 `plan.md` 阶段 1。
