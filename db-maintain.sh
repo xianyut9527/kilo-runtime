@@ -13,7 +13,8 @@
 #   ./db-maintain.sh --status   只读体检，不动数据
 #
 # 安全性：只 DELETE 事件流/过期消息；不触碰 memory、credential、project。
-#         kilo.db 被 Kilo 进程独占锁，运行中执行会失败 —— 先关 VS Code/Kilo。
+#         2026-09-15 实测：WAL 模式下 DELETE/checkpoint/VACUUM 均可在线执行（Kilo 运行中），
+#         无需关机。VACUUM 后需再跑一次 wal_checkpoint(TRUNCATE) 回收其产生的 WAL。
 set -euo pipefail
 
 EXT="${KILO_EXE:-}"
