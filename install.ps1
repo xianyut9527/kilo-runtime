@@ -1,4 +1,4 @@
-<#
+﻿<#
   kilo_config 全量下发器（PowerShell 原生版，与 install.sh 行为一致）
 
   用法：
