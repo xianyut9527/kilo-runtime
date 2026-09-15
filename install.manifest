@@ -10,7 +10,7 @@
 #   __KILO_CONFIG__ = 实际部署目录（本项目为 ~/.config/kilo）→ 用于 provider.npm
 #   __KILO_HOME__   = 家目录 → 用于 instructions / skills.paths
 
-kilo.json
+kilo.json.tmpl -> kilo.json
 INSTRUCTIONS.md
 agent/
 plugin/

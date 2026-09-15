@@ -36,7 +36,7 @@ function Get-Sha256([string]$Path) {
 
 function Test-NeedsSubst([string]$Path) {
     $n = Split-Path -Leaf $Path
-    return ($n -eq 'kilo.json' -or $n -eq 'INSTRUCTIONS.md')
+    return ($n -eq 'kilo.json' -or $n -eq 'kilo.json.tmpl' -or $n -eq 'INSTRUCTIONS.md')
 }
 
 # 展开清单 -> @{ Src; Dst }
@@ -77,7 +77,7 @@ function Render-Content([string]$SrcPath) {
 
 # 校验：渲染后的 kilo.json 必须是合法 JSON，且不得残留未替换的占位符
 try {
-    $rendered = Render-Content (Join-Path $ScriptDir 'kilo.json')
+    $rendered = Render-Content (Join-Path $ScriptDir 'kilo.json.tmpl')
     $null = $rendered | ConvertFrom-Json
 }
 catch {
@@ -132,7 +132,7 @@ if (Test-Path $TargetDir) {
         ForEach-Object { $_.InputObject })
 }
 
-$cfg = (Render-Content (Join-Path $ScriptDir 'kilo.json')) | ConvertFrom-Json
+$cfg = (Render-Content (Join-Path $ScriptDir 'kilo.json.tmpl')) | ConvertFrom-Json
 $mode = if ($Check) { 'check' } elseif ($DryRun) { 'dry-run' } else { 'install' }
 
 Write-Host ''
