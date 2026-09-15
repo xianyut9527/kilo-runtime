@@ -13,7 +13,9 @@
 kilo.json.tmpl -> kilo.json
 INSTRUCTIONS.md
 agent/
+command/
 plugin/
+scripts/memory-enable.mjs
 provider/hx-failover/src/
 provider/hx-failover/dist/
 provider/hx-failover/package.json

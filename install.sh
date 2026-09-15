@@ -11,7 +11,7 @@
 #   - 清单驱动（install.manifest），不在脚本里硬编码文件列表
 #   - __KILO_HOME__ 占位符替换为本机家目录（正斜杠），保证仓库可移植
 #   - 幂等：内容一致则跳过；逐文件 sha 比对
-#   - 可回滚：首次写入前把整个目标目录打包为 <target>.backup-<ts>.tar
+#   - 可回滚：首次写入前把整个目标目录打包为 <target>.backup-<ts>.tar（只保留最近 N 个，见下）
 #   - 不下发 node_modules / package-lock.json（本机依赖，不入库）
 set -euo pipefail
 
@@ -172,7 +172,24 @@ if [ "$DRY_RUN" = "0" ] && [ "$CHECK" = "0" ] && [ -d "$TARGET_DIR" ]; then
     BK_PARENT="$(cygpath -u "$BK_PARENT" 2>/dev/null || echo "$BK_PARENT")"
   fi
   BK="$BK_PARENT/$(basename "$TARGET_DIR").backup-$(date +%Y%m%d-%H%M%S).tar"
+  # 顺序与 install.ps1 保持一致：**先裁剪、后创建**。先创建的话，新备份会参与排序，
+  # 而它与已有备份的 mtime 可能同秒并列，靠排序排除不可靠（会把自己删掉）。
   # 排除 node_modules：本机依赖动辄几十 MB，备份里没有价值
+  KEEP_BACKUPS="${KILO_KEEP_BACKUPS:-2}"
+  case "$KEEP_BACKUPS" in
+    ''|*[!0-9]*) echo "[BACKUP] WARN: KILO_KEEP_BACKUPS 非法（$KEEP_BACKUPS，需 ≥1 整数），按默认 2 处理" >&2; KEEP_BACKUPS=2 ;;
+  esac
+  if [ "$KEEP_BACKUPS" -lt 1 ]; then
+    echo "[BACKUP] WARN: KILO_KEEP_BACKUPS 非法（$KEEP_BACKUPS，需 ≥1 整数），按默认 2 处理" >&2
+    KEEP_BACKUPS=2
+  fi
+  find "$BK_PARENT" -maxdepth 1 -name "$(basename "$TARGET_DIR").backup-*" -type f -printf '%T@\t%p\n' 2>/dev/null \
+    | sort -rn | cut -f2- | tail -n +"$KEEP_BACKUPS" \
+    | while IFS= read -r old; do
+        [ -n "$old" ] || continue
+        rm -f -- "$old" && echo "[BACKUP] prune $old（保留最近 $KEEP_BACKUPS 个）"
+      done || true
+
   if ( cd "$BK_PARENT" && tar cf "$BK" --exclude='node_modules' "$(basename "$TARGET_DIR")" 2>/dev/null ); then
     echo "[BACKUP] $BK"
   else
