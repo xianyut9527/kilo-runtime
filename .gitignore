@@ -50,3 +50,11 @@ temp_*
 # 下发器产生的目标目录备份（默认在 ~/.config/ 下，若改为仓内目标则忽略）
 kilo.backup-*.tar
 kilo.json.bak.*
+
+# LLM 排查/调试脚手架产物（曾误提交，此模式覆盖防回归）
+*.rec
+render.tmp.json
+render-check.*
+find-ctrl.*
+find-sub.*
+check.cjs

@@ -147,3 +147,90 @@ const wdElapsed = Date.now() - wdT0;
 console.log("");
 console.log("watchdog elapsed(ms):", wdElapsed);
 console.log("PASS watchdog-fires         :", Boolean(wdError) && /chunkTimeout/.test(String(wdError?.message)) && wdElapsed < 5000);
+
+// ── 回归 4：流中断重包装（2026-09-15 断流专项）────────────────────────────
+// 生产事故形态：200 OK + SSE 中途断开 → provider-utils 把 body 读取错误包成
+// APICallError{statusCode:200, isRetryable:false}（消费期从流上抛，不进 withFailover
+// 的 catch）→ Kilo 自动重试门只认 isRetryable:true → 错误直达用户。
+// 修复后：消费期断流错误必须被重包装为 isRetryable:true，且不触发 provider 内部重试
+// （流已交给调用方，重放会重复输出；重试由 Kilo 会话级整条消息重跑接管）。
+const APICALL_MARKER = Symbol.for("vercel.ai.error.AI_APICallError");
+
+// 4a：模拟 socket 断开 —— body 流产出 2 个 chunk 后以 undici「terminated」形态报错。
+// 注意必须异步 error：start() 里同步 error 会按规范丢弃已入队 chunk，模拟不出「部分输出后断流」
+let fetchCount4 = 0;
+const fakeFetch4 = async (url, init) => {
+  fetchCount4++;
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  const body = new ReadableStream({
+    start(controller) {
+      const enc = new TextEncoder();
+      controller.enqueue(enc.encode(`data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", created: 1, model, choices: [{ index: 0, delta: { role: "assistant", content: "Hel" }, finish_reason: null }] })}\n\n`));
+      setTimeout(() => {
+        controller.enqueue(enc.encode(`data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", created: 1, model, choices: [{ index: 0, delta: { content: "lo" }, finish_reason: null }] })}\n\n`));
+        // undici 断流形态：TypeError "terminated"（cause ECONNRESET）
+        controller.error(Object.assign(new TypeError("terminated"), { cause: { code: "ECONNRESET" } }));
+      }, 20);
+    },
+  });
+  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p4 = createHxFailover({
+  name: "hx",
+  baseURL: "https://stub.local/v1",
+  apiKey: "stub",
+  fetch: fakeFetch4,
+  // 链上只有主模型（explicit 空链），确保任何内部重试/换模型都无处可去，fetch 计数才可信
+  failover: { chain: { models: [] } },
+});
+let breakError = null, breakText = "";
+const keepAlive4 = setInterval(() => {}, 100);
+try {
+  const { stream } = await p4.languageModel("glm-5.3-flash").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+  for await (const part of stream) {
+    if (part.type === "text-delta") breakText += part.delta ?? part.textDelta ?? "";
+  }
+} catch (e) { breakError = e; }
+clearInterval(keepAlive4);
+console.log("");
+console.log("4a partial text before break:", JSON.stringify(breakText), "| fetch calls:", fetchCount4);
+console.log("  error:", breakError?.name, "|", String(breakError?.message).slice(0, 90));
+console.log("PASS break-marked-retryable :", Boolean(breakError) && breakError[APICALL_MARKER] === true && breakError.isRetryable === true);
+console.log("PASS break-status-kept-200  :", breakError?.statusCode === 200);
+console.log("PASS break-cause-preserved  :", String(breakError?.cause?.message ?? "").includes("Failed to process successful response") || String(breakError?.cause?.message ?? "").includes("terminated"));
+console.log("PASS break-no-inner-retry   :", fetchCount4 === 1);
+console.log("PASS break-after-partial    :", breakText === "Hello");
+
+// 4b：消费期取消（用户停止）必须直通，绝不能被标记成可重试
+let fetchCount4b = 0;
+const fakeFetch4b = async (url, init) => {
+  fetchCount4b++;
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", created: 1, model: "m", choices: [{ index: 0, delta: { role: "assistant", content: "x" }, finish_reason: null }] })}\n\n`));
+      controller.error(Object.assign(new Error("The operation was aborted."), { name: "AbortError" }));
+    },
+  });
+  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p4b = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch4b,
+  failover: { chain: { models: [] } },
+});
+let cancelErr = null;
+try {
+  const { stream } = await p4b.languageModel("glm-5.3-flash").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+  for await (const _ of stream) { /* 收到 1 chunk 后流报取消错 */ }
+} catch (e) { cancelErr = e; }
+console.log("");
+console.log("PASS cancel-midstream-passthrough :", cancelErr?.name === "AbortError" && cancelErr?.isRetryable !== true);
+
+// 4c：回归 3 的看门狗错误现在必须是可重试形态（挂死 → Kilo 自动重试接管，而非用户面前报错）
+console.log("PASS watchdog-retryable     :", Boolean(wdError) && wdError[APICALL_MARKER] === true && wdError.isRetryable === true);

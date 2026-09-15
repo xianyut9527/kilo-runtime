@@ -18,6 +18,7 @@
 //                  ② 失败 profile 临时停用+冷却
 //                  ③ 切换注入可见通知 ④ 禁止嵌套 ⑤ 全链失败抛原始最后一个错误
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { APICallError } from "@ai-sdk/provider";
 import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -122,10 +123,58 @@ function isRetryable(err) {
   if (isCancellation(err)) return false;
   const status = err?.statusCode ?? err?.status ?? err?.response?.status;
   if (typeof status === "number") {
+    // 2xx 状态的 API 错误只可能是「成功响应 body 处理失败」（真实 API 错误必带 4xx/5xx），
+    // 此错误从 doStream() 调用内抛出时尚无内容交付给调用方 → 可安全走内部重试/降级
+    if (status >= 200 && status < 300) return true;
     return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
   }
   // 无状态码（网络中断/无效 key 导致的解析失败）也触发降级——legacy 的「API 错误即触发」
   return true;
+}
+
+// ── 流中断错误重包装（2026-09-15 断流专项）────────────────────────────
+// 背景：natapp 隧道偶发「200 OK + SSE 流中途断开」。AI SDK 在成功响应 body
+// 读取阶段出错时（provider-utils wrapResponseBodyStream.pull，消费期抛出，
+// 不经过 withFailover 的 catch）包装为 APICallError{statusCode:200,
+// isRetryable:false, message:"Failed to process successful response"}；
+// Kilo 的自动重试门（exe 反编译实证）只放行 APIError.isInstance &&
+// (data.isRetryable || statusCode>=500)，于是错误直达用户，只能手动重发。
+//
+// 解法：doStream 返回的流外层再包一层，消费期读到流中断类错误时重包装为
+// APICallError{isRetryable:true} 上抛，让 Kilo 会话级重试接管（整条消息重跑）。
+// provider 侧绝不在流中途重放——流已交给调用方，重放必然重复输出（与
+// chunkTimeout 看门狗注释同理）；chunkTimeout 主动中断也走同一重包装，
+// 「挂死 30s」从用户面前报错变为自动重试。
+//
+// 取消类（用户停止/客户端断连）绝不重包装：原样上抛，避免已中止 signal 上空转。
+function isStreamBreakError(err) {
+  if (isCancellation(err)) return false;
+  // 2xx 状态的 APICallError 即「成功响应 body 处理失败」的规范形态（版本鲁棒，
+  // 不依赖 message 文案）；message 兜底覆盖老版本包装文案
+  if (APICallError.isInstance(err)) {
+    const s = err.statusCode;
+    if (typeof s === "number" && s >= 200 && s < 300) return true;
+    if (String(err.message ?? "").includes("Failed to process successful response")) return true;
+  }
+  // chunkTimeout 看门狗主动中断（流静默挂死）
+  if (String(err?.message ?? "").includes("chunkTimeout 看门狗")) return true;
+  // 裸 body 读取断裂（socket 层错误直接从底层流抛出的变体）
+  const msg = `${String(err?.message ?? err)} ${String(err?.cause?.message ?? err?.cause?.code ?? "")}`;
+  return /terminated|socket hang up|ECONNRESET|ECONNABORTED|ERR_STREAM_PREMATURE_CLOSE|premature close|underlying socket/i.test(msg);
+}
+
+function rewrapStreamBreak(err) {
+  if (APICallError.isInstance(err) && err.isRetryable === true) return err;
+  return new APICallError({
+    message: `hx-failover: 上游流中断（流已开始后断开），已标记可自动重试 —— ${String(err?.message ?? err).slice(0, 300)}`,
+    url: err?.url,
+    requestBodyValues: err?.requestBodyValues,
+    statusCode: err?.statusCode,
+    responseHeaders: err?.responseHeaders,
+    cause: err,
+    // 关键：statusCode 可能是 200（「成功响应处理失败」），必须显式覆盖默认判定
+    isRetryable: true,
+  });
 }
 
 export function createHxFailover(options) {
@@ -190,8 +239,55 @@ export function createHxFailover(options) {
       }
     }
 
-    // R8：全链失败必须抛原始最后一个错误（保留可诊断性），不得静默吞错
+    // R8：全链失败必须抛原始最后一个错误（保留可诊断性），不得静默吞错。
+    // 例外：若最后一个错误是流中断类，重包装为 isRetryable=true —— 内部重试/降级
+    // 已尽力，Kilo 会话级重试是最后兜底；cause 保留原始错误，可诊断性不丢。
+    if (isStreamBreakError(lastError)) {
+      await logFailover({ from: modelId, action: "stream_break_rewrap", error: String(lastError?.message ?? lastError).slice(0, 200) });
+      throw rewrapStreamBreak(lastError);
+    }
     throw lastError ?? new Error("hx-failover: 降级链全部失败");
+  }
+
+  // 流消费期错误重包装：doStream 建流成功后，body 读取/解析阶段的错误由读取方
+  // 在 pull 时收到（不经过 withFailover 的 catch）——这正是生产断流（200 OK +
+  // SSE 中途断开）的路径。此层在最外拦截：流中断类 → 重包装 isRetryable=true
+  // 交给 Kilo 自动重试；取消类与其他错误原样直通。
+  function withStreamBreakRewrap(stream, modelId) {
+    const reader = stream.getReader();
+    let emittedAny = false; // 断流前是否已产出内容（诊断用：Kilo 重试整条消息重跑）
+    return new ReadableStream({
+      async pull(controller) {
+        let next;
+        try {
+          next = await reader.read();
+        } catch (error) {
+          if (isStreamBreakError(error)) {
+            const wrapped = rewrapStreamBreak(error);
+            logFailover({
+              from: modelId,
+              action: "stream_break_rewrap",
+              emittedAny,
+              status: wrapped.statusCode,
+              error: String(error?.message ?? error).slice(0, 200),
+            });
+            controller.error(wrapped);
+          } else {
+            controller.error(error);
+          }
+          return;
+        }
+        if (next.done) {
+          controller.close();
+          return;
+        }
+        emittedAny = true;
+        controller.enqueue(next.value);
+      },
+      cancel(reason) {
+        return reader.cancel(reason).catch(() => {});
+      },
+    });
   }
 
   // 流式空闲看门狗：chunkTimeout 期内没有任何新 chunk 则主动 error 流。
@@ -233,32 +329,36 @@ export function createHxFailover(options) {
       async doStream(callOptions) {
         return withFailover(modelId, async (m, id, hop) => {
           const result = await m.doStream(callOptions);
-          const stream = chunkTimeoutMs > 0 ? withChunkWatchdog(result.stream, chunkTimeoutMs, id) : result.stream;
-          if (hop === 0) return { ...result, stream };
-
-          // 切换通知（legacy 语义③）：在流首插入一行可见提示。
-          // 必须保持 ReadableStream 语义（Kilo 会对 stream 调 pipeThrough），
-          // 且 text-delta 必须配套 text-start/text-end（否则 Kilo 报 "text part ... not found"）。
-          //
-          // 注意：此处的 hop>0 意味着「切换在 doStream 建流之前完成」（上游在返回 stream 前就失败了），
-          // 因此插入通知不会与已输出内容冲突。若失败发生在流读取过程中，异常由读取方抛出，
-          // 不会回到本函数的重试逻辑 —— 即不存在「流中途换模型导致重复输出」的路径。
-          const noticeId = "hx-failover-notice";
-          const prepend = new TransformStream({
-            start(controller) {
-              controller.enqueue({ type: "text-start", id: noticeId });
-              controller.enqueue({
-                type: "text-delta",
-                id: noticeId,
-                delta: `⚠️ [failover] ${modelId} 失败，已自动降级到 ${id}\n\n`,
-              });
-              controller.enqueue({ type: "text-end", id: noticeId });
-            },
-            transform(chunk, controller) {
-              controller.enqueue(chunk);
-            },
-          });
-          return { ...result, stream: stream.pipeThrough(prepend) };
+          let stream = result.stream;
+          if (hop > 0) {
+            // 切换通知（legacy 语义③）：在流首插入一行可见提示。
+            // 必须保持 ReadableStream 语义（Kilo 会对 stream 调 pipeThrough），
+            // 且 text-delta 必须配套 text-start/text-end（否则 Kilo 报 "text part ... not found"）。
+            //
+            // 注意：此处的 hop>0 意味着「切换在 doStream 建流之前完成」（上游在返回 stream 前就失败了），
+            // 因此插入通知不会与已输出内容冲突。若失败发生在流读取过程中，异常由读取方抛出，
+            // 不会回到本函数的重试逻辑 —— 即不存在「流中途换模型导致重复输出」的路径。
+            const noticeId = "hx-failover-notice";
+            const prepend = new TransformStream({
+              start(controller) {
+                controller.enqueue({ type: "text-start", id: noticeId });
+                controller.enqueue({
+                  type: "text-delta",
+                  id: noticeId,
+                  delta: `⚠️ [failover] ${modelId} 失败，已自动降级到 ${id}\n\n`,
+                });
+                controller.enqueue({ type: "text-end", id: noticeId });
+              },
+              transform(chunk, controller) {
+                controller.enqueue(chunk);
+              },
+            });
+            stream = stream.pipeThrough(prepend);
+          }
+          if (chunkTimeoutMs > 0) stream = withChunkWatchdog(stream, chunkTimeoutMs, id);
+          // 最外层：消费期流中断 → 重包装 isRetryable=true，Kilo 会话级重试接管
+          stream = withStreamBreakRewrap(stream, modelId);
+          return { ...result, stream };
         });
       },
       // 供诊断读取（非官方字段，Kilo 忽略）

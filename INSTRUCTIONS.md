@@ -16,7 +16,8 @@
 - 项目级事实写项目记忆（按项目隔离）；跨项目通用经验才写 AGENTS.md。
 
 ## 改代码前
-- 涉及既有代码的改动，先用 gitnexus 查 impact（谁依赖它、影响哪些流程），再动手。
+- 涉及既有代码的改动：若 gitnexus 工具可用（已索引且 MCP 已启用），先查 impact（谁依赖它、影响哪些流程）再动手；
+  gitnexus MCP 默认关闭，改已索引项目前用 /mcps 现开，未索引项目直接跳过，不要尝试调用不存在的 gitnexus 工具。
 - 探索用 explore（省算力），实现由主 agent 承担，深度子任务用 general。
 - 改配置类文件前，先确认改的是「SSOT 仓库」还是「部署副本」：`~/.config/kilo/` 下的
   `kilo.json` / `plugin/` / `agent/` 都由 kilo_config 仓库（本仓库，`git remote -v` 可查）下发，

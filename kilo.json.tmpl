@@ -9,7 +9,7 @@
   "$schema": "https://app.kilo.ai/config.json",
 
   // ── 模型总开关 ──────────────────────────────────────────────────
-  // 主力执行模型（default_agent=code 绑定它）。deepseek-v4.1-flash：快、便宜、支持图像输入
+  // 主力执行模型（default_agent=code 绑定它）。glm-5.3-flash：实测最快档，支持图像输入
   "model": "hx/glm-5.3-flash",
   // 轻任务模型：起会话标题/摘要等后台活，用最便宜的 minimax
   "small_model": "hx/minimax-m3",
@@ -21,7 +21,7 @@
   "default_agent": "code",
 
   // ── 基础行为 ────────────────────────────────────────────────────
-  // 会话级快照：每次编辑前存档，可回滚（checkpoint 功能）
+  // 会话级快照：每次编辑前存档，可回滚（checkpoint 功能）。安全网，性能专项验证后保持开启。
   "snapshot": true,
   // 扩展自动更新（更新后建议跑 ./install.sh --check 确认渲染一致）
   "autoupdate": true,
@@ -31,10 +31,13 @@
   "privacy_mode": true,
   // 允许模型用网络搜索
   "web_search": true,
-  // 保存后自动跑 formatter（prettier 等）
+  // 保存后自动跑 formatter（prettier 等）。性能专项验证后保持开启（关它换不来多少速度，还会漂移代码风格）。
   "formatter": true,
   // LSP 代码智能（跳转/补全/诊断），配合 permission.lsp=allow
   "lsp": true,
+  // 远程控制：常驻云端中继连接，会话事件多一条转发通道（49f8ed9/f3caadd 与模型切换同期引入的
+  // 变慢嫌疑项）。不用手机端盯任务就关；需要时 /remote 临时开
+  "remote_control": false,
 
   // ── 每会话注入的策略文件（认知中心/风险分级/一次性交付/硬约束）──
   // __KILO_HOME__ 由 installer 替换为本机家目录（Kilo 不展开 ~，必须绝对路径）
@@ -49,19 +52,22 @@
   },
 
   // ── 智能体路由（前 5 个是内置 agent 的模型覆盖，verify 是自定义）──
-  // code         默认执行者：写代码/跑命令，主力模型 deepseek-v4.1-flash
+  // code         默认执行者：写代码/跑命令，glm-5.3-flash（实测最快档）。
+  //              ⚠️ 性能红线：49f8ed9 曾把 code 换成 deepseek-v4.1-flash，日常 95% 任务走 code
+  //              agent → 体感全面变慢（git 49f8ed9 即"快→慢"分界，同期还开了 remote_control）。
+  //              换主力模型必须单变量切换并实测对比，不得随其他改动捎带调整。
   // plan         规划模式：出方案不动手，用 kimi 换个视角思考
   // general      深度子任务：难啃的实现/分析，用 glm-5.2 大杯
   // explore      探索代理（subagent）：只读侦察，用最便宜模型扫代码
   // orchestrator 多代理编排：拆解任务分派子代理
-  // verify       自定义复核代理（subagent）：异源模型 kimi 复核 deepseek 的产出
+  // verify       自定义复核代理（subagent）：异源模型 kimi 复核 glm 的产出
   //              —— 不同厂商交叉验证，只读不许改（edit/bash写通道均 deny）
   // variant 默认不设：agent 级默认 high/max 会让每轮工具调用都先深度思考，
   // 多轮任务累积延迟明显（实测体感"非常慢"）。需要时在模型选择器手动切换
   // 思考强度（模型级 variants 已注册 low/medium/high/max）。
   "agent": {
     "code": {
-      "model": "hx/deepseek-v4.1-flash"
+      "model": "hx/glm-5.3-flash"
     },
     "plan": {
       "model": "hx/kimi-k2.6"
@@ -126,10 +132,11 @@
   },
 
   // ── 工具输出截断（防单条输出撑爆上下文）─────────────────────────
-  // 超 2000 行或 51200 字节：全文落盘，只留预览在上下文里
+  // 超 2000 行或 20KB：全文落盘，只留预览在上下文里。
+  // 51200 让大输出常驻上下文，每轮 prefill 重复付费；落盘的文件模型需要时可重读，无损。
   "tool_output": {
     "max_lines": 2000,
-    "max_bytes": 51200
+    "max_bytes": 20480
   },
 
   // ── 文件监视忽略（watcher 不盯这些，省 CPU）────────────────────
@@ -274,8 +281,10 @@
   },
 
   // ── MCP 服务器（外挂工具集，工具名前缀 = 服务器名）───────────────
+  // 性能口径：每个 enabled 的 MCP 都会在会话启动时拉起进程，且全部工具 schema
+  // 每轮都进 prompt（prefill 变大、TTFT 变慢）。低频 MCP 默认关闭，用时 /mcps 现开。
   "mcp": {
-    // 浏览器自动化（导航/截图/表单/快照）
+    // 浏览器自动化（导航/截图/表单/快照）——低频，按需开
     "playwright": {
       "type": "local",
       "command": [
@@ -283,10 +292,10 @@
         "-y",
         "@playwright/mcp@0.0.38"
       ],
-      "enabled": true,
-      "timeout": 10000
+      "enabled": false,
+      "timeout": 30000
     },
-    // 最新库文档查询（防模型用过期 API）
+    // 最新库文档查询（防模型用过期 API）——低频，按需开
     "context7": {
       "type": "local",
       "command": [
@@ -294,17 +303,20 @@
         "-y",
         "@upstash/context7-mcp"
       ],
-      "enabled": true,
-      "timeout": 10000
+      "enabled": false,
+      "timeout": 30000
     },
-    // 代码知识图谱（仓库清单由 gitnexus 自维护，不在此写数量）：impact 影响面分析/依赖查询
+    // 代码知识图谱：impact 影响面分析/依赖查询。默认关闭——只对建过索引的项目有用，
+    // 未索引项目白占启动进程和 prompt 体积；改已索引项目前 /mcps 现开
     "gitnexus": {
       "type": "local",
       "command": [
-        "gitnexus",
+        "npx",
+        "-y",
+        "gitnexus@1.6.12",
         "mcp"
       ],
-      "enabled": true,
+      "enabled": false,
       "timeout": 30000
     }
   },
@@ -331,11 +343,12 @@
       "options": {
         // 上游 OpenAI 兼容端点
         "baseURL": "https://xianyu1.natapp4.cc/v1",
-        // 单次请求最长 5 分钟
-        "timeout": 300000,
-        // 流式空闲看门狗：相邻 chunk 间隔超 2 分钟主动断流（provider 内实现；
-        // fetch timeout 只覆盖到响应头，body 阶段挂死靠它兜底）
-        "chunkTimeout": 120000,
+        // 单次请求最长 2 分钟：慢响应更早显式报错，由重试/用户接管（原 5 分钟死等太久）
+        "timeout": 120000,
+        // 流式空闲看门狗：相邻 chunk 间隔超 60s 主动断流（provider 内实现；
+        // fetch timeout 只覆盖到响应头，body 阶段挂死靠它兜底）。
+        // 60s = 正常流远小于此间隔，又不误伤超长思考不吐字的场景
+        "chunkTimeout": 60000,
         // 故障降级链：主模型失败→依次切换，每跳重试 2 次，
         // 失败模型冷却 60s，切换时流首注入 ⚠️ [failover] 可见提示
         "failover": {
@@ -366,7 +379,6 @@
       "models": {
         // 无路由引用；保留作 test-failover.mjs 取消直通回归的桩模型
         "deepseek-v4-flash": {
-          "name": "deepseek-v4-flash",
           "reasoning": true,
           "variants": {
             "low": { "reasoningEffort": "low" },
@@ -380,7 +392,6 @@
           }
         },
         "deepseek-v4.1-flash": {
-          "name": "deepseek-v4.1-flash",
           "reasoning": true,
           "variants": {
             "low": { "reasoningEffort": "low" },
@@ -403,7 +414,6 @@
           }
         },
         "glm-5.2": {
-          "name": "glm-5.2",
           "reasoning": true,
           "variants": {
             "low": { "reasoningEffort": "low" },
@@ -416,22 +426,7 @@
             "output": 32768
           }
         },
-        "glm-5.3": {
-          "name": "glm-5.3",
-          "reasoning": true,
-          "variants": {
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" }
-          },
-          "limit": {
-            "context": 200000,
-            "output": 32768
-          }
-        },        
         "glm-5.3-flash": {
-          "name": "glm-5.3-flash",
           "reasoning": true,
           "variants": {
             "low": { "reasoningEffort": "low" },
@@ -454,7 +449,6 @@
           }
         },
         "kimi-k2.6": {
-          "name": "kimi-k2.6",
           "reasoning": true,
           "variants": {
             "low": { "reasoningEffort": "low" },
@@ -477,7 +471,6 @@
           }
         },
         "minimax-m3": {
-          "name": "minimax-m3",
           "reasoning": true,
           "variants": {
             "low": { "reasoningEffort": "low" },
@@ -501,6 +494,5 @@
         }
       }
     }
-  },
-    "remote_control": true
+  }
 }

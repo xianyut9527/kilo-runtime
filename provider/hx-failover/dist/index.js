@@ -28208,9 +28208,34 @@ function isRetryable(err) {
   if (isCancellation(err)) return false;
   const status = err?.statusCode ?? err?.status ?? err?.response?.status;
   if (typeof status === "number") {
+    if (status >= 200 && status < 300) return true;
     return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
   }
   return true;
+}
+function isStreamBreakError(err) {
+  if (isCancellation(err)) return false;
+  if (APICallError.isInstance(err)) {
+    const s = err.statusCode;
+    if (typeof s === "number" && s >= 200 && s < 300) return true;
+    if (String(err.message ?? "").includes("Failed to process successful response")) return true;
+  }
+  if (String(err?.message ?? "").includes("chunkTimeout \u770B\u95E8\u72D7")) return true;
+  const msg = `${String(err?.message ?? err)} ${String(err?.cause?.message ?? err?.cause?.code ?? "")}`;
+  return /terminated|socket hang up|ECONNRESET|ECONNABORTED|ERR_STREAM_PREMATURE_CLOSE|premature close|underlying socket/i.test(msg);
+}
+function rewrapStreamBreak(err) {
+  if (APICallError.isInstance(err) && err.isRetryable === true) return err;
+  return new APICallError({
+    message: `hx-failover: \u4E0A\u6E38\u6D41\u4E2D\u65AD\uFF08\u6D41\u5DF2\u5F00\u59CB\u540E\u65AD\u5F00\uFF09\uFF0C\u5DF2\u6807\u8BB0\u53EF\u81EA\u52A8\u91CD\u8BD5 \u2014\u2014 ${String(err?.message ?? err).slice(0, 300)}`,
+    url: err?.url,
+    requestBodyValues: err?.requestBodyValues,
+    statusCode: err?.statusCode,
+    responseHeaders: err?.responseHeaders,
+    cause: err,
+    // 关键：statusCode 可能是 200（「成功响应处理失败」），必须显式覆盖默认判定
+    isRetryable: true
+  });
 }
 function createHxFailover(options) {
   const { name: name15 = "hx", apiKey, headers, fetch: customFetch, failover: failoverOpts, ...rest } = options ?? {};
@@ -28261,7 +28286,48 @@ function createHxFailover(options) {
         }
       }
     }
+    if (isStreamBreakError(lastError)) {
+      await logFailover({ from: modelId, action: "stream_break_rewrap", error: String(lastError?.message ?? lastError).slice(0, 200) });
+      throw rewrapStreamBreak(lastError);
+    }
     throw lastError ?? new Error("hx-failover: \u964D\u7EA7\u94FE\u5168\u90E8\u5931\u8D25");
+  }
+  function withStreamBreakRewrap(stream, modelId) {
+    const reader = stream.getReader();
+    let emittedAny = false;
+    return new ReadableStream({
+      async pull(controller) {
+        let next;
+        try {
+          next = await reader.read();
+        } catch (error62) {
+          if (isStreamBreakError(error62)) {
+            const wrapped2 = rewrapStreamBreak(error62);
+            logFailover({
+              from: modelId,
+              action: "stream_break_rewrap",
+              emittedAny,
+              status: wrapped2.statusCode,
+              error: String(error62?.message ?? error62).slice(0, 200)
+            });
+            controller.error(wrapped2);
+          } else {
+            controller.error(error62);
+          }
+          return;
+        }
+        if (next.done) {
+          controller.close();
+          return;
+        }
+        emittedAny = true;
+        controller.enqueue(next.value);
+      },
+      cancel(reason) {
+        return reader.cancel(reason).catch(() => {
+        });
+      }
+    });
   }
   function withChunkWatchdog(stream, ms, modelId) {
     let timer = null;
@@ -28311,26 +28377,30 @@ function createHxFailover(options) {
       async doStream(callOptions) {
         return withFailover(modelId, async (m, id, hop) => {
           const result = await m.doStream(callOptions);
-          const stream = chunkTimeoutMs > 0 ? withChunkWatchdog(result.stream, chunkTimeoutMs, id) : result.stream;
-          if (hop === 0) return { ...result, stream };
-          const noticeId = "hx-failover-notice";
-          const prepend = new TransformStream({
-            start(controller) {
-              controller.enqueue({ type: "text-start", id: noticeId });
-              controller.enqueue({
-                type: "text-delta",
-                id: noticeId,
-                delta: `\u26A0\uFE0F [failover] ${modelId} \u5931\u8D25\uFF0C\u5DF2\u81EA\u52A8\u964D\u7EA7\u5230 ${id}
+          let stream = result.stream;
+          if (hop > 0) {
+            const noticeId = "hx-failover-notice";
+            const prepend = new TransformStream({
+              start(controller) {
+                controller.enqueue({ type: "text-start", id: noticeId });
+                controller.enqueue({
+                  type: "text-delta",
+                  id: noticeId,
+                  delta: `\u26A0\uFE0F [failover] ${modelId} \u5931\u8D25\uFF0C\u5DF2\u81EA\u52A8\u964D\u7EA7\u5230 ${id}
 
 `
-              });
-              controller.enqueue({ type: "text-end", id: noticeId });
-            },
-            transform(chunk, controller) {
-              controller.enqueue(chunk);
-            }
-          });
-          return { ...result, stream: stream.pipeThrough(prepend) };
+                });
+                controller.enqueue({ type: "text-end", id: noticeId });
+              },
+              transform(chunk, controller) {
+                controller.enqueue(chunk);
+              }
+            });
+            stream = stream.pipeThrough(prepend);
+          }
+          if (chunkTimeoutMs > 0) stream = withChunkWatchdog(stream, chunkTimeoutMs, id);
+          stream = withStreamBreakRewrap(stream, modelId);
+          return { ...result, stream };
         });
       },
       // 供诊断读取（非官方字段，Kilo 忽略）
