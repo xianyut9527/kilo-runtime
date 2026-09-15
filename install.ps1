@@ -65,10 +65,17 @@ foreach ($raw in Get-Content $Manifest) {
     }
 }
 
-# 渲染内容（含占位符替换）
+# 渲染内容（含占位符替换 + 模板注释剥离）
+# 注释约定：仅 *.tmpl 里「行首 //」是给人看的注释，部署时剥离成纯 JSON
+# （Kilo 拒绝 JSON 注释键；行内 // 不动，防误伤 URL）
 function Render-Content([string]$SrcPath) {
     $text = [System.IO.File]::ReadAllText($SrcPath, [System.Text.UTF8Encoding]::new($false))
-    if (Test-NeedsSubst $SrcPath) {
+    if ($SrcPath -like '*.tmpl') {
+        $text = ($text -split "`r?`n" | Where-Object { $_ -notmatch '^\s*//' }) -join "`n"
+        $text = $text.Replace('__KILO_CONFIG__', $TargetNative)
+        $text = $text.Replace('__KILO_HOME__', $HomeSlash)
+    }
+    elseif (Test-NeedsSubst $SrcPath) {
         $text = $text.Replace('__KILO_CONFIG__', $TargetNative)
         $text = $text.Replace('__KILO_HOME__', $HomeSlash)
     }

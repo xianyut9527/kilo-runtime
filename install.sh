@@ -74,15 +74,23 @@ needs_subst() {
   esac
 }
 
-# 把源文件渲染到目标（含占位符替换），并返回是否发生变化
+# 把源文件渲染到目标（含占位符替换 + 模板注释剥离），并返回是否发生变化
+# 注释约定：仅 *.tmpl 里「行首 //」是给人看的注释，部署时剥离成纯 JSON
+# （Kilo 拒绝 JSON 注释键；行内 // 不动，防误伤 URL）
 render_file() { # $1=src $2=dst
   local src="$1" dst="$2" tmp
   tmp="$(mktemp)"
-  if needs_subst "$1"; then
-    sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$src" > "$tmp"
-  else
-    cp -f "$src" "$tmp"
-  fi
+  case "$src" in
+    *.tmpl)
+      sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$src" \
+        | sed -e '/^[[:space:]]*\/\//d' > "$tmp" ;;
+    *)
+      if needs_subst "$1"; then
+        sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$src" > "$tmp"
+      else
+        cp -f "$src" "$tmp"
+      fi ;;
+  esac
   local h_src h_dst
   h_src="$(hash_of "$tmp")"
   h_dst=""
@@ -132,7 +140,7 @@ done < "$MANIFEST"
 TOTAL="$(wc -l < "$PAIRS" | tr -d ' ')"
 
 # ---------- 校验：kilo.json.tmpl 渲染后必须是合法 JSON，且不得残留占位符 ----------
-RENDERED_JSON="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl")"
+RENDERED_JSON="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | sed -e '/^[[:space:]]*\/\//d')"
 if printf '%s' "$RENDERED_JSON" | grep -q '__KILO_\(HOME\|CONFIG\)__'; then
   echo "[INSTALL] FAIL: kilo.json.tmpl 渲染后仍残留占位符（provider 将初始化失败）" >&2
   exit 1
@@ -200,9 +208,9 @@ if [ "$STRAYS" -gt 0 ]; then
   printf '%s\n' "$STRAY_LIST" | sed 's/^/    /'
 fi
 if [ -n "$PY" ]; then
-  MODEL="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('model','(none)'))")"
-  SMALL="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('small_model','(none)'))")"
-  AGENTS="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(', '.join(c.get('agent',{}).keys()) or '(none)')")"
+  MODEL="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | sed -e '/^[[:space:]]*\/\//d' | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('model','(none)'))")"
+  SMALL="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | sed -e '/^[[:space:]]*\/\//d' | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('small_model','(none)'))")"
+  AGENTS="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | sed -e '/^[[:space:]]*\/\//d' | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(', '.join(c.get('agent',{}).keys()) or '(none)')")"
   echo "  model    : $MODEL"
   echo "  small    : $SMALL"
   echo "  agents   : $AGENTS"

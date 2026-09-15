@@ -23,9 +23,10 @@
 | `plugin/moa.ts` | 按需多模型分析 | 高风险判断时 3+1 模型交叉（agent 自主决定调用） |
 | `provider/hx-failover/` | 模型故障自动降级 | Kilo 原生只会同模型退避重试；这是可靠性的核心 |
 | `install.*` | 下发器 | 清单驱动 / 幂等 / 备份 / 漂移检测 |
-| `plan.md` | 架构决策记录 | 精简版：能力边界 + 硬约束（防重复踩坑） |
 
-**已删**（评估过，纯过程性）：knowledge-base（知识已固化进 INSTRUCTIONS.md）、telemetry/metrics 脚本（被动诊断）、AGENTS 模板（未接线）。
+**已删**（评估过，非运行时资产）：
+- knowledge-base（知识已固化进 INSTRUCTIONS.md）、telemetry/metrics 脚本（被动诊断）、AGENTS 模板（未接线）。
+- `plan.md` 架构决策记录（2026-09-15）：硬约束已固化进本 README + INSTRUCTIONS.md，模型路由表反而先过期失真；不再保留会漂移的副本。
 
 ## 关键约定（改配置前必读）
 

@@ -17,7 +17,7 @@ const DEFAULT_COOLDOWN_MS = 60_000;
 const MAX_RETRIES_PER_HOP = 2;
 const BACKOFF_MS = [500, 1500];
 
-// 内置默认降级链（plan.md §W3.6）：options.failover 缺失时回退到此
+// 内置默认降级链（kilo.json 的 options.failover 缺失时回退到此；与 kilo.json.tmpl 保持一致）
 // 注意：首位永远是主模型（chainOf 会把 currentModelId 排到最前）。
 const DEFAULT_CHAIN = ["glm-5.3-flash", "kimi-k2.6", "deepseek-v4.1-flash", "glm-5.2"];
 

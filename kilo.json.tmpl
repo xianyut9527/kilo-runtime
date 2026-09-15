@@ -1,25 +1,61 @@
 {
+  // ══════════════════════════════════════════════════════════════════
+  // KiloCode 全局配置（SSOT 模板）
+  // 仓库里这份带注释；install 部署时会剥离所有「行首 //」注释行，
+  // 现网 ~/.config/kilo/kilo.json 保持纯 JSON（Kilo 拒绝自定义键，
+  // 注释键 "//" 会让整份配置失效 —— 所以只能在模板层注释）。
+  // 改完跑 ./install.sh 部署，重启 Kilo 生效。
+  // ══════════════════════════════════════════════════════════════════
   "$schema": "https://app.kilo.ai/config.json",
+
+  // ── 模型总开关 ──────────────────────────────────────────────────
+  // 主力执行模型（default_agent=code 绑定它）。glm-5.3-flash：快、便宜、支持图像输入
   "model": "hx/glm-5.3-flash",
+  // 轻任务模型：起会话标题/摘要等后台活，用最便宜的 minimax
   "small_model": "hx/minimax-m3",
+  // 子代理（task 工具派活）默认模型，深度任务时会按 INSTRUCTIONS 升级到 general
   "subagent_model": "hx/glm-5.3-flash",
+  // 子代理最大嵌套深度（防递归失控）：子→孙 两层封顶
   "subagent_depth": 2,
+  // 无显式指定 agent 时的默认入口
   "default_agent": "code",
+
+  // ── 基础行为 ────────────────────────────────────────────────────
+  // 会话级快照：每次编辑前存档，可回滚（checkpoint 功能）
   "snapshot": true,
+  // 扩展自动更新（更新后建议跑 ./install.sh --check 确认渲染一致）
   "autoupdate": true,
+  // 会话分享彻底关闭（不出网）
   "share": "disabled",
+  // 隐私模式：遥测不上报
   "privacy_mode": true,
+  // 允许模型用网络搜索
   "web_search": true,
+  // 保存后自动跑 formatter（prettier 等）
   "formatter": true,
+  // LSP 代码智能（跳转/补全/诊断），配合 permission.lsp=allow
   "lsp": true,
+
+  // ── 每会话注入的策略文件（认知中心/风险分级/一次性交付/硬约束）──
+  // __KILO_HOME__ 由 installer 替换为本机家目录（Kilo 不展开 ~，必须绝对路径）
   "instructions": [
     "__KILO_HOME__/.config/kilo/INSTRUCTIONS.md"
   ],
+  // 技能目录（48 个技能）：agent 可按需加载领域知识
   "skills": {
     "paths": [
       "__KILO_HOME__/.agents/skills"
     ]
   },
+
+  // ── 智能体路由（前 5 个是内置 agent 的模型覆盖，verify 是自定义）──
+  // code         默认执行者：写代码/跑命令，主力模型
+  // plan         规划模式：出方案不动手，用 kimi 换个视角思考
+  // general      深度子任务：难啃的实现/分析，用 glm-5.2 大杯
+  // explore      探索代理（subagent）：只读侦察，用最便宜模型扫代码
+  // orchestrator 多代理编排：拆解任务分派子代理
+  // verify       自定义复核代理（subagent）：异源模型 deepseek 复核
+  //              glm 的产出 —— 不同厂商交叉验证，只读不许改（edit=deny）
   "agent": {
     "code": {
       "model": "hx/glm-5.3-flash"
@@ -45,18 +81,31 @@
       }
     }
   },
+
+  // ── 上下文压缩（长会话不丢关键信息）─────────────────────────────
+  // token 到上下文窗口 85% 时自动触发压缩
   "compaction": {
     "auto": true,
+    // 压缩时顺手裁剪老的工具输出（它们最占空间）
     "prune": true,
+    // 最近 6 轮用户消息保留原文（含其后 assistant/工具回复）
     "tail_turns": 6,
+    // 压缩后最多保 4 万 token 的近期内容不进摘要
     "preserve_recent_tokens": 40000,
+    // 给压缩过程本身留 3.2 万 token 缓冲（防溢出）
     "reserved": 32000,
+    // 触发阈值（7.6.2 官方字段）
     "threshold_percent": 85
   },
+
+  // ── 工具输出截断（防单条输出撑爆上下文）─────────────────────────
+  // 超 2000 行或 51200 字节：全文落盘，只留预览在上下文里
   "tool_output": {
     "max_lines": 2000,
     "max_bytes": 51200
   },
+
+  // ── 文件监视忽略（watcher 不盯这些，省 CPU）────────────────────
   "watcher": {
     "ignore": [
       "node_modules/**",
@@ -70,17 +119,27 @@
       "target/**"
     ]
   },
+
+  // ── git 提交信息生成规则（中文 commit）──────────────────────────
   "commit_message": {
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
   },
+
+  // ── 权限（安全核心，语义实测与官方文档不同，注意两条）────────────
+  // ① 最后一条匹配者生效（非文档说的 first-match）→ 兜底 "*" 必须放最前
+  // ② --auto 无人值守下 ask 等于 allow → 想真拦必须写 deny
+  // 三道防线：permission-guard 插件(动态) → 本静态规则 → deny 兜底
   "permission": {
+    // bash：* 兜底 ask 在最前；具体规则在后覆盖
     "bash": {
       "*": "ask",
+      // 只读 git 操作放行
       "git status*": "allow",
       "git diff*": "allow",
       "git log*": "allow",
       "git show*": "allow",
       "git branch*": "allow",
+      // 安全的写操作放行
       "git add*": "allow",
       "git commit*": "allow",
       "git stash*": "allow",
@@ -93,6 +152,7 @@
       "git describe*": "allow",
       "git blame*": "allow",
       "git config --get*": "allow",
+      // 影响远端/历史的操作要人工确认
       "git push*": "ask",
       "git merge*": "ask",
       "git rebase*": "ask",
@@ -100,7 +160,9 @@
       "git checkout*": "ask",
       "git restore*": "ask",
       "git revert*": "ask",
+      // 不可逆清空工作区：绝对禁止
       "git clean*": "deny",
+      // npm：本地操作放行
       "npm run*": "allow",
       "npm test*": "allow",
       "npm install*": "allow",
@@ -108,9 +170,11 @@
       "npm ls*": "allow",
       "npm view*": "allow",
       "npm outdated*": "allow",
+      // 发布类操作：绝对禁止（发布是不可逆的公开行为）
       "npm publish*": "deny",
       "npm unpublish*": "deny",
       "npm pack*": "deny",
+      // PowerShell 只读命令放行
       "Get-ChildItem *": "allow",
       "Get-Content *": "allow",
       "Get-Item *": "allow",
@@ -119,16 +183,22 @@
       "Test-Path *": "allow",
       "Measure-Object *": "allow",
       "Get-Process *": "allow",
+      // node 任意脚本放行（构建/测试需要；危险操作由插件动态拦）
       "node *": "allow",
       "rg *": "allow",
+      // 递归强删：绝对禁止（插件层还会按内容二次拦截）
       "rm -rf *": "deny",
       "Remove-Item -Recurse -Force *": "deny"
     },
+    // 只读类工具全放行
     "read": "allow",
     "glob": "allow",
     "grep": "allow",
     "list": "allow",
+    // 子代理派活放行（配合 subagent_depth=2 防失控）
     "task": "allow",
+    // 文件编辑：* 兜底 ask 最前 → src 放行 → 锁文件全部 deny
+    // （锁文件由包管理器维护，手改必炸；插件层还堵了 sed/node 绕过通道）
     "edit": {
       "*": "ask",
       "src/**": "allow",
@@ -157,25 +227,40 @@
       "*.lock": "deny",
       "**/*.lock": "deny"
     },
+    // 访问工作目录之外：要确认
     "external_directory": "ask",
+    // 网络读取/搜索放行（凭证路径由插件拦）
     "webfetch": "allow",
     "websearch": "allow",
+    // 原生记忆读写放行（自我进化的通道，默认 ask 会锁死自主沉淀）
     "kilo_memory_save": "allow",
     "kilo_memory_recall": "allow",
+    // LSP 智能放行
     "lsp": "allow",
+    // 技能加载放行
     "skill": "allow",
+    // 语义搜索放行（代码索引查询）
     "semantic_search": "allow",
+    // Playwright MCP 全部工具要确认（浏览器能干的事太多）
     "playwright_*": "ask",
+    // 待办读写放行（任务管理）
     "todowrite": "allow",
     "todoread": "allow",
+    // 向用户提问放行
     "question": "allow",
+    // 死循环检测放行
     "doom_loop": "allow",
+    // markdown 源渲染放行
     "markdown_source": "allow",
+    // notebook 只读放行，写/执行要确认
     "notebook_read": "allow",
     "notebook_edit": "ask",
     "notebook_execute": "ask"
   },
+
+  // ── MCP 服务器（外挂工具集，工具名前缀 = 服务器名）───────────────
   "mcp": {
+    // 浏览器自动化（导航/截图/表单/快照）
     "playwright": {
       "type": "local",
       "command": [
@@ -186,6 +271,7 @@
       "enabled": true,
       "timeout": 10000
     },
+    // 最新库文档查询（防模型用过期 API）
     "context7": {
       "type": "local",
       "command": [
@@ -196,6 +282,7 @@
       "enabled": true,
       "timeout": 10000
     },
+    // 代码知识图谱（59 个已索引仓库）：impact 影响面分析/依赖查询
     "gitnexus": {
       "type": "local",
       "command": [
@@ -206,20 +293,35 @@
       "timeout": 30000
     }
   },
+
+  // ── 实验开关（7.6.2 支持，已逐个验证）───────────────────────────
+  // 子代理可自选模型/推理力度（配 general/explore 路由更灵活）
+  // 主子代理共享任务看板（发现互通，不重复探索）
+  // batch 工具（多工具调用合并成一轮，省 token）
   "experimental": {
     "task_model_selection": true,
     "shared_agent_board": true,
     "batch_tool": true,
+    // OpenTelemetry 关闭
     "openTelemetry": false
   },
+
+  // ── 自研 provider：hx（带四级故障降级）──────────────────────────
+  // npm 指向本地自包含包（dist 已打包全部依赖，无 node_modules 依赖）
+  // __KILO_CONFIG__ 由 installer 替换为部署目录（file:/// 三斜杠必须）
   "provider": {
     "hx": {
       "name": "hx",
       "npm": "file:///__KILO_CONFIG__/provider/hx-failover",
       "options": {
+        // 上游 OpenAI 兼容端点
         "baseURL": "https://xianyu1.natapp4.cc/v1",
+        // 单次请求最长 5 分钟
         "timeout": 300000,
+        // 流式响应单 chunk 最长 2 分钟（防挂死）
         "chunkTimeout": 120000,
+        // 故障降级链：主模型失败→依次切换，每跳重试 2 次，
+        // 失败模型冷却 60s，切换时流首注入 ⚠️ [failover] 可见提示
         "failover": {
           "chain": {
             "models": [
@@ -230,6 +332,8 @@
             ]
           }
         },
+        // moa 工具配置（plugin/moa.ts 读这里）：高风险判断时
+        // 2 个参考模型独立分析 → kimi 聚合交叉结论
         "moa": {
           "references": [
             "glm-5.2",
@@ -238,6 +342,7 @@
           "aggregator": "kimi-k2.6"
         }
       },
+      // 模型注册表（catalog：能力/上下文窗口/输出上限）
       "models": {
         "deepseek-v4-flash": {
           "name": "deepseek-v4-flash",
