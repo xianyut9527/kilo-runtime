@@ -118,7 +118,6 @@ while IFS= read -r raw; do
   dst="${line##*->}"
   src="$(echo "$src" | sed 's/[[:space:]]*$//')"
   dst="$(echo "$dst" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-  [ "$dst" = "$src" ] && dst="$src"
 
   if [ -d "$SCRIPT_DIR/$src" ] || [ "${src%/}" != "$src" ]; then
     root="${src%/}"
@@ -138,6 +137,17 @@ while IFS= read -r raw; do
 done < "$MANIFEST"
 
 TOTAL="$(wc -l < "$PAIRS" | tr -d ' ')"
+
+# ---------- provider dist 新鲜度：src 比 dist 新说明忘跑 build，部署的会是旧行为 ----------
+SRC_JS="$SCRIPT_DIR/provider/hx-failover/src/index.js"
+DIST_JS="$SCRIPT_DIR/provider/hx-failover/dist/index.js"
+if [ -f "$SRC_JS" ] && [ -f "$DIST_JS" ] && [ "$SRC_JS" -nt "$DIST_JS" ]; then
+  echo "[INSTALL] WARN: provider src/index.js 比 dist/index.js 新 —— 先在 provider/hx-failover 跑 npm run build 再下发" >&2
+  if [ "$CHECK" = "1" ]; then
+    echo "[check] 漂移：provider dist 过期（src 已改未重建）" >&2
+    exit 1
+  fi
+fi
 
 # ---------- 校验：kilo.json.tmpl 渲染后必须是合法 JSON，且不得残留占位符 ----------
 RENDERED_JSON="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | sed -e '/^[[:space:]]*\/\//d')"

@@ -3,19 +3,29 @@
 // 契约（7.6.2 实测）：
 //   - provider 工厂被调用时收到 { name, baseURL, apiKey, headers, fetch }
 //   - 工厂须返回 provider 对象：可调用 + languageModel/chatModel/embeddingModel/... 方法
-//   - languageModel(id) 返回 LanguageModelV2：{ specificationVersion:"v2", provider, modelId, supportedUrls, doStream, doGenerate }
+//   - languageModel(id) 返回 LanguageModelV3：{ specificationVersion:"v3", provider, modelId, supportedUrls, doStream, doGenerate }
 //   - kilo.json 的 `provider.hx.options.failover` 原样透传到 options（schema 未封死 additionalProperties）
 //
-// legacy 五项语义：① 错误即触发（不限状态码）② 失败 profile 临时停用+冷却
+// ⚠️ spec 版本必须是 v3（Kilo 7.6.2 运行时 spec）：
+// 声明 v2 会让 Kilo 走兼容桥（日志 "Using v2 specification compatibility mode"），
+// 该桥把 finishReason 归一化后整轮丢失，落库为 step-finish.reason="unknown"、
+// tokens 全 0，UI 报「回合已结束，模型未提供结束原因」。2026-09-15 用受控实验确认：
+// 同一包装声明 v3 时 reason=stop，声明 v2 时 reason=unknown。
+// 因此依赖锁 @ai-sdk/openai-compatible ^2（其 specificationVersion 为 "v3"），
+// 不可退回 ^1（"v2"）。
+//
+// legacy 五项语义：① 错误即触发（不限状态码，唯一例外见 isCancellation：调用方取消直通）
+//                  ② 失败 profile 临时停用+冷却
 //                  ③ 切换注入可见通知 ④ 禁止嵌套 ⑤ 全链失败抛原始最后一个错误
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const DEFAULT_COOLDOWN_MS = 60_000;
 const MAX_RETRIES_PER_HOP = 2;
 const BACKOFF_MS = [500, 1500];
+const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 
 // 内置默认降级链（kilo.json 的 options.failover 缺失时回退到此；与 kilo.json.tmpl 保持一致）
 // 注意：首位永远是主模型（chainOf 会把 currentModelId 排到最前）。
@@ -35,6 +45,11 @@ async function logFailover(record) {
     const p = failoverLogPath();
     if (!logDirReady) logDirReady = mkdir(join(p, ".."), { recursive: true });
     await logDirReady;
+    // 简单轮转：超 5MB 归档为 .1（只保一代；事件频率低，足够排查用）
+    try {
+      const st = await stat(p);
+      if (st.size > LOG_ROTATE_BYTES) await rename(p, `${p}.1`);
+    } catch { /* 文件不存在或轮转失败都不影响写日志 */ }
     await appendFile(p, JSON.stringify({ ts: new Date().toISOString(), kind: "failover", ...record }) + "\n", "utf8");
   } catch {
     // 写日志失败绝不影响模型调用
@@ -91,12 +106,25 @@ function chainOf(options, currentModelId) {
   return ordered;
 }
 
+// 调用方主动取消（用户按停止 / 会话被取消 / 客户端断连）绝不是上游故障：
+// 必须原样直通抛出，否则会在已 aborted 的 signal 上把整条降级链各试 3 次（实测 4 模型 × 3 次 ≈ 8s），
+// 并给每个模型打上冷却标记，导致冷却期内的备用模型被 skip_cooldown 跳过 → 真故障时无备用可用、直接停止。
+// 判据优先用 name：跨包/跨 realm 的 AbortError 实例 instanceof Error 不成立；旧运行时无 Error.isError。
+// 注意：TimeoutError/ResponseAborted 是 AI SDK 归一化后的真实超时/上游断流，仍按下文重试+降级处理。
+function isCancellation(err) {
+  const name = err?.name;
+  if (name === "AbortError") return true;
+  const code = err?.code ?? err?.cause?.code;
+  return code === "ABORT_ERR";
+}
+
 function isRetryable(err) {
+  if (isCancellation(err)) return false;
   const status = err?.statusCode ?? err?.status ?? err?.response?.status;
   if (typeof status === "number") {
     return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
   }
-  // 无状态码（网络/超时/abort/无效 key 导致的解析失败）也触发降级——legacy 的「API 错误即触发」
+  // 无状态码（网络中断/无效 key 导致的解析失败）也触发降级——legacy 的「API 错误即触发」
   return true;
 }
 
@@ -108,11 +136,13 @@ export function createHxFailover(options) {
   }
 
   // Kilo/自研扩展键不可透传给 @ai-sdk/openai-compatible（未知键会报错）
-  const EXTENSION_KEYS = ["failover", "moa"];
+  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout"];
   const sdkOptions = { ...rest, name, apiKey, headers, fetch: customFetch };
   for (const k of EXTENSION_KEYS) delete sdkOptions[k];
 
   const cooldownMs = Number(failoverOpts?.cooldownMs) > 0 ? Number(failoverOpts.cooldownMs) : DEFAULT_COOLDOWN_MS;
+  // 流式空闲看门狗（kilo.json options.chunkTimeout；0/缺省 = 关闭）
+  const chunkTimeoutMs = Number(options?.chunkTimeout) > 0 ? Number(options.chunkTimeout) : 0;
 
   const provider = createOpenAICompatible(sdkOptions);
 
@@ -134,6 +164,11 @@ export function createHxFailover(options) {
           return await run(model, id, hop);
         } catch (err) {
           lastError = err;
+          // 取消类错误：只记一条诊断日志，立即原样抛出（不进冷却，不换模型）
+          if (isCancellation(err)) {
+            await logFailover({ from: modelId, at: id, action: "cancelled" });
+            throw err;
+          }
           if (!isRetryable(err)) throw err;
 
           if (attempt < MAX_RETRIES_PER_HOP) {
@@ -159,10 +194,36 @@ export function createHxFailover(options) {
     throw lastError ?? new Error("hx-failover: 降级链全部失败");
   }
 
+  // 流式空闲看门狗：chunkTimeout 期内没有任何新 chunk 则主动 error 流。
+  // 背景：fetch timeout 只覆盖到响应头，body 阶段挂死会无限等待且上层无感知
+  // （chunkTimeout 曾是「无消费者的无效配置」，2026-09-15 补实现）。
+  // 看门狗把「静默挂死」转成「显式报错」，由上层（Kilo 重试/用户重发）接管；
+  // 不触发本包的模型降级 —— 流已交给调用方，重放语义不安全。
+  function withChunkWatchdog(stream, ms, modelId) {
+    let timer = null;
+    const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    const arm = (controller) => {
+      clear();
+      timer = setTimeout(() => {
+        try {
+          controller.error(new Error(`hx-failover: ${modelId} 流式响应超过 ${ms}ms 无新数据（chunkTimeout 看门狗），主动中断`));
+        } catch { /* controller 已关闭则忽略 */ }
+      }, ms);
+      timer.unref?.(); // 看门狗不阻止进程退出
+    };
+    const watch = new TransformStream({
+      start(controller) { arm(controller); },
+      transform(chunk, controller) { arm(controller); controller.enqueue(chunk); },
+      flush() { clear(); },
+      cancel() { clear(); },
+    });
+    return stream.pipeThrough(watch);
+  }
+
   function wrap(modelId) {
     const inner = provider.chatModel(modelId);
     return {
-      specificationVersion: "v2",
+      specificationVersion: "v3",
       provider: inner.provider ?? name,
       modelId,
       supportedUrls: inner.supportedUrls ?? {},
@@ -172,7 +233,8 @@ export function createHxFailover(options) {
       async doStream(callOptions) {
         return withFailover(modelId, async (m, id, hop) => {
           const result = await m.doStream(callOptions);
-          if (hop === 0) return result;
+          const stream = chunkTimeoutMs > 0 ? withChunkWatchdog(result.stream, chunkTimeoutMs, id) : result.stream;
+          if (hop === 0) return { ...result, stream };
 
           // 切换通知（legacy 语义③）：在流首插入一行可见提示。
           // 必须保持 ReadableStream 语义（Kilo 会对 stream 调 pipeThrough），
@@ -196,7 +258,7 @@ export function createHxFailover(options) {
               controller.enqueue(chunk);
             },
           });
-          return { ...result, stream: result.stream.pipeThrough(prepend) };
+          return { ...result, stream: stream.pipeThrough(prepend) };
         });
       },
       // 供诊断读取（非官方字段，Kilo 忽略）
@@ -206,7 +268,7 @@ export function createHxFailover(options) {
 
   const wrapped = (id) => wrap(id);
   wrapped.provider = name;
-  wrapped.specificationVersion = "v2";
+  wrapped.specificationVersion = "v3";
   wrapped.languageModel = (id) => wrap(id);
   wrapped.chatModel = (id) => wrap(id);
   wrapped.embeddingModel = (id) => provider.embeddingModel(id);

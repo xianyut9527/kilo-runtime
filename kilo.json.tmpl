@@ -9,7 +9,7 @@
   "$schema": "https://app.kilo.ai/config.json",
 
   // ── 模型总开关 ──────────────────────────────────────────────────
-  // 主力执行模型（default_agent=code 绑定它）。glm-5.3-flash：快、便宜、支持图像输入
+  // 主力执行模型（default_agent=code 绑定它）。deepseek-v4.1-flash：快、便宜、支持图像输入
   "model": "hx/glm-5.3-flash",
   // 轻任务模型：起会话标题/摘要等后台活，用最便宜的 minimax
   "small_model": "hx/minimax-m3",
@@ -41,7 +41,7 @@
   "instructions": [
     "__KILO_HOME__/.config/kilo/INSTRUCTIONS.md"
   ],
-  // 技能目录（48 个技能）：agent 可按需加载领域知识
+  // 技能目录：agent 可按需加载领域知识（技能增删无需改配置）
   "skills": {
     "paths": [
       "__KILO_HOME__/.agents/skills"
@@ -49,16 +49,19 @@
   },
 
   // ── 智能体路由（前 5 个是内置 agent 的模型覆盖，verify 是自定义）──
-  // code         默认执行者：写代码/跑命令，主力模型
+  // code         默认执行者：写代码/跑命令，主力模型 deepseek-v4.1-flash
   // plan         规划模式：出方案不动手，用 kimi 换个视角思考
   // general      深度子任务：难啃的实现/分析，用 glm-5.2 大杯
   // explore      探索代理（subagent）：只读侦察，用最便宜模型扫代码
   // orchestrator 多代理编排：拆解任务分派子代理
-  // verify       自定义复核代理（subagent）：异源模型 deepseek 复核
-  //              glm 的产出 —— 不同厂商交叉验证，只读不许改（edit=deny）
+  // verify       自定义复核代理（subagent）：异源模型 kimi 复核 deepseek 的产出
+  //              —— 不同厂商交叉验证，只读不许改（edit/bash写通道均 deny）
+  // variant 默认不设：agent 级默认 high/max 会让每轮工具调用都先深度思考，
+  // 多轮任务累积延迟明显（实测体感"非常慢"）。需要时在模型选择器手动切换
+  // 思考强度（模型级 variants 已注册 low/medium/high/max）。
   "agent": {
     "code": {
-      "model": "hx/glm-5.3-flash"
+      "model": "hx/deepseek-v4.1-flash"
     },
     "plan": {
       "model": "hx/kimi-k2.6"
@@ -70,14 +73,38 @@
       "model": "hx/minimax-m3"
     },
     "orchestrator": {
-      "model": "hx/deepseek-v4.1-flash"
+      "model": "hx/kimi-k2.6"
     },
     "verify": {
       "mode": "subagent",
-      "model": "hx/deepseek-v4.1-flash",
+      "model": "hx/kimi-k2.6",
       "description": "独立验证视角（异源模型复核高风险改动，只读不改动）。仅在认证/权限/支付/数据迁移/公共契约等高风险改动时按需调用。",
       "permission": {
-        "edit": "deny"
+        "edit": "deny",
+        // 只读强制力补全：堵 bash 直接写通道（前缀式模式，与主配置同形式；
+        // 管道/重定向绕过由 permission-guard 插件按内容二次拦截）
+        "bash": {
+          "sed -i*": "deny",
+          "Set-Content *": "deny",
+          "Out-File *": "deny",
+          "Add-Content *": "deny",
+          "tee *": "deny",
+          "Remove-Item *": "deny",
+          "rm *": "deny",
+          "mv *": "deny",
+          "git add*": "deny",
+          "git commit*": "deny",
+          "git push*": "deny",
+          "git merge*": "deny",
+          "git rebase*": "deny",
+          "git reset*": "deny",
+          "git checkout*": "deny",
+          "git restore*": "deny",
+          "git clean*": "deny",
+          "npm install*": "deny",
+          "npm ci*": "deny",
+          "npm publish*": "deny"
+        }
       }
     }
   },
@@ -199,31 +226,17 @@
     "task": "allow",
     // 文件编辑：* 兜底 ask 最前 → src 放行 → 锁文件全部 deny
     // （锁文件由包管理器维护，手改必炸；插件层还堵了 sed/node 绕过通道）
+    // 非后缀 .lock 的锁文件单列；一切 *.lock 由末尾兜底 deny 覆盖（最后匹配生效）
     "edit": {
       "*": "ask",
       "src/**": "allow",
-      "package-lock.json": "deny",
-      "**/package-lock.json": "deny",
       "npm-shrinkwrap.json": "deny",
       "**/npm-shrinkwrap.json": "deny",
       "pnpm-lock.yaml": "deny",
       "**/pnpm-lock.yaml": "deny",
       "pnpm-lock.yml": "deny",
       "**/pnpm-lock.yml": "deny",
-      "yarn.lock": "deny",
-      "**/yarn.lock": "deny",
-      "bun.lock": "deny",
       "bun.lockb": "deny",
-      "Cargo.lock": "deny",
-      "**/Cargo.lock": "deny",
-      "composer.lock": "deny",
-      "**/composer.lock": "deny",
-      "poetry.lock": "deny",
-      "**/poetry.lock": "deny",
-      "Gemfile.lock": "deny",
-      "**/Gemfile.lock": "deny",
-      "Pipfile.lock": "deny",
-      "uv.lock": "deny",
       "*.lock": "deny",
       "**/*.lock": "deny"
     },
@@ -232,6 +245,8 @@
     // 网络读取/搜索放行（凭证路径由插件拦）
     "webfetch": "allow",
     "websearch": "allow",
+    // MoA 交叉验证工具：要确认（真实计费；--auto 无人值守下 ask 等同放行）
+    "moa": "ask",
     // 原生记忆读写放行（自我进化的通道，默认 ask 会锁死自主沉淀）
     "kilo_memory_save": "allow",
     "kilo_memory_recall": "allow",
@@ -282,7 +297,7 @@
       "enabled": true,
       "timeout": 10000
     },
-    // 代码知识图谱（59 个已索引仓库）：impact 影响面分析/依赖查询
+    // 代码知识图谱（仓库清单由 gitnexus 自维护，不在此写数量）：impact 影响面分析/依赖查询
     "gitnexus": {
       "type": "local",
       "command": [
@@ -318,7 +333,8 @@
         "baseURL": "https://xianyu1.natapp4.cc/v1",
         // 单次请求最长 5 分钟
         "timeout": 300000,
-        // 流式响应单 chunk 最长 2 分钟（防挂死）
+        // 流式空闲看门狗：相邻 chunk 间隔超 2 分钟主动断流（provider 内实现；
+        // fetch timeout 只覆盖到响应头，body 阶段挂死靠它兜底）
         "chunkTimeout": 120000,
         // 故障降级链：主模型失败→依次切换，每跳重试 2 次，
         // 失败模型冷却 60s，切换时流首注入 ⚠️ [failover] 可见提示
@@ -343,10 +359,21 @@
         }
       },
       // 模型注册表（catalog：能力/上下文窗口/输出上限）
+      // variants 必须显式声明：hx 的 npm 是 file:/// 本地包，不命中
+      // Kilo 自动生成 variants 的白名单（@ai-sdk/openai-compatible 等），
+      // 不写则模型选择器里没有"思考强度"选项。key=reasoningEffort 会被
+      // openai-compatible 映射成请求体 reasoning_effort 透传给上游网关。
       "models": {
+        // 无路由引用；保留作 test-failover.mjs 取消直通回归的桩模型
         "deepseek-v4-flash": {
           "name": "deepseek-v4-flash",
           "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
           "limit": {
             "context": 200000,
             "output": 32768
@@ -355,6 +382,12 @@
         "deepseek-v4.1-flash": {
           "name": "deepseek-v4.1-flash",
           "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
           "modalities": {
             "input": [
               "text",
@@ -372,6 +405,12 @@
         "glm-5.2": {
           "name": "glm-5.2",
           "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
           "limit": {
             "context": 200000,
             "output": 32768
@@ -380,6 +419,12 @@
         "glm-5.3-flash": {
           "name": "glm-5.3-flash",
           "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
           "modalities": {
             "input": [
               "text",
@@ -397,6 +442,12 @@
         "kimi-k2.6": {
           "name": "kimi-k2.6",
           "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
           "modalities": {
             "input": [
               "text",
@@ -414,6 +465,12 @@
         "minimax-m3": {
           "name": "minimax-m3",
           "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
           "modalities": {
             "input": [
               "text",

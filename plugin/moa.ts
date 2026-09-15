@@ -7,15 +7,19 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const CONFIG_DIR = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "kilo");
+// 配置目录支持 KILO_CONFIG_DIR 覆盖（install --target 自定义部署时也不至于读不到配置）
+const CONFIG_DIR = process.env.KILO_CONFIG_DIR ||
+  join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "kilo");
 const DATA_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "kilo");
 const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合）
 const TIMEOUT_MS = 120000;
+const CFG_TTL_MS = 60_000; // 配置缓存 60s：改配置后最多 1 分钟生效，无需重启
 
 let cfgCache = null;
+let cfgCacheAt = 0;
 
 async function loadCfg() {
-  if (cfgCache) return cfgCache;
+  if (cfgCache && Date.now() - cfgCacheAt < CFG_TTL_MS) return cfgCache;
   const kilo = JSON.parse(await readFile(join(CONFIG_DIR, "kilo.json"), "utf8"));
   const opts = kilo?.provider?.hx?.options ?? {};
   const auth = JSON.parse(await readFile(join(DATA_DIR, "auth.json"), "utf8"));
@@ -28,6 +32,7 @@ async function loadCfg() {
     references: opts?.moa?.references ?? ["glm-5.2", "deepseek-v4.1-flash"],
     aggregator: opts?.moa?.aggregator ?? "kimi-k2.6",
   };
+  cfgCacheAt = Date.now();
   return cfgCache;
 }
 

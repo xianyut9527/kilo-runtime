@@ -19,7 +19,8 @@
 - 涉及既有代码的改动，先用 gitnexus 查 impact（谁依赖它、影响哪些流程），再动手。
 - 探索用 explore（省算力），实现由主 agent 承担，深度子任务用 general。
 - 改配置类文件前，先确认改的是「SSOT 仓库」还是「部署副本」：`~/.config/kilo/` 下的
-  `kilo.json` / `plugin/` / `agent/` 都由 `E:/AI/agent/kilo_config` 下发，直接改本机副本会在下次下发时被覆盖。
+  `kilo.json` / `plugin/` / `agent/` 都由 kilo_config 仓库（本仓库，`git remote -v` 可查）下发，
+  直接改本机副本会在下次下发时被覆盖。
 
 ## 验证按风险触发（不是流水线）
 - 低风险（文档、注释、格式、非执行配置）：改完即交付。
@@ -37,6 +38,7 @@
 - **权限规则最后一条匹配者生效**：兜底 `*` 必须写在最前，例外（尤其 `deny`）写在后面。
 - **Kilo 不展开 `~`**：路径必须写绝对形式；仓库模板用占位符由安装脚本替换。
 - **`provider.npm` 必须 `file:///`（三斜杠）**。
+- **自研 provider 必须声明 LanguageModel spec `v3`**：声明 `v2` 会走兼容桥丢掉 finishReason/usage，表现为 UI 报「模型未提供结束原因」。
 - 本地 `plugin/*.ts` 自动加载，不必登记进 `plugin` 数组。
 - **不要**在内置 agent 名下写同名 `.md`（会整体覆盖内置提示词）；`verify` 这类非内置 agent 才用 `.md`。
 

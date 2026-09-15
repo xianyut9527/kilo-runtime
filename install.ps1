@@ -65,6 +65,14 @@ foreach ($raw in Get-Content $Manifest) {
     }
 }
 
+# ---------- provider dist 新鲜度：src 比 dist 新说明忘跑 build，部署的会是旧行为 ----------
+$srcJs  = Join-Path $ScriptDir 'provider/hx-failover/src/index.js'
+$distJs = Join-Path $ScriptDir 'provider/hx-failover/dist/index.js'
+if ((Test-Path $srcJs) -and (Test-Path $distJs) -and ((Get-Item $srcJs).LastWriteTime -gt (Get-Item $distJs).LastWriteTime)) {
+    Write-Warning "[INSTALL] WARN: provider src/index.js 比 dist/index.js 新 —— 先在 provider/hx-failover 跑 npm run build 再下发"
+    if ($Check) { Write-Error "[check] 漂移：provider dist 过期（src 已改未重建）"; exit 1 }
+}
+
 # 渲染内容（含占位符替换 + 模板注释剥离）
 # 注释约定：仅 *.tmpl 里「行首 //」是给人看的注释，部署时剥离成纯 JSON
 # （Kilo 拒绝 JSON 注释键；行内 // 不动，防误伤 URL）
