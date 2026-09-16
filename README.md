@@ -29,7 +29,7 @@
 | `scripts/memory-enable.mjs` | 记忆批量启用/体检 | 部署到 `~/.config/kilo/scripts/`：无参=全量状态体检，`<dir>`=显式启用（含非 git 目录），`--db`=从 kilo.db 项目表批量启用；`/memory-setup` 命令的执行体 |
 | `command/memory-setup.md` | 全局命令 | 非 git 目录显式启用记忆 + 排查修复自举失效 |
 | `command/evolve.md` | 全局命令 | 复盘进化：蒸馏近期会话入库 + 修正过期记忆 + 反哺 SSOT（改动需确认） |
-| `provider/hx-failover/` | 模型故障自动降级 + 流式空闲看门狗 + 流中断自动重试 | Kilo 原生只会同模型退避重试；这是可靠性的核心。流中断专项（2026-09-15）：「200 OK + SSE 中途断开」错误重包装为 isRetryable:true → Kilo 会话级自动重试接管，无需手动重发。⚠️ 降级只覆盖模型级故障，baseURL（natapp 隧道）单点故障全链失效——多端点容灾待规划 |
+| `provider/hx-failover/` | 模型故障自动降级 + 流式空闲看门狗 + 流中断自动重试 | Kilo 原生只会同模型退避重试；这是可靠性的核心。流中断专项（2026-09-15）：「200 OK + SSE 中途断开」错误重包装为 isRetryable:true → Kilo 会话级自动重试接管，无需手动重发。⚠️ 降级只覆盖模型级故障，baseURL（natapp 隧道）单点故障全链失效——多端点容灾待规划。⚠️ provider 随 kilo server 进程启动加载（file:// 包整包入内存）：更新 dist 并 install 后，**必须重载 VS Code 窗口才生效**（2026-09-16 实测：9:22 部署的断流修复因 9:20 启动的旧进程未重载，当日仍裸穿报错） |
 | `install.*` | 下发器 | 清单驱动 / 幂等 / 备份 / 漂移检测（含 provider dist 新鲜度检查）；备份只保留最近 2 个（`KILO_KEEP_BACKUPS` 可调，需 ≥1 整数；非法值告警后按默认 2，绝不中断下发） |
 | `db-maintain.sh` | kilo.db 在线瘦身 | 清事件溯源/过期会话（实测 14.2GB→1.1GB），不碰记忆与凭证；分批短事务 + VACUUM 写者门禁 + WAL checkpoint |
 | `cleanup.sh` | 运行痕迹清理 | Kilo 托管临时目录内过期条目 + `%TEMP%` 下 `kilo*` 兄弟项 + `~/.config/kilo.backup-*` 保留上限；**默认 dry-run** |
@@ -155,6 +155,9 @@ New-Item -ItemType Directory -Force "$env:TEMP\kilo-smoke" | Out-Null
 
 # 记忆链路（全量状态体检；本仓库应 enabled=true 且 records>0）
 node scripts\memory-enable.mjs
+
+# quality-gate 纯函数回归（离线，不联网；改 quality-gate.ts/正则后必跑）
+node scripts\test-quality-gate.mjs
 ```
 
 `cleanup.sh` / `db-maintain.sh` 是 bash 脚本，在 Git Bash 里直接跑（`bash cleanup.sh --status`），或经上面的 PowerShell 包装调用。

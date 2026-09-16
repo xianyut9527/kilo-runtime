@@ -365,7 +365,9 @@
         // 60s = 正常流远小于此间隔，又不误伤超长思考不吐字的场景
         "chunkTimeout": 60000,
         // 故障降级链：主模型失败→依次切换，每跳重试 2 次，
-        // 失败模型冷却 60s，切换时流首注入 ⚠️ [failover] 可见提示
+        // 失败模型冷却 60s，切换时流首注入 ⚠️ [failover] 可见提示。
+        // ※ 模型切换的唯一真源就是本配置文件——provider/moa/dual-review 代码均无内置默认链/兜底模型，
+        //   换模型只改这里（agent 路由 / failover / moa / dual_review 都在本文件内）
         "failover": {
           "chain": {
             "models": [

@@ -29,6 +29,8 @@ const provider = createHxFailover({
   baseURL: "https://stub.local/v1",
   apiKey: "stub",
   fetch: fakeFetch,
+  // 显式传链：降级链唯一真源是配置（kilo.json failover.chain.models），代码已无内置默认链
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash", "glm-5.2"] } },
 });
 
 const model = provider.languageModel("glm-5.3-flash");
@@ -50,6 +52,11 @@ console.log("");
 console.log("PASS failover-switched      :", calls.length > 1 && calls[0] === "glm-5.3-flash");
 console.log("PASS notice-injected        :", text.includes("[failover]"));
 console.log("PASS served-by-fallback     :", /\[served-by (kimi-k2\.6|deepseek-v4\.1-flash|glm-5\.2)\]/.test(text));
+
+// ── 回归 1b：未配置 failover → 链 = 仅当前模型（代码无内置默认链，缺配置不猜）────────
+const bare = createHxFailover({ name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch });
+console.log("");
+console.log("PASS no-config-single-model :", bare.languageModel("glm-5.3-flash").hxFailoverChain.length === 1);
 
 // ── 回归 2：调用方取消（AbortError）必须直通 ────────────────────────────────
 // 缺陷复现：旧 isRetryable 把 AbortError 也当可重试 → 在已 aborted 的 signal 上把整条链各试 3 次

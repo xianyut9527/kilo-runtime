@@ -9,8 +9,14 @@ import { join } from "node:path";
 
 const CONFIG_DIR = process.env.KILO_CONFIG_DIR ||
   join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "kilo");
-const DATA_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "kilo");
+// 数据目录：与 kilo.db / auth.json / failover-events.jsonl 同根。
+// memory-bootstrap.ts 复用此常量（同目录部署）；provider/hx-failover 与 scripts/memory-enable.mjs
+// 跨部署边界（独立打包/部署到别处），各自保留本地实现。
+export const DATA_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "kilo");
 export const CFG_TTL_MS = 60_000;
+// 超时兜底：配置缺失/非法时回退（与 kilo.json provider.hx.options.timeout 同值 120s）。
+// moa.ts / dual-review.ts 共享此常量，消除三处分散的 120_000 硬编码。
+export const FALLBACK_TIMEOUT_MS = 120_000;
 
 let cfgCache = null;
 let cfgCacheAt = 0;

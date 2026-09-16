@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
+import { DATA_DIR } from "./hx-client";
 
 const TAG = "[memory-bootstrap]";
 
@@ -47,11 +47,7 @@ const STATE_ENABLED = `{
 }
 `;
 
-function dataDir() {
-  return process.env.XDG_DATA_HOME
-    ? path.join(process.env.XDG_DATA_HOME, "kilo")
-    : path.join(os.homedir(), ".local", "share", "kilo");
-}
+// 数据目录统一取 hx-client 共享常量 DATA_DIR（XDG_DATA_HOME 优先，与 kilo.db/auth.json 同根）
 
 function safeName(name) {
   const s = name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
@@ -117,7 +113,7 @@ function bootstrap(dir) {
   if (!canonical) return false;
   const display = safeName(path.basename(canonical));
   const folder = `${display}-${createHash("sha1").update(canonical).digest("hex").slice(0, 12)}`;
-  const root = path.join(dataDir(), "memory", folder);
+  const root = path.join(DATA_DIR, "memory", folder);
   if (fs.existsSync(path.join(root, "state.json"))) return false;
   fs.mkdirSync(path.join(root, "sessions"), { recursive: true });
   writeIfAbsent(path.join(root, ".gitignore"), "*\n!.gitignore\n");

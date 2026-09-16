@@ -3,12 +3,12 @@
 // 依赖：plugin/hx-client.ts（与 dual-review.ts 共享的配置读取与请求层，改凭证/baseURL 规则只改那边）。
 // 配置：kilo.json -> provider.hx.options.moa.{references,aggregator}；凭证：auth.json 的 hx.key。
 
-import { loadCfg, ask } from "./hx-client";
+import { loadCfg, ask, FALLBACK_TIMEOUT_MS } from "./hx-client";
 
 const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合）
 
-// 超时统一走配置 provider.hx.options.timeout（与主链路/dual-review 同口径）；缺失/非法回退 120s
-const FALLBACK_TIMEOUT_MS = 120_000;
+// 超时统一走配置 provider.hx.options.timeout（与主链路/dual-review 同口径）；
+// 兜底值取 hx-client 共享常量 FALLBACK_TIMEOUT_MS（缺失/非法时 120s）
 
 export const Moa = async () => {
   return {
@@ -30,17 +30,21 @@ export const Moa = async () => {
           const task = String(args?.task ?? "").trim();
           if (!task) return "moa: 缺少 task 参数";
 
+          // 模型唯一真源 = kilo.json provider.hx.options.moa（改模型只改配置文件，代码不留兜底默认值）
+          const cfgMoa = cfg.options?.moa ?? {};
           const refs = (Array.isArray(args?.references) && args.references.length
             ? args.references
-            : (cfg.options?.moa?.references ?? ["glm-5.2", "deepseek-v4.1-flash"])
+            : (Array.isArray(cfgMoa.references) ? cfgMoa.references : [])
           )
             .filter((m) => typeof m === "string" && m)
             .slice(0, MAX_REFS);
           const aggregator = typeof args?.aggregator === "string" && args.aggregator
             ? args.aggregator
-            : (cfg.options?.moa?.aggregator ?? "kimi-k2.6");
+            : (typeof cfgMoa.aggregator === "string" ? cfgMoa.aggregator : "");
 
-          if (refs.length === 0) return "moa: references 为空";
+          if (refs.length === 0 || !aggregator) {
+            return "moa: 参考模型/聚合模型未配置——请在 kilo.json 的 provider.hx.options.moa 配置 references 与 aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
+          }
 
           const timeoutMs = Number(cfg.options?.timeout) > 0 ? Number(cfg.options.timeout) : FALLBACK_TIMEOUT_MS;
 

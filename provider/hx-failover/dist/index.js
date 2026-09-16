@@ -28141,7 +28141,6 @@ var DEFAULT_COOLDOWN_MS = 6e4;
 var MAX_RETRIES_PER_HOP = 2;
 var BACKOFF_MS = [500, 1500];
 var LOG_ROTATE_BYTES = 5 * 1024 * 1024;
-var DEFAULT_CHAIN = ["glm-5.3-flash", "kimi-k2.6", "deepseek-v4.1-flash", "glm-5.2"];
 function failoverLogPath() {
   const dataHome = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
   return join(dataHome, "kilo", "failover-events.jsonl");
@@ -28177,9 +28176,8 @@ function markFailed(id, cooldownMs) {
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
-function chainOf(options, currentModelId) {
+function configuredModelsOf(options) {
   const raw = options?.failover;
-  const explicit = raw !== void 0 && raw !== null && !(typeof raw === "object" && Object.keys(raw).length === 0);
   let list = [];
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     if (Array.isArray(raw.profiles)) list = raw.profiles;
@@ -28188,8 +28186,10 @@ function chainOf(options, currentModelId) {
   } else if (Array.isArray(raw)) {
     list = raw;
   }
-  let models = list.map((p) => typeof p === "string" ? p : p?.model ?? p?.id).filter((m) => typeof m === "string" && m);
-  if (models.length === 0 && !explicit) models = DEFAULT_CHAIN.slice();
+  return list.map((p) => typeof p === "string" ? p : p?.model ?? p?.id).filter((m) => typeof m === "string" && m);
+}
+function chainOf(options, currentModelId) {
+  const models = configuredModelsOf(options);
   const seen = /* @__PURE__ */ new Set();
   const ordered = [currentModelId, ...models].filter((m) => {
     if (!m || seen.has(m)) return false;
@@ -28239,6 +28239,11 @@ function rewrapStreamBreak(err) {
 }
 function createHxFailover(options) {
   const { name: name15 = "hx", apiKey, headers, fetch: customFetch, failover: failoverOpts, ...rest } = options ?? {};
+  const rawF = options?.failover;
+  const explicitF = rawF !== void 0 && rawF !== null && !(typeof rawF === "object" && Object.keys(rawF).length === 0);
+  if (!explicitF) {
+    console.error("hx-failover: \u672A\u914D\u7F6E\u964D\u7EA7\u94FE\uFF08kilo.json provider.hx.options.failover.chain.models\uFF09\u2014\u2014\u4EC5\u7528\u5F53\u524D\u6A21\u578B\uFF0C\u65E0\u81EA\u52A8\u964D\u7EA7");
+  }
   if (failoverOpts?.nested === true || Array.isArray(failoverOpts?.nested)) {
     throw new Error("hx-failover: \u7981\u6B62\u5D4C\u5957 failover \u914D\u7F6E\uFF08legacy \u8BED\u4E49\uFF0C\u9632\u5FAA\u73AF\u4F9D\u8D56\uFF09");
   }

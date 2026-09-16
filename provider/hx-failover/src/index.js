@@ -28,9 +28,9 @@ const MAX_RETRIES_PER_HOP = 2;
 const BACKOFF_MS = [500, 1500];
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 
-// 内置默认降级链（kilo.json 的 options.failover 缺失时回退到此；与 kilo.json.tmpl 保持一致）
-// 注意：首位永远是主模型（chainOf 会把 currentModelId 排到最前）。
-const DEFAULT_CHAIN = ["glm-5.3-flash", "kimi-k2.6", "deepseek-v4.1-flash", "glm-5.2"];
+// 降级链唯一真源 = kilo.json 的 provider.hx.options.failover.chain.models（改模型只改配置文件）。
+// 代码不内置默认链：未配置时链 = 仅当前模型（等于无降级，与 Kilo 原生单模型行为一致），
+// 工厂初始化时打一条 stderr 告警提示补配置。
 
 // 降级记录：事件发生在 provider 内，Kilo 感知不到（不会触发 session.next.retried），
 // 因此包自己写本地 JSONL 便于事后排查（纯追加，失败不影响模型调用）。
@@ -77,9 +77,9 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function chainOf(options, currentModelId) {
+// 从 failover 配置提取模型名列表（供 chainOf 与「缺配置告警」共用）
+function configuredModelsOf(options) {
   const raw = options?.failover;
-  const explicit = raw !== undefined && raw !== null && !(typeof raw === "object" && Object.keys(raw).length === 0);
   let list = [];
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     if (Array.isArray(raw.profiles)) list = raw.profiles;
@@ -88,13 +88,13 @@ function chainOf(options, currentModelId) {
   } else if (Array.isArray(raw)) {
     list = raw;
   }
-
-  let models = list
+  return list
     .map((p) => (typeof p === "string" ? p : p?.model ?? p?.id))
     .filter((m) => typeof m === "string" && m);
+}
 
-  // 未显式配置（或配置为空）时回退内置默认链
-  if (models.length === 0 && !explicit) models = DEFAULT_CHAIN.slice();
+function chainOf(options, currentModelId) {
+  const models = configuredModelsOf(options);
 
   // 主模型永远排第一；去掉重复与嵌套（禁止嵌套：链内不得再含 failover 配置）
   const seen = new Set();
@@ -179,6 +179,14 @@ function rewrapStreamBreak(err) {
 
 export function createHxFailover(options) {
   const { name = "hx", apiKey, headers, fetch: customFetch, failover: failoverOpts, ...rest } = options ?? {};
+
+  // 降级链缺失告警（每工厂一次）：真源在 kilo.json provider.hx.options.failover.chain.models。
+  // 显式配置空链（failover:{chain:{models:[]}}，测试隔离用）是刻意行为，不告警。
+  const rawF = options?.failover;
+  const explicitF = rawF !== undefined && rawF !== null && !(typeof rawF === "object" && Object.keys(rawF).length === 0);
+  if (!explicitF) {
+    console.error("hx-failover: 未配置降级链（kilo.json provider.hx.options.failover.chain.models）——仅用当前模型，无自动降级");
+  }
 
   if (failoverOpts?.nested === true || Array.isArray(failoverOpts?.nested)) {
     throw new Error("hx-failover: 禁止嵌套 failover 配置（legacy 语义，防循环依赖）");

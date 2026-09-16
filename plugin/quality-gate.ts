@@ -85,7 +85,7 @@ function rememberCommand(s, cmd) {
 // 口径与 INSTRUCTIONS「测试或构建」对齐：build/type-check 计入；make/dotnet/phpunit
 // 与直跑 test 前缀脚本（bun test-x.mjs——本仓离线测试的既定形态）也计入。
 const VERIFY_CMD_RE =
-  /(?:^|[;|]|&&|\|\|)\s*(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test|lint|check|typecheck|type-check|build)\b|(?:npx|bunx)\s+(?:jest|vitest|tsc|eslint|ruff)\b|(?:jest|vitest|mypy|pytest|eslint|ruff|tsc)\s|go\s+(?:test|vet)\b|cargo\s+(?:test|check|clippy)\b|python[0-9.]*\s+-m\s+(?:pytest|unittest)\b|(?:mvn|gradlew?)\b[^;&|\n]*\btest\b|make\s+(?:test|check|lint)\b|dotnet\s+test\b|phpunit\b|(?:node|bun|deno|python[0-9.]*)\s+(?:[\w\/\\.-]*[\/\\])?test[\w.-]*\.(?:mjs|cjs|js|ts|tsx|py)\b)/i;
+  /(?:^|[;|]|&&|\|\|)\s*(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test|lint|check|typecheck|type-check|build)\b|(?:npx|bunx)\s+(?:jest|vitest|tsc|eslint|ruff)\b|(?:jest|vitest|mypy|pytest|eslint|ruff|tsc)\s|go\s+(?:test|vet)\b|cargo\s+(?:test|check|clippy)\b|python[0-9.]*\s+-m\s+(?:pytest|unittest)\b|(?:mvn|gradlew?)\b[^;&|\n]*\btest\b|make\s+(?:test|check|lint)\b|dotnet\s+test\b|phpunit\b|(?:node|bun|deno|python[0-9.]*)\s+(?:[\w\/\\.-]*[\/\\])?tests?[\w\/\\.-]*\.(?:mjs|cjs|js|ts|tsx|py)\b)/i;
 export { VERIFY_CMD_RE };
 
 function hasRanVerify(s) {

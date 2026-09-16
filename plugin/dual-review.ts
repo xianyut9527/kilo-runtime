@@ -3,8 +3,8 @@
 // 定位：对一次改动/一份结论做正反两路独立审查——
 //   正向（证成为主）：找「为什么这个方案/改动是对的、完备的」，漏检点、边界遗漏；
 //   反向（证伪为主）：专门找错——逻辑缺陷、边界条件、安全漏洞、遗漏需求、过度设计。
-// 两路并行、不同参考模型分别承担（默认正向 deepseek、反向 glm-5.2——与主执行模型 glm-5.3 异源），
-// 最后由异源聚合模型（kimi）综合出裁决：通过 / 有条件通过（列出必须修复项）/ 不通过。
+// 两路并行、不同参考模型分别承担（默认值见 kilo.json provider.hx.options.dual_review，
+// 与主执行模型异源），最后由异源聚合模型综合出裁决：通过 / 有条件通过（列出必须修复项）/ 不通过。
 // 与 moa 工具的区别：moa 是通用多视角聚合；本工具是改动审查专用协议，正反视角由 prompt 明确分工。
 //
 // 依赖：plugin/hx-client.ts（与 moa.ts 共享的配置读取与请求层，改凭证/baseURL 规则只改那边）。
@@ -14,11 +14,11 @@
 // 不再「提醒模型手动调」，而是插件自身执行正反审查+裁决，结果回注工具结果流。
 // tool: dual_review 仍保留，供模型主动发起（例如覆盖更细粒度的审查对象）。
 
-import { loadCfg, ask } from "./hx-client";
+import { loadCfg, ask, FALLBACK_TIMEOUT_MS } from "./hx-client";
 
 // 超时统一走配置：kilo.json provider.hx.options.timeout（主链路同口径，当前 120s）；
-// 配置缺失/非法才回退 120s。之前硬编码 180s 与主链路/moa 不一致，交付节点最坏拖长 50%。
-const FALLBACK_TIMEOUT_MS = 120_000;
+// 配置缺失/非法才回退，兜底值取 hx-client 共享常量 FALLBACK_TIMEOUT_MS。
+// 之前硬编码 180s 与主链路/moa 不一致，交付节点最坏拖长 50%。
 
 // ── 正反两路 prompt 协议 ─────────────────────────────────────
 
@@ -71,9 +71,14 @@ export async function runDualReview(subject, overrides = {}) {
 
   const timeoutMs = Number(cfg.options?.timeout) > 0 ? Number(cfg.options.timeout) : FALLBACK_TIMEOUT_MS;
 
-  const posModel = typeof overrides?.positive_model === "string" && overrides.positive_model ? overrides.positive_model : (cfg.options?.dual_review?.positive ?? "deepseek-v4.1-flash");
-  const negModel = typeof overrides?.negative_model === "string" && overrides.negative_model ? overrides.negative_model : (cfg.options?.dual_review?.negative ?? "glm-5.2");
-  const aggModel = typeof overrides?.aggregator === "string" && overrides.aggregator ? overrides.aggregator : (cfg.options?.dual_review?.aggregator ?? "kimi-k2.6");
+  // 模型唯一真源 = kilo.json provider.hx.options.dual_review（改模型只改配置文件，代码不留兜底默认值）
+  const dr = cfg.options?.dual_review ?? {};
+  const posModel = typeof overrides?.positive_model === "string" && overrides.positive_model ? overrides.positive_model : dr.positive;
+  const negModel = typeof overrides?.negative_model === "string" && overrides.negative_model ? overrides.negative_model : dr.negative;
+  const aggModel = typeof overrides?.aggregator === "string" && overrides.aggregator ? overrides.aggregator : dr.aggregator;
+  if (!posModel || !negModel || !aggModel) {
+    return "dual_review: 审查模型未配置——请在 kilo.json 的 provider.hx.options.dual_review 配置 positive/negative/aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
+  }
 
   // 正反两路并行；单路失败不废全局（与 moa 同语义）
   const [posRes, negRes] = await Promise.allSettled([
