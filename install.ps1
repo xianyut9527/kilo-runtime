@@ -159,8 +159,8 @@ foreach ($p in $pairs) {
 }
 
 # ---------- 多余文件检测（漂移的另一面：部署目录里清单管不到的文件） ----------
-# 白名单：Kilo 运行时自建（package.json/plugin 编译依赖、.gitignore、迁移标记、旧备份）
-$whitelist = '^(\.gitignore|\.bash-permission-migrated|package(-lock)?\.json|kilo\.json\.bak\..*)$|^(\.kilo|node_modules)(/|$)|^provider/hx-failover/node_modules(/|$)'
+# 白名单：Kilo 运行时自建（package.json/plugin 编译依赖、.gitignore、迁移标记、旧备份、全局经验层运行时状态）
+$whitelist = '^(\.gitignore|\.bash-permission-migrated|GLOBAL-NOTES\.md|package(-lock)?\.json|kilo\.json\.bak\..*)$|^(\.kilo|node_modules)(/|$)|^provider/hx-failover/node_modules(/|$)'
 $strayList = @()
 if (Test-Path $TargetDir) {
     $expected = @($pairs | ForEach-Object { ($_.Dst -replace '\\', '/') } | Sort-Object)

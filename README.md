@@ -39,6 +39,7 @@
 - **启用通道三层**：① `plugin/memory-bootstrap.ts` 自动（git 项目，session.created 触发）；② `/memory-setup` 命令（非 git 目录/排查，调部署副本 `scripts/memory-enable.mjs`）；③ 官方兜底（TUI `/memory` 或 `kilo serve` + `POST /memory/enable?directory=...`）。scaffold 产物已与官方 enable 逐字节比对。
 - **生效语义**：工具表随会话启动定型——启用后**新会话**才有 `kilo_memory_*` 工具与注入（会话结束自动沉淀 turnClose、开场自动注入索引，上限 8KB）。
 - **进化回路**：会话内主动沉淀（INSTRUCTIONS.md 策略）+ `/evolve` 周期复盘（蒸馏 → correct/forget 修正 → 通用教训反哺本仓库，改动需确认）。
+- **全局经验层 `GLOBAL-NOTES.md`**（`~/.config/kilo/`，kilo.json instructions 第二入口）：跨项目教训**全自动追加**（一行一条带日期，追加前检索去重，总量 ~1KB 封顶），/evolve 定期修剪 + 成熟条目升格进 INSTRUCTIONS（需确认）。属运行时状态**不进下发清单**——install 不清理清单外文件，不会被覆盖；新机器由 memory-bootstrap 插件按模板自愈创建（已实测 instructions 引用缺失文件不报错）。追加通道用 node 单行脚本（bash `node *` allow），不用 edit 工具（会触发 external_directory 询问）。
 - **验证**：`node scripts/memory-enable.mjs`（全量状态表）；新会话调 `kilo_memory_recall mode=catalog` 应列出已入库条目。
 - **全局命令目录**（二进制实证）：`~/.config/kilo/command/*.md`；`.kilo/command/` 是项目级，部署在 `~/.config/kilo/.kilo/` 下的旧资产不会被加载。
 - **插件生效时机**：插件随 kilo server 进程启动加载——扩展长驻 server 需**重载 VS Code 窗口**一次才会加载 memory-bootstrap；CLI（kilo run/serve）每次进程新起，天然生效。

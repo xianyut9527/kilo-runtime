@@ -91,6 +91,27 @@ function writeIfAbsent(file, content) {
   if (!fs.existsSync(file)) fs.writeFileSync(file, content, "utf8");
 }
 
+// 全局经验层自愈：GLOBAL-NOTES.md 是运行时状态不进下发清单，新机器首次启动时由本插件
+// 按模板创建（配置根从插件自身部署位置推导，零猜测）。已有文件绝不动。
+const GLOBAL_NOTES_TEMPLATE = `# Global Notes（全自动全局经验层）
+
+<!-- 机制：跨项目通用教训由 agent 直接追加到下方 Notes 列表（一行一条，格式：- YYYY-MM-DD 教训内容）。
+     不需要用户确认；总量上限约 1KB，/evolve 定期修剪：去重、删过时、成熟条目升格进 INSTRUCTIONS.md（需确认）。
+     本文件是运行时状态，不进下发清单，install 不会覆盖它。 -->
+
+## Notes
+`;
+
+function ensureGlobalNotes() {
+  try {
+    // 插件部署在 <configRoot>/plugin/ 下，配置根 = 上一级（实测 import.meta.dir = .../kilo/plugin）
+    const configRoot = path.dirname(import.meta.dir);
+    writeIfAbsent(path.join(configRoot, "GLOBAL-NOTES.md"), GLOBAL_NOTES_TEMPLATE);
+  } catch {
+    // 自愈失败不影响主流程
+  }
+}
+
 function bootstrap(dir) {
   const canonical = canonicalRoot(dir);
   if (!canonical) return false;
@@ -123,6 +144,7 @@ function bootstrap(dir) {
 export const MemoryBootstrap = async ({ directory }) => {
   // 进程启动时覆盖主工作区；其余目录（Agent Manager worktree 等）由 session.created 事件覆盖
   try {
+    ensureGlobalNotes();
     if (directory) bootstrap(directory);
   } catch (e) {
     console.error(TAG, "init failed:", e);

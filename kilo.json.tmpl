@@ -41,8 +41,11 @@
 
   // ── 每会话注入的策略文件（认知中心/风险分级/一次性交付/硬约束）──
   // __KILO_HOME__ 由 installer 替换为本机家目录（Kilo 不展开 ~，必须绝对路径）
+  // GLOBAL-NOTES.md 是全自动生长的全局经验层：agent 直接追加（不进下发清单，
+  // 属运行时状态非配置；install 不清理清单外文件），/evolve 定期修剪并升格成熟条目
   "instructions": [
-    "__KILO_HOME__/.config/kilo/INSTRUCTIONS.md"
+    "__KILO_HOME__/.config/kilo/INSTRUCTIONS.md",
+    "__KILO_HOME__/.config/kilo/GLOBAL-NOTES.md"
   ],
   // 技能目录：agent 可按需加载领域知识（技能增删无需改配置）
   "skills": {
