@@ -4,7 +4,7 @@
   // 仓库里这份带注释；install 部署时会剥离所有「行首 //」注释行，
   // 现网 ~/.config/kilo/kilo.json 保持纯 JSON（Kilo 拒绝自定义键，
   // 注释键 "//" 会让整份配置失效 —— 所以只能在模板层注释）。
-  // 改完跑 ./install.sh 部署，重启 Kilo 生效。
+  // 改完跑 ./install.ps1（或 ./install.sh）部署，重启 Kilo 生效。
   // ══════════════════════════════════════════════════════════════════
   "$schema": "https://app.kilo.ai/config.json",
 
@@ -223,6 +223,14 @@
       // node 任意脚本放行（构建/测试需要；危险操作由插件动态拦）
       "node *": "allow",
       "rg *": "allow",
+      // 验证工具链放行（层 2 要求真跑测试/静态检查；与 node * 同风险级别，
+      // 高危内容由 permission-guard 动态拦截）：bun/bunx/npx（JS 工具链）、
+      // ruff（Python 静态检查）、python（pytest 等）
+      "bun *": "allow",
+      "bunx *": "allow",
+      "npx *": "allow",
+      "ruff *": "allow",
+      "python *": "allow",
       // 递归强删：绝对禁止（插件层还会按内容二次拦截）
       "rm -rf *": "deny",
       "Remove-Item -Recurse -Force *": "deny"
@@ -257,6 +265,10 @@
     "websearch": "allow",
     // MoA 交叉验证工具：要确认（真实计费；--auto 无人值守下 ask 等同放行）
     "moa": "ask",
+    // 双向异源审查（复杂任务交付时正反两路+裁决，3 次上游调用）：
+    // allow = quality-gate 在完成节点由插件直调自动执行（无人工确认、不依赖模型手动调）；
+    // 这是质量自动闭环的通道；模型也可主动调用审查特定方案
+    "dual_review": "allow",
     // 原生记忆读写放行（自我进化的通道，默认 ask 会锁死自主沉淀）
     "kilo_memory_save": "allow",
     "kilo_memory_recall": "allow",
@@ -371,6 +383,13 @@
             "glm-5.2",
             "deepseek-v4.1-flash"
           ],
+          "aggregator": "kimi-k2.6"
+        },
+        // dual_review 工具配置（plugin/dual-review.ts 读这里）：三层交付检查层 3，
+        // quality-gate 在交付节点直调（正反异源并行 → 第三方裁决）；三模型均与主执行模型异源
+        "dual_review": {
+          "positive": "deepseek-v4.1-flash",
+          "negative": "glm-5.2",
           "aggregator": "kimi-k2.6"
         }
       },

@@ -1,64 +1,11 @@
 // W3.5 MoA（Mixture-of-Agents）按需工具
 // 定位：主 agent 仅在需要多视角/高风险判断时调用；绝不每轮自动 fanout（红线 R4/R9）。
-// 依赖：零依赖，直接 fetch OpenAI-compatible /chat/completions（不 import AI SDK，避免 plugin runtime 解析问题）。
+// 依赖：plugin/hx-client.ts（与 dual-review.ts 共享的配置读取与请求层，改凭证/baseURL 规则只改那边）。
 // 配置：kilo.json -> provider.hx.options.moa.{references,aggregator}；凭证：auth.json 的 hx.key。
 
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { loadCfg, ask } from "./hx-client";
 
-// 配置目录支持 KILO_CONFIG_DIR 覆盖（install --target 自定义部署时也不至于读不到配置）
-const CONFIG_DIR = process.env.KILO_CONFIG_DIR ||
-  join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "kilo");
-const DATA_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "kilo");
 const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合）
-const TIMEOUT_MS = 120000;
-const CFG_TTL_MS = 60_000; // 配置缓存 60s：改配置后最多 1 分钟生效，无需重启
-
-let cfgCache = null;
-let cfgCacheAt = 0;
-
-async function loadCfg() {
-  if (cfgCache && Date.now() - cfgCacheAt < CFG_TTL_MS) return cfgCache;
-  const kilo = JSON.parse(await readFile(join(CONFIG_DIR, "kilo.json"), "utf8"));
-  const opts = kilo?.provider?.hx?.options ?? {};
-  const auth = JSON.parse(await readFile(join(DATA_DIR, "auth.json"), "utf8"));
-  const key = auth?.hx?.key;
-  if (!opts.baseURL) throw new Error("moa: provider.hx.options.baseURL 未配置");
-  if (!key) throw new Error("moa: auth.json 缺少 hx.key（请先登录/配置 hx provider）");
-  cfgCache = {
-    baseURL: String(opts.baseURL).replace(/\/+$/, ""),
-    key,
-    references: opts?.moa?.references ?? ["glm-5.2", "deepseek-v4.1-flash"],
-    aggregator: opts?.moa?.aggregator ?? "kimi-k2.6",
-  };
-  cfgCacheAt = Date.now();
-  return cfgCache;
-}
-
-async function ask({ baseURL, key, model, prompt }) {
-  const res = await fetch(`${baseURL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      stream: false,
-    }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`${model} HTTP ${res.status}: ${body.slice(0, 300)}`);
-  }
-  const data = await res.json();
-  const text = data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text;
-  if (typeof text !== "string" || !text) throw new Error(`${model}: 空响应`);
-  return text;
-}
 
 export const Moa = async () => {
   return {
@@ -82,13 +29,13 @@ export const Moa = async () => {
 
           const refs = (Array.isArray(args?.references) && args.references.length
             ? args.references
-            : cfg.references
+            : (cfg.options?.moa?.references ?? ["glm-5.2", "deepseek-v4.1-flash"])
           )
             .filter((m) => typeof m === "string" && m)
             .slice(0, MAX_REFS);
           const aggregator = typeof args?.aggregator === "string" && args.aggregator
             ? args.aggregator
-            : cfg.aggregator;
+            : (cfg.options?.moa?.aggregator ?? "kimi-k2.6");
 
           if (refs.length === 0) return "moa: references 为空";
 

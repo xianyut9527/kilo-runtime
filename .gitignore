@@ -32,6 +32,7 @@ Thumbs.db
 *.swo
 __pycache__/
 .pytest_cache/
+.ruff_cache/
 
 # 通用备份 / 临时 / 对比文件（防 LLM 修复流程产生的中间产物污染仓库）
 *.bak
