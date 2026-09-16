@@ -7,6 +7,9 @@ import { loadCfg, ask } from "./hx-client";
 
 const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合）
 
+// 超时统一走配置 provider.hx.options.timeout（与主链路/dual-review 同口径）；缺失/非法回退 120s
+const FALLBACK_TIMEOUT_MS = 120_000;
+
 export const Moa = async () => {
   return {
     tool: {
@@ -39,8 +42,10 @@ export const Moa = async () => {
 
           if (refs.length === 0) return "moa: references 为空";
 
+          const timeoutMs = Number(cfg.options?.timeout) > 0 ? Number(cfg.options.timeout) : FALLBACK_TIMEOUT_MS;
+
           const settled = await Promise.allSettled(
-            refs.map((m) => ask({ baseURL: cfg.baseURL, key: cfg.key, model: m, prompt: task }))
+            refs.map((m) => ask({ baseURL: cfg.baseURL, key: cfg.key, model: m, prompt: task, timeoutMs }))
           );
 
           const views = [];
@@ -70,6 +75,7 @@ export const Moa = async () => {
               key: cfg.key,
               model: aggregator,
               prompt: aggregatePrompt,
+              timeoutMs,
             });
           } catch (e) {
             // 聚合失败也要返回可用结果（不丢参考视角）

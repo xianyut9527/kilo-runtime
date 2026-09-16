@@ -16,11 +16,9 @@
 // 层 3 全自动闭环（W3.9/W3.11）：交付节点（todo 全 completed + 高风险/复杂改动）由插件直调
 //   dual-review 的 runDualReview，审查对象从会话证据自动构建（编辑文件+脱敏命令+git diff
 //   +未跟踪新文件全文——新文件不在 git diff 里，审查者原本看不见内容），裁决直接回注。
-//   闭环硬约束：裁决存在「必须修复项」→ 阻断交付（修复须有新编辑，重标记即自动复审，
-//   直到裁决通过）；自动审查上限 2 轮，超限放行并回注残余项升级人工确认；
-//   接受残余风险须显式 echo "review-accepted: 原因"（可审计）。
-//   闭环强化：裁决未通过 → 阻断交付（before 钩子），修复后自动再审直到通过；
-//   逃生门 echo "review-accepted: <原因>"（可审计接受残余风险）；轮次上限防死循环。
+//   闭环硬约束（W3.11）：裁决存在「必须修复项」→ 阻断交付（before 钩子，修复须有新编辑，
+//   重标记即自动复审，直到裁决通过）；自动审查上限 2 轮，超限放行并回注残余项升级人工确认；
+//   接受残余风险须显式 echo "review-accepted: 原因"（可审计），防死循环烧钱。
 //
 // 设计红线：
 //   - fail-closed 仅两处：层 2 测试缺口门禁与层 3 审查闭环（均带显式逃生门），
@@ -82,8 +80,12 @@ function rememberCommand(s, cmd) {
 }
 
 // 验证命令识别：只认命令动词位（命令开头或 ; | || && 之后），自由子串会误放行
+// （`git tag v0.1-test` 这类含 test 字样的普通命令不能算已验证）。
+// 口径与 INSTRUCTIONS「测试或构建」对齐：build/type-check 计入；make/dotnet/phpunit
+// 与直跑 test 前缀脚本（bun test-x.mjs——本仓离线测试的既定形态）也计入。
 const VERIFY_CMD_RE =
-  /(?:^|[;|]|&&|\|\|)\s*(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test|lint|check|typecheck)\b|(?:npx|bunx)\s+(?:jest|vitest|tsc|eslint|ruff)\b|(?:jest|vitest|mypy|pytest|eslint|ruff|tsc)\s|go\s+(?:test|vet)\b|cargo\s+(?:test|check|clippy)\b|python[0-9.]*\s+-m\s+(?:pytest|unittest)\b|(?:mvn|gradlew?)\b[^;&|\n]*\btest\b)/i;
+  /(?:^|[;|]|&&|\|\|)\s*(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test|lint|check|typecheck|type-check|build)\b|(?:npx|bunx)\s+(?:jest|vitest|tsc|eslint|ruff)\b|(?:jest|vitest|mypy|pytest|eslint|ruff|tsc)\s|go\s+(?:test|vet)\b|cargo\s+(?:test|check|clippy)\b|python[0-9.]*\s+-m\s+(?:pytest|unittest)\b|(?:mvn|gradlew?)\b[^;&|\n]*\btest\b|make\s+(?:test|check|lint)\b|dotnet\s+test\b|phpunit\b|(?:node|bun|deno|python[0-9.]*)\s+(?:[\w\/\\.-]*[\/\\])?test[\w.-]*\.(?:mjs|cjs|js|ts|tsx|py)\b)/i;
+export { VERIFY_CMD_RE };
 
 function hasRanVerify(s) {
   return s.commands.some((c) => VERIFY_CMD_RE.test(c));
@@ -307,8 +309,12 @@ function appendToResult(output, text) {
 // ── 高风险路径识别（层 3 自动执行的依据）──────────────────────
 // 命中即视为复杂/高风险改动：交付节点若本会话未做过双向审查，插件直调 runDualReview 自动执行。
 // 范围参照 INSTRUCTIONS「高风险」口径：认证/权限/支付/数据迁移/公共契约/核心配置。
+// 两种命中形态：① 文件名以关键词开头（auth.ts / order-query.ts）；
+// ② 关键词是完整路径段（目录名——src/auth/utils.ts 这类文件名不含关键词的同样命中；
+//    正因目录语义，order-system/ 这类仅前缀相似的目录不会误命中）。
 const HIGH_RISK_RE =
-  /(?:^|[/\\])(?:auth|authentication|login|session|token|jwt|permission|acl|rbac|payment|pay|billing|charge|wallet|order|transaction|migration|migrate|ddl|schema|contract|api[-_]?design|public)[-_.\w]*\.(?:ts|tsx|js|jsx|mjs|cjs|py|java|kt|go|rs|cs|sql)$/i;
+  /(?:^|[/\\])(?:auth|authentication|login|session|token|jwt|permission|acl|rbac|payment|pay|billing|charge|wallet|order|transaction|migration|migrate|ddl|schema|contract|api[-_]?design|public)(?:[-_.\w]*\.(?:ts|tsx|js|jsx|mjs|cjs|py|java|kt|go|rs|cs|sql)$|[/\\])/i;
+export { HIGH_RISK_RE };
 
 function isHighRiskFile(file) {
   return HIGH_RISK_RE.test(String(file ?? ""));
@@ -323,15 +329,16 @@ function extractTool(input) {
 }
 
 // ── 层 3 全自动：审查对象自动构建 ─────────────────────────────
-// git diff 有内容则取（真实改动最可靠的审查素材），截断防 prompt 爆炸；
-// 未跟踪新文件不在 git diff 里——审查者原本只看得见文件名，按「diff 中未出现」
-// 逐个补读全文（有界：最多 8 个 × 4000 字符）；无 git（非 repo / 命令失败）
-// 则降级为会话证据池（编辑文件列表 + 脱敏命令）。
+// git diff（对 HEAD，含已暂存改动——只 diff 工作区会漏掉 git add 过的内容）有内容则取
+// （真实改动最可靠的审查素材），截断防 prompt 爆炸；未跟踪新文件不在 git diff 里——
+// 审查者原本只看得见文件名，按「diff 中未出现」逐个补读全文（有界：最多 8 个 × 4000 字符）；
+// 无 git（非 repo / 命令失败）则降级为会话证据池（编辑文件列表 + 脱敏命令）。
+// 已提交的改动不在任何 diff 里（会话中途 commit 的场景）——由文件名清单兜底可见性。
 export async function reviewSubject(root, s, editedList) {
   const parts = [`本次会话编辑了以下文件：\n${editedList}`];
   let diffText = "";
   try {
-    const { out } = await runCmd("git", ["diff", "--unified=3", "--no-color"], 10_000, root);
+    const { out } = await runCmd("git", ["diff", "HEAD", "--unified=3", "--no-color"], 10_000, root);
     diffText = String(out ?? "");
   } catch { /* 非 git 环境：走降级 */ }
   if (diffText.trim().length > 50) parts.push(`对应 git diff：\n${diffText}`);
@@ -353,7 +360,7 @@ export const QualityGate = async ({ directory } = {}) => {
   // 用它而非 process.cwd()，否则 worktree/monorepo 场景下 tsconfig 探测必败、检查静默关闭
   if (directory) projectRoot = directory;
   return {
-    // 层 2 硬门禁（唯一 fail-closed 点）：编辑过代码文件 × 未验证/未登记跳过
+    // 层 2 硬门禁（fail-closed 点之一，另一处是层 3 审查闭环）：编辑过代码文件 × 未验证/未登记跳过
     // → 否决 todowrite 的「全部标记完成」。报错即行动指引（跑验证或显式登记跳过）。
     "tool.execute.before": async (input, output) => {
       try {
@@ -363,9 +370,12 @@ export const QualityGate = async ({ directory } = {}) => {
         if (!todos || todos.length === 0) return;
         if (!todos.every((t) => t?.status === "completed")) return; // 只拦「全部完成」的交付节点
         const s = bucketOf(input);
+        const codeEdits = codeEditsOf(s);
         // 层 3 闭环硬阻断（交付前）：上轮审查未通过且其后没有任何新编辑（= 未尝试修复）→ 否决。
         // 修复过文件则放行本次 todowrite，由 after 钩子在交付节点重新审查（修复→再审循环）。
-        const complexEarly = s.highRisk.size > 0 || s.edited.size >= 3;
+        // 触发口径与 after 钩子一致：高风险文件，或含代码改动且跨 ≥3 文件——
+        // 纯文档会话不送付费审查（层 2 同样豁免文档，口径对齐）。
+        const complexEarly = s.highRisk.size > 0 || (codeEdits.length > 0 && s.edited.size >= 3);
         if (complexEarly && s.reviewPending && !hasAcceptMarker(s) && s.editVersion === s.reviewPending.editVersion) {
           const p = s.reviewPending;
           throw new Error(
@@ -374,7 +384,6 @@ export const QualityGate = async ({ directory } = {}) => {
               `② 确认接受残余风险则执行 echo "review-accepted: <原因>"（可审计）后重试。`
           );
         }
-        const codeEdits = codeEditsOf(s);
         if (codeEdits.length === 0) return; // 非代码编辑不受限
         if (hasRanVerify(s) || hasSkipMarker(s)) return;
         const names = codeEdits.slice(0, 3).map((f) => f.split(/[\\/]/).pop()).join(", ");
@@ -474,7 +483,8 @@ export const QualityGate = async ({ directory } = {}) => {
           // 轮次上限（MAX_REVIEW_ROUNDS）后仍不过 → 放行并回注残余项（升级人工，防死循环）。
           // 无法解析的裁决（上游失败等）→ fail-open 不阻断（质量降质但不卡交付）。
           const allDone = todos.length > 0 && todos.every((t) => t?.status === "completed");
-          const complex = s.highRisk.size > 0 || s.edited.size >= 3;
+          // 与 before 钩子同一口径：高风险文件，或含代码改动且跨 ≥3 文件（纯文档不烧审查费）
+          const complex = s.highRisk.size > 0 || (codeEdits.length > 0 && s.edited.size >= 3);
           if (allDone && complex && !s.dualReviewed && !hasAcceptMarker(s)) {
             const editedList = [...s.edited].slice(0, 30).join("\n");
             const subject = await reviewSubject(projectRoot, s, editedList);

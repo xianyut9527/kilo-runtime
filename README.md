@@ -20,7 +20,7 @@
 | `agent/verify.md` | 异源验证子代理 | 高风险改动的独立复核视角 |
 | `plugin/permission-guard.ts` | 动态权限守护 | 拦截静态规则漏掉的不可逆命令 + 密钥路径；实测有效 |
 | `plugin/compaction-anchor.ts` | 压缩锚点 | 长会话压缩后不丢任务连续性 |
-| `plugin/quality-gate.ts` | 三层交付检查（层 1+2+层 3 调度与闭环） | 层 1：todo completed 时核对执行痕迹（防空口声明）；层 2（fail-closed）：编辑过代码但未跑验证命令时否决「全部完成」（逃生门 verify-skipped）；编辑后按后缀跑 ruff/tsc 即时回注诊断；交付节点（todo 全 completed + 高风险/跨≥3 文件）直调 dual-review 自动执行层 3——裁决未通过**阻断交付**，修复后自动再审直到通过（上限 2 轮，超限放行并回注残余项升级人工；逃生门 review-accepted） |
+| `plugin/quality-gate.ts` | 三层交付检查（层 1+2+层 3 调度与闭环） | 层 1：todo completed 时核对执行痕迹（防空口声明）；层 2（fail-closed）：编辑过代码但未跑验证/构建命令时否决「全部完成」（逃生门 verify-skipped）；编辑后按后缀跑 ruff/tsc 即时回注诊断；交付节点（todo 全 completed + 高风险文件，或含代码改动且跨≥3 文件——纯文档不烧审查费）直调 dual-review 自动执行层 3，审查素材取 `git diff HEAD`（含已暂存）+未跟踪新文件全文——裁决未通过**阻断交付**，修复后自动再审直到通过（上限 2 轮，超限放行并回注残余项升级人工；逃生门 review-accepted） |
 | `plugin/dual-review.ts` | 层 3 双向异源审查 | 正向（查遗漏）×反向（红队找错）异源模型并行 + 第三方裁决；被 quality-gate 在交付节点自动调用，也可经 `dual_review` 工具手动发起（permission=allow） |
 | `plugin/hx-client.ts` | hx 上游共享客户端 | moa 与 dual-review 的公共配置读取/请求层（改凭证与 baseURL 规则只改这里） |
 | `plugin/moa.ts` | 按需多模型分析 | 高风险判断时 3+1 模型交叉（agent 自主决定调用） |

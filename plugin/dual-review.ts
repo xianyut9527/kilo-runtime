@@ -16,7 +16,9 @@
 
 import { loadCfg, ask } from "./hx-client";
 
-const TIMEOUT_MS = 180000;
+// 超时统一走配置：kilo.json provider.hx.options.timeout（主链路同口径，当前 120s）；
+// 配置缺失/非法才回退 120s。之前硬编码 180s 与主链路/moa 不一致，交付节点最坏拖长 50%。
+const FALLBACK_TIMEOUT_MS = 120_000;
 
 // ── 正反两路 prompt 协议 ─────────────────────────────────────
 
@@ -67,14 +69,16 @@ export async function runDualReview(subject, overrides = {}) {
   if (!subject) return "dual_review: 缺少 subject 参数";
   if (subject.length < 50) return "dual_review: subject 过短（<50 字符），请带上改动摘要与关键代码片段";
 
+  const timeoutMs = Number(cfg.options?.timeout) > 0 ? Number(cfg.options.timeout) : FALLBACK_TIMEOUT_MS;
+
   const posModel = typeof overrides?.positive_model === "string" && overrides.positive_model ? overrides.positive_model : (cfg.options?.dual_review?.positive ?? "deepseek-v4.1-flash");
   const negModel = typeof overrides?.negative_model === "string" && overrides.negative_model ? overrides.negative_model : (cfg.options?.dual_review?.negative ?? "glm-5.2");
   const aggModel = typeof overrides?.aggregator === "string" && overrides.aggregator ? overrides.aggregator : (cfg.options?.dual_review?.aggregator ?? "kimi-k2.6");
 
   // 正反两路并行；单路失败不废全局（与 moa 同语义）
   const [posRes, negRes] = await Promise.allSettled([
-    ask({ baseURL: cfg.baseURL, key: cfg.key, model: posModel, prompt: POSITIVE_PROMPT(subject), timeoutMs: TIMEOUT_MS }),
-    ask({ baseURL: cfg.baseURL, key: cfg.key, model: negModel, prompt: NEGATIVE_PROMPT(subject), timeoutMs: TIMEOUT_MS }),
+    ask({ baseURL: cfg.baseURL, key: cfg.key, model: posModel, prompt: POSITIVE_PROMPT(subject), timeoutMs }),
+    ask({ baseURL: cfg.baseURL, key: cfg.key, model: negModel, prompt: NEGATIVE_PROMPT(subject), timeoutMs }),
   ]);
 
   const posText = posRes.status === "fulfilled" ? posRes.value : null;
@@ -105,6 +109,7 @@ export async function runDualReview(subject, overrides = {}) {
       key: cfg.key,
       model: aggModel,
       prompt: AGGREGATE_PROMPT(subject, posText, negText),
+      timeoutMs,
     });
   } catch (e) {
     return [
