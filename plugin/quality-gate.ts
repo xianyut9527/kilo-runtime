@@ -13,13 +13,18 @@
 // 附加：edit/write 后按后缀跑静态检查（ruff / tsc --noEmit），诊断即时回注。
 //   工具可用性一次性探测（缺失则永久跳过，不再每轮烧超时）；并发编辑单飞共享一次 tsc；
 //   同文件未变更（mtime 未变）直接复用上次诊断，tsc 全量运行不再受时间窗陈旧性影响。
-// 层 3 全自动闭环（W3.9）：交付节点（todo 全 completed + 高风险/复杂改动）由插件直调
+// 层 3 全自动闭环（W3.9/W3.11）：交付节点（todo 全 completed + 高风险/复杂改动）由插件直调
 //   dual-review 的 runDualReview，审查对象从会话证据自动构建（编辑文件+脱敏命令+git diff
 //   +未跟踪新文件全文——新文件不在 git diff 里，审查者原本看不见内容），裁决直接回注。
+//   闭环硬约束：裁决存在「必须修复项」→ 阻断交付（修复须有新编辑，重标记即自动复审，
+//   直到裁决通过）；自动审查上限 2 轮，超限放行并回注残余项升级人工确认；
+//   接受残余风险须显式 echo "review-accepted: 原因"（可审计）。
+//   闭环强化：裁决未通过 → 阻断交付（before 钩子），修复后自动再审直到通过；
+//   逃生门 echo "review-accepted: <原因>"（可审计接受残余风险）；轮次上限防死循环。
 //
 // 设计红线：
-//   - 除层 2 硬门禁（唯一 fail-closed 点，带逃生门）外，所有检查静默降级
-//     （try-catch 全包），绝不阻断工具执行；只警告不拦截。
+//   - fail-closed 仅两处：层 2 测试缺口门禁与层 3 审查闭环（均带显式逃生门），
+//     其余检查静默降级（try-catch 全包），只警告不拦截。
 //   - 状态按 sessionID 分桶：Kilo 长驻进程服务多会话/子代理，进程级单例会让
 //     「跑过验证」与「todo 快照」跨会话污染判定。桶上限 20 个，LRU 淘汰。
 //     工具探测结果进程级共享（环境属性与会话无关）。
@@ -49,7 +54,7 @@ function bucketOf(input) {
   const id = String(input?.sessionID ?? "__global__");
   let s = sessions.get(id);
   if (!s) {
-    s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false };
+    s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0 };
     sessions.set(id, s);
     if (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
   }
@@ -87,6 +92,7 @@ function hasRanVerify(s) {
 function rememberEdit(s, p) {
   if (typeof p !== "string" || !p) return;
   s.edited.add(p);
+  s.editVersion = (s.editVersion ?? 0) + 1; // 层 3 闭环：编辑计数，审查后有无修复靠它判定
   if (s.edited.size > MAX_EDITED) s.edited.delete(s.edited.values().next().value);
 }
 
@@ -124,6 +130,41 @@ const VERIFY_SKIP_RE = /verify-skipped\s*:/i;
 
 function hasSkipMarker(s) {
   return s.commands.some((c) => VERIFY_SKIP_RE.test(c));
+}
+
+// ── 层 3 闭环（审查未通过 → 阻断交付，修复后自动再审，直到通过或升级人工）──
+const MAX_REVIEW_ROUNDS = 2; // 自动审查轮次上限：超限放行并回注残余项（升级人工），防死循环烧钱
+const REVIEW_ACCEPT_RE = /review-accepted\s*:/i;
+
+function hasAcceptMarker(s) {
+  return s.commands.some((c) => REVIEW_ACCEPT_RE.test(c));
+}
+
+// 从裁决文本解析结论。fail = 裁决「不通过」或「必须修复项」段非空；
+// inconclusive = 文本里没有「## 裁决」段（上游失败/一路阵亡等），不阻断（fail-open）。
+export function parseReviewVerdict(text) {
+  const t = String(text ?? "");
+  // 段落提取：以「## 」标题定位，截到下一个「## 」或 <details> 为止（正则刻意不含换行转义）
+  const sectionAfter = (heading) => {
+    const i = t.indexOf(heading);
+    if (i < 0) return null;
+    const rest = t.slice(i + heading.length);
+    const end = rest.search(/##\s|<details>/);
+    return (end < 0 ? rest : rest.slice(0, end)).trim();
+  };
+  const verdictSection = sectionAfter("## 裁决");
+  const fixSection = sectionAfter("## 必须修复项") ?? "";
+  // 「必须修复项」段剥掉「无/none」与列表符号后仍有实质内容 → 有必须修复项
+  const stripped = fixSection.replace(/^(无|none)[.。]?/i, "").replace(/[-*•\s]+/g, "");
+  const mustFixEmpty = stripped.length === 0;
+  // 模型把选项原样回显（含「三选一」提示）时裁决段不可信，只按「必须修复项」段判定
+  const echoOptions = /三选一/.test(verdictSection ?? "");
+  return {
+    fail: (!echoOptions && /不通过/.test(verdictSection ?? "")) || !mustFixEmpty,
+    inconclusive: verdictSection === null,
+    verdictLine: (verdictSection ?? "").slice(0, 100),
+    fixSection: fixSection.slice(0, 600),
+  };
 }
 
 function codeEditsOf(s) {
@@ -322,6 +363,17 @@ export const QualityGate = async ({ directory } = {}) => {
         if (!todos || todos.length === 0) return;
         if (!todos.every((t) => t?.status === "completed")) return; // 只拦「全部完成」的交付节点
         const s = bucketOf(input);
+        // 层 3 闭环硬阻断（交付前）：上轮审查未通过且其后没有任何新编辑（= 未尝试修复）→ 否决。
+        // 修复过文件则放行本次 todowrite，由 after 钩子在交付节点重新审查（修复→再审循环）。
+        const complexEarly = s.highRisk.size > 0 || s.edited.size >= 3;
+        if (complexEarly && s.reviewPending && !hasAcceptMarker(s) && s.editVersion === s.reviewPending.editVersion) {
+          const p = s.reviewPending;
+          throw new Error(
+            `[quality-gate] 层 3 闭环：双向审查未通过（${p.verdictLine || "有条件通过"}），存在未处理的必须修复项：\n${p.fixSection}\n\n` +
+              `二选一：① 逐条修复后重新标记全部完成——将自动触发第 ${s.reviewRounds + 1}/${MAX_REVIEW_ROUNDS} 轮审查；` +
+              `② 确认接受残余风险则执行 echo "review-accepted: <原因>"（可审计）后重试。`
+          );
+        }
         const codeEdits = codeEditsOf(s);
         if (codeEdits.length === 0) return; // 非代码编辑不受限
         if (hasRanVerify(s) || hasSkipMarker(s)) return;
@@ -359,8 +411,10 @@ export const QualityGate = async ({ directory } = {}) => {
         }
 
         // ①'' dual_review 调用登记（层 3 自动闭环：完成节点查此标志）
+        // 手动补审同时清 reviewPending：显式复审过的会话不应再被 before 钩子按旧裁决误拦
         if (tool === "dual_review") {
           s.dualReviewed = true;
+          s.reviewPending = null;
           return;
         }
 
@@ -413,22 +467,47 @@ export const QualityGate = async ({ directory } = {}) => {
             }
           }
 
-          // 层 3 全自动执行：todo 全部 completed（交付节点）+ 高风险/复杂改动 + 本会话未做过双向审查
-          // → 插件直调 runDualReview（正反审查+裁决），结果直接回注，无人工确认、不依赖模型自觉。
-          // 异常/上游全失败由 runDualReview 内部收敛或此处 catch（fail-open，不阻断交付）。
+          // 层 3 全自动执行 + 闭环：todo 全部 completed（交付节点）+ 高风险/复杂改动
+          // + 本会话审查未通过/未做过 → 插件直调 runDualReview（正反审查+裁决）。
+          // 闭环语义：裁决未通过 → 记录 must-fix 并阻断本次交付（before 钩子），
+          // 修复后重新标记完成 → 此处自动再审；通过才置 dualReviewed。
+          // 轮次上限（MAX_REVIEW_ROUNDS）后仍不过 → 放行并回注残余项（升级人工，防死循环）。
+          // 无法解析的裁决（上游失败等）→ fail-open 不阻断（质量降质但不卡交付）。
           const allDone = todos.length > 0 && todos.every((t) => t?.status === "completed");
           const complex = s.highRisk.size > 0 || s.edited.size >= 3;
-          if (allDone && complex && !s.dualReviewed) {
-            s.dualReviewed = true; // 无论成败只自动执行一次，防重复触发烧上游调用
+          if (allDone && complex && !s.dualReviewed && !hasAcceptMarker(s)) {
             const editedList = [...s.edited].slice(0, 30).join("\n");
             const subject = await reviewSubject(projectRoot, s, editedList);
             try {
               const verdict = await runDualReview(subject);
-              appendToResult(
-                output,
-                `\n${TAG} 层 3 双向审查（自动执行，正反异源模型+裁决）\n${verdict}\n` +
-                  `若存在「必须修复项」，逐条处理后方可交付。`
-              );
+              const v = parseReviewVerdict(verdict);
+              appendToResult(output, `\n${TAG} 层 3 双向审查（自动执行，正反异源模型+裁决）\n${verdict}`);
+              if (v.inconclusive) {
+                // 上游失败/一路阵亡：不阻断（fail-open），但一次为限防重复烧钱
+                s.dualReviewed = true;
+                appendToResult(output, `\n${TAG} ⚠️ 审查结果无法解析（上游失败），本次按未审查交付，请人工留意。`);
+              } else if (v.fail) {
+                s.reviewRounds += 1;
+                if (s.reviewRounds >= MAX_REVIEW_ROUNDS) {
+                  s.dualReviewed = true;
+                  appendToResult(
+                    output,
+                    `\n${TAG} ⚠️ 已连续 ${s.reviewRounds} 轮审查未通过，达到自动审查上限，放行交付。\n` +
+                      `残余必须修复项（交付前请人工确认）：\n${v.fixSection}`
+                  );
+                } else {
+                  s.reviewPending = { editVersion: s.editVersion, verdictLine: v.verdictLine, fixSection: v.fixSection };
+                  appendToResult(
+                    output,
+                    `\n${TAG} ❌ 审查未通过，交付已阻断：必须修复项未处理。修复后重新标记全部完成将自动再审（第 ${s.reviewRounds + 1}/${MAX_REVIEW_ROUNDS} 轮）；` +
+                      `确认接受残余风险则 echo "review-accepted: <原因>"。`
+                  );
+                }
+              } else {
+                s.dualReviewed = true;
+                s.reviewPending = null;
+                appendToResult(output, `\n${TAG} ✅ 审查通过，闭环结束。`);
+              }
             } catch (e) {
               console.error(TAG, "auto dual review failed:", e?.message ?? e);
             }
