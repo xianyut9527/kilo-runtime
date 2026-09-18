@@ -70,5 +70,31 @@ t("README.md 不命中", !HIGH_RISK_RE.test("README.md"));
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// ── reviewSubject（git 仓库 → diff 范围限定本会话编辑文件） ──
+// 多会话共享工作区场景：HEAD 不动，工作区堆着多个会话的改动 + tmp 脚本。
+// reviewSubject 必须只取本会话编辑过的文件，不能把别会话的改动/tmp 脚本算进审查素材。
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qg-rsj-git-"));
+  const git = (args) => execFileSync("git", args, { cwd: tmp, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" }, stdio: ["ignore", "pipe", "pipe"] }).toString();
+  git(["init", "-q"]);
+  // 基线：两个已提交文件
+  const mine = path.join(tmp, "mine.ts");
+  const other = path.join(tmp, "other.ts");
+  fs.writeFileSync(mine, "export const m = 0;\n");
+  fs.writeFileSync(other, "export const o = 0;\n");
+  git(["add", "."]);
+  git(["commit", "-q", "-m", "base"]);
+  // 本会话只改 mine.ts；别会话改 other.ts + 加一个 tmp 脚本
+  fs.writeFileSync(mine, "export const m = 1;\n");
+  fs.writeFileSync(other, "export const o = 99;\n");
+  fs.writeFileSync(path.join(tmp, "tmp-debug.cjs"), "debug\n");
+  const s = { commands: [], edited: new Set([mine]) };
+  const subject = await reviewSubject(tmp, s, "mine.ts");
+  t("git 仓库：本会话编辑文件的 diff 入素材", subject.includes("export const m = 1;"));
+  t("git 仓库：别会话改动不进审查素材（other.ts 的改动不出现）", !subject.includes("const o = 99"));
+  t("git 仓库：未编辑的 tmp 脚本不进审查素材", !subject.includes("tmp-debug.cjs"));
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 console.log(`\n${fail === 0 ? "✅" : "❌"} quality-gate 回归：${pass} 通过 / ${fail} 失败`);
 process.exit(fail === 0 ? 0 : 1);

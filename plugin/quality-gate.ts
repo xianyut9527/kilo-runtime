@@ -15,8 +15,9 @@
 //   同文件未变更（mtime 未变）直接复用上次诊断，tsc 全量运行不再受时间窗陈旧性影响。
 // 层 3 全自动闭环（W3.9/W3.11）：交付节点（todo 全 completed + 高风险文件，或含代码改动
 //   且跨 ≥3 文件——纯文档会话不烧审查费）由插件直调 dual-review 的 runDualReview。
-//   审查对象自动构建：编辑文件清单 + git diff HEAD（含已暂存，截断防 prompt 爆炸）
-//   +未跟踪新文件全文（不在 diff 里，审查者原本看不见），降级为会话证据池（脱敏命令）。
+//   审查对象自动构建：编辑文件清单 + git diff HEAD -- <本会话编辑的代码文件>（范围对齐本会话改动，
+//   不审别会话的累积改动/tmp 脚本；含已暂存，截断防 prompt 爆炸）+ 未跟踪新文件全文（不在 diff 里，
+//   审查者原本看不见），降级为会话证据池（脱敏命令）。
 //   闭环硬约束（W3.11）：裁决存在「必须修复项」→ 阻断交付（before 钩子，修复须有新编辑，
 //   重标记即自动复审，直到裁决通过）；自动审查上限 2 轮，超限放行并回注残余项升级人工确认；
 //   接受残余风险须显式 echo "review-accepted: 原因"（可审计），防死循环烧钱。
@@ -330,20 +331,33 @@ function extractTool(input) {
 }
 
 // ── 层 3 全自动：审查对象自动构建 ─────────────────────────────
-// git diff（对 HEAD，含已暂存改动——只 diff 工作区会漏掉 git add 过的内容）有内容则取
-// （真实改动最可靠的审查素材），截断防 prompt 爆炸；未跟踪新文件不在 git diff 里——
-// 审查者原本只看得见文件名，按「diff 中未出现」逐个补读全文（有界：最多 8 个 × 4000 字符）；
-// 无 git（非 repo / 命令失败）则降级为会话证据池（编辑文件列表 + 脱敏命令）。
+// 范围对齐「本会话改动」而非「整个工作区未提交改动」：git diff 只取本会话编辑过的代码文件
+// （git diff HEAD -- <pathspec>）。多会话共享工作区且 HEAD 不动时，git diff HEAD 会把所有
+// 会话的累积改动 + tmp 脚本都算进来，审错范围（2026-09-17 事故：正向模型审了旧 diff）。
+// 已暂存改动仍可见（git diff HEAD 含 staged）；未跟踪新文件不在 diff 里——按「diff 中未出现」
+// 逐个补读全文（有界：最多 8 个 × 4000 字符）；无 git（非 repo / 命令失败）则降级为会话证据池。
 // 已提交的改动不在任何 diff 里（会话中途 commit 的场景）——由文件名清单兜底可见性。
 export async function reviewSubject(root, s, editedList) {
   const parts = [`本次会话编辑了以下文件：\n${editedList}`];
+  // pathspec 数量设上限：edited 可达 MAX_EDITED(500)，全列进命令行会超 Windows 32767 字符上限
+  // 导致 git 进程启动失败（ENAMETOOLONG）。审查素材本就截断到 24000 字符，前 100 个代码文件的
+  // diff 已足够覆盖视野，其余靠文件名清单可见。超出 100 个的情况 = 超大改动，单轮审查也看不完。
+  const editedCodeFiles = [...s.edited].filter(isCodeFile).slice(0, 100);
   let diffText = "";
-  try {
-    const { out } = await runCmd("git", ["diff", "HEAD", "--unified=3", "--no-color"], 10_000, root);
-    diffText = String(out ?? "");
-  } catch { /* 非 git 环境：走降级 */ }
+  if (editedCodeFiles.length > 0) {
+    try {
+      // git diff HEAD -- <path...> 只输出给定路径的改动；路径不存在/已删除 git 静默跳过
+      const { out } = await runCmd(
+        "git",
+        ["diff", "HEAD", "--unified=3", "--no-color", "--", ...editedCodeFiles],
+        10_000,
+        root,
+      );
+      diffText = String(out ?? "");
+    } catch { /* 非 git 环境：走降级 */ }
+  }
   if (diffText.trim().length > 50) parts.push(`对应 git diff：\n${diffText}`);
-  const unseen = [...s.edited].filter(isCodeFile).filter((f) => !diffText.includes(path.basename(f))).slice(0, 8);
+  const unseen = editedCodeFiles.filter((f) => !diffText.includes(path.basename(f))).slice(0, 8);
   for (const f of unseen) {
     try {
       const content = fs.readFileSync(f, "utf8");
