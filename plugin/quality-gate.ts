@@ -503,10 +503,15 @@ export const QualityGate = async ({ directory } = {}) => {
           if (allDone && complex && !s.dualReviewed && !hasAcceptMarker(s)) {
             const editedList = [...s.edited].slice(0, 30).join("\n");
             const subject = await reviewSubject(projectRoot, s, editedList);
+            const reviewT0 = Date.now();
+            // 钩子无 ctx.metadata 通道（流式进度仅手动 dual_review 工具可用），
+            // stderr 提示交付节点正在跑异源审查，避免「静默卡住」观感（CLI TUI 可见）
+            console.error(`${TAG} 层 3 双向审查执行中（正反两路异源模型 + 裁决，预计 30s~2min）…`);
             try {
               const verdict = await runDualReview(subject);
               const v = parseReviewVerdict(verdict);
-              appendToResult(output, `\n${TAG} 层 3 双向审查（自动执行，正反异源模型+裁决）\n${verdict}`);
+              const reviewSecs = ((Date.now() - reviewT0) / 1000).toFixed(1);
+              appendToResult(output, `\n${TAG} 层 3 双向审查（自动执行，正反异源模型+裁决，耗时 ${reviewSecs}s）\n${verdict}`);
               if (v.inconclusive) {
                 // 上游失败/一路阵亡：不阻断（fail-open），但一次为限防重复烧钱
                 s.dualReviewed = true;
