@@ -12,7 +12,7 @@
   // 主力执行模型（default_agent=code 绑定它）。glm-5.3-flash：实测最快档，支持图像输入
   "model": "hx/glm-5.3-flash",
   // 轻任务模型：起会话标题/摘要等后台活，用最便宜的 minimax
-  "small_model": "hx/minimax-m3",
+  "small_model": "hx/deepseek-v4.1-flash",
   // 子代理（task 工具派活）默认模型，深度任务时会按 INSTRUCTIONS 升级到 general
   "subagent_model": "hx/glm-5.3-flash",
   // 子代理最大嵌套深度（防递归失控）：子→孙 两层封顶
@@ -79,7 +79,7 @@
       "model": "hx/glm-5.2"
     },
     "explore": {
-      "model": "hx/minimax-m3"
+      "model": "hx/deepseek-v4.1-flash"
     },
     "orchestrator": {
       "model": "hx/kimi-k2.6"
