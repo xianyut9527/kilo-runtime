@@ -21,8 +21,8 @@
 | `plugin/permission-guard.ts` | 动态权限守护 | 拦截静态规则漏掉的不可逆命令 + 密钥路径；实测有效 |
 | `plugin/compaction-anchor.ts` | 压缩锚点 | 长会话压缩后不丢任务连续性 |
 | `plugin/quality-gate.ts` | 三层交付检查（层 1+2+层 3 调度与闭环） | 层 1：todo completed 时核对执行痕迹（防空口声明）；层 2（fail-closed）：编辑过代码但未跑验证/构建命令时否决「全部完成」（逃生门 verify-skipped）；编辑后按后缀跑 ruff/tsc 即时回注诊断；交付节点（todo 全 completed + 高风险文件，或含代码改动且跨≥3 文件——纯文档不烧审查费）直调 dual-review 自动执行层 3，审查素材取 `git diff HEAD`（含已暂存）+未跟踪新文件全文——裁决未通过**阻断交付**，修复后自动再审直到通过（上限 2 轮，超限放行并回注残余项升级人工；逃生门 review-accepted） |
-| `plugin/dual-review.ts` | 层 3 双向异源审查 | 正向（查遗漏）×反向（红队找错）异源模型并行 + 第三方裁决；被 quality-gate 在交付节点自动调用，也可经 `dual_review` 工具手动发起（permission=allow） |
-| `plugin/test-quality-gate.mjs` | 门禁离线回归（不联网、不起 Kilo） | `node plugin/test-quality-gate.mjs`：esbuild 打包后测 parseReviewVerdict/VERIFY_CMD_RE/HIGH_RISK_RE/reviewSubject 共 22 例——门禁正则与裁决解析的任何回归（含 CJK 腐化）立即变红 |
+| `plugin/dual-review.ts` | 层 3 双向异源审查 | 正向（查遗漏）×反向（红队找错）异源模型并行 + 第三方裁决；被 quality-gate 在交付节点自动调用（无 ctx 时进度降级 stderr，阶段切换即时可见），也可经 `dual_review` 工具手动发起（permission=allow） |
+| `scripts/test-quality-gate.mjs` | 门禁离线回归（不联网、不起 Kilo） | `node scripts/test-quality-gate.mjs`：esbuild 打包后测 parseReviewVerdict/VERIFY_CMD_RE/HIGH_RISK_RE/reviewSubject/makeTitle 共 28 例——门禁正则、裁决解析与进度通道选择的任何回归（含 CJK 腐化）立即变红 |
 | `plugin/hx-client.ts` | hx 上游共享客户端 | moa 与 dual-review 的公共配置读取/请求层（改凭证与 baseURL 规则只改这里） |
 | `plugin/moa.ts` | 按需多模型分析 | 高风险判断时 3+1 模型交叉（agent 自主决定调用） |
 | `plugin/memory-bootstrap.ts` | 记忆自举 | git 项目首个 session.created 自动启用原生记忆（scaffold 与官方 /memory/enable 产物逐字节一致；create-if-missing，绝不改已有状态） |

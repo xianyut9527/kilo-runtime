@@ -16,6 +16,8 @@
 //
 // 2026-09-18 性能改造：全链路 SSE 流式 + ctx.metadata 实时进度标题 + 聚合输入截断
 //（subject 8k / 两路结论各 10k），长 diff 审查不再静默等待 1-2 分钟。
+// 2026-09-20 可观测性补漏：quality-gate 钩子直调路径无 ctx.metadata，进度标题降级 stderr
+//（10s 节流、阶段首现立即输出），自动审查不再黑盒；makeTitle 具名导出供离线回归覆盖。
 
 import { loadCfg, ask, FALLBACK_TIMEOUT_MS } from "./hx-client";
 
@@ -24,17 +26,46 @@ import { loadCfg, ask, FALLBACK_TIMEOUT_MS } from "./hx-client";
 // 空闲看门狗与主链路 chunkTimeout 同源，流式中无 chunk 判死快速失败进重试。
 
 const TITLE_THROTTLE_MS = 800;
+const STDERR_THROTTLE_MS = 10_000; // stderr 降级通道节流：按阶段各自计时，防两路交替标题刷屏
 const AGG_SUBJECT_LIMIT = 8_000;   // 聚合 prompt 中审查对象截断
 const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
 
-function makeTitle(ctx, label) {
+const TAG = "[dual-review] ";
+
+export function makeTitle(ctx, label) {
+  // 优先 ctx.metadata 实时进度（手动 dual_review 工具调用有此通道）；
+  // quality-gate 钩子自动审查只有 (input, output)，无 ctx —— 降级 stderr 节流输出，
+  // 与层 3 开头那条「双向审查执行中…」同通道（CLI 终端可见；VS Code 扩展是否转发
+  // 插件 stderr 取决于其实现，可在扩展输出日志查看），消除交付节点黑盒等待。
+  const useMeta = !!(ctx && typeof ctx.metadata === "function");
+  const throttleMs = useMeta ? TITLE_THROTTLE_MS : STDERR_THROTTLE_MS;
+  const emit = useMeta
+    // 同步抛错（metadata 异常）与异步 rejection 都必须吞掉：onDelta 由 hx-client 的
+    // try/catch 包裹且不 await，逃逸会变成未处理 rejection。
+    ? (text) => {
+        try {
+          const r = ctx.metadata({ title: text || label });
+          if (r && typeof r.catch === "function") r.catch(() => {});
+        } catch { /* metadata 不可用则静默 */ }
+      }
+    : (text) => console.error(`${TAG}${text || label}`);
   let last = 0;
+  const stageAt = new Map(); // stderr 路径：按阶段各自节流（正反两路标题交替到达，单一计时器会失效）
   return async (text) => {
-    if (!ctx || typeof ctx.metadata !== "function") return;
     const now = Date.now();
-    if (now - last < TITLE_THROTTLE_MS && text) return;
-    last = now;
-    try { await ctx.metadata({ title: text || label }); } catch {}
+    if (useMeta) {
+      // 工具卡标题可原地刷新：维持原全局节流语义
+      if (now - last < throttleMs && text) return;
+      last = now;
+      emit(text);
+      return;
+    }
+    // stderr 不可原地刷新：阶段首次出现立即输出，同阶段后续按 10s 节流防刷屏
+    const stage = String(text || label).replace(/\d+/g, "#");
+    const prev = stageAt.get(stage);
+    if (prev !== undefined && now - prev < throttleMs && text) return;
+    stageAt.set(stage, now);
+    emit(text);
   };
 }
 

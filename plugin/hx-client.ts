@@ -10,7 +10,7 @@
 //   - 网络类失败（非 HTTP 4xx）自动重试 2 次指数退避（400ms/1200ms）；HTTP 400/401/403/404
 //     视为确定性失败不重试，避免对死配置空烧时间。
 //   - onDelta(text) 回调：调用方（moa/dual-review）用它把生成进度实时写进 ctx.metadata
-//     工具标题，UI 可见「正在生成…已收 N 字」。
+//     工具标题（无 ctx 的自动审查路径由调用方降级 stderr），UI 可见「正在生成…已收 N 字」。
 
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";

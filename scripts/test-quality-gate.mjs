@@ -4,7 +4,8 @@
 // 原理：用 esbuild（provider 的既有依赖）把 plugin/quality-gate.ts 打包到临时文件再 import——
 // 直接 import 会死在「./dual-review 无扩展名」的 Node ESM 解析上。
 // 覆盖：parseReviewVerdict 裁决解析 / VERIFY_CMD_RE 验证命令识别 / HIGH_RISK_RE 高风险路径
-// / reviewSubject 无 git 降级。正则与门禁逻辑的任何回归（含 CJK 腐化）都会让本测试变红。
+// / reviewSubject 无 git 降级 / makeTitle 进度通道选择与节流（含无 ctx 降级 stderr）。
+// 正则、门禁逻辑与进度通道的任何回归（含 CJK 腐化）都会让本测试变红。
 // 注意：本文件必须在 scripts/ 下（不进 install.manifest）——放 plugin/ 会随整目录部署进生产配置。
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -94,6 +95,60 @@ t("README.md 不命中", !HIGH_RISK_RE.test("README.md"));
   t("git 仓库：别会话改动不进审查素材（other.ts 的改动不出现）", !subject.includes("const o = 99"));
   t("git 仓库：未编辑的 tmp 脚本不进审查素材", !subject.includes("tmp-debug.cjs"));
   fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// ── makeTitle（plugin/dual-review.ts）：进度通道选择与节流 ──
+// quality-gate 钩子直调 runDualReview 时不传 ctx，进度必须降级 stderr（否则交付节点黑盒）；
+// 有 ctx.metadata 时仍走工具卡标题。阶段切换不受节流影响，metadata 异常必须静默不逃逸。
+{
+  const drBundle = path.join(os.tmpdir(), `dr-test-${process.pid}.mjs`);
+  execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "dual-review.ts"),
+    "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${drBundle}`], { stdio: "inherit" });
+  const dr = await import(pathToFileURL(drBundle).href);
+  fs.rmSync(drBundle, { force: true });
+
+  const lines = [];
+  const origErr = console.error;
+  console.error = (...a) => lines.push(a.join(" "));
+  try {
+    // 无 ctx（自动审查路径）→ stderr；阶段首次出现立即输出，同阶段重复按 10s 节流
+    const emit = dr.makeTitle(null, "双向审查两路并行");
+    await emit("正向已收 1 字");
+    await emit("正向已收 2 字");
+    await emit("两路并行已收 9 字");
+    await emit("两路并行已收 88 字");
+    t("无 ctx：进度降级 stderr，阶段首现不被节流吞掉、同阶段重复被抑制",
+      lines.length === 2 && lines[0].includes("正向") && lines[1].includes("两路并行"));
+
+    // 两路标题交替到达（正/反各一路）：不得因交替而每 chunk 都视为新阶段刷屏
+    lines.length = 0;
+    const emit2 = dr.makeTitle(null, "双向审查两路并行");
+    for (let i = 1; i <= 5; i++) {
+      await emit2(`正向已收 ${i * 10} 字`);
+      await emit2(`两路并行已收 ${i * 10} 字`);
+    }
+    t("无 ctx：正反交替标题不被误判为阶段切换（仅各输出一次）", lines.length === 2);
+
+    // 有 ctx.metadata → 走工具卡标题，不落 stderr
+    const titles = [];
+    const emitMeta = dr.makeTitle({ metadata: (m) => { titles.push(m.title); return Promise.resolve(); } }, "X");
+    const before = lines.length;
+    await emitMeta("裁决生成中 10 字");
+    t("有 ctx.metadata：刷新工具卡标题且不写 stderr",
+      titles.length === 1 && titles[0].includes("裁决生成中") && lines.length === before);
+
+    // metadata 同步抛错 / 返回非 Promise：静默，不得逃逸成未处理 rejection
+    let escaped = false;
+    try {
+      const emitThrow = dr.makeTitle({ metadata: () => { throw new Error("boom"); } }, "Y");
+      await emitThrow("x");
+      const emitVoid = dr.makeTitle({ metadata: () => undefined }, "Z");
+      await emitVoid("y");
+    } catch { escaped = true; }
+    t("ctx.metadata 抛错/返回非 Promise → 静默不逃逸", escaped === false);
+  } finally {
+    console.error = origErr;
+  }
 }
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} quality-gate 回归：${pass} 通过 / ${fail} 失败`);

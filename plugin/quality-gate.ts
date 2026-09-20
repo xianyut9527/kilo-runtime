@@ -504,8 +504,8 @@ export const QualityGate = async ({ directory } = {}) => {
             const editedList = [...s.edited].slice(0, 30).join("\n");
             const subject = await reviewSubject(projectRoot, s, editedList);
             const reviewT0 = Date.now();
-            // 钩子无 ctx.metadata 通道（流式进度仅手动 dual_review 工具可用），
-            // stderr 提示交付节点正在跑异源审查，避免「静默卡住」观感（CLI TUI 可见）
+            // 钩子无 ctx.metadata 通道：runDualReview 内部已把进度标题降级 stderr
+            // （阶段切换立即输出、5s 节流），此处只补一条总起提示，避免「静默卡住」观感
             console.error(`${TAG} 层 3 双向审查执行中（正反两路异源模型 + 裁决，预计 30s~2min）…`);
             try {
               const verdict = await runDualReview(subject);
