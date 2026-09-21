@@ -17,6 +17,14 @@
 // legacy 五项语义：① 错误即触发（不限状态码，唯一例外见 isCancellation：调用方取消直通）
 //                  ② 失败 profile 临时停用+冷却
 //                  ③ 切换注入可见通知 ④ 禁止嵌套 ⑤ 全链失败抛原始最后一个错误
+//
+// thinking 协议兜底（2026-09-21 reasoning_content 400 专项）：
+// DeepSeek V4 / Kimi K2.6 / GLM-5.x / MiniMax 在 thinking 模式下要求历史 assistant 消息
+// 回传 reasoning_content（工具循环续跑必查）；Kilo 从存储重放历史不保留该字段，
+// @ai-sdk/openai-compatible 只在 assistant 带 reasoning 块时才输出它 → 上游 400
+// 「must be passed back」直达用户（kilo.db 实证全部命中 deepseek-v4.1-flash，variant=max）。
+// 真实思考文本在更上层已丢失，本层唯一能做的是协议兜底：给缺失该字段的 assistant 消息
+// 补空串（四家上游直连实测均接受）。开关 reasoningEcho，缺省关，kilo.json 显式开。
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { APICallError } from "@ai-sdk/provider";
 import { appendFile, mkdir, rename, stat } from "node:fs/promises";
@@ -58,6 +66,38 @@ async function logFailover(record) {
 }
 
 const cooldown = new Map(); // modelId -> 失效截止时间戳
+
+// ── thinking 模式 reasoning_content 回传兜底（2026-09-21 400 专项）─────────────
+// 只补缺失、绝不覆盖已有值（真实思考文本由 SDK 转换层写入时保持原样）；
+// 解析失败/非聊天请求（无 messages）一律原样放行，兜底永不阻断请求。
+function patchReasoningContent(bodyText) {
+  let parsed;
+  try { parsed = JSON.parse(bodyText); } catch { return bodyText; }
+  const messages = parsed?.messages;
+  if (!Array.isArray(messages)) return bodyText;
+  let changed = false;
+  for (const m of messages) {
+    if (m && m.role === "assistant" && typeof m.reasoning_content !== "string") {
+      m.reasoning_content = "";
+      changed = true;
+    }
+  }
+  return changed ? JSON.stringify(parsed) : bodyText;
+}
+
+function withReasoningEcho(baseFetch) {
+  const call = baseFetch ?? globalThis.fetch;
+  return async function reasoningEchoFetch(input, init) {
+    try {
+      // SDK 的 postJsonToApi 固定 fetch(url, {method:"POST", body:<JSON 字符串>})
+      if (init && typeof init.body === "string" && init.body.length > 0) {
+        const patched = patchReasoningContent(init.body);
+        if (patched !== init.body) init = { ...init, body: patched };
+      }
+    } catch { /* 兜底永不阻断请求 */ }
+    return call(input, init);
+  };
+}
 
 function isCooling(id, cooldownMs) {
   const until = cooldown.get(id);
@@ -192,9 +232,19 @@ export function createHxFailover(options) {
     throw new Error("hx-failover: 禁止嵌套 failover 配置（legacy 语义，防循环依赖）");
   }
 
-  // Kilo/自研扩展键不可透传给 @ai-sdk/openai-compatible（未知键会报错）
-  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout"];
-  const sdkOptions = { ...rest, name, apiKey, headers, fetch: customFetch };
+  // Kilo/自研扩展键不可透传给 @ai-sdk/openai-compatible（SDK 只读已知键，未知键静默丢弃——
+  // 但留在 settings 里易被误当 SDK 能力排查，统一剥除；timeout/dual_review 由 plugin 侧直读 kilo.json）
+  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "timeout", "dual_review"];
+  // thinking 模式 reasoning_content 回传兜底（kilo.json options.reasoningEcho；缺省 = 关闭）
+  const reasoningEcho = options?.reasoningEcho === true;
+  const sdkOptions = {
+    ...rest,
+    name,
+    apiKey,
+    headers,
+    // 关闭时原样透传 customFetch（含 undefined → SDK 走全局 fetch），行为零变化
+    fetch: reasoningEcho ? withReasoningEcho(customFetch) : customFetch,
+  };
   for (const k of EXTENSION_KEYS) delete sdkOptions[k];
 
   const cooldownMs = Number(failoverOpts?.cooldownMs) > 0 ? Number(failoverOpts.cooldownMs) : DEFAULT_COOLDOWN_MS;
@@ -226,7 +276,18 @@ export function createHxFailover(options) {
             await logFailover({ from: modelId, at: id, action: "cancelled" });
             throw err;
           }
-          if (!isRetryable(err)) throw err;
+          if (!isRetryable(err)) {
+            // 不可重试错误（400 类协议/参数错误）原样直通，但必须入遥测：
+            // 此前这类错误完全绕过降级链与日志（reasoning_content 400 排查时无迹可循）
+            await logFailover({
+              from: modelId,
+              at: id,
+              action: "fatal",
+              status: err?.statusCode ?? err?.status,
+              error: String(err?.message ?? err).slice(0, 200),
+            });
+            throw err;
+          }
 
           if (attempt < MAX_RETRIES_PER_HOP) {
             await logFailover({ from: modelId, at: id, action: "retry", attempt: attempt + 1 });

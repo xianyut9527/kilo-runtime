@@ -22,14 +22,14 @@
 | `plugin/compaction-anchor.ts` | 压缩锚点 | 长会话压缩后不丢任务连续性 |
 | `plugin/quality-gate.ts` | 三层交付检查（层 1+2+层 3 调度与闭环） | 层 1：todo completed 时核对执行痕迹（防空口声明）；层 2（fail-closed）：编辑过代码但未跑验证/构建命令时否决「全部完成」（逃生门 verify-skipped）；编辑后按后缀跑 ruff/tsc 即时回注诊断；交付节点（todo 全 completed + 高风险文件，或含代码改动且跨≥3 文件——纯文档不烧审查费）直调 dual-review 自动执行层 3，审查素材取 `git diff HEAD`（含已暂存）+未跟踪新文件全文——裁决未通过**阻断交付**，修复后自动再审直到通过（上限 2 轮，超限放行并回注残余项升级人工；逃生门 review-accepted） |
 | `plugin/dual-review.ts` | 层 3 双向异源审查 | 正向（查遗漏）×反向（红队找错）异源模型并行 + 第三方裁决；被 quality-gate 在交付节点自动调用（无 ctx 时进度降级 stderr，阶段切换即时可见），也可经 `dual_review` 工具手动发起（permission=allow） |
-| `scripts/test-quality-gate.mjs` | 门禁离线回归（不联网、不起 Kilo） | `node scripts/test-quality-gate.mjs`：esbuild 打包后测 parseReviewVerdict/VERIFY_CMD_RE/HIGH_RISK_RE/reviewSubject/makeTitle 共 28 例——门禁正则、裁决解析与进度通道选择的任何回归（含 CJK 腐化）立即变红 |
+| `scripts/test-quality-gate.mjs` | 门禁离线回归（不联网、不起 Kilo） | `node scripts/test-quality-gate.mjs`：esbuild 打包后测 parseReviewVerdict/VERIFY_CMD_RE/HIGH_RISK_RE/reviewSubject/makeTitle 共 29 例——门禁正则、裁决解析与进度通道选择的任何回归（含 CJK 腐化）立即变红 |
 | `plugin/hx-client.ts` | hx 上游共享客户端 | moa 与 dual-review 的公共配置读取/请求层（改凭证与 baseURL 规则只改这里） |
 | `plugin/moa.ts` | 按需多模型分析 | 高风险判断时 3+1 模型交叉（agent 自主决定调用） |
 | `plugin/memory-bootstrap.ts` | 记忆自举 | git 项目首个 session.created 自动启用原生记忆（scaffold 与官方 /memory/enable 产物逐字节一致；create-if-missing，绝不改已有状态） |
 | `scripts/memory-enable.mjs` | 记忆批量启用/体检 | 部署到 `~/.config/kilo/scripts/`：无参=全量状态体检，`<dir>`=显式启用（含非 git 目录），`--db`=从 kilo.db 项目表批量启用；`/memory-setup` 命令的执行体 |
 | `command/memory-setup.md` | 全局命令 | 非 git 目录显式启用记忆 + 排查修复自举失效 |
 | `command/evolve.md` | 全局命令 | 复盘进化：蒸馏近期会话入库 + 修正过期记忆 + 反哺 SSOT（改动需确认） |
-| `provider/hx-failover/` | 模型故障自动降级 + 流式空闲看门狗 + 流中断自动重试 | Kilo 原生只会同模型退避重试；这是可靠性的核心。流中断专项（2026-09-15）：「200 OK + SSE 中途断开」错误重包装为 isRetryable:true → Kilo 会话级自动重试接管，无需手动重发。⚠️ 降级只覆盖模型级故障，baseURL（natapp 隧道）单点故障全链失效——多端点容灾待规划。⚠️ provider 随 kilo server 进程启动加载（file:// 包整包入内存）：更新 dist 并 install 后，**必须重载 VS Code 窗口才生效**（2026-09-16 实测：9:22 部署的断流修复因 9:20 启动的旧进程未重载，当日仍裸穿报错） |
+| `provider/hx-failover/` | 模型故障自动降级 + 流式空闲看门狗 + 流中断自动重试 + thinking 协议兜底 | Kilo 原生只会同模型退避重试；这是可靠性的核心。流中断专项（2026-09-15）：「200 OK + SSE 中途断开」错误重包装为 isRetryable:true → Kilo 会话级自动重试接管，无需手动重发。reasoning_content 400 专项（2026-09-21）：DeepSeek V4/K2.6/GLM-5.x/MiniMax thinking 模式要求历史 assistant 消息回传 reasoning_content，Kilo 重放丢失 → 工具循环续跑 400 直达用户（400 不重试不降级、降级日志无痕）；`reasoningEcho: true` 出站补空串兜底 + fatal 错误入 failover-events.jsonl 遥测。⚠️ 降级只覆盖模型级故障，baseURL（natapp 隧道）单点故障全链失效——多端点容灾待规划。⚠️ provider 随 kilo server 进程启动加载（file:// 包整包入内存）：更新 dist 并 install 后，**必须重载 VS Code 窗口才生效**（2026-09-16 实测：9:22 部署的断流修复因 9:20 启动的旧进程未重载，当日仍裸穿报错） |
 | `install.*` | 下发器 | 清单驱动 / 幂等 / 备份 / 漂移检测（含 provider dist 新鲜度检查）；备份只保留最近 2 个（`KILO_KEEP_BACKUPS` 可调，需 ≥1 整数；非法值告警后按默认 2，绝不中断下发） |
 | `db-maintain.sh` | kilo.db 在线瘦身 | 清事件溯源/过期会话（实测 14.2GB→1.1GB），不碰记忆与凭证；分批短事务 + VACUUM 写者门禁 + WAL checkpoint |
 | `cleanup.sh` | 运行痕迹清理 | Kilo 托管临时目录内过期条目 + `%TEMP%` 下 `kilo*` 兄弟项 + `~/.config/kilo.backup-*` 保留上限；**默认 dry-run** |
@@ -55,7 +55,7 @@
 已固化的口径：
 - **MCP 默认全关**（playwright/context7/gitnexus）：用时 `/mcps` 现开；未索引项目 gitnexus 无用，别为"改代码查 impact"常开。INSTRUCTIONS.md 已配套改为条件表述。
 - **安全网不省**：snapshot / formatter 保持 true（曾关，撤回只剩"撤对话不撤文件"、代码风格漂移——质量换速度不值）。
-- **超时**：provider timeout 120s、chunkTimeout 60s（原 300s/120s 死等太久；30s 误伤超长思考）。
+- **超时**：`options.timeout` 300s 仅作 MoA/dual_review 分析调用总上限（主模型循环**不消费**该键——DB 实证 27 例 >120s step-finish 正常完成，2026-09-21）；主链路靠 chunkTimeout 60s 空闲看门狗（30s 误伤超长思考）。
 - **DB 膨胀**：event 表是流式 delta 逐行事件溯源，每两周跑一次 `./db-maintain.sh`（2026-09-14→15 一天即回涨 3GB）。
 - **「Failed to execute statement / UnknownError」根因**：Kilo 的 sqlite 连接固定 `PRAGMA busy_timeout = 5000`（二进制内实测），写语句 5s 拿不到锁即失败；Drizzle 把底层 `SqliteError` 包装成这句固定文案，真实 cause 被吞、UI 只显示 UnknownError。触发场景主要是**维护期间并发写**（旧版 db-maintain 在 Kilo 活着时跑单条大 DELETE + VACUUM）。当前脚本对策：删除分批（`--batch` / `--batch-msg`）+ 有写者时拒绝 VACUUM（`--force` 可越权）或 `--no-vacuum`。
   代价口径：`kilo db` 每次调用约 2s 冷启动开销，故批次行数要按「锁时长 × 调用次数」权衡（3GB 事件量按默认 5 万行/批约 15 批、30s 左右）。

@@ -1,6 +1,14 @@
 // 用注入的假 fetch 驱动真实降级代码路径（不打真实网络）。
 // 目标：证明 doStream 在 hop0 失败时确实切到链上后继模型，并注入可见通知。
 // 用 import.meta.url 定位 dist：仓库可克隆到任意路径，不得写死绝对路径。
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { mkdtemp, readFile } from "node:fs/promises";
+
+// 全部测试的 failover 遥测写入临时目录，不污染真实 failover-events.jsonl
+// （failoverLogPath 在调用时读 env，import 后设置即生效）
+process.env.XDG_DATA_HOME = await mkdtemp(join(tmpdir(), "hx-failover-test-"));
+
 const { createHxFailover } = await import(new URL("./dist/index.js", import.meta.url).href);
 
 const calls = [];
@@ -241,3 +249,98 @@ console.log("PASS cancel-midstream-passthrough :", cancelErr?.name === "AbortErr
 
 // 4c：回归 3 的看门狗错误现在必须是可重试形态（挂死 → Kilo 自动重试接管，而非用户面前报错）
 console.log("PASS watchdog-retryable     :", Boolean(wdError) && wdError[APICALL_MARKER] === true && wdError.isRetryable === true);
+
+// ── 回归 5：thinking 模式 reasoning_content 回传兜底（2026-09-21 400 专项）───
+// 背景：DeepSeek V4/Kimi K2.6/GLM-5.x/MiniMax thinking 模式要求历史 assistant 消息
+// 回传 reasoning_content；Kilo 历史重放丢失该字段 → 工具循环续跑 400 直达用户
+//（实证：kilo.db message.error 全部命中 deepseek-v4.1-flash，400 不重试不降级）。
+// 修复：出站请求体给缺失该字段的 assistant 消息补空串；已有真实值不覆盖。
+const capturedBodies = [];
+const fakeFetch5 = async (url, init) => {
+  capturedBodies.push(JSON.parse(init.body));
+  const sse = [
+    `data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", created: 1, model: "m", choices: [{ index: 0, delta: { role: "assistant", content: "ok" }, finish_reason: null }] })}\n\n`,
+    `data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", created: 1, model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })}\n\n`,
+    "data: [DONE]\n\n",
+  ].join("");
+  return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+
+// 模拟 Kilo 历史重放形状：assistant 只有 tool-call（无 reasoning 块）→ 转换层不输出该字段
+const replayPrompt = (withReasoning) => [
+  { role: "user", content: [{ type: "text", text: "读文件" }] },
+  { role: "assistant", content: withReasoning
+    ? [{ type: "reasoning", text: "真实思考" }, { type: "tool-call", toolCallId: "c1", toolName: "t", input: {} }]
+    : [{ type: "tool-call", toolCallId: "c1", toolName: "t", input: {} }] },
+  { role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: "t", output: { type: "text", value: "ok" } }] },
+  { role: "user", content: [{ type: "text", text: "继续" }] },
+];
+const runCapture = async (provider, prompt) => {
+  capturedBodies.length = 0;
+  const { stream } = await provider.languageModel("glm-5.3-flash").doStream({
+    prompt,
+    includeRawChunks: false,
+  });
+  for await (const _ of stream) { /* 消费即弃 */ }
+  return capturedBodies[0]?.messages ?? [];
+};
+
+// 5a：开启 → 缺失字段补空串（含 content:null + tool_calls 的真实故障形状）
+const p5a = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch5,
+  reasoningEcho: true, failover: { chain: { models: [] } },
+});
+const msgs5a = await runCapture(p5a, replayPrompt(false));
+const asst5a = msgs5a.find((m) => m.role === "assistant");
+console.log("");
+console.log("PASS echo-on-fills-empty    :", asst5a?.reasoning_content === "");
+
+// 5b：缺省（未配置）→ 不注入，行为零变化
+const p5b = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch5,
+  failover: { chain: { models: [] } },
+});
+const msgs5b = await runCapture(p5b, replayPrompt(false));
+console.log("PASS echo-off-by-default    :", msgs5b.every((m) => !("reasoning_content" in m)));
+
+// 5c：已有真实思考值不被覆盖（reasoning 块 → SDK 转换已有 reasoning_content）
+const p5c = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch5,
+  reasoningEcho: true, failover: { chain: { models: [] } },
+});
+const msgs5c = await runCapture(p5c, replayPrompt(true));
+const asst5c = msgs5c.find((m) => m.role === "assistant");
+console.log("PASS echo-preserves-real    :", asst5c?.reasoning_content === "真实思考");
+
+// 5d：不可重试错误（reasoning_content 400 形态）原样直通但入遥测（此前完全无痕）
+const fakeFetch5d = async () => new Response(
+  JSON.stringify({ error: { message: "The `reasoning_content` in the thinking mode must be passed back to the API.", type: "invalid_request_error" } }),
+  { status: 400, headers: { "content-type": "application/json" } },
+);
+const p5d = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch5d,
+  failover: { chain: { models: [] } },
+});
+let err5d = null;
+try {
+  await p5d.languageModel("glm-5.3-flash").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+} catch (e) { err5d = e; }
+console.log("PASS fatal-passthrough      :", err5d?.statusCode === 400 && err5d?.isRetryable === false);
+let fatalLine = null;
+try {
+  const log5d = await readFile(join(process.env.XDG_DATA_HOME, "kilo", "failover-events.jsonl"), "utf8");
+  fatalLine = log5d.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.action === "fatal");
+} catch { /* 无日志文件视为未写入 */ }
+console.log("PASS fatal-logged           :", Boolean(fatalLine) && fatalLine.status === 400 && String(fatalLine.error ?? "").includes("reasoning_content"));
+
+// 5e：扩展键剥除完整性（timeout/dual_review 不得流入 SDK settings —— createOpenAICompatible 只读已知键，
+// 但留在 settings 里易被误当 SDK 能力排查；SDK 源码实证 createOpenAICompatible 仅解构已知键）
+const p5e = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub",
+  timeout: 120000, dual_review: { positive: "x", negative: "y", aggregator: "z" },
+  reasoningEcho: true, failover: { chain: { models: [] } },
+});
+console.log("PASS strip-ext-keys         :", p5e !== null && typeof p5e.chatModel === "function");

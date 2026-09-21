@@ -358,12 +358,23 @@
       "options": {
         // 上游 OpenAI 兼容端点
         "baseURL": "https://xianyu1.natapp4.cc/v1",
-        // 单次请求最长 2 分钟：慢响应更早显式报错，由重试/用户接管（原 5 分钟死等太久）
-        "timeout": 120000,
+        // MoA/dual_review 分析调用总时长上限（kilo.json options.timeout 唯一消费方 = 这两个工具）。
+        // ⚠️ 主模型循环不消费本键（provider/hx-failover 不读它，2026-09-21 DB 实证：
+        // 27 例 >120s 的 step-finish 正常完成，120s 从未生效于主链路；主链路只有 chunkTimeout 空闲看门狗）。
+        // 120s→300s：与 hx-client 流式设计口径对齐（其缺省兜底即 300s），避免长审查被 2 分钟硬切。
+        "timeout": 300000,
         // 流式空闲看门狗：相邻 chunk 间隔超 60s 主动断流（provider 内实现；
         // fetch timeout 只覆盖到响应头，body 阶段挂死靠它兜底）。
         // 60s = 正常流远小于此间隔，又不误伤超长思考不吐字的场景
         "chunkTimeout": 60000,
+        // thinking 模式协议兜底（2026-09-21 reasoning_content 400 专项）：
+        // DeepSeek V4/Kimi K2.6/GLM-5.x/MiniMax 上游要求历史 assistant 消息回传
+        // reasoning_content（工具循环续跑必查）；Kilo 历史重放不保留该字段 →
+        // 上游 400「must be passed back」直达用户（kilo.db 实证全命中 deepseek-v4.1-flash，
+        // 400 不重试不降级、降级日志无痕）。开启后 provider 在出站请求体给缺失该字段的
+        // assistant 消息补空串：四家上游直连实测均接受；真实思考文本客户端不留存无法恢复，
+        // 空串是协议层标准兜底（opencode-thinking-fix 同款方案）。已有真实值不覆盖。
+        "reasoningEcho": true,
         // 故障降级链：主模型失败→依次切换，每跳重试 2 次，
         // 失败模型冷却 60s，切换时流首注入 ⚠️ [failover] 可见提示。
         // ※ 模型切换的唯一真源就是本配置文件——provider/moa/dual-review 代码均无内置默认链/兜底模型，

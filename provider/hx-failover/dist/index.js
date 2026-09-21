@@ -28161,6 +28161,37 @@ async function logFailover(record2) {
   }
 }
 var cooldown = /* @__PURE__ */ new Map();
+function patchReasoningContent(bodyText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return bodyText;
+  }
+  const messages = parsed?.messages;
+  if (!Array.isArray(messages)) return bodyText;
+  let changed = false;
+  for (const m of messages) {
+    if (m && m.role === "assistant" && typeof m.reasoning_content !== "string") {
+      m.reasoning_content = "";
+      changed = true;
+    }
+  }
+  return changed ? JSON.stringify(parsed) : bodyText;
+}
+function withReasoningEcho(baseFetch) {
+  const call = baseFetch ?? globalThis.fetch;
+  return async function reasoningEchoFetch(input2, init) {
+    try {
+      if (init && typeof init.body === "string" && init.body.length > 0) {
+        const patched = patchReasoningContent(init.body);
+        if (patched !== init.body) init = { ...init, body: patched };
+      }
+    } catch {
+    }
+    return call(input2, init);
+  };
+}
 function isCooling(id, cooldownMs) {
   const until = cooldown.get(id);
   if (until === void 0) return false;
@@ -28247,8 +28278,16 @@ function createHxFailover(options) {
   if (failoverOpts?.nested === true || Array.isArray(failoverOpts?.nested)) {
     throw new Error("hx-failover: \u7981\u6B62\u5D4C\u5957 failover \u914D\u7F6E\uFF08legacy \u8BED\u4E49\uFF0C\u9632\u5FAA\u73AF\u4F9D\u8D56\uFF09");
   }
-  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout"];
-  const sdkOptions = { ...rest, name: name15, apiKey, headers, fetch: customFetch };
+  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "timeout", "dual_review"];
+  const reasoningEcho = options?.reasoningEcho === true;
+  const sdkOptions = {
+    ...rest,
+    name: name15,
+    apiKey,
+    headers,
+    // 关闭时原样透传 customFetch（含 undefined → SDK 走全局 fetch），行为零变化
+    fetch: reasoningEcho ? withReasoningEcho(customFetch) : customFetch
+  };
   for (const k of EXTENSION_KEYS) delete sdkOptions[k];
   const cooldownMs = Number(failoverOpts?.cooldownMs) > 0 ? Number(failoverOpts.cooldownMs) : DEFAULT_COOLDOWN_MS;
   const chunkTimeoutMs = Number(options?.chunkTimeout) > 0 ? Number(options.chunkTimeout) : 0;
@@ -28272,7 +28311,16 @@ function createHxFailover(options) {
             await logFailover({ from: modelId, at: id, action: "cancelled" });
             throw err;
           }
-          if (!isRetryable(err)) throw err;
+          if (!isRetryable(err)) {
+            await logFailover({
+              from: modelId,
+              at: id,
+              action: "fatal",
+              status: err?.statusCode ?? err?.status,
+              error: String(err?.message ?? err).slice(0, 200)
+            });
+            throw err;
+          }
           if (attempt < MAX_RETRIES_PER_HOP) {
             await logFailover({ from: modelId, at: id, action: "retry", attempt: attempt + 1 });
             await sleep(BACKOFF_MS[attempt] ?? 1500);
