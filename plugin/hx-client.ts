@@ -45,13 +45,16 @@ const NON_RETRYABLE_STATUS = new Set([400, 401, 403, 404, 422]);
 // 根因：单上游网关 CPU 过载时所有模型 503，provider 降级链与 moa 并行路全挂——
 // 降级只是换模型名不换网关，过载时段怎么换都 503。断路器连续 CB_THRESHOLD 次
 // 503-overload 后进入 open 态：cooldown 内 ask() 直接抛错不发请求（fail fast，
-// 省掉每路 8-15s 空烧与对过载网关的持续施压）；cooldown 后 half-open 放 probe，
-// 成功关断、失败重开。只对 503+overload 计数；4xx/超时/网络错不触发（单请求问题非网关问题）。
+// 省掉每路 8-15s 空烧与对过载网关的持续施压）；cooldown 后 half-open 放单个 probe
+// （probeInFlight 锁防 moa 并发 fanout 多路同时穿透），成功关断、任何失败重开。
+// 只对 503+overload 计数；4xx/超时/网络错不触发 open（单请求问题非网关问题），
+// 但 half-open 态的 probe 遭遇任何失败都回退 open（探测失败=网关仍不可信）。
 const CB_THRESHOLD = 3;
 const CB_COOLDOWN_MS = 30_000;
 let cbConsecutiveOverloads = 0;
 let cbState = "closed"; // "closed" | "open" | "half-open"
 let cbOpenedAt = 0;
+let cbProbeInFlight = false; // half-open 单 probe 锁：防并发 fanout 集体穿透
 
 export function circuitState() { return cbState; }
 
@@ -62,14 +65,25 @@ function isOverloadErr(err) {
 
 function cbOnSuccess() {
   cbConsecutiveOverloads = 0;
+  cbProbeInFlight = false;
   cbState = "closed";
 }
 
 function cbOnOverloadFail() {
   cbConsecutiveOverloads++;
-  if (cbConsecutiveOverloads >= CB_THRESHOLD) {
+  if (cbConsecutiveOverloads >= CB_THRESHOLD || cbState === "half-open") {
     cbState = "open";
     cbOpenedAt = Date.now();
+    cbProbeInFlight = false;
+  }
+}
+
+// half-open probe 遭遇非 overload 失败（超时/网络错/4xx）：网关仍不可信，回退 open
+function cbOnProbeFail() {
+  if (cbState === "half-open") {
+    cbState = "open";
+    cbOpenedAt = Date.now();
+    cbProbeInFlight = false;
   }
 }
 
@@ -77,12 +91,15 @@ function cbAllowRequest() {
   if (cbState === "closed") return true;
   if (cbState === "open") {
     if (Date.now() - cbOpenedAt >= CB_COOLDOWN_MS) {
-      cbState = "half-open"; // 放一个 probe
-      return true;
+      cbState = "half-open"; // 转 half-open，下面走单 probe 锁
+    } else {
+      return false;
     }
-    return false;
   }
-  return true; // half-open：probe 放行
+  // half-open：单 probe 锁——已有 probe 在途时其余请求 fail fast（防并发穿透）
+  if (cbProbeInFlight) return false;
+  cbProbeInFlight = true;
+  return true;
 }
 
 let cfgCache = null;
@@ -283,6 +300,7 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, onDe
       const status = e?.statusCode;
       // 确定性失败（HTTP 4xx 已知状态码）不重试；中断（AbortError 由我们主动 abort 触发）按超时算可重试
       if (NON_RETRYABLE_STATUS.has(status)) {
+        cbOnProbeFail(); // half-open probe 遭 4xx：网关仍不可信，回退 open
         await logAskFailure(e, model, Date.now() - t0);
         throw e;
       }
@@ -290,23 +308,29 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, onDe
       const totalTimeout = typeof e?.message === "string" && e.message.includes("总时长超过");
       if (totalTimeout || Date.now() - t0 >= budgetMs) {
         if (isOverloadErr(e)) cbOnOverloadFail();
+        else cbOnProbeFail(); // probe 超时/网络错：同样回退 open
         await logAskFailure(e, model, Date.now() - t0);
         throw e;
       }
       // 503 过载：断路器计数 + 专用退避（2s/6s 给上游喘息，而非 400ms 火上浇油）
       if (isOverloadErr(e)) {
         cbOnOverloadFail();
-        if (cbConsecutiveOverloads >= CB_THRESHOLD && i < maxAttempts - 1) {
+        // 断路器已翻 open（含 half-open probe 过载失败）：剩余重试不再发请求
+        if (cbState === "open" && i < maxAttempts - 1) {
           continue; // 下一轮 cbAllowRequest() 判定，open 时直接 fail fast
         }
         if (i < maxAttempts - 1) {
           await new Promise((r2) => setTimeout(r2, OVERLOAD_BACKOFF_MS[i] ?? 6000));
         }
-      } else if (i < maxAttempts - 1) {
-        await new Promise((r2) => setTimeout(r2, BACKOFF_MS[i] ?? 1200));
+      } else {
+        cbOnProbeFail(); // 非 overload 失败：probe 态回退（closed 态无操作）
+        if (i < maxAttempts - 1) {
+          await new Promise((r2) => setTimeout(r2, BACKOFF_MS[i] ?? 1200));
+        }
       }
     }
   }
+  cbOnProbeFail(); // 重试耗尽的最终失败：probe 态同样回退
   await logAskFailure(lastErr, model, Date.now() - t0);
   throw lastErr;
 }
