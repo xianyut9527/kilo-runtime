@@ -25,6 +25,12 @@
 //   - 遥测错误字段改固定分类枚举（不再落上游报文文本）：网关 4xx/内容策略类报文可能回显
 //     请求体片段，直写 message 有 prompt 泄漏面；
 //   - 轮转先删旧归档再 rename：Windows 不允许 rename 覆盖已存在目标，否则第二次轮转起静默失效。
+//
+// 2026-09-22 三轮审查修复（重载后实测）：
+//   - half-open 跨代隔离：cbOnSuccess/cbOnOverloadFail/cbOnProbeFail 按请求身份（isProbe）
+//     裁决——trip 前发出的旧请求迟到成功/失败均无权迁移状态，关断/回退专属当代 probe
+//     （旧成功不得提前释放 probe 锁放进并发 fanout；旧失败不得丢弃其后的 probe 恢复证据）；
+//   - open 态迟到过载不再刷新 openedAt：冷却自 trip 时刻起算，防拖尾失败无限顺延停摆。
 
 import { appendFile, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -81,27 +87,43 @@ function isOverloadErr(err) {
   return /system cpu overloaded|overloaded/i.test(String(err?.message ?? ""));
 }
 
-function cbOnSuccess() {
+function cbOnSuccess(isProbe) {
   // open 态的迟到成功不关断：在途旧请求（open 前发出）成功不代表网关已恢复，
   // 冷却窗口必须走完——只有 half-open probe 成功才允许关断（防绕过冷却直砸过载网关）
   if (cbState === "open") return;
+  // 跨代隔离（三轮审查实测必须项）：half-open 态只有当代 probe 的成功有权关断并释放
+  // probe 锁——trip 前发出的旧请求迟到成功不得提前关断（否则真 probe 在途时锁被释放、
+  // 并发 fanout 涌入刚过载过的网关）
+  if (cbState === "half-open" && !isProbe) return;
   cbConsecutiveOverloads = 0;
   cbProbeInFlight = false;
   cbState = "closed";
 }
 
-function cbOnOverloadFail() {
+function cbOnOverloadFail(isProbe) {
   cbConsecutiveOverloads++;
-  if (cbConsecutiveOverloads >= CB_THRESHOLD || cbState === "half-open") {
+  if (cbState === "half-open") {
+    // 跨代隔离：half-open 态只有当代 probe 的过载失败有权回退 open；旧请求迟到过载不裁决
+    if (isProbe) {
+      cbState = "open";
+      cbOpenedAt = Date.now();
+      cbProbeInFlight = false;
+    }
+    return;
+  }
+  // 已 open 态的迟到过载不刷新 openedAt：冷却窗口自 trip 时刻起算，防拖尾失败无限顺延停摆
+  if (cbConsecutiveOverloads >= CB_THRESHOLD && cbState !== "open") {
     cbState = "open";
     cbOpenedAt = Date.now();
     cbProbeInFlight = false;
   }
 }
 
-// half-open probe 遭遇非 overload 失败（超时/网络错/4xx）：网关仍不可信，回退 open
-function cbOnProbeFail() {
-  if (cbState === "half-open") {
+// half-open probe 遭遇非 overload 失败（超时/网络错/4xx）：网关仍不可信，回退 open。
+// 跨代隔离：仅当代 probe 的失败有裁决权——旧请求迟到失败不得凭空延长冷却（其后的真
+// probe 成功会被 open 态忽略规则丢弃，等于白扔一次有效恢复证据、多 30s 全局停摆）
+function cbOnProbeFail(isProbe) {
+  if (cbState === "half-open" && isProbe) {
     cbState = "open";
     cbOpenedAt = Date.now();
     cbProbeInFlight = false;
@@ -334,28 +356,28 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, onDe
       if (gate === "probe") holdProbe = true;
       try {
         const r = await attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, onDelta, signal });
-        cbOnSuccess();
+        cbOnSuccess(holdProbe);
         return r.text;
       } catch (e) {
         lastErr = e;
         const status = e?.statusCode;
         // 确定性失败（HTTP 4xx 已知状态码）不重试；中断（AbortError 由我们主动 abort 触发）按超时算可重试
         if (NON_RETRYABLE_STATUS.has(status)) {
-          cbOnProbeFail(); // half-open probe 遭 4xx：网关仍不可信，回退 open
+          cbOnProbeFail(holdProbe); // half-open probe 遭 4xx：网关仍不可信，回退 open
           await logAskFailure(e, model, Date.now() - t0);
           throw e;
         }
         // 墙钟预算耗尽（总时长超时或已耗时过半途预算）：不再重试
         const totalTimeout = typeof e?.message === "string" && e.message.includes("总时长超过");
         if (totalTimeout || Date.now() - t0 >= budgetMs) {
-          if (isOverloadErr(e)) cbOnOverloadFail();
-          else cbOnProbeFail(); // probe 超时/网络错：同样回退 open
+          if (isOverloadErr(e)) cbOnOverloadFail(holdProbe);
+          else cbOnProbeFail(holdProbe); // probe 超时/网络错：同样回退 open
           await logAskFailure(e, model, Date.now() - t0);
           throw e;
         }
         // 503 过载：断路器计数 + 专用退避（2s/6s 给上游喘息，而非 400ms 火上浇油）
         if (isOverloadErr(e)) {
-          cbOnOverloadFail();
+          cbOnOverloadFail(holdProbe);
           // 断路器已翻 open（含 half-open probe 过载失败）：剩余重试不再发请求
           if (cbState === "open" && i < maxAttempts - 1) {
             continue; // 下一轮 cbAllowRequest() 判定，open 时直接 fail fast
@@ -364,14 +386,14 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, onDe
             await new Promise((r2) => setTimeout(r2, OVERLOAD_BACKOFF_MS[i] ?? 6000));
           }
         } else {
-          cbOnProbeFail(); // 非 overload 失败：probe 态回退（closed 态无操作）
+          cbOnProbeFail(holdProbe); // 非 overload 失败：probe 态回退（closed 态无操作）
           if (i < maxAttempts - 1) {
             await new Promise((r2) => setTimeout(r2, BACKOFF_MS[i] ?? 1200));
           }
         }
       }
     }
-    cbOnProbeFail(); // 重试耗尽的最终失败：probe 态同样回退
+    cbOnProbeFail(holdProbe); // 重试耗尽的最终失败：probe 态同样回退
     await logAskFailure(lastErr, model, Date.now() - t0);
     throw lastErr;
   } finally {
