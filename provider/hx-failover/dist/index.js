@@ -28348,6 +28348,8 @@ function createHxFailover(options) {
   function withStreamBreakRewrap(stream, modelId) {
     const reader = stream.getReader();
     let emittedAny = false;
+    const streamT0 = Date.now();
+    let chunks = 0;
     return new ReadableStream({
       async pull(controller) {
         let next;
@@ -28360,6 +28362,8 @@ function createHxFailover(options) {
               from: modelId,
               action: "stream_break_rewrap",
               emittedAny,
+              chunks,
+              elapsedMs: Date.now() - streamT0,
               status: wrapped2.statusCode,
               error: String(error62?.message ?? error62).slice(0, 200)
             });
@@ -28374,6 +28378,7 @@ function createHxFailover(options) {
           return;
         }
         emittedAny = true;
+        chunks++;
         controller.enqueue(next.value);
       },
       cancel(reason) {

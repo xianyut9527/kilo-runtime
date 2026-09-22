@@ -325,6 +325,11 @@ export function createHxFailover(options) {
   function withStreamBreakRewrap(stream, modelId) {
     const reader = stream.getReader();
     let emittedAny = false; // 断流前是否已产出内容（诊断用：Kilo 重试整条消息重跑）
+    // 断流阶段诊断（2026-09-22）：elapsed/chunks 区分「流早期断」（建流即断，疑似隧道
+    // 连接老化）与「流晚期断」（长思考/长生成中断，疑似隧道空闲回收或上游重启），
+    // 下次断流时遥测直接给出流的存活时长与吞吐量
+    const streamT0 = Date.now();
+    let chunks = 0;
     return new ReadableStream({
       async pull(controller) {
         let next;
@@ -337,6 +342,8 @@ export function createHxFailover(options) {
               from: modelId,
               action: "stream_break_rewrap",
               emittedAny,
+              chunks,
+              elapsedMs: Date.now() - streamT0,
               status: wrapped.statusCode,
               error: String(error?.message ?? error).slice(0, 200),
             });
@@ -351,6 +358,7 @@ export function createHxFailover(options) {
           return;
         }
         emittedAny = true;
+        chunks++;
         controller.enqueue(next.value);
       },
       cancel(reason) {
