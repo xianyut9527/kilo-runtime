@@ -1,0 +1,9 @@
+{
+  // kilo.json.tmpl 是带「行首 //」整行注释的 JSONC 模板（install 部署时剥成纯 JSON）。
+  // 关联为 jsonc 后获得语法高亮、括号匹配与语法错误红线（VS Code 打开本仓库即生效）。
+  // ⚠️ 注释纪律：仍只能写「行首 //」整行——jsonc 语法允许的 /* */ 与行尾 //，
+  // install 的剥注释规则不处理，写进去会让部署产物变成非法 JSON（-DryRun 校验会拦）。
+  "files.associations": {
+    "kilo.json.tmpl": "jsonc"
+  }
+}

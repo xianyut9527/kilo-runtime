@@ -4,12 +4,26 @@
 
 ## 快速开始
 
+Windows（PowerShell 7+，本仓库主环境）：
+
+```powershell
+.\install.ps1 -DryRun   # 预览变更（含模板渲染 + JSON 合法性 + 占位符残留校验，不写盘）
+.\install.ps1           # 下发（自动备份，幂等）
+.\install.ps1 -Check    # 漂移检测（可挂预提交钩子）
+```
+
+macOS / Linux（bash）：
+
 ```bash
 ./install.sh --dry-run   # 预览变更
 ./install.sh             # 下发（自动备份，幂等）
-./install.sh --check     # 漂移检测（可挂预提交钩子）
-# Windows 原生：install.ps1（同参数）
+./install.sh --check     # 漂移检测
 ```
+
+平台口径：
+
+- **目录一致**：配置下发到 `~/.config/kilo`（Windows 即 `C:\Users\<你>\.config\kilo`），数据在 `~/.local/share/kilo`；两个安装器行为一致。
+- **维护脚本**：`cleanup.sh` / `db-maintain.sh` 是 bash 脚本——Windows 经 Git Bash 运行，日常走 PowerShell 包装 `scripts\kilo-maintenance.ps1`（见「磁盘垃圾与维护」）；依赖 GNU coreutils（`stat -c` / `find -printf` / `du`），macOS/BSD 语法不同未适配，勿直接跑。
 
 ## 资产清单（全部有明确运行时职责）
 
@@ -20,17 +34,19 @@
 | `agent/verify.md` | 异源验证子代理 | 高风险改动的独立复核视角 |
 | `plugin/permission-guard.ts` | 动态权限守护 | 拦截静态规则漏掉的不可逆命令 + 密钥路径；实测有效 |
 | `plugin/compaction-anchor.ts` | 压缩锚点 | 长会话压缩后不丢任务连续性 |
-| `plugin/quality-gate.ts` | 三层交付检查（层 1+2+层 3 调度与闭环） | 层 1：todo completed 时核对执行痕迹（防空口声明）；层 2（fail-closed）：编辑过代码但未跑验证/构建命令时否决「全部完成」（逃生门 verify-skipped）；编辑后按后缀跑 ruff/tsc 即时回注诊断；交付节点（todo 全 completed + 高风险文件，或含代码改动且跨≥3 文件——纯文档不烧审查费）直调 dual-review 自动执行层 3，审查素材取 `git diff HEAD`（含已暂存）+未跟踪新文件全文——裁决未通过**阻断交付**，修复后自动再审直到通过（上限 2 轮，超限放行并回注残余项升级人工；逃生门 review-accepted） |
-| `plugin/dual-review.ts` | 层 3 双向异源审查 | 正向（查遗漏）×反向（红队找错）异源模型并行 + 第三方裁决；被 quality-gate 在交付节点自动调用（无 ctx 时进度降级 stderr，阶段切换即时可见），也可经 `dual_review` 工具手动发起（permission=allow） |
+| `plugin/quality-gate.ts` | 三层交付检查（层 1+2+层 3 调度与闭环） | 层 1：todo completed 时核对执行痕迹（防空口声明）；层 2（fail-closed）：编辑过代码但未跑验证/构建命令时否决「全部完成」（逃生门 verify-skipped）；编辑后按后缀跑 ruff/tsc 即时回注诊断；交付节点（todo 全 completed + 高风险文件，或含代码改动且跨≥3 文件——纯文档不烧审查费）直调 dual-review 自动执行层 3，审查素材范围限定本会话：编辑文件清单 + `git diff HEAD -- <本会话编辑的代码文件>`（含已暂存，pathspec ≤100 防 Windows 命令行超长）+ diff 未覆盖的未跟踪新文件全文（≤8 个×4000 字）+ 无 git 降级为脱敏会话证据池，素材截断 24k——多会话共享工作区不再把别会话的累积改动/tmp 脚本审进来（2026-09-17 事故）——裁决未通过**阻断交付**，修复后自动再审直到通过（上限 2 轮，超限放行并回注残余项升级人工；逃生门 review-accepted） |
+| `plugin/dual-review.ts` | 层 3 双向异源审查 | 正向（查遗漏）×反向（红队找错）异源模型并行 + 第三方裁决；被 quality-gate 在交付节点自动调用（无 ctx 时进度降级 stderr，阶段切换即时可见），也可经 `dual_review` 工具手动发起（permission=allow）。单路失败不做单路裁决（返回幸存方原文）；聚合输入截断（subject 8k / 单路结论 10k）；模型读 kilo.json 零内置默认 |
 | `scripts/test-quality-gate.mjs` | 门禁离线回归（不联网、不起 Kilo） | `node scripts/test-quality-gate.mjs`：esbuild 打包后测 parseReviewVerdict/VERIFY_CMD_RE/HIGH_RISK_RE/reviewSubject/makeTitle 共 29 例——门禁正则、裁决解析与进度通道选择的任何回归（含 CJK 腐化）立即变红 |
-| `plugin/hx-client.ts` | hx 上游共享客户端 | moa 与 dual-review 的公共配置读取/请求层（改凭证与 baseURL 规则只改这里） |
-| `plugin/moa.ts` | 按需多模型分析 | 高风险判断时 3+1 模型交叉（agent 自主决定调用） |
+| `plugin/hx-client.ts` | hx 上游共享客户端 | moa 与 dual-review 的公共层：kilo.json options + auth.json hx.key 读取（60s 缓存）+ SSE 流式请求——三层超时（首字节 / chunk 空闲 / 总时长）、网络类失败重试 2 次指数退避、HTTP 400/401/403/404/422 确定性失败不重试、`onDelta` 进度回调（改凭证与 baseURL 规则只改这里） |
+| `plugin/moa.ts` | 按需多模型分析 | 高风险判断时 N 参考 + 1 聚合交叉（默认取 kilo.json `provider.hx.options.moa`，单次上限 3 参考 + 1 聚合；SSE 流式 + 工具卡进度标题 + 每路结论截断 12k；agent 自主决定调用） |
 | `plugin/memory-bootstrap.ts` | 记忆自举 | git 项目首个 session.created 自动启用原生记忆（scaffold 与官方 /memory/enable 产物逐字节一致；create-if-missing，绝不改已有状态） |
 | `scripts/memory-enable.mjs` | 记忆批量启用/体检 | 部署到 `~/.config/kilo/scripts/`：无参=全量状态体检，`<dir>`=显式启用（含非 git 目录），`--db`=从 kilo.db 项目表批量启用；`/memory-setup` 命令的执行体 |
 | `command/memory-setup.md` | 全局命令 | 非 git 目录显式启用记忆 + 排查修复自举失效 |
 | `command/evolve.md` | 全局命令 | 复盘进化：蒸馏近期会话入库 + 修正过期记忆 + 反哺 SSOT（改动需确认） |
-| `provider/hx-failover/` | 模型故障自动降级 + 流式空闲看门狗 + 流中断自动重试 + thinking 协议兜底 | Kilo 原生只会同模型退避重试；这是可靠性的核心。流中断专项（2026-09-15）：「200 OK + SSE 中途断开」错误重包装为 isRetryable:true → Kilo 会话级自动重试接管，无需手动重发。reasoning_content 400 专项（2026-09-21）：DeepSeek V4/K2.6/GLM-5.x/MiniMax thinking 模式要求历史 assistant 消息回传 reasoning_content，Kilo 重放丢失 → 工具循环续跑 400 直达用户（400 不重试不降级、降级日志无痕）；`reasoningEcho: true` 出站补空串兜底 + fatal 错误入 failover-events.jsonl 遥测。⚠️ 降级只覆盖模型级故障，baseURL（natapp 隧道）单点故障全链失效——多端点容灾待规划。⚠️ provider 随 kilo server 进程启动加载（file:// 包整包入内存）：更新 dist 并 install 后，**必须重载 VS Code 窗口才生效**（2026-09-16 实测：9:22 部署的断流修复因 9:20 启动的旧进程未重载，当日仍裸穿报错） |
-| `install.*` | 下发器 | 清单驱动 / 幂等 / 备份 / 漂移检测（含 provider dist 新鲜度检查）；备份只保留最近 2 个（`KILO_KEEP_BACKUPS` 可调，需 ≥1 整数；非法值告警后按默认 2，绝不中断下发） |
+| `provider/hx-failover/` | 模型故障自动降级 + 全链路 SSE 流式 + 三级超时 + thinking 协议兜底 | Kilo 原生只会同模型退避重试；这是可靠性的核心。**SSE 流式**（2026-09-19）：上游流式直通 + 进度可视，超时拆三级（首字节 / chunk 空闲 `chunkTimeout` / 总时长）。**流中断专项**（2026-09-15）：「200 OK + SSE 中途断开」错误重包装为 isRetryable:true → Kilo 会话级自动重试接管，无需手动重发。**reasoning_content 400 专项**（2026-09-21）：DeepSeek V4/K2.6/GLM-5.x/MiniMax thinking 模式要求历史 assistant 消息回传 reasoning_content，Kilo 重放丢失 → 工具循环续跑 400 直达用户（400 不重试不降级、降级日志无痕）；`reasoningEcho: true` 出站补空串兜底 + fatal 错误入 failover-events.jsonl 遥测（5MB 轮转）。**模型唯一真源**：降级链 / moa / dual_review 全部读 kilo.json `provider.hx.options`，代码零内置默认（未配链 = 仅当前模型直通 + stderr 告警）。⚠️ 降级只覆盖模型级故障，baseURL（natapp 隧道）单点故障全链失效——多端点容灾待规划。⚠️ provider 随 kilo server 进程启动加载（file:// 包整包入内存）：更新 dist 并 install 后，**必须重载 VS Code 窗口才生效**（2026-09-16 实测：9:22 部署的断流修复因 9:20 启动的旧进程未重载，当日仍裸穿报错） |
+| `provider/hx-failover/test-failover.mjs` | provider 离线回归（21 例，不打真实网络） | `node provider/hx-failover/test-failover.mjs`：假 fetch 驱动真实 doStream——降级切换/通知注入/冷却不污染/看门狗触发/流中断 isRetryable/reasoningEcho 补写/fatal 透传+遥测落盘/扩展键剥除全覆盖；改 `src/index.js` 后先 `npm run build` 再必跑（测的是 dist 行为） |
+| `install.*` | 下发器 | 清单驱动 / 幂等 / 备份 / 漂移检测（含 provider dist 新鲜度检查）；备份只保留最近 2 个（`KILO_KEEP_BACKUPS` 可调，需 ≥1 整数；非法值告警后按默认 2，绝不中断下发）。`install.sh` 用 `--dry-run/--check`，`install.ps1` 用 `-DryRun/-Check`，**参数风格不同** |
+| `.vscode/settings.json` | 仓库级编辑器体验 | 把 `kilo.json.tmpl` 关联为 `jsonc`——模板获得语法高亮 / 括号匹配 / 语法错误红线（VS Code 打开本仓库即生效）；非运行时资产，不进 `install.manifest` |
 | `db-maintain.sh` | kilo.db 在线瘦身 | 清事件溯源/过期会话（实测 14.2GB→1.1GB），不碰记忆与凭证；分批短事务 + VACUUM 写者门禁 + WAL checkpoint |
 | `cleanup.sh` | 运行痕迹清理 | Kilo 托管临时目录内过期条目 + `%TEMP%` 下 `kilo*` 兄弟项 + `~/.config/kilo.backup-*` 保留上限；**默认 dry-run** |
 | `scripts/kilo-maintenance.ps1` | 维护调度入口 | 组合上面两个脚本 + 到期判断 + 登录自启/计划任务；VACUUM 保持人工 |
@@ -54,6 +70,7 @@
 
 已固化的口径：
 - **MCP 默认全关**（playwright/context7/gitnexus）：用时 `/mcps` 现开；未索引项目 gitnexus 无用，别为"改代码查 impact"常开。INSTRUCTIONS.md 已配套改为条件表述。
+- **remote_control 默认关闭**（2026-09-20）：常驻云端中继连接是会话事件转发通道，属「快→慢」同期嫌疑项；不用手机端盯任务就关，需要时 `/remote` 临时开。
 - **安全网不省**：snapshot / formatter 保持 true（曾关，撤回只剩"撤对话不撤文件"、代码风格漂移——质量换速度不值）。
 - **超时**：`options.timeout` 300s 仅作 MoA/dual_review 分析调用总上限（主模型循环**不消费**该键——DB 实证 27 例 >120s step-finish 正常完成，2026-09-21）；主链路靠 chunkTimeout 60s 空闲看门狗（30s 误伤超长思考）。
 - **DB 膨胀**：event 表是流式 delta 逐行事件溯源，每两周跑一次 `./db-maintain.sh`（2026-09-14→15 一天即回涨 3GB）。
@@ -73,7 +90,7 @@
 
 **除此之外没有任何回收**：Kilo 把子进程的 `TMP/TMPDIR` 指向 `$TEMP/kilo`（`kilo debug paths` 的 `tmp`），agent 在里面写的脚本/测试库、`install` 每次下发产生的配置备份、`kilo.db` 事件流水，都无人清理。实测 `%TEMP%` 下 `kilo*` 累计 **2.5GB**（含一份 1.33GB 的 `kilo.db` 沙箱副本）。`storage`(200MB)/`snapshot`/`cache` 也未见保留策略。
 
-手动入口（都不需要管理员）：
+手动入口（都不需要管理员；bash 块在 Git Bash 运行，Windows 日常建议直接用下面 PowerShell 包装）:
 
 ```bash
 ./cleanup.sh              # 预览：临时目录 + 配置备份的可删清单与体积
@@ -114,6 +131,27 @@
 - knowledge-base（知识已固化进 INSTRUCTIONS.md）、telemetry/metrics 脚本（被动诊断）、AGENTS 模板（未接线）。
 - `plan.md` 架构决策记录（2026-09-15）：硬约束已固化进本 README + INSTRUCTIONS.md，模型路由表反而先过期失真；不再保留会漂移的副本。
 
+## 模板编辑体验（kilo.json.tmpl）
+
+模板是带「行首 `//`」注释的 JSONC，`.tmpl` 后缀默认无高亮——本仓库内置 `.vscode/settings.json` 已把它关联为 `jsonc`，VS Code 打开仓库即获得语法高亮、括号匹配与语法错误红线。
+
+维护回路（改模板的固定三步）：
+
+1. 改模板。注释纪律：**只写「行首 `//`」整行**——jsonc 语法允许 `/* */` 与行尾 `//`，但 install 只剥行首 `//`（行内 `//` 不动，防误伤 URL），其余形式会让部署产物变成非法 JSON；
+2. `.\install.ps1 -DryRun`（bash：`./install.sh --dry-run`）——渲染 + JSON 合法性 + 占位符残留三项校验一步完成，不写盘，即改即验；
+3. 绿了再真实下发，并跑「验收」命令。
+
+## 隐私与安全边界
+
+- **本仓库按私有资产管理**：`kilo.json.tmpl` 含真实上游网关域名（内网穿透入口，且已存在于 git 提交历史）。外发/开源前必须 ① 替换域名、② 重写历史（如 `git filter-repo`）——只改当前文件不等于删历史。文档一律不出现完整域名。
+- **凭证零入库**（2026-09-22 全仓扫描确认）：API key 只存 `~/.local/share/kilo/auth.json` 运行时读取；代码/配置无硬编码凭证；git 历史无凭证文件；`.gitignore` 已兜底运行时产物。
+- **出网链路明示**（敏感代码仓库先评估再触发）：
+  - 模型主链路 + failover：对话内容发往上游网关；
+  - `dual_review` / `moa`：审查素材（diff 片段、任务描述）额外发往上游参考/裁决模型（单次共 3 次调用）；
+  - `web_search` / `webfetch` 已放行；Kilo 自身遥测已关（`privacy_mode: true`）。
+- **failover 遥测口径**：`~/.local/share/kilo/failover-events.jsonl` 只记模型名/动作/HTTP 状态/错误摘要（≤200 字），**不含对话与 prompt 内容**；5MB 轮转只保一代。
+- **破坏性操作默认安全**：`cleanup.sh` 默认 dry-run 逐条打印；`db-maintain.sh` 分批短事务、VACUUM 仅人工；install 写盘前自动备份（保留 2 份）；agent 权限三道防线（permission-guard 动态拦截 → 静态规则 → deny 兜底）。
+
 ## 关键约定（改配置前必读）
 
 1. **模板文件名必须是 `kilo.json.tmpl`**。Kilo 会自动加载工作目录的 `kilo.json` 作为项目级配置——模板含占位符，一旦被加载，provider 路径渲染成 `file:///__KILO_CONFIG__/...`（不存在）→ `Failed to initialize provider: hx`。installer 渲染后部署为 `kilo.json`。
@@ -126,6 +164,7 @@
 8. **不要在内置 agent 名下放同名 `.md`**（整体覆盖内置提示词）。内置（`kilo agent list` 实测）：`ask / code / compaction / debug / explore / general / orchestrator / plan / summary / title`。自定义 agent（`verify` 等）才用 `.md`。
    ⚠️ 别照抄 `kilo.json` schema 注解里的 agent 键名 —— 那里含已过期的 `build` / `scout`，实测不存在；判定内置与否只认 `kilo agent list`。
 9. **改配置后必须真跑一次任务**（`kilo run --dir <d> --auto "..."`）——`debug config` 通过 ≠ 能执行任务（踩过：provider 路径错导致所有任务失败，debug 不报错）。
+10. **模型唯一真源 = `kilo.json.tmpl`**（2026-09-20 起）：agent 路由、failover 降级链、moa、dual_review 的模型全部只在该模板配置（`agent` 段 + `provider.hx.options.{failover,moa,dual_review}`）；plugin 与 provider 代码零内置默认——换模型只改模板再下发，别改代码。
 
 ## 验收
 
@@ -138,7 +177,7 @@ EXT="$(ls -d "$HOME"/.vscode/extensions/kilocode.kilo-code-*/ 2>/dev/null | sort
 mkdir -p /tmp/smoke && "${EXT}bin/kilo.exe" run --dir "$(cygpath -m /tmp/smoke)" --auto "回答：就绪"
 ```
 
-PowerShell 原生等价：
+PowerShell 原生等价（**Windows 主环境用这个**）：
 
 ```powershell
 .\install.ps1 -Check
@@ -158,14 +197,17 @@ node scripts\memory-enable.mjs
 
 # quality-gate 纯函数回归（离线，不联网；改 quality-gate.ts/正则后必跑）
 node scripts\test-quality-gate.mjs
+
+# provider 离线回归（改 provider/hx-failover/src 后先 npm run build 再跑；测的是 dist 行为）
+node provider\hx-failover\test-failover.mjs
 ```
 
-`cleanup.sh` / `db-maintain.sh` 是 bash 脚本，在 Git Bash 里直接跑（`bash cleanup.sh --status`），或经上面的 PowerShell 包装调用。
+`cleanup.sh` / `db-maintain.sh` 是 bash 脚本，Windows 在 Git Bash 里直接跑（`bash cleanup.sh --status`），或经上面的 PowerShell 包装调用。
 依赖 GNU coreutils/findutils（`stat -c` / `find -printf` / `du`），Git Bash 自带；macOS/BSD 的 find/stat 语法不同，未经适配勿直接跑。
 
 ## 变更流程
 
-1. 改仓库（新文件加进 `install.manifest`）
-2. `--dry-run` 看差异 → `./install.sh` 下发
+1. 改仓库（新文件加进 `install.manifest`；改 `provider/hx-failover/src` 后先 `npm run build`——install 的 dist 新鲜度检查会拦旧 dist）
+2. `.\install.ps1 -DryRun`（bash：`./install.sh --dry-run`）看差异 → `.\install.ps1` 下发
 3. 跑验收三条
 4. 提交
