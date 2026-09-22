@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { DATA_DIR } from "./hx-client";
+import { DATA_DIR } from "../lib/hx-client";
 
 const TAG = "[memory-bootstrap]";
 

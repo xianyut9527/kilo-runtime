@@ -27,7 +27,7 @@ execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "quality-g
 const mod = await import(pathToFileURL(bundle).href);
 fs.rmSync(bundle, { force: true });
 
-const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker } = mod;
+const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery } = mod;
 let pass = 0, fail = 0;
 const failed = [];
 const t = (name, cond) => {
@@ -68,15 +68,30 @@ t("README.md 不命中", !HIGH_RISK_RE.test("README.md"));
 t("exitCodeOf：output.exitCode 显式字段", exitCodeOf({ exitCode: 1 }) === 1);
 t("exitCodeOf：output.exit 显式字段", exitCodeOf({ exit: 0 }) === 0);
 t("exitCodeOf：metadata 降级", exitCodeOf({ metadata: { exit: 2 } }) === 2);
-t("exitCodeOf：结果文本解析（失败形态）", exitCodeOf({ output: "oops\nExit code: 1" }) === 1);
+t("exitCodeOf：结果文本解析（失败形态，独占一行）", exitCodeOf({ output: "oops\nExit code: 1" }) === 1);
+t("exitCodeOf：描述性文本不误采（Expected exit code: 0）", exitCodeOf({ output: "Expected exit code: 0\n" }) === undefined);
+t("exitCodeOf：纯字符串 output 也解析", exitCodeOf("Exit code: 2") === 2);
 t("exitCodeOf：成功无退出信息 → undefined（降级旧口径）", exitCodeOf({ output: "all tests passed" }) === undefined);
 t("exitCodeOf：output 缺失 → undefined", exitCodeOf(null) === undefined);
 
 // ── exitMasked：退出码遮蔽形态 ──
 t("exitMasked：|| true 遮蔽", exitMasked("npm test || true") === true);
+t("exitMasked：|| exit 0 遮蔽", exitMasked("npm test || exit 0") === true);
+t("exitMasked：|| exit 1 传播失败不遮蔽", exitMasked("npm test || exit 1") === false);
 t("exitMasked：|| echo ok 遮蔽", exitMasked('npm test || echo "ok"') === true);
-t("exitMasked：; echo ok 遮蔽（分号不短路）", exitMasked("npm test; echo done") === true);
-t("exitMasked：无 pipefail 管道遮蔽", exitMasked("npm test | cat") === true);
+t("exitMasked：|| false 不遮蔽（false 保留失败退出码）", exitMasked("npm test || false") === false);
+t("exitMasked：; echo ok 遮蔽（分号尾段以成功命令开头）", exitMasked("npm test; echo done") === true);
+t("exitMasked：; true && deploy 不遮蔽（尾段 && 接非成功命令）", exitMasked("npm test; true && deploy") === false);
+t("exitMasked：; true && echo ok 遮蔽（尾段 && 接成功命令）", exitMasked("npm test; true && echo ok") === true);
+t("exitMasked：中间分号段成功但尾段非成功不遮蔽", exitMasked("echo start; true; npm test") === false);
+t("exitMasked：非透传管道遮蔽（cat/tee 类已豁免）", exitMasked("npm test | node check.js") === true);
+t("exitMasked：grep 会改写退出码（匹配与否）→ 不豁免", exitMasked("npm test | grep pattern") === true);
+t("exitMasked：pipefail 字样出现在 echo 文本不豁免", exitMasked('echo "no pipefail"; npm test | node x.js') === true);
+t("exitMasked：tee 透传管道豁免（留档无遮蔽意图）", exitMasked("npm test | tee out.log") === false);
+t("exitMasked：head 截断管道豁免", exitMasked("npm test 2>&1 | head -50") === false);
+t("exitMasked：多段全透传管道豁免", exitMasked("npm test | head -50 | sort") === false);
+t("exitMasked：非透传后段仍遮蔽", exitMasked("npm test | weird-cmd") === true);
+t("exitMasked：透传后跟非透传段仍遮蔽", exitMasked("npm test | tee a.log | weird-cmd") === true);
 t("exitMasked：pipefail 管道不遮蔽", exitMasked("set -o pipefail && npm test | cat") === false);
 t("exitMasked：&& 不吞码（不得误标）", exitMasked("cd x && npm test && echo done") === false);
 t("exitMasked：普通验证命令不遮蔽", exitMasked("npm test") === false);
@@ -90,8 +105,11 @@ t("失败可查：exit 非 0 → verifyFailureOf 命中", (() => {
   const f = verifyFailureOf(mk([{ cmd: "npm test", exit: 1, editV: 1 }], 1));
   return f && f.exit === 1 && f.cmd === "npm test";
 })());
+t("旧版本失败不回注：失败后又改代码（未重跑）→ verifyFailureOf 为 null", verifyFailureOf(mk([{ cmd: "npm test", exit: 1, editV: 1 }], 2)) === null);
 t("过时验证：测试通过后又改代码 → 不算跑赢", hasVerified(mk([{ cmd: "npm test", exit: 0, editV: 1 }], 2)) === false);
 t("先失败后修好：最后一次是 exit 0 → 跑赢", hasVerified(mk([{ cmd: "npm test", exit: 1, editV: 1 }, { cmd: "npm test", exit: 0, editV: 2 }], 2)) === true);
+t("先通过后修坏（可信失败在通过之后）→ 不算跑赢", hasVerified(mk([{ cmd: "npm test", exit: 0, editV: 1 }, { cmd: "npm test", exit: 1, editV: 1 }], 1)) === false);
+t("成功验证在后、遮蔽命令更后 → 仍算跑赢（遮蔽非可信负证据）", hasVerified(mk([{ cmd: "npm test", exit: 0, editV: 1 }, { cmd: "npm test || true", exit: 0, editV: 1 }], 1)) === true);
 t("遮蔽成功不算跑赢：npm test || true", hasVerified(mk([{ cmd: "npm test || true", exit: 0, editV: 1 }], 1)) === false);
 t("exit 未知：不算跑赢（降级旧口径由 hasRanVerify 兜底）", hasVerified(mk([{ cmd: "npm test", exit: undefined, editV: 1 }], 1)) === false);
 t("exit 未知：不算失败（不误杀）", verifyFailureOf(mk([{ cmd: "npm test", exit: undefined, editV: 1 }], 1)) === null);
@@ -151,6 +169,26 @@ t("hasAcceptMarker：无关命令不误报", hasAcceptMarker(mk([{ cmd: "npm tes
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// ── isComplexDelivery：层 3 触发口径 ──
+// 高风险命中与文件数无关；普通改动须含代码且跨 ≥5 文件（2026-09-22 由 ≥3 上调）
+t("isComplexDelivery：高风险文件命中（1 个编辑也触发）", (() => {
+  const s = { highRisk: new Set(["src/auth/x.ts"]), edited: new Set(["src/auth/x.ts"]) };
+  return isComplexDelivery(s, ["src/auth/x.ts"]) === true;
+})());
+t("isComplexDelivery：4 文件改动不触发（≥3 旧口径已上调）", (() => {
+  const edited = new Set(["a.ts", "b.ts", "c.ts", "d.ts"]);
+  return isComplexDelivery({ highRisk: new Set(), edited }, ["a.ts", "b.ts", "c.ts", "d.ts"]) === false;
+})());
+t("isComplexDelivery：5 文件改动触发", (() => {
+  const files = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"];
+  return isComplexDelivery({ highRisk: new Set(), edited: new Set(files) }, files) === true;
+})());
+t("isComplexDelivery：无代码编辑不触发（纯文档）", (() => {
+  const edited = new Set(["README.md", "docs/a.md"]);
+  return isComplexDelivery({ highRisk: new Set(), edited }, []) === false;
+})());
+t("isComplexDelivery：0 文件编辑 + 高风险空 → false", isComplexDelivery({ highRisk: new Set(), edited: new Set() }, []) === false);
+
 // ── makeTitle（plugin/dual-review.ts）：进度通道选择与节流 ──
 // 2026-09-22 通道根因修复后签名 makeTitle(emit, label)：emit 函数（工具路径，
 // bridgeProgress 注入）→ 转发流式进度；无 emit（quality-gate 钩子直调路径）→
@@ -194,9 +232,9 @@ t("hasAcceptMarker：无关命令不误报", hasAcceptMarker(mk([{ cmd: "npm tes
     t("有 emit：转发流式进度且不写 stderr（force 透传）",
       titles.length === 2 && titles[0].includes("裁决生成中") && titles[1].startsWith("!") && lines.length === before);
 
-    // bridgeProgress（plugin/hx-client.ts）：yield 进度序列 + 最终结果 + 节流 + force 透传
+    // bridgeProgress（lib/hx-client.ts）：yield 进度序列 + 最终结果 + 节流 + force 透传
     const hxBundle = path.join(os.tmpdir(), `hx-test-${process.pid}.mjs`);
-    execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "hx-client.ts"),
+    execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "lib", "hx-client.ts"),
       "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${hxBundle}`], { stdio: "inherit" });
     const hx = await import(pathToFileURL(hxBundle).href);
     fs.rmSync(hxBundle, { force: true });

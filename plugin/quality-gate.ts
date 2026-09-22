@@ -16,7 +16,7 @@
 //   存 Kilo 数据目录按项目哈希隔离，不污染用户项目；老 TS/写失败自动降级全量，损坏自动
 //   删除重建）。工具可用性一次性探测、并发单飞共享一次 tsc、同文件 mtime 缓存复用语义不变。
 // 层 3 全自动闭环（W3.9/W3.11）：交付节点（todo 全 completed + 高风险文件，或含代码改动
-//   且跨 ≥3 文件——纯文档会话不烧审查费）由插件直调 dual-review 的 runDualReview。
+//   且跨 ≥5 文件——纯文档会话不烧审查费）由插件直调 dual-review 的 runDualReview。
 //   审查对象自动构建：编辑文件清单 + git diff HEAD -- <本会话编辑的代码文件>（范围对齐本会话改动，
 //   不审别会话的累积改动/tmp 脚本；含已暂存，截断防 prompt 爆炸）+ 未跟踪新文件全文（不在 diff 里，
 //   审查者原本看不见），降级为会话证据池（脱敏命令）。
@@ -39,14 +39,17 @@
 //     结果文本解析；全部落空 = 未知 → 降级旧口径放行（fail-open 不误杀）。遮蔽形态
 //     （|| true / || echo / ; exit 0 / 无 pipefail 管道）只算「跑过」，不参与「跑赢」判定。
 //   - 层 3 审查素材缓存：subject sha1 与上次完全一致 → 复用既有裁决（含未通过状态），
-//     不为同一份 diff 重烧 30s~2min；diff/文件清单有任何变化立即失效。
+//     不为同一份 diff 重烧 2~4min 审查；diff/文件清单有任何变化立即失效。
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
-import { DATA_DIR } from "./hx-client";
 import { runDualReview } from "./dual-review";
+
+// 内联 DATA_DIR（不从 hx-client 导入——避免插件模块缓存交互导致 Kilo 7.7.6 config hook 级联崩溃）
+const DATA_DIR = path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"), "kilo");
 
 const TAG = "[quality-gate]";
 
@@ -68,9 +71,15 @@ function bucketOf(input) {
   const id = String(input?.sessionID ?? "__global__");
   let s = sessions.get(id);
   if (!s) {
-    s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null };
+    s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, exitContractWarned: false, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null };
     sessions.set(id, s);
-    if (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
+    if (sessions.size > MAX_SESSIONS) {
+      // LRU 驱逐前清理挂起的诊断定时器：否则回调会在已脱离 Map 的会话对象上空跑 tsc
+      const oldestKey = sessions.keys().next().value;
+      const evicted = sessions.get(oldestKey);
+      if (evicted?.diagTimer) { clearTimeout(evicted.diagTimer); evicted.diagTimer = null; }
+      sessions.delete(oldestKey);
+    }
   }
   return s;
 }
@@ -95,19 +104,28 @@ function cmdText(c) {
   return typeof c === "string" ? c : String(c?.cmd ?? "");
 }
 
-// 退出码三段契约防御：output 显式字段 → metadata → 结果文本解析
-// （失败形态常见 "Exit code: N"；成功时常无此行 → undefined = 未知，层 2 降级旧口径不误杀）。
+// 退出码三段契约防御：output 显式字段 → metadata → 结果文本解析。
+// 文本解析只认**独占一行的退出码声明**（多行模式行首锚定）——测试日志中的
+// `Expected exit code: 0` 这类描述性文本不会被误采；成功时常无此行 → undefined=未知。
 export function exitCodeOf(output) {
   const o = output ?? {};
   for (const k of ["exitCode", "exit", "code"]) {
     const v = o?.[k] ?? o?.metadata?.[k];
     if (typeof v === "number") return v;
   }
-  const m = String(o?.output ?? "").match(/\bexit(?:\s+code)?\s*[:=]\s*(\d{1,3})\b/i);
+  const text = typeof o === "string" ? o : String(o?.output ?? o?.stdout ?? o?.stderr ?? "");
+  const m = text.match(/^\s*exit(?:\s+code)?\s*[:=]\s*(\d{1,4})\s*$/im);
   return m ? Number(m[1]) : undefined;
 }
 
 function rememberCommand(s, cmd, exit, editV) {
+  if (exit === undefined && !s.exitContractWarned) {
+    // 防御日志（每会话一次，防刷屏也不永久静默）：钩子契约未采集到退出码
+    // （调用方漏传参或 Kilo 结果无此信息）——该命令走「未知 → 降级旧口径」路径，
+    // 静默削弱需在此留下排查线索
+    s.exitContractWarned = true;
+    console.error(`${TAG} exit code unavailable from hook contract（层 2 降级旧口径放行）: ${scrubCommand(cmd).slice(0, 80)}`);
+  }
   s.commands.push({ cmd: scrubCommand(cmd), exit, editV });
   if (s.commands.length > MAX_COMMANDS) s.commands.shift();
 }
@@ -122,24 +140,37 @@ export { VERIFY_CMD_RE };
 
 // ── 退出码遮蔽识别（P0-3 误报治理）──────────────────────────
 // 这些形态下命令自身的 exit 不可信（失败会被吞成 0）：只算「跑过」，不参与「跑赢」判定。
-// 注意 && 不吞码（短路，左侧失败整体即失败），不得标记。
+// 注意：&& 不吞码（短路，左侧失败整体即失败）；|| false 不吞码（false 退出码为 1，
+// 忠实保留前段失败）；|| exit N（N≠0）传播失败也不吞码——三者都不得标记为遮蔽。
+// 已知残余（意图启发式的边界，宁少遮蔽不误杀）：tee/head 等透传后段技术上仍覆盖前段
+// 退出码，此处按「用户意图是留档/截断而非掩盖」豁免；grep 会因匹配与否改变退出码，
+// 已移出豁免（这类静默改写退出码的后段必须判遮蔽）。
+const PIPE_PASS_THROUGH = /\|\s*(?:tee|head|tail|cat|less|more|wc|sort|uniq|column|iconv|tr)\b[^|;&]*/gi;
+const SUCCESS_TAIL = /^(?:true|:|exit\s+0\b|echo)\b/i; // 以成功命令开头的分号尾段
 export function exitMasked(cmd) {
   const c = String(cmd ?? "");
-  // || true / || echo ok / 行尾悬挂 ||：|| 在失败侧续接后段，失败被吞
-  if (/\|\|\s*(?:true|false|exit\b|echo\b|:)/i.test(c) || /\|\|\s*$/.test(c)) return true;
-  // ; true / ; exit 0 / ; echo ok：分号不短路，后段 exit 覆盖前段失败
-  if (/;\s*(?:true|exit\s+0|echo\b)/i.test(c)) return true;
-  // 无 pipefail 的管道：管道前段失败被后段吞掉（保守整命令判定，宁降级不误判「跑赢」）
-  if (/(?<!\|)\|(?!\|)/.test(c) && !/pipefail/i.test(c)) return true;
+  // || true / || : / || echo ok / || exit 0 / 行尾悬挂 ||：|| 在失败侧续接返回 0 的后段
+  if (/\|\|\s*(?:true|:|exit\s+0\b|echo\b)/i.test(c) || /\|\|\s*$/.test(c)) return true;
+  // 分号链最终退出码由最后一个分号段决定：该段以成功命令开头，且所有 && 接续段
+  // 都是成功命令（true && echo ok 整链退出码 0 吞掉前段失败；true && deploy 不吞）——遮蔽
+  const tail = (c.split(";").pop() ?? "").trim();
+  const segs = tail.split(/&&/i);
+  if (SUCCESS_TAIL.test(tail) && segs.every((seg) => SUCCESS_TAIL.test(seg.trim()))) return true;
+  // 无 pipefail 的管道：前段失败被后段吞掉。透传/截断类后段豁免（见头注），豁免后
+  // 仍存在其他单管道 → 保守判遮蔽。pipefail 只认显式 `set ±o pipefail`（echo 文本/
+  // 文件名里的 "pipefail" 字样不得误豁免）
+  if (/(?<!\|)\|(?!\|)/.test(c) && !/\bset\s+[-+][a-zA-Z]*o\s+pipefail\b/i.test(c)) {
+    if (/(?<!\|)\|(?!\|)/.test(c.replace(PIPE_PASS_THROUGH, " "))) return true;
+  }
   return false;
 }
 
 // 层 2 判定（结果实证版）：
 //   hasRanVerify —— 旧口径「跑过」：存在任何验证命令（无论 exit/时序/遮蔽），降级兜底用
-//   hasVerified  —— 新口径「跑赢」：最近一次验证命令 exit===0、无遮蔽形态、且发生在
+//   hasVerified  —— 新口径「跑赢」：存在任一验证命令满足 exit===0、无遮蔽形态、发生在
 //                   末次代码编辑之后（editV 为命令执行时的代码编辑计数）。exit 未知
 //                   （钩子契约落空）不算跑赢，由 hasRanVerify 降级放行（fail-open 不误杀）
-//   verifyFailureOf —— 最近一次验证「跑了但失败」（exit 非 0）：交付节点回注 + 层 2 拦截
+//   verifyFailureOf —— 最近一次验证「明确失败」（exit 非 0）：交付节点回注 + 层 2 拦截
 function verifyScan(s) {
   const cmds = s.commands ?? [];
   for (let i = cmds.length - 1; i >= 0; i--) {
@@ -155,24 +186,35 @@ function hasRanVerify(s) {
 }
 
 function hasVerified(s) {
-  const hit = verifyScan(s);
-  if (!hit) return false;
-  const { entry } = hit;
-  const exit = typeof entry === "object" ? entry.exit : undefined;
-  const editV = typeof entry === "object" ? entry.editV : undefined;
-  if (exit !== 0) return false; // 未知 → 降级；非 0 → 没跑赢
-  if (exitMasked(cmdText(entry))) return false; // 遮蔽形态不算跑赢
-  // 末次代码编辑之后跑的才算（防「先跑过、后改坏」）——editV 相等 = 其后无代码编辑
-  return (s.codeEditV ?? 0) > 0 && editV !== undefined && editV >= (s.codeEditV ?? 0);
+  const curV = s.codeEditV ?? 0;
+  if (curV <= 0) return false;
+  // 新鲜可信通过：exit 0 + 无遮蔽 + 末次代码编辑之后（只看最近一条会漏掉
+  // 「成功验证在前、遮蔽命令在后」的合法情形——遮蔽命令不构成可信负证据）
+  let lastFreshPassIdx = -1;
+  (s.commands ?? []).forEach((c, i) => {
+    if (typeof c !== "object" || !VERIFY_CMD_RE.test(cmdText(c))) return;
+    if (c.exit !== 0 || exitMasked(cmdText(c))) return;
+    if (c.editV !== undefined && c.editV >= curV) lastFreshPassIdx = i;
+  });
+  if (lastFreshPassIdx < 0) return false;
+  // 但新鲜通过之后不得再出现明确失败（exit 非 0 且无遮蔽 = 可信负证据，推翻此前通过）
+  return !(s.commands ?? []).slice(lastFreshPassIdx + 1).some((c) => {
+    if (typeof c !== "object" || !VERIFY_CMD_RE.test(cmdText(c))) return false;
+    return typeof c.exit === "number" && c.exit !== 0 && !exitMasked(cmdText(c));
+  });
 }
 
 function verifyFailureOf(s) {
-  const hit = verifyScan(s);
-  if (!hit) return null;
-  const { entry } = hit;
-  const exit = typeof entry === "object" ? entry.exit : undefined;
-  if (typeof exit !== "number" || exit === 0) return null; // 未知不算失败（降级旧口径）
-  return { cmd: cmdText(entry), exit };
+  // 当前代码版本内的最近一次「明确失败」：editV 低于 codeEditV 的失败属于旧版本，
+  // 回注会误导（代码已改、失败已不存在）。新鲜 exit 0 存在时 hasVerified 已先行放行。
+  const curV = s.codeEditV ?? 0;
+  let last = null;
+  for (const c of s.commands ?? []) {
+    if (typeof c !== "object" || !VERIFY_CMD_RE.test(cmdText(c))) continue;
+    if (typeof c.exit === "number" && c.exit !== 0
+        && c.editV !== undefined && c.editV >= curV) last = { cmd: cmdText(c), exit: c.exit };
+  }
+  return last;
 }
 export { hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker };
 
@@ -217,7 +259,7 @@ function isCodeFile(f) {
 const VERIFY_SKIP_RE = /verify-skipped\s*:/i;
 
 function hasSkipMarker(s) {
-  return s.commands.some((c) => VERIFY_SKIP_RE.test(cmdText(c)));
+  return (s.commands ?? []).some((c) => VERIFY_SKIP_RE.test(cmdText(c)));
 }
 
 // ── 层 3 闭环（审查未通过 → 阻断交付，修复后自动再审，直到通过或升级人工）──
@@ -225,7 +267,7 @@ const MAX_REVIEW_ROUNDS = 2; // 自动审查轮次上限：超限放行并回注
 const REVIEW_ACCEPT_RE = /review-accepted\s*:/i;
 
 function hasAcceptMarker(s) {
-  return s.commands.some((c) => REVIEW_ACCEPT_RE.test(cmdText(c)));
+  return (s.commands ?? []).some((c) => REVIEW_ACCEPT_RE.test(cmdText(c)));
 }
 
 // 从裁决文本解析结论。fail = 裁决「不通过」或「必须修复项」段非空；
@@ -258,6 +300,15 @@ export function parseReviewVerdict(text) {
 function codeEditsOf(s) {
   return [...s.edited].filter(isCodeFile);
 }
+
+// 层 3 触发口径（before/after 钩子共用，防两处漂移）：
+// 高风险文件命中即触发（文件数无关）；普通改动须含代码且跨 ≥5 文件。
+// ≥3 口径 2026-09-22 上调为 ≥5：48h 遥测实测每次自动审查墙钟 5~8min（22 次共 35min），
+// 常规 3~4 文件任务的质量收益不抵交付节点卡顿；纯文档会话依旧不烧审查费。
+function isComplexDelivery(s, codeEdits) {
+  return (s?.highRisk?.size ?? 0) > 0 || ((codeEdits?.length ?? 0) > 0 && (s?.edited?.size ?? 0) >= 5);
+}
+export { isComplexDelivery };
 
 // ── todo 证据核对（层 1）──────────────────────────────────────
 // 停用词：todo 文本里的动词虚词，提取实义 token 用于与证据串匹配
@@ -551,9 +602,9 @@ export const QualityGate = async ({ directory } = {}) => {
         const codeEdits = codeEditsOf(s);
         // 层 3 闭环硬阻断（交付前）：上轮审查未通过且其后没有任何新编辑（= 未尝试修复）→ 否决。
         // 修复过文件则放行本次 todowrite，由 after 钩子在交付节点重新审查（修复→再审循环）。
-        // 触发口径与 after 钩子一致：高风险文件，或含代码改动且跨 ≥3 文件——
+        // 触发口径与 after 钩子一致：高风险文件，或含代码改动且跨 ≥5 文件——
         // 纯文档会话不送付费审查（层 2 同样豁免文档，口径对齐）。
-        const complexEarly = s.highRisk.size > 0 || (codeEdits.length > 0 && s.edited.size >= 3);
+        const complexEarly = isComplexDelivery(s, codeEdits);
         if (complexEarly && s.reviewPending && !hasAcceptMarker(s) && s.editVersion === s.reviewPending.editVersion) {
           const p = s.reviewPending;
           throw new Error(
@@ -694,9 +745,9 @@ export const QualityGate = async ({ directory } = {}) => {
           // 轮次上限（MAX_REVIEW_ROUNDS）后仍不过 → 放行并回注残余项（升级人工，防死循环）。
           // 无法解析的裁决（上游失败等）→ fail-open 不阻断（质量降质但不卡交付）。
           // P0-2 素材缓存：审查素材 sha1 与上次完全一致 → 复用既有裁决，不为同一份 diff
-          // 重烧 30s~2min；diff/文件清单有任何变化即失效。
-          // 与 before 钩子同一口径：高风险文件，或含代码改动且跨 ≥3 文件（纯文档不烧审查费）
-          const complex = s.highRisk.size > 0 || (codeEdits.length > 0 && s.edited.size >= 3);
+          // 重烧 2~4min；diff/文件清单有任何变化即失效。
+          // 与 before 钩子同一口径：高风险文件，或含代码改动且跨 ≥5 文件（纯文档不烧审查费）
+          const complex = isComplexDelivery(s, codeEdits);
           if (allDone && complex && !s.dualReviewed && !hasAcceptMarker(s)) {
             const editedList = [...s.edited].slice(0, 30).join("\n");
             const subject = await reviewSubject(projectRoot, s, editedList);
@@ -709,8 +760,12 @@ export const QualityGate = async ({ directory } = {}) => {
             } else {
               const reviewT0 = Date.now();
               // 钩子无 ctx.metadata 通道：runDualReview 内部已把进度标题降级 stderr
-              // （阶段切换立即输出、5s 节流），此处只补一条总起提示，避免「静默卡住」观感
-              console.error(`${TAG} 层 3 双向审查执行中（正反两路异源模型 + 裁决，预计 30s~2min）…`);
+              // （阶段首现立即输出、同阶段 10s 节流）；上游首字未到时 onDelta 不触发，
+              // 补一个 30s 心跳兜住这段死区，消除「黑盒卡死」观感
+              console.error(`${TAG} 层 3 双向审查执行中（正反两路异源模型 + 裁决，输出已限长，预计 2~4min）…`);
+              const hb = setInterval(() => {
+                console.error(`${TAG} 层 3 审查仍在进行… ${Math.round((Date.now() - reviewT0) / 1000)}s`);
+              }, 30_000);
               try {
                 verdict = await runDualReview(subject);
                 const reviewSecs = ((Date.now() - reviewT0) / 1000).toFixed(1);
@@ -718,6 +773,8 @@ export const QualityGate = async ({ directory } = {}) => {
                 s.reviewCache = { key: subjectKey, verdict };
               } catch (e) {
                 console.error(TAG, "auto dual review failed:", e?.message ?? e);
+              } finally {
+                clearInterval(hb);
               }
             }
             if (verdict != null) {

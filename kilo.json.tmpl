@@ -336,13 +336,14 @@
     }
   },
 
+  // ── 主子代理共享任务看板（7.7.6 从 experimental 升格为顶层键）──
+  "shared_agent_board": true,
+
   // ── 实验开关（7.6.2 支持，已逐个验证）───────────────────────────
   // 子代理可自选模型/推理力度（配 general/explore 路由更灵活）
-  // 主子代理共享任务看板（发现互通，不重复探索）
   // batch 工具（多工具调用合并成一轮，省 token）
   "experimental": {
     "task_model_selection": true,
-    "shared_agent_board": true,
     "batch_tool": true,
     // OpenTelemetry 关闭
     "openTelemetry": false

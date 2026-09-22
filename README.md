@@ -1,6 +1,6 @@
 # kilo_config — KiloCode 全局配置（SSOT）
 
-唯一真源，下发到 `~/.config/kilo/`。只装**改变运行时行为**的东西，编排判断交给 agent。
+唯一真源，下发到 `~/.config/kilo/`。只装**改变运行时行为**的东西，编排判断交给 agent（这套原则的由来见下文「架构演变」）。
 
 ## 快速开始
 
@@ -25,6 +25,41 @@ macOS / Linux（bash）：
 - **目录一致**：配置下发到 `~/.config/kilo`（Windows 即 `C:\Users\<你>\.config\kilo`），数据在 `~/.local/share/kilo`；两个安装器行为一致。
 - **维护脚本**：`cleanup.sh` / `db-maintain.sh` 是 bash 脚本——Windows 经 Git Bash 运行，日常走 PowerShell 包装 `scripts\kilo-maintenance.ps1`（见「磁盘垃圾与维护」）；依赖 GNU coreutils（`stat -c` / `find -printf` / `du`），macOS/BSD 语法不同未适配，勿直接跑。
 
+## 架构演变（工作流编排 → 认知中心 + 插件化门禁）
+
+本仓库前身是一套完整的多智能体工作流编排系统，2026-09-14 起收敛为「配置 SSOT + 运行时增强」。
+开头那句「编排判断交给 agent」正是这次换层的结论。三段演变如下（细节见 git 历史）：
+
+### V1 · 多智能体工作流编排（2026-05 ~ 2026-09-13，已废弃）
+
+- **ensemble 多模型并行**（2026-05）：AGENTS.md 角色表 + `agent/ensemble.md` 编排流程——单模型修复 ≥3 轮自动升级 @ensemble，executor-{dp,mm,kimi,cx} 多模型 worktree 并行编码 + synthesizer 融合 + 三角验证（对抗性检查专岗）。
+- **生命周期状态机**（2026-07 ~ 08）：conductor 单编排者 + lifecycle v6 八阶段（intent→sizing→design→implementation→verification→review→repair→delivering）、委派协议 / 证据契约 / mount 定级挂载，配套 doctor S/H 系列语义校验、transition-check 等机械校验脚本群（lifecycle-doctor 单文件 2100+ 行）；期间还短暂上线过 Holographic / Hermes 记忆系统，上线数日即废弃。
+- **MMO 多模型审计**（2026-09）：deep-analyzer 6 智能体编排并入 conductor，13 智能体拓扑 + 编排层断路器降级策略；knowledge-base（FX 条目）+ lessons 三件套做经验沉淀（fact_store 体系 8 月已先行废弃）。
+
+**为什么废弃**（每条都是实证教训，不是口味问题）：
+1. **prompt 纪律没有强制力**——编排文档写得再细，模型可以遗忘 / 绕过：「声称测试跑过」「声称审查通过」在运行时无从核实，质量门禁只是文档约定。
+2. **机械校验器自己先失真**——doctor / transition-check 本用来防文档漂移，但校验器自身 2100+ 行、内部死引用 22 处，模型路由表比配置先过期，维护校验器成了新的主业。
+3. **编排烧上下文与延迟**——每层委派都要裁剪 / 传递上下文包，MMO 一次审计多路模型串并行，简单任务也被套上状态机开销。
+4. **建错了层**——断路器、熔断、证据契约全写在 prompt / 编排层，而 Kilo 真正的扩展点（plugin 钩子 / provider / 权限 / instructions 注入）一个都没用上。
+
+### V2 · SSOT 收敛（2026-09-14）
+
+单日三连提交完成换层：删 13 个编排 / 审查 agent 文档与校验脚本群 → 收敛为 SSOT 仓库 + install 双平台全量下发器（插件、`agent/verify.md`、INSTRUCTIONS.md、provider/hx-failover 收回仓库）→ 再删 knowledge-base / telemetry / AGENTS 模板等过程性组件（经验固化进 INSTRUCTIONS.md——每会话注入优于偶发检索）。原则收敛为一句话：**只装改变运行时行为的东西，编排判断交给 agent**；验收口径也随之从「文档齐全、校验全绿」变成「真实任务端到端跑通」。
+
+### V3 · 认知中心 + 插件化运行时增强（2026-09-14 至今，现行）
+
+旧体系的目标全部保留，实现整体下沉一层：
+
+| 目标 | 旧实现（prompt / 编排层） | 现实现（运行时层） |
+|------|---------------------------|---------------------|
+| 质量门禁 | 三层门禁体系、双 checker、证据契约（文档约定） | `plugin/quality-gate.ts` 三层硬门禁——层 1 步骤符合性 / 层 2 验证实证（只认末次编辑后 exit 0，fail-closed 否决「全部完成」）/ 层 3 双向审查闭环（不过即阻断交付）；模型绕不过 |
+| 多模型审查 | ensemble 交叉审查、三角验证、MMO 审计 | `plugin/dual-review.ts` 异源双向（正向查遗漏 × 反向红队）+ 第三方裁决，交付节点自动触发 |
+| 可靠性 | 编排层断路器 / 熔断阈值（prompt 约定） | `lib/hx-client.ts` + `provider/hx-failover`——三级超时、断路器、failover 降级链、reasoningEcho 协议兜底 |
+| 经验沉淀 | knowledge-base FX / fact_store / lessons 三件套 | Kilo 原生记忆（memory-bootstrap 自举）+ `/evolve` 复盘 + GLOBAL-NOTES.md 跨项目经验层 |
+| 模型路由 | agent frontmatter + plan.md 路由表（先过期失真） | `kilo.json.tmpl` 唯一真源，plugin / provider 代码零内置默认（2026-09-20 起） |
+
+配套纪律（固化进 INSTRUCTIONS.md）：主 agent 持完整上下文自主决策，子代理是按需调用的工具；扇出 ≤3（2026-09-17 实测 6 子代理扇出 60s 内全 abort）；审查走 `dual_review`，不自组子代理面板；验证按风险触发；**不新建编排引擎、DAG 或阶段门禁**。
+
 ## 资产清单（全部有明确运行时职责）
 
 | 路径 | 职责 | 为什么留 |
@@ -34,11 +69,11 @@ macOS / Linux（bash）：
 | `agent/verify.md` | 异源验证子代理 | 高风险改动的独立复核视角 |
 | `plugin/permission-guard.ts` | 动态权限守护 | 拦截静态规则漏掉的不可逆命令 + 密钥路径；实测有效 |
 | `plugin/compaction-anchor.ts` | 压缩锚点 | 长会话压缩后不丢任务连续性 |
-| `plugin/quality-gate.ts` | 三层交付检查（层 1+2+层 3 调度与闭环） | 层 1：todo completed 时核对执行痕迹（防空口声明）；层 2（fail-closed，2026-09-22 结果实证）：编辑过代码但未跑验证命令否决「全部完成」，且**只认末次代码编辑后 exit 0 的验证命令**——跑了但失败（exit 非 0）同样拦下要求修复重跑；退出码三段契约采集（output 字段→metadata→文本解析，落空/`|| true` 等遮蔽形态降级旧口径放行不误杀，逃生门 verify-skipped）；编辑后静态检查**异步防抖**（5s 单飞后台跑 + tsc `--incremental`，tsbuildinfo 存 Kilo 数据目录按项目哈希隔离，编辑路径零阻塞），诊断积压由交付节点强制冲刷回注；交付节点（todo 全 completed + 高风险文件，或含代码改动且跨≥3 文件——纯文档不烧审查费）直调 dual-review 自动执行层 3，审查素材范围限定本会话：编辑文件清单 + `git diff HEAD -- <本会话编辑的代码文件>`（含已暂存，pathspec ≤100 防 Windows 命令行超长）+ diff 未覆盖的未跟踪新文件全文（≤8 个×4000 字）+ 无 git 降级为脱敏会话证据池，素材截断 24k——多会话共享工作区不再把别会话的累积改动/tmp 脚本审进来（2026-09-17 事故）——素材 sha1 与上次一致时**复用既有裁决**（hash 命中不重烧 30s~2min），裁决未通过**阻断交付**，修复后自动再审直到通过（上限 2 轮，超限放行并回注残余项升级人工；逃生门 review-accepted） |
-| `plugin/dual-review.ts` | 层 3 双向异源审查 | 正向（查遗漏）×反向（红队找错）异源模型并行 + 第三方裁决；被 quality-gate 在交付节点自动调用（无 ctx 时进度降级 stderr，阶段切换即时可见），也可经 `dual_review` 工具手动发起（permission=allow）。单路失败不做单路裁决（返回幸存方原文）；聚合输入截断（subject 8k / 单路结论 10k）；模型读 kilo.json 零内置默认 |
-| `scripts/test-quality-gate.mjs` | 门禁离线回归（不联网、不起 Kilo） | `node scripts/test-quality-gate.mjs`：esbuild 打包后测 parseReviewVerdict/VERIFY_CMD_RE/HIGH_RISK_RE/reviewSubject/exitCodeOf/exitMasked/hasVerified·verifyFailureOf/hasSkipMarker·hasAcceptMarker/makeTitle/bridgeProgress 共 60 例——门禁正则、裁决解析、结果实证判定与进度通道选择的任何回归（含 CJK 腐化）立即变红 |
-| `scripts/test-circuit-breaker.mjs` | 断路器离线回归（不联网、不起 Kilo） | `node --experimental-strip-types scripts/test-circuit-breaker.mjs`：动态 import plugin/hx-client.ts（`?r=` 击穿 ESM 缓存取全新断路器状态），网络层打桩，18 场景——trip/fail fast/probe 锁/跨代迟到回调隔离/冷却起点/401 与网络错不触发 |
-| `plugin/hx-client.ts` | hx 上游共享客户端 | moa 与 dual-review 的公共层：kilo.json options + auth.json hx.key 读取（60s 缓存）+ SSE 流式请求——三层超时（首字节 / chunk 空闲 / 总时长）、网络类失败重试 2 次指数退避、HTTP 400/401/403/404/422 确定性失败不重试、`onDelta` 进度回调；最终失败写 failover-events.jsonl 遥测（`kind:"hx-client"`，只记模型/状态/错误摘要/耗时，不含内容——moa「N 轮失败」从此可回溯）（改凭证与 baseURL 规则只改这里） |
+| `plugin/quality-gate.ts` | 三层交付检查（层 1+2+层 3 调度与闭环） | 层 1：todo completed 时核对执行痕迹（防空口声明）；层 2（fail-closed，2026-09-22 结果实证）：编辑过代码但未跑验证命令否决「全部完成」，且**只认末次代码编辑后 exit 0 的验证命令**——跑了但失败（exit 非 0）同样拦下要求修复重跑；退出码三段契约采集（output 字段→metadata→文本解析，落空/`|| true` 等遮蔽形态降级旧口径放行不误杀，逃生门 verify-skipped）；编辑后静态检查**异步防抖**（5s 单飞后台跑 + tsc `--incremental`，tsbuildinfo 存 Kilo 数据目录按项目哈希隔离，编辑路径零阻塞），诊断积压由交付节点强制冲刷回注；交付节点（todo 全 completed + 高风险文件，或含代码改动且跨≥5 文件——纯文档不烧审查费；2026-09-22 由 ≥3 上调，每次自动审查墙钟 2~4min，触发过频不划算）直调 dual-review 自动执行层 3，审查素材范围限定本会话：编辑文件清单 + `git diff HEAD -- <本会话编辑的代码文件>`（含已暂存，pathspec ≤100 防 Windows 命令行超长）+ diff 未覆盖的未跟踪新文件全文（≤8 个×4000 字）+ 无 git 降级为脱敏会话证据池，素材截断 24k——多会话共享工作区不再把别会话的累积改动/tmp 脚本审进来（2026-09-17 事故）——素材 sha1 与上次一致时**复用既有裁决**（hash 命中不重烧 2~4min），裁决未通过**阻断交付**，修复后自动再审直到通过（上限 2 轮，超限放行并回注残余项升级人工；逃生门 review-accepted） |
+| `plugin/dual-review.ts` | 层 3 双向异源审查 | 正向（查遗漏）×反向（红队找错）异源模型并行 + 第三方裁决；被 quality-gate 在交付节点自动调用（无 ctx 时进度降级 stderr，阶段切换即时可见，30s 心跳兜首字死区），也可经 `dual_review` 工具手动发起（permission=allow）。单路失败不做单路裁决（返回幸存方原文）；聚合输入截断（subject 8k / 单路结论 10k）；输出限长（正/反 ≤800 字、裁决 ≤600 字，2026-09-22 墙钟 5~8min→2~4min）；模型读 kilo.json 零内置默认 |
+| `scripts/test-quality-gate.mjs` | 门禁离线回归（不联网、不起 Kilo） | `node scripts/test-quality-gate.mjs`：esbuild 打包后测 parseReviewVerdict/VERIFY_CMD_RE/HIGH_RISK_RE/reviewSubject/exitCodeOf/exitMasked/hasVerified·verifyFailureOf/hasSkipMarker·hasAcceptMarker/makeTitle/bridgeProgress 共 78 例——门禁正则、裁决解析、结果实证判定与进度通道选择的任何回归（含 CJK 腐化）立即变红 |
+| `scripts/test-circuit-breaker.mjs` | 断路器离线回归（不联网、不起 Kilo） | `node --experimental-strip-types scripts/test-circuit-breaker.mjs`：动态 import lib/hx-client.ts（`?r=` 击穿 ESM 缓存取全新断路器状态），网络层打桩，18 场景——trip/fail fast/probe 锁/跨代迟到回调隔离/冷却起点/401 与网络错不触发 |
+| `lib/hx-client.ts` | hx 上游共享客户端（非插件） | moa 与 dual-review 的公共层：kilo.json options + auth.json hx.key 读取（60s 缓存）+ SSE 流式请求——三层超时（首字节 / chunk 空闲 / 总时长）、网络类失败重试 2 次指数退避、HTTP 400/401/403/404/422 确定性失败不重试、`onDelta` 进度回调；最终失败写 failover-events.jsonl 遥测（`kind:"hx-client"`，只记模型/状态/错误摘要/耗时，不含内容——moa「N 轮失败」从此可回溯）（改凭证与 baseURL 规则只改这里） |
 | `plugin/moa.ts` | 按需多模型分析 | 高风险判断时 N 参考 + 1 聚合交叉（默认取 kilo.json `provider.hx.options.moa`，单次上限 3 参考 + 1 聚合；SSE 流式 + 工具卡进度标题 + 每路结论截断 12k；agent 自主决定调用） |
 | `plugin/memory-bootstrap.ts` | 记忆自举 | git 项目首个 session.created 自动启用原生记忆（scaffold 与官方 /memory/enable 产物逐字节一致；create-if-missing，绝不改已有状态） |
 | `scripts/memory-enable.mjs` | 记忆批量启用/体检 | 部署到 `~/.config/kilo/scripts/`：无参=全量状态体检，`<dir>`=显式启用（含非 git 目录），`--db`=从 kilo.db 项目表批量启用；`/memory-setup` 命令的执行体 |

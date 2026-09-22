@@ -1,14 +1,14 @@
 // 断路器离线验证 v6：断路器全生命周期 + 三轮审查必须项场景。
 // v6 新增：跨代迟到成功/失败不污染 half-open、open 态迟到过载不刷新冷却。
 // 运行：node --experimental-strip-types scripts/test-circuit-breaker.mjs
-// （直接动态 import plugin/hx-client.ts，靠 ?r= 查询串击穿 ESM 缓存取得全新断路器状态；
+// （直接动态 import lib/hx-client.ts，靠 ?r= 查询串击穿 ESM 缓存取得全新断路器状态；
 //   网络层打桩，不联网、不起 Kilo，18 场景全绿为过）
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PLUGIN_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugin");
+const PLUGIN_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "lib");
 const TMP = path.join(tmpdir(), "cb-test-" + Date.now());
 mkdirSync(TMP, { recursive: true });
 process.env.KILO_CONFIG_DIR = TMP;

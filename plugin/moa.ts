@@ -1,6 +1,6 @@
 // W3.5 MoA（Mixture-of-Agents）按需工具
 // 定位：主 agent 仅在需要多视角/高风险判断时调用；绝不每轮自动 fanout（红线 R4/R9）。
-// 依赖：plugin/hx-client.ts（与 dual-review.ts 共享的配置读取与请求层，改凭证/baseURL 规则只改那边）。
+// 依赖：lib/hx-client.ts（与 dual-review.ts 共享的配置读取与请求层，改凭证/baseURL 规则只改那边）。
 // 配置：kilo.json -> provider.hx.options.moa.{references,aggregator}；凭证：auth.json 的 hx.key。
 //
 // 2026-09-18 性能改造：
@@ -24,7 +24,7 @@
 //     中文进度文本流式显示在工具卡正文（不进对话历史），最后 yield 最终结果；
 //   - 进度文本全面中文化（用户反馈 "moa"/"dual_review" 不语义化）。
 
-import { loadCfg, ask, FALLBACK_TIMEOUT_MS, FALLBACK_CHUNK_TIMEOUT_MS, circuitState, bridgeProgress } from "./hx-client";
+import { loadCfg, ask, FALLBACK_TIMEOUT_MS, FALLBACK_CHUNK_TIMEOUT_MS, circuitState, bridgeProgress } from "../lib/hx-client";
 
 const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合）
 const AGG_VIEW_LIMIT = 12_000; // 聚合 prompt 单路参考截断上限（字符）

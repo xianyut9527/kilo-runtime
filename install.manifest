@@ -15,6 +15,7 @@ INSTRUCTIONS.md
 agent/
 command/
 plugin/
+lib/
 scripts/memory-enable.mjs
 provider/hx-failover/src/
 provider/hx-failover/dist/
