@@ -30,6 +30,20 @@ const STDERR_THROTTLE_MS = 10_000; // stderr 降级通道节流：按阶段各�
 const AGG_SUBJECT_LIMIT = 8_000;   // 聚合 prompt 中审查对象截断
 const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
 
+// 审查器版本（quality-gate 层 3 审查缓存键成分）：三路 prompt 协议、限长或裁决解析
+// 口径变更时必须递增——版本一变缓存全失效，旧裁决不再被复用。
+const REVIEWER_VERSION = "dr-2026-09-22.1";
+
+// 审查器指纹：审查器版本 + 配置的模型三元组。quality-gate 把它掺进审查素材缓存键：
+// 改 prompt（版本变）或换模型（三元组变）→ 指纹变 → 缓存失效，绝不为同一份 diff
+// 复用异构模型的旧裁决（2026-09-22 三模型裁决必须项）。cfg 可注入（离线测试用），
+// 缺省读真实配置；配置读失败由调用方决定降级方向（quality-gate 选择不命中缓存）。
+async function reviewerFingerprint(cfg) {
+  const c = cfg ?? await loadCfg();
+  const dr = c.options?.dual_review ?? {};
+  return `v=${REVIEWER_VERSION}|p=${dr.positive ?? ""}|n=${dr.negative ?? ""}|a=${dr.aggregator ?? ""}`;
+}
+
 const TAG = "[dual-review] ";
 
 // 进度发射助手（2026-09-22 通道根因修复）：
@@ -278,6 +292,6 @@ export const DualReview = async (ctx = {}) => {
 // Kilo vE2 契约：模块唯一函数导出 = 工厂（DualReview/default 同引用被 Set 去重）。
 // 工具函数经此命名空间对象暴露（对象无 server 属性 → kE2 跳过，绝不会被当工厂调用）。
 // quality-gate 经 `(await import("./dual-review"))._export.runDualReview` 取用。
-export const _export = { makeTitle, runDualReview };
+export const _export = { makeTitle, runDualReview, reviewerFingerprint };
 
 export default DualReview;

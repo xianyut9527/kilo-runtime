@@ -12,9 +12,12 @@
 //   含 test 字样的普通命令误判成「已验证」，方向是吞掉警告。
 // 附加：edit/write 后按后缀跑静态检查（ruff / tsc --noEmit）——2026-09-22 改异步防抖：
 //   编辑不再阻塞工具返回（5s 防抖 + 单飞后台跑，stderr 可观测），诊断积压在交付节点
-//   强制冲刷回注（质量兜底不丢，成本集中支付一次）；tsc 加 --incremental（tsbuildinfo
-//   存 Kilo 数据目录按项目哈希隔离，不污染用户项目；老 TS/写失败自动降级全量，损坏自动
-//   删除重建）。工具可用性一次性探测、并发单飞共享一次 tsc、同文件 mtime 缓存复用语义不变。
+//   强制冲刷回注（质量兜底不丢，成本集中支付一次）；冲刷有总预算上限（30s）+ 编辑计数
+//   比对（复用层 2「末次编辑后」语义：等待期间又编辑 → 诊断不覆盖末次编辑，补跑一轮，
+//   仍不覆盖则带陈旧标注返回，防防抖单飞下死等或分钟级阻塞）；tsc 加 --incremental
+//   （tsbuildinfo 存 Kilo 数据目录按项目哈希隔离，不污染用户项目；老 TS/写失败自动降级
+//   全量，损坏自动删除重建）。工具可用性一次性探测、并发单飞共享一次 tsc、同文件 mtime
+//   缓存复用语义不变。
 // 层 3 全自动闭环（W3.9/W3.11）：交付节点（todo 全 completed + 高风险文件，或含代码改动
 //   且跨 ≥5 文件——纯文档会话不烧审查费）由插件直调 dual-review 的 runDualReview。
 //   审查对象自动构建：编辑文件清单 + git diff HEAD -- <本会话编辑的代码文件>（范围对齐本会话改动，
@@ -38,8 +41,10 @@
 //     跨会话盲区/撒谎四类尾巴）。退出码三段契约防御：output 显式字段 → metadata →
 //     结果文本解析；全部落空 = 未知 → 降级旧口径放行（fail-open 不误杀）。遮蔽形态
 //     （|| true / || echo / ; exit 0 / 无 pipefail 管道）只算「跑过」，不参与「跑赢」判定。
-//   - 层 3 审查素材缓存：subject sha1 与上次完全一致 → 复用既有裁决（含未通过状态），
-//     不为同一份 diff 重烧 2~4min 审查；diff/文件清单有任何变化立即失效。
+//   - 层 3 审查素材缓存：缓存键 = 审查器指纹（审查器版本 + 配置模型三元组，由
+//     dual-review.reviewerFingerprint 提供）+ 素材 sha1，完全一致才复用既有裁决
+//     （含未通过状态），不为同一份 diff 重烧 2~4min 审查；diff/文件清单/prompt 版本/
+//     模型配置任何变化立即失效——绝不复用异构模型的旧裁决（2026-09-22 三模型裁决必须项）。
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -70,6 +75,7 @@ try { projectRoot = process.cwd(); } catch { projectRoot = "."; }
 const probe = { tsc: null, ruff: null }; // null=未探测，true/false=可用性
 let tscInFlight = null; // 并发编辑单飞：共享同一次 tsc 全量输出
 const DIAG_DEBOUNCE_MS = 5_000; // 编辑后防抖：5s 无新动作才真正跑诊断（编辑路径零阻塞）
+const FLUSH_BUDGET_MS = 30_000; // 交付冲刷总预算：超时带陈旧标注返回，防交付节点分钟级阻塞
 let tscIncrementalOk = null; // null=未探测；false=项目 TS 过老/写失败，永久降级全量
 
 // ── 会话级状态（sessionID 分桶）──────────────────────────────
@@ -472,6 +478,14 @@ async function staticDiagnose(file, dir, s) {
   return null; // 其他后缀 v1 不做（js/eslint 与 go vet 后续按需加）
 }
 
+// 可诊断后缀（staticDiagnose 实际处理集）：入队过滤用——文档/其他代码后缀不进
+// pendingDiags 空转，也避免文档编辑触发冲刷的第二轮补跑
+const DIAGNOSABLE_EXT = new Set(["ts", "tsx", "mts", "cts", "py"]);
+function isDiagnosable(f) {
+  const m = String(f ?? "").match(/\.(\w+)$/);
+  return !!m && DIAGNOSABLE_EXT.has(m[1].toLowerCase());
+}
+
 // ── 异步诊断调度（P0-1：编辑路径零阻塞）──────────────────────
 // 编辑 → 登记待诊文件 + 5s 防抖 → 后台单飞跑诊断 → 结果进 s.diagNotes（stderr 可观测）
 // → 交付节点（todowrite 全 completed）flushDiags 强制等待冲刷回注。质量兜底不丢，
@@ -484,15 +498,21 @@ function scheduleDiags(s) {
   try { s.diagTimer.unref?.(); } catch { }
 }
 
-async function runDiags(s) {
+// hasBudget：可选墙钟预算判定（交付冲刷传入；后台防抖路径不传 = 不限）。
+// 预算耗尽时剩余文件放回 pendingDiags（下次防抖/冲刷重试），不丢也不无限拖交付。
+async function runDiags(s, hasBudget) {
   if (s.diagBusy) return; // 上一次还在跑：文件已入 pendingDiags，下轮防抖会再跑
   s.diagBusy = true;
   const files = [...s.pendingDiags];
   s.pendingDiags.clear();
   try {
-    for (const f of files) {
-      const diags = await staticDiagnose(f, projectRoot, s);
-      if (diags && diags.length > 0) s.diagNotes.set(f, diags);
+    for (let i = 0; i < files.length; i++) {
+      if (hasBudget && !hasBudget()) {
+        for (let j = i; j < files.length; j++) s.pendingDiags.add(files[j]);
+        break;
+      }
+      const diags = await staticDiagnose(files[i], projectRoot, s);
+      if (diags && diags.length > 0) s.diagNotes.set(files[i], diags);
     }
     if (files.length > 0) {
       const bad = [...s.diagNotes.keys()].length;
@@ -505,21 +525,40 @@ async function runDiags(s) {
   }
 }
 
-// 交付节点冲刷：跳过防抖立即跑完积压诊断（若有），返回所有未修复诊断的回注文本
+// 冲刷新鲜度判定（纯函数供离线回归）：诊断是否覆盖末次代码编辑——编辑计数未变、
+// 无新积压、后台不在跑三者同时成立（与层 2 hasVerified 的「末次编辑后」语义同构；
+// 只比 codeEditV：文档编辑不产生代码诊断，不应触发补跑轮）
+function diagCoversLastEdit(s, v0) {
+  return (s?.codeEditV ?? 0) === (v0 ?? 0) && (s?.pendingDiags?.size ?? 0) === 0 && !s?.diagBusy;
+}
+
+// 交付节点冲刷（三模型裁决必须项——预算上限 + 编辑计数比对）：
+//   - 总预算 FLUSH_BUDGET_MS：含 runDiags + 等后台轮，超时不再死等，带陈旧标注返回
+//     （防防抖单飞下交付节点分钟级阻塞）；
+//   - 最多两轮：等待期间又发生代码编辑 → 诊断不覆盖末次编辑 → 补跑一轮兜新鲜度；
+//     两轮后仍不覆盖（持续编辑中）→ 陈旧标注返回，不无限追。
 async function flushDiags(s) {
-  if (s.diagTimer) { clearTimeout(s.diagTimer); s.diagTimer = null; }
-  if (s.pendingDiags.size > 0 && !s.diagBusy) await runDiags(s);
-  // 正在后台跑的最后一轮：等它落地（有界等待防卡交付）
-  let waited = 0;
-  while (s.diagBusy && waited < 21_000) {
-    await new Promise((r) => setTimeout(r, 200));
-    waited += 200;
+  const t0 = Date.now();
+  const hasBudget = () => Date.now() - t0 < FLUSH_BUDGET_MS;
+  let stale = false;
+  for (let pass = 0; pass < 2 && hasBudget(); pass++) {
+    const v0 = s.codeEditV ?? 0;
+    if (s.diagTimer) { clearTimeout(s.diagTimer); s.diagTimer = null; }
+    if (s.pendingDiags.size > 0 && !s.diagBusy && hasBudget()) await runDiags(s, hasBudget);
+    // 正在后台跑的轮次：等它落地（预算内）
+    while (s.diagBusy && hasBudget()) await new Promise((r) => setTimeout(r, 200));
+    if (s.diagBusy) { stale = true; break; } // 预算耗尽而后台仍在跑：不再死等
+    if (diagCoversLastEdit(s, v0)) { stale = false; break; } // 诊断覆盖末次编辑，干净
+    stale = true; // 等待期间有新编辑/新积压 → 补跑一轮
   }
   if (s.diagNotes.size === 0) return null;
   const parts = [...s.diagNotes.entries()].map(([f, diags]) =>
     `${f}（共 ${diags.length} 条）：\n  ${diags.slice(0, 20).join("\n  ")}`);
   s.diagNotes.clear();
-  return `静态检查诊断（后台汇总，需修复后再交付）：\n${parts.join("\n")}`;
+  const staleNote = stale
+    ? "（注意：部分诊断未覆盖末次编辑——冲刷期间仍有编辑或超等待预算，修复后建议重新交付验证）"
+    : "";
+  return `静态检查诊断（后台汇总${staleNote}，需修复后再交付）：\n${parts.join("\n")}`;
 }
 
 // ── 回注通道 ─────────────────────────────────────────────────
@@ -692,8 +731,10 @@ const QualityGateImpl = async ({ directory } = {}) => {
           if (file) {
             rememberEdit(s, file);
             if (isHighRiskFile(file)) s.highRisk.add(file);
-            s.pendingDiags.add(file); // 刚写过 mtime 必变，mtime 缓存必失效 → 一律入队防抖
-            scheduleDiags(s);
+            if (isDiagnosable(file)) { // 只有可诊断后缀入队：文档/其他后缀不空转防抖队列
+              s.pendingDiags.add(file); // 刚写过 mtime 必变，mtime 缓存必失效 → 一律入队防抖
+              scheduleDiags(s);
+            }
           }
           return;
         }
@@ -761,19 +802,30 @@ const QualityGateImpl = async ({ directory } = {}) => {
           // 修复后重新标记完成 → 此处自动再审；通过才置 dualReviewed。
           // 轮次上限（MAX_REVIEW_ROUNDS）后仍不过 → 放行并回注残余项（升级人工，防死循环）。
           // 无法解析的裁决（上游失败等）→ fail-open 不阻断（质量降质但不卡交付）。
-          // P0-2 素材缓存：审查素材 sha1 与上次完全一致 → 复用既有裁决，不为同一份 diff
-          // 重烧 2~4min；diff/文件清单有任何变化即失效。
-          // 与 before 钩子同一口径：高风险文件，或含代码改动且跨 ≥5 文件（纯文档不烧审查费）
+          // P0-2 素材缓存（缓存键完整版，2026-09-22 三模型裁决必须项）：
+          // 键 = 审查器指纹（审查器版本 + 配置模型三元组，reviewerFingerprint 提供）
+          //   + 素材 sha1。改 prompt/换模型后指纹即变，缓存失效——绝不为同一份 diff
+          // 复用异构模型的旧裁决；指纹不可得（配置读失败）→ 键掺时变值保证不命中，
+          // 宁可重烧一次审查也不冒陈旧裁决风险。
           const complex = isComplexDelivery(s, codeEdits);
           if (allDone && complex && !s.dualReviewed && !hasAcceptMarker(s)) {
             const editedList = [...s.edited].slice(0, 30).join("\n");
             const subject = await reviewSubject(projectRoot, s, editedList);
-            const subjectKey = createHash("sha1").update(subject).digest("hex");
+            let drExport = null;
+            let reviewerFp = "";
+            try {
+              drExport = (await import("./dual-review"))._export;
+              reviewerFp = await drExport.reviewerFingerprint();
+            } catch (e) {
+              reviewerFp = `fp-unavailable-${Date.now()}`;
+              console.error(TAG, "审查器指纹不可得（缓存本次不复用）:", e?.message ?? e);
+            }
+            const subjectKey = createHash("sha1").update(`${reviewerFp}\n${subject}`).digest("hex");
             let verdict = null;
             if (s.reviewCache && s.reviewCache.key === subjectKey) {
               verdict = s.reviewCache.verdict;
-              console.error(`${TAG} 层 3 审查素材与上次完全一致（hash 命中），复用既有裁决，不重复烧审查`);
-              appendToResult(output, `\n${TAG} 层 3 审查素材与上次完全一致（hash 命中），复用既有裁决，不重复烧审查。`);
+              console.error(`${TAG} 层 3 审查素材+审查器指纹一致（hash 命中），复用既有裁决，不重复烧审查`);
+              appendToResult(output, `\n${TAG} 层 3 审查素材与审查器配置均未变化（hash 命中），复用既有裁决，不重复烧审查。`);
             } else {
               const reviewT0 = Date.now();
               // 钩子无 ctx.metadata 通道：runDualReview 内部已把进度标题降级 stderr
@@ -784,8 +836,7 @@ const QualityGateImpl = async ({ directory } = {}) => {
                 console.error(`${TAG} 层 3 审查仍在进行… ${Math.round((Date.now() - reviewT0) / 1000)}s`);
               }, 30_000);
               try {
-                const { _export } = await import("./dual-review");
-                verdict = await _export.runDualReview(subject);
+                verdict = await (drExport ?? (await import("./dual-review"))._export).runDualReview(subject);
                 const reviewSecs = ((Date.now() - reviewT0) / 1000).toFixed(1);
                 appendToResult(output, `\n${TAG} 层 3 双向审查（自动执行，正反异源模型+裁决，耗时 ${reviewSecs}s）\n${verdict}`);
                 s.reviewCache = { key: subjectKey, verdict };
@@ -856,7 +907,7 @@ export const QualityGate = async (ctx = {}) => {
 // 真根因修复的核心机制——2026-09-22 启动崩溃复盘（逆向 kilo.exe vE2/iE2/kE2 确认）。
 export const _export = {
   exitCodeOf, exitMasked, parseReviewVerdict, reviewSubject, isComplexDelivery,
-  hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker,
+  hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, diagCoversLastEdit,
   VERIFY_CMD_RE, HIGH_RISK_RE,
 };
 

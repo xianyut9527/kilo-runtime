@@ -28,7 +28,7 @@ const mod = await import(pathToFileURL(bundle).href);
 fs.rmSync(bundle, { force: true });
 
 // 工具函数经 _export 命名空间暴露（非顶层导出——Kilo vE2 会把每个导出函数当工厂调用）
-const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery } = mod._export ?? mod;
+const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit } = mod._export ?? mod;
 let pass = 0, fail = 0;
 const failed = [];
 const t = (name, cond) => {
@@ -190,6 +190,16 @@ t("isComplexDelivery：无代码编辑不触发（纯文档）", (() => {
 })());
 t("isComplexDelivery：0 文件编辑 + 高风险空 → false", isComplexDelivery({ highRisk: new Set(), edited: new Set() }, []) === false);
 
+// ── diagCoversLastEdit：交付冲刷新鲜度判定（2026-09-22 三模型裁决必须项）──
+// 与层 2 hasVerified「末次编辑后」语义同构：冲刷等待期间又编辑 → 诊断不覆盖末次编辑
+const dcls = (over) => diagCoversLastEdit({ codeEditV: 2, pendingDiags: new Set(), diagBusy: false, ...over }, 2);
+t("diagCovers：无新编辑无积压后台空闲 → 覆盖", dcls({}) === true);
+t("diagCovers：冲刷期间又编辑代码（codeEditV 前进）→ 不覆盖（触发补跑轮）", dcls({ codeEditV: 3 }) === false);
+t("diagCovers：新积压未跑 → 不覆盖", dcls({ pendingDiags: new Set(["a.ts"]) }) === false);
+t("diagCovers：后台仍在跑 → 不覆盖", dcls({ diagBusy: true }) === false);
+t("diagCovers：文档编辑不数（editVersion 变但 codeEditV 不变）→ 仍覆盖",
+  diagCoversLastEdit({ codeEditV: 2, editVersion: 9, pendingDiags: new Set(), diagBusy: false }, 2) === true);
+
 // ── makeTitle（plugin/dual-review.ts）：进度通道选择与节流 ──
 // 2026-09-22 通道根因修复后签名 makeTitle(emit, label)：emit 函数（工具路径，
 // bridgeProgress 注入）→ 转发流式进度；无 emit（quality-gate 钩子直调路径）→
@@ -240,6 +250,17 @@ t("isComplexDelivery：0 文件编辑 + 高风险空 → false", isComplexDelive
       "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${hxBundle}`], { stdio: "inherit" });
     const hx = await import(pathToFileURL(hxBundle).href);
     fs.rmSync(hxBundle, { force: true });
+
+    // ── reviewerFingerprint：审查缓存键成分（2026-09-22 三模型裁决必须项）──
+    // 缓存键 = 指纹 + 素材 sha1：改 prompt（版本变）或换模型（三元组变）→ 指纹变 →
+    // 缓存失效，绝不复用异构模型旧裁决。cfg 注入，不依赖真实配置。
+    const fpCfg = (dual_review) => ({ options: { dual_review } });
+    const fpA = await drT.reviewerFingerprint(fpCfg({ positive: "m-a", negative: "m-b", aggregator: "m-c" }));
+    t("指纹含版本与模型三元组", /^v=\S+\|p=m-a\|n=m-b\|a=m-c$/.test(fpA));
+    t("换任一模型 → 指纹变（缓存即失效）",
+      fpA !== (await drT.reviewerFingerprint(fpCfg({ positive: "m-x", negative: "m-b", aggregator: "m-c" }))));
+    t("配置缺 dual_review → 指纹稳定（空三元组，不抛错）",
+      /^v=\S+\|p=\|n=\|a=$/.test(await drT.reviewerFingerprint(fpCfg(undefined))));
     const stream = hx.bridgeProgress(async (emit3) => {
       emit3("启动：模型 A + 模型 B", true);
       await new Promise((r) => setTimeout(r, 10)); // 越过短节流窗
