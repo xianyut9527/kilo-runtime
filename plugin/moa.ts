@@ -23,6 +23,9 @@
 //   - 改走 preliminary 流：execute 返回 bridgeProgress async generator，每个 yield 的
 //     中文进度文本流式显示在工具卡正文（不进对话历史），最后 yield 最终结果；
 //   - 进度文本全面中文化（用户反馈 "moa"/"dual_review" 不语义化）。
+//   - 三修（工具路径实测 f.split 崩溃，与 dual-review 同根因）：execute 曾为 async——
+//     Promise 包装使 kilo a5$ 判非 iterable，generator 对象被当 final output 下发致下游
+//     崩溃；execute 必须 sync 返回 iterable（契约红线详见 lib/hx-client.ts 注释）。
 
 import { loadCfg, ask, FALLBACK_TIMEOUT_MS, FALLBACK_CHUNK_TIMEOUT_MS, circuitState, bridgeProgress } from "../lib/hx-client";
 
@@ -54,7 +57,14 @@ const MoaImpl = async () => {
           },
           aggregator: { type: "string", description: "聚合模型 id（可选，默认取配置）" },
         },
-        async execute(args, ctx) {
+        // ⚠️ 不得改为 async（2026-09-22 f.split 工具崩溃根因，kilo.exe a5$ 逆向 + 17ms 复现实证）：
+        // kilo 消费端先同步检查 execute 返回值是否带 Symbol.asyncIterator（preliminary 流式契约）；
+        // async 函数返回 Promise<AsyncGenerator> 不带该属性 → generator 对象被 await 后当
+        // final output 整体下发，下游渲染对它取字段得 undefined 再 .split →
+        // "undefined is not an object (evaluating 'f.split')"（必现、与参数无关）。
+        // 含 await 的逻辑与快速失败路径全部移入 run 函数，early-return 字符串成为唯一（final）yield。
+        execute(args, ctx) {
+          return bridgeProgress((emit) => (async () => {
           const t0 = Date.now();
           const cfg = await loadCfg();
           let task = String(args?.task ?? "").trim();
@@ -92,8 +102,6 @@ const MoaImpl = async () => {
             return "moa: 上游网关断路器开启（近期连续 503 过载）——并行请求会加剧过载，请约 30s 后重试，或稍后再跑本任务。";
           }
 
-          // 主体走 preliminary 流式进度（bridgeProgress）：每个 yield 的中文进度实时显示在工具卡
-          return bridgeProgress((emit) => (async () => {
             const setTitle = makeTitle(emit, `【多模型协作】参考并行中`);
 
             // 分路进度账本：单行进度聚合各路状态（生成中：N字… / 完成：✓N字 / 失败：✗）

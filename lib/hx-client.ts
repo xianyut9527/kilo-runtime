@@ -78,6 +78,13 @@ export function circuitState() { return cbState; }
 // experimental_context，此前基于它的全部进度标题被静默吞掉（「工具卡黑盒、像卡死」的根因）。
 // 用法：execute 返回 bridgeProgress((emit) => runXxx(emit))；runXxx 内部 emit("进度文本", force)
 // 发流式进度、return 最终字符串。emit 自带节流（force=true 跳过，用于阶段切换等关键帧）。
+//
+// ⚠️ 契约红线（2026-09-22 moa/dual_review 连续 f.split 崩溃根因）：execute 本身必须是普通
+// 函数（非 async）——kilo 消费端（a5$）先同步检查 execute 返回值是否带 Symbol.asyncIterator，
+// async 函数返回 Promise<AsyncGenerator> 不带 → generator 对象被 await 后当 final output
+// 整体下发，下游渲染对它取字段得 undefined 再 .split →
+// "undefined is not an object (evaluating 'f.split')"（17ms 必现、与参数无关）。
+// 含 await 的逻辑放进 runWithEmit（可 async），early-return 字符串即 final yield。
 export function bridgeProgress(runWithEmit, { throttleMs = 800 } = {}) {
   const q = [];
   let wake = null;

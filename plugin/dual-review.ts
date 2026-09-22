@@ -251,10 +251,12 @@ const DualReviewImpl = async () => {
           negative_model: { type: "string", description: "反向审查模型（可选，默认取配置）" },
           aggregator: { type: "string", description: "裁决模型（可选，默认取配置）" },
         },
-        async execute(args, ctx) {
-          // preliminary 流式进度：执行期间的中文进度实时显示在工具卡（bridgeProgress），
-          // 最终结果作为最后一个 yield 值成为 final。快速失败（缺参数/断路器 open）由
-          // runDualReview 直接返回字符串，generator 只 yield final——行为不变。
+        // ⚠️ 不得改为 async（2026-09-22 f.split 工具崩溃根因）：kilo 消费端同步检查 execute
+        // 返回值的 Symbol.asyncIterator；async 返回 Promise<AsyncGenerator> 不带该属性，
+        // generator 对象被当 final output 整体下发，下游 f.split 必崩（17ms 必现、与参数无关）。
+        // runDualReview 自身是 async，由 bridgeProgress 内部 Promise.resolve().then() 接管；
+        // 快速失败（缺 subject/断路器 open）返回字符串 = 唯一（final）yield，行为不变。
+        execute(args, ctx) {
           return bridgeProgress((emit) => runDualReview(args?.subject, args, emit));
         },
       },

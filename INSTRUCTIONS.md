@@ -76,6 +76,7 @@
 - **自研 provider 必须声明 LanguageModel spec `v3`**：声明 `v2` 会走兼容桥丢掉 finishReason/usage，表现为 UI 报「模型未提供结束原因」。
 - 本地 `plugin/*.ts` 自动加载，不必登记进 `plugin` 数组。
 - **插件模块只导出工厂函数**：kilo vE2 加载器会把模块里**每个导出函数**都当插件工厂用 `(ctx, options)` 调用——非工厂导出抛错即 `"failed to load plugin"`、返回 undefined 即 `"plugin config hook failed"`，级联炸掉 provider 列表/模型选择器（2026-09-22 复盘实证）。工具函数一律经 `_export` 命名空间对象暴露（对象无 `server` 属性即被跳过）；`*Impl` 不得导出（钩子双重注册）。install.ps1/sh 冒烟 + test-plugin-contract.mjs 会强制拦截。
+- **流式工具 execute 不得 async**：kilo 消费端（a5$）同步检查 execute 返回值的 `Symbol.asyncIterator`——async 函数返回 `Promise<AsyncGenerator>` 不带该属性，generator 对象会被当 final output 整体下发，下游渲染报 `"undefined is not an object (evaluating 'f.split')"`（2026-09-22 moa/dual_review 连续崩溃实证，17ms 必现）。要流式进度就普通函数同步返回 `bridgeProgress(...)`，await 逻辑放进 run 函数；test-plugin-contract.mjs ⑤ 强制拦截。
 - **不要**在内置 agent 名下写同名 `.md`（会整体覆盖内置提示词）；`verify` 这类非内置 agent 才用 `.md`。
 
 ## 版本口径

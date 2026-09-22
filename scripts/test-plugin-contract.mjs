@@ -116,6 +116,40 @@ if (fs.existsSync(LIB_DIR)) {
   }
 }
 
+// ── 断言 6：流式工具 execute 契约（2026-09-22 moa/dual_review f.split 崩溃根因）──
+// kilo 消费端（a5$，逆向实证）同步检查 execute 返回值是否带 Symbol.asyncIterator：
+// async execute 返回 Promise<AsyncGenerator> 不带该属性 → generator 对象被 await 后当
+// final output 整体下发 → 下游渲染 f.split 崩溃（"undefined is not an object
+// (evaluating 'f.split')"，17ms 必现、与参数无关）。契约：execute 为普通函数（非 async）、
+// 同步返回 async iterable；模拟 a5$ 消费到结束，final yield 必须是字符串。
+const STREAM_TOOLS = [
+  { plugin: "moa.ts", tool: "moa", args: { task: "" } },
+  { plugin: "dual-review.ts", tool: "dual_review", args: { subject: "" } },
+];
+for (const { plugin, tool, args } of STREAM_TOOLS) {
+  const mod = await import(pathToFileURL(path.join(PLUGIN_DIR, plugin)).href);
+  const factory = Object.values(mod).find((v) => typeof v === "function");
+  const hooks = await factory(CTX, undefined);
+  const execute = hooks?.tool?.[tool]?.execute;
+  if (typeof execute !== "function") {
+    assert(`execute 存在：plugin/${plugin}#${tool}`, false);
+    continue;
+  }
+  const r = execute(args, {});
+  assert(`execute 非 Promise（async 污染 → kilo f.split 崩溃）：plugin/${plugin}#${tool}`, !(r && typeof r.then === "function"));
+  assert(`execute 同步返回 async iterable：plugin/${plugin}#${tool}`, r != null && typeof r[Symbol.asyncIterator] === "function");
+  try {
+    let last = undefined, n = 0;
+    for await (const chunk of r) { last = chunk; n++; }
+    assert(`a5$ 消费到结束 final 为字符串：plugin/${plugin}#${tool}（${n} 个 yield，final="${String(last).slice(0, 40)}"）`, typeof last === "string");
+  } catch (e) {
+    const msg = String(e?.message ?? e);
+    // 环境缺 kilo.json/auth.json（CI 等）时 loadCfg 抛错属环境问题，不算契约失败
+    const envMissing = /hx-client|baseURL|auth\.json/.test(msg);
+    assert(`a5$ 消费：plugin/${plugin}#${tool}${envMissing ? "（环境缺配置，final 断言跳过）" : `: ${msg}`}`, envMissing);
+  }
+}
+
 console.log(results.join("\n"));
 const failed = results.filter((r) => r.startsWith("FAIL")).length;
 console.log(`\n${results.length - failed}/${results.length} 通过${failed ? `，${failed} 失败` : ""}`);
