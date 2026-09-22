@@ -19,7 +19,7 @@
 // 2026-09-20 可观测性补漏：quality-gate 钩子直调路径无 ctx.metadata，进度标题降级 stderr
 //（10s 节流、阶段首现立即输出），自动审查不再黑盒；makeTitle 具名导出供离线回归覆盖。
 
-import { loadCfg, ask, FALLBACK_TIMEOUT_MS } from "./hx-client";
+import { loadCfg, ask, FALLBACK_TIMEOUT_MS, circuitState } from "./hx-client";
 
 // 超时统一走配置：kilo.json provider.hx.options.timeout（主链路同口径）；
 // 配置缺失/非法才回退，兜底值取 hx-client 共享常量。
@@ -51,11 +51,12 @@ export function makeTitle(ctx, label) {
     : (text) => console.error(`${TAG}${text || label}`);
   let last = 0;
   const stageAt = new Map(); // stderr 路径：按阶段各自节流（正反两路标题交替到达，单一计时器会失效）
-  return async (text) => {
+  // force=true 跳过节流：启动/阶段切换等低频关键节点，保证最后一帧不被节流吞掉（与 moa 同语义）
+  return async (text, force) => {
     const now = Date.now();
     if (useMeta) {
       // 工具卡标题可原地刷新：维持原全局节流语义
-      if (now - last < throttleMs && text) return;
+      if (!force && now - last < throttleMs && text) return;
       last = now;
       emit(text);
       return;
@@ -63,7 +64,7 @@ export function makeTitle(ctx, label) {
     // stderr 不可原地刷新：阶段首次出现立即输出，同阶段后续按 10s 节流防刷屏
     const stage = String(text || label).replace(/\d+/g, "#");
     const prev = stageAt.get(stage);
-    if (prev !== undefined && now - prev < throttleMs && text) return;
+    if (!force && prev !== undefined && now - prev < throttleMs && text) return;
     stageAt.set(stage, now);
     emit(text);
   };
@@ -131,13 +132,26 @@ export async function runDualReview(subject, overrides = {}, ctx = null) {
     return "dual_review: 审查模型未配置——请在 kilo.json 的 provider.hx.options.dual_review 配置 positive/negative/aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
   }
 
+  // 断路器预检（2026-09-22 网关过载专项，与 moa 同语义）：网关 open 态时两路并行 = 集体施压 + 空烧。
+  if (circuitState() === "open") {
+    return "dual_review: 上游网关断路器开启（近期连续 503 过载）——请约 30s 后重试；本次审查跳过不阻塞交付，稍后可手动补审。";
+  }
+
   const setTitle = makeTitle(ctx, "双向审查两路并行");
+  // 启动即写标题（不等首 chunk）：上游过载/断流时这里是黑盒期唯一可见反馈（2026-09-22，与 moa 同修）
+  await setTitle(`双向审查启动：正向 ${posModel} + 反向 ${negModel}`, true);
+
+  // 输入上限（审查必须项）：正反两路 prompt 注入截断版 subject，防超大 diff 撑爆两次上游调用；
+  // 截断事实内联标注——审查者明确知道自己在看残件，不在残缺输入上假装全量结论
+  const subjectIn = subject.length > AGG_SUBJECT_LIMIT
+    ? subject.slice(0, AGG_SUBJECT_LIMIT) + `\n（截断：原始 ${subject.length} 字符）`
+    : subject;
 
   // 正反两路并行；单路失败不废全局（与 moa 同语义）
   const [posRes, negRes] = await Promise.allSettled([
-    ask({ baseURL: cfg.baseURL, key: cfg.key, model: posModel, prompt: POSITIVE_PROMPT(subject), timeoutMs, idleMs,
+    ask({ baseURL: cfg.baseURL, key: cfg.key, model: posModel, prompt: POSITIVE_PROMPT(subjectIn), timeoutMs, idleMs,
           onDelta: (_d, n) => setTitle(`正向已收 ${n} 字`) }),
-    ask({ baseURL: cfg.baseURL, key: cfg.key, model: negModel, prompt: NEGATIVE_PROMPT(subject), timeoutMs, idleMs,
+    ask({ baseURL: cfg.baseURL, key: cfg.key, model: negModel, prompt: NEGATIVE_PROMPT(subjectIn), timeoutMs, idleMs,
           onDelta: (_d, n) => setTitle(`两路并行已收 ${n} 字`) }),
   ]);
 

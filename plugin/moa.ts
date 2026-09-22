@@ -9,20 +9,29 @@
 //     已从 kilo.exe 源码反编译确认：state.title=kH.title??…）；
 //   - 聚合阶段对超长参考结论截断（每路 12k 字符），防聚合 prompt 超上下文导致二次长等待；
 //   - 每路参考的耗时/字数进入结果报告，可观测性对齐。
+//
+// 2026-09-22 可见性修复（用户实测：工具卡全程只显示 "moa"，无任何进度）：
+//   - 根因：setTitle 只由 onDelta 触发 —— 上游一个 chunk 都没吐（过载/断流）时
+//     ctx.metadata 从未被调用，卡片停留在默认标题；且分路状态不可见。
+//   - 启动即写标题（不等首 chunk）：「MoA 启动：<模型列表>」；
+//   - 每路独立计数（字数/✓完成/✗失败）合成单行标题，实时看各路差异；
+//   - 聚合阶段立即切换标题，不再等待聚合首个 chunk；
 
-import { loadCfg, ask, FALLBACK_TIMEOUT_MS } from "./hx-client";
+import { loadCfg, ask, FALLBACK_TIMEOUT_MS, FALLBACK_CHUNK_TIMEOUT_MS, circuitState } from "./hx-client";
 
 const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合）
 const AGG_VIEW_LIMIT = 12_000; // 聚合 prompt 单路参考截断上限（字符）
+const MAX_TASK_CHARS = 50_000; // 任务输入上限：防无界文本多次灌入上游（成本/上下文）
 const TITLE_THROTTLE_MS = 800; // 标题刷新节流（防高频 metadata 调用）
 
 // 进度标题助手：把调用方已格式化的进度消息写进工具卡。失败静默（老版本无此能力时退化为无进度）。
+// force=true 跳过节流——用于启动/阶段切换/完成态等低频关键节点，保证最后一帧不被节流吞掉。
 function makeTitle(ctx, label) {
   let last = 0;
-  return async (text) => {
+  return async (text, force) => {
     if (!ctx || typeof ctx.metadata !== "function") return;
     const now = Date.now();
-    if (now - last < TITLE_THROTTLE_MS && text) return;
+    if (!force && now - last < TITLE_THROTTLE_MS && text) return;
     last = now;
     try {
       await ctx.metadata({ title: text || label });
@@ -48,17 +57,23 @@ export const Moa = async () => {
         async execute(args, ctx) {
           const t0 = Date.now();
           const cfg = await loadCfg();
-          const task = String(args?.task ?? "").trim();
+          let task = String(args?.task ?? "").trim();
           if (!task) return "moa: 缺少 task 参数";
+          // 输入上限：超长任务截断并内联标注（截断事实随 prompt 可见，聚合模型知道输入是残件）
+          if (task.length > MAX_TASK_CHARS) {
+            task = task.slice(0, MAX_TASK_CHARS) + `\n（截断：原始 ${task.length} 字符）`;
+          }
 
           // 模型唯一真源 = kilo.json provider.hx.options.moa（改模型只改配置文件，代码不留兜底默认值）
           const cfgMoa = cfg.options?.moa ?? {};
-          const refs = (Array.isArray(args?.references) && args.references.length
-            ? args.references
-            : (Array.isArray(cfgMoa.references) ? cfgMoa.references : [])
-          )
-            .filter((m) => typeof m === "string" && m)
-            .slice(0, MAX_REFS);
+          // 去重后再截断：["m","m","m"] 这类重复配置/参数不得绕过 MAX_REFS 成本红线（审查必须项）
+          const refs = [...new Set(
+            (Array.isArray(args?.references) && args.references.length
+              ? args.references
+              : (Array.isArray(cfgMoa.references) ? cfgMoa.references : [])
+            )
+              .filter((m) => typeof m === "string" && m)
+          )].slice(0, MAX_REFS);
           const aggregator = typeof args?.aggregator === "string" && args.aggregator
             ? args.aggregator
             : (typeof cfgMoa.aggregator === "string" ? cfgMoa.aggregator : "");
@@ -69,18 +84,43 @@ export const Moa = async () => {
 
           const totalMs = Number(cfg.options?.timeout) > 0 ? Number(cfg.options.timeout) : FALLBACK_TIMEOUT_MS;
           // 空闲看门狗：与主链路 chunkTimeout 同源（流式中 X ms 无新 chunk 即判死，快速失败进重试）
-          const idleMs = Number(cfg.options?.chunkTimeout) > 0 ? Number(cfg.options.chunkTimeout) : 60_000;
+          const idleMs = Number(cfg.options?.chunkTimeout) > 0 ? Number(cfg.options.chunkTimeout) : FALLBACK_CHUNK_TIMEOUT_MS;
+
+          // 断路器预检（2026-09-22 网关过载专项）：网关 open 态时 2-3 路并行 = 对过载网关的
+          // 集体施压 + 每路 8-15s 空烧。fail fast 并给用户明确信号（等恢复 vs 换时段重试）。
+          if (circuitState() === "open") {
+            return "moa: 上游网关断路器开启（近期连续 503 过载）——并行请求会加剧过载，请约 30s 后重试，或稍后再跑本任务。";
+          }
 
           const setTitle = makeTitle(ctx, `MoA 参考并行中`);
 
-          // 参考阶段：并行 + 各路流式进度
-          const settled = await Promise.allSettled(
-            refs.map((m) => ask({
+          // 分路进度账本：单行标题聚合各路状态（生成中：N字… / 完成：✓N字 / 失败：✗）
+          const kb = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+          const refState = refs.map((m) => ({ model: m, chars: 0, done: false, failed: false, t0: 0, ms: 0 }));
+          const renderRefs = (prefix, force) => {
+            const line = refState
+              .map((s) => `${s.model} ${s.failed ? "✗" : s.done ? `✓${kb(s.chars)}字` : `${kb(s.chars)}字…`}`)
+              .join(" | ");
+            return setTitle(`${prefix} ${line}`, force);
+          };
+
+          // 参考阶段：启动即写标题（不等首 chunk——断流/过载时这里是唯一的可见反馈），
+          // 各路 onDelta 更新自己的计数；promise 落定即打 ✓/✗，不等整批 allSettled。
+          await renderRefs(`MoA 启动（${refs.length} 路并行）：`, true);
+          const promises = refs.map((m, i) => {
+            refState[i].t0 = Date.now();
+            const p = ask({
               baseURL: cfg.baseURL, key: cfg.key, model: m, prompt: task,
               timeoutMs: totalMs, idleMs,
-              onDelta: (_d, total) => setTitle(`MoA ${refs.length} 路并行生成中（单路已收 ${total} 字）`),
-            }))
-          );
+              onDelta: (_d, total) => { refState[i].chars = total; renderRefs(`MoA ${refs.length} 路并行`); },
+            });
+            p.then(
+              () => { refState[i].done = true; refState[i].ms = Date.now() - refState[i].t0; renderRefs(`MoA ${refs.length} 路并行`, true); },
+              () => { refState[i].failed = true; refState[i].ms = Date.now() - refState[i].t0; renderRefs(`MoA ${refs.length} 路并行`, true); },
+            );
+            return p;
+          });
+          const settled = await Promise.allSettled(promises);
 
           const views = [];
           const failures = [];
@@ -88,9 +128,9 @@ export const Moa = async () => {
           settled.forEach((r, i) => {
             if (r.status === "fulfilled") {
               views.push({ model: refs[i], text: r.value });
-              perf.push(`${refs[i]}：${r.value.length} 字`);
+              perf.push(`${refs[i]}：${r.value.length} 字 / ${(refState[i].ms / 1000).toFixed(1)}s`);
             } else {
-              failures.push(`${refs[i]}: ${r.reason?.message ?? r.reason}`);
+              failures.push(`${refs[i]}: ${r.reason?.message ?? r.reason}（${(refState[i].ms / 1000).toFixed(1)}s）`);
             }
           });
 
@@ -116,6 +156,8 @@ export const Moa = async () => {
           ].join("\n");
 
           const aggTitle = makeTitle(ctx, `MoA 聚合（${aggregator}）`);
+          // 聚合阶段切换标题不等待首 chunk：参考阶段的结果差异（成功/失败数）立刻可见
+          await aggTitle(`MoA 聚合启动（${aggregator}，参考成功 ${views.length}/${refs.length}）`, true);
           let conclusion;
           try {
             conclusion = await ask({
