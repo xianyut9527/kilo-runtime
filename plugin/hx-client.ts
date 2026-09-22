@@ -18,8 +18,15 @@
 //   - 可选 signal 取消透传：调用方传入 AbortSignal 即可中止（预留，工具 ctx 尚无此通道）；
 //   - 401 立即失效凭证缓存：换 key 后不再用旧 key 空烧 60s TTL；
 //   - logDirReady 失败不再永久缓存 rejected Promise，遥测目录可重试。
+//
+// 2026-09-22 二轮审查修复：
+//   - half-open 单探测名额：由断路器维护者以 cbProbeInFlight 锁实现（probe 在途其余请求
+//     fail fast、probe 失败回退 open、finally 兜底释放），见 4cfa939/5fa8dbf；
+//   - 遥测错误字段改固定分类枚举（不再落上游报文文本）：网关 4xx/内容策略类报文可能回显
+//     请求体片段，直写 message 有 prompt 泄漏面；
+//   - 轮转先删旧归档再 rename：Windows 不允许 rename 覆盖已存在目标，否则第二次轮转起静默失效。
 
-import { appendFile, mkdir, readFile, rename, stat } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -122,7 +129,8 @@ let cfgCacheAt = 0;
 // ── 失败遥测（2026-09-22 glm-5.2 四连失败专项）──────────────────
 // moa/dual-review 走本客户端直连，不经过 provider 降级链也不写 failover-events.jsonl——
 // 「N 轮失败」曾完全无迹可循，只能事后人工实测复现定位。最终失败（重试耗尽/确定性 4xx）
-// 追加一行 jsonl：只记模型/HTTP 状态/错误摘要（≤200 字）/耗时，绝不含 prompt 与生成内容。
+// 追加一行 jsonl：只记模型/HTTP 状态/错误分类（固定枚举，不含上游报文文本）/耗时，
+// 绝不含 prompt 与生成内容。
 // 与 provider 的遥测同文件同轮转口径（>5MB 归档 .1）；写失败绝不影响主流程。
 const ASK_LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 
@@ -140,15 +148,30 @@ async function logAskFailure(e, model, elapsedMs) {
     await logDirReady;
     try {
       const st = await stat(p);
-      if (st.size > ASK_LOG_ROTATE_BYTES) await rename(p, `${p}.1`);
+      // 轮转：先删旧归档再 rename——Windows 不允许 rename 覆盖已存在目标（EPERM），
+      // 直接 rename 会让第二次及以后的轮转静默失效（二轮审查必须项）
+      if (st.size > ASK_LOG_ROTATE_BYTES) {
+        await rm(`${p}.1`, { force: true });
+        await rename(p, `${p}.1`);
+      }
     } catch { /* 文件不存在则跳过轮转 */ }
+    // 错误字段只落固定分类枚举，不落 e.message 原文：OpenAI 兼容网关在 400/422/内容策略类
+    // 错误中常回显请求体片段，直写 message 有 prompt 泄漏面（二轮审查必须项）。
+    // 电路 open 的提示文案是我们自己构造的、无上游文本，属安全例外。
+    const cls = e?.circuitOpen ? "circuit_open"
+      : e?.statusCode != null ? `http_${e.statusCode}`
+      : /总时长超过/.test(String(e?.message ?? "")) ? "timeout_total"
+      : /空闲超过/.test(String(e?.message ?? "")) ? "timeout_idle"
+      : /空响应/.test(String(e?.message ?? "")) ? "empty_response"
+      : /响应无 body/.test(String(e?.message ?? "")) ? "no_body"
+      : "network_error";
     await appendFile(p, JSON.stringify({
       ts: new Date().toISOString(),
       kind: "hx-client",
       action: "ask_fail",
       model,
       status: e?.statusCode ?? null,
-      error: String(e?.message ?? e).slice(0, 200),
+      error: cls,
       elapsedMs,
     }) + "\n", "utf8");
   } catch { /* 遥测失败不影响主流程 */ }
