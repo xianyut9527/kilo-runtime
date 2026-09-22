@@ -75,10 +75,11 @@
 - **`provider.npm` 必须 `file:///`（三斜杠）**。
 - **自研 provider 必须声明 LanguageModel spec `v3`**：声明 `v2` 会走兼容桥丢掉 finishReason/usage，表现为 UI 报「模型未提供结束原因」。
 - 本地 `plugin/*.ts` 自动加载，不必登记进 `plugin` 数组。
+- **插件模块只导出工厂函数**：kilo vE2 加载器会把模块里**每个导出函数**都当插件工厂用 `(ctx, options)` 调用——非工厂导出抛错即 `"failed to load plugin"`、返回 undefined 即 `"plugin config hook failed"`，级联炸掉 provider 列表/模型选择器（2026-09-22 复盘实证）。工具函数一律经 `_export` 命名空间对象暴露（对象无 `server` 属性即被跳过）；`*Impl` 不得导出（钩子双重注册）。install.ps1/sh 冒烟 + test-plugin-contract.mjs 会强制拦截。
 - **不要**在内置 agent 名下写同名 `.md`（会整体覆盖内置提示词）；`verify` 这类非内置 agent 才用 `.md`。
 
 ## 版本口径
-- 本机日常实际使用的是 VS Code 扩展内嵌 CLI（7.6.2）；终端里全局 npm 的 `kilo`（7.4.16）校验口径不同，
+- 本机日常实际使用的是 VS Code 扩展内嵌 CLI（7.7.6）；终端里全局 npm 的 `kilo`（7.4.16）校验口径不同，
   它对 `privacy_mode` / `web_search` / `subagent_depth` 会报不识别 —— 那是旧版本读取同一份配置，不代表配置坏了。
 
 ## 边界

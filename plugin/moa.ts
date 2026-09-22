@@ -39,7 +39,7 @@ function makeTitle(emit, label) {
   };
 }
 
-export const Moa = async () => {
+const MoaImpl = async () => {
   return {
     tool: {
       moa: {
@@ -199,4 +199,15 @@ export const Moa = async () => {
       },
     },
   };
+};
+
+// never-throw 包装（爆炸半径收口，2026-09-22）：工厂抛错会导致 Kilo 插件注册表留洞 →
+// config hook 级联 → provider 列表全挂 → 模型选择器空。工厂期异常只禁用本插件。
+export const Moa = async (ctx = {}) => {
+  try {
+    return await MoaImpl(ctx);
+  } catch (e) {
+    console.error("[moa] init failed (插件已降级禁用，provider 不受影响):", e?.message ?? e);
+    return {};
+  }
 };

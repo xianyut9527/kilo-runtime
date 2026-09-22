@@ -197,6 +197,146 @@ if [ "$DRY_RUN" = "0" ] && [ "$CHECK" = "0" ] && [ -d "$TARGET_DIR" ]; then
   fi
 fi
 
+# ---------- 插件加载冒烟闸门（与 install.ps1 对等，2026-09-22 启动崩溃的教训） ----------
+# 事故：把编辑中的中间态 plugin/*.ts 下发 → Kilo 7.7.6 插件加载失败 →
+# config hook 级联崩溃 → provider 列表全挂 → 无法选择模型。
+# 真根因（2026-09-22 逆向 kilo.exe vE2/iE2/kE2 确认）：Kilo 把 plugin 模块里**每个导出函数**
+# 都当插件工厂用 (ctx, options) 调一遍——非工厂导出函数收到 (ctx,undefined) 即抛错 →
+# "failed to load plugin"；返回 undefined 的 → "plugin config hook failed"(N.config)。
+# 因此 plugin/*.ts 做两级检查：① import 不抛；② vE2 模拟——每个导出函数用 (ctx, options)
+# 调一遍，抛错或返回非对象即中止。lib/*.ts 只做 ①（库文件不被 Kilo 当插件加载）。
+# 注意：Kilo 会把 plugin/ 下每个 .ts 当插件模块求值（库文件放这里会加载失败）——
+# lib/ 只作共享依赖目录，plugin/ 只放真正的插件入口。
+# 路径 → file:// URL。bun/node 是原生程序，不认 MSYS 路径（/e/... 或 /tmp/...），
+# 必须先用 cygpath 转成 Windows 形式（E:/...），否则 import 一律失败 →
+# 冒烟闸门会误判所有文件「加载即崩」。无 cygpath（Linux/WSL）时原样使用。
+to_file_url() { # $1 = 文件路径
+  local p="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    p="$(cygpath -m "$p" 2>/dev/null || echo "$p")"
+  fi
+  echo "file:///$p"
+}
+
+# 返回 0 = 通过；非 0 = 该文件加载即崩 / vE2 工厂模拟失败。
+smoke_ts() { # $1 = 源文件
+  local f="$1"
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "[INSTALL] WARN: bun 不可用，跳过插件冒烟检查（$f 未经验证即下发）" >&2
+    return 0
+  fi
+  local url; url="$(to_file_url "$f")"
+  bun -e "import('$url').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })" >/dev/null 2>&1
+}
+
+# vE2 工厂模拟（仅 plugin/*.ts）：模拟 kilo.exe vE2/iE2/kE2——把每个导出函数（引用去重）
+# 当插件工厂用 (ctx, options) 调用。契约：恰好 1 个不同函数导出（工厂）不抛且返回对象、
+# 对象导出无 server 函数；违反 = 启动崩溃级缺陷（"failed to load plugin" /
+# "plugin config hook failed"），必须拦下。
+# 写临时 .mjs 再跑：bun --eval 的 argv 传参/顶层 await 语义不可靠（2026-09-22 实测），
+# 文件形式与 install.ps1 同款、已验证。Map 迭代解构是 [fn, name]（键=函数引用，值=名字）。
+smoke_ts_ve2() { # $1 = 源文件
+  local f="$1"
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "[INSTALL] WARN: bun 不可用，跳过 vE2 工厂模拟（$f）" >&2
+    return 0
+  fi
+  local url tmpmjs rc
+  url="$(to_file_url "$f")"
+  tmpmjs="$(mktemp /tmp/kilo-ve2-smoke-XXXXXX.mjs)"
+  cat > "$tmpmjs" <<'VE2JS'
+const target = process.argv[2];
+const mod = await import(target);
+const fnByRef = new Map();
+for (const [k, v] of Object.entries(mod)) {
+  if (typeof v !== "function") {
+    if (v && typeof v === "object" && typeof v.server === "function") {
+      console.error("object export \"" + k + "\" contains a server function - kE2 would call it as a factory -> startup crash");
+      process.exit(1);
+    }
+    continue;
+  }
+  if (!fnByRef.has(v)) fnByRef.set(v, k);
+}
+if (fnByRef.size !== 1) {
+  console.error("expected exactly 1 distinct function export (the factory), got " + fnByRef.size + ": " + [...fnByRef.values()].join(", ") + " - vE2 registers/calls each as a plugin -> startup crash");
+  process.exit(1);
+}
+for (const [fn, name] of fnByRef) {
+  const r = await fn({ directory: "/kilo-smoke-nonexistent", client: {}, $: undefined }, undefined);
+  if (r === null || r === undefined || typeof r !== "object") {
+    console.error("factory \"" + name + "\" called with (ctx,options) returned " + String(r) + " (non-object) - pollutes hook registry -> startup crash");
+    process.exit(1);
+  }
+}
+VE2JS
+  bun "$tmpmjs" "$url" >/dev/null 2>&1
+  rc=$?
+  rm -f "$tmpmjs"
+  return $rc
+}
+
+# provider dist 冒烟：dist/index.js 是 server 启动时加载的模块，语法错/半写同样让 provider 注册失败。
+smoke_provider_js() { # $1 = 源文件
+  local f="$1"
+  if ! command -v node >/dev/null 2>&1; then
+    echo "[INSTALL] WARN: node 不可用，跳过 provider dist 冒烟检查（$f）" >&2
+    return 0
+  fi
+  local url; url="$(to_file_url "$f")"
+  node --input-type=module -e "import('$url').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })" >/dev/null 2>&1
+}
+
+# 预检：任何写入之前完成全量冒烟，否则第 N 个失败时前 N-1 个已落盘 → 半套部署。
+# 只对将发生变化的文件检查（same 的文件已是部署态，无需重复验）。
+# 三种模式都跑：-Check 是预飞检查，仓库里若有「加载即崩」的插件必须在此暴露。
+while IFS=$'\t' read -r src dst; do
+  [ -z "$src" ] && continue
+  dstf="$TARGET_DIR/$dst"
+  # 用与 render_file 相同的 hash 判定是否需要写；有差异才需要冒烟
+  tmpchk="$(mktemp)"
+  case "$src" in
+    *.tmpl)
+      sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$src" \
+        | sed -e '/^[[:space:]]*\/\//d' > "$tmpchk" ;;
+    *)
+      if needs_subst "$src"; then
+        sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$src" > "$tmpchk"
+      else
+        cp -f "$src" "$tmpchk"
+      fi ;;
+  esac
+  hs="$(hash_of "$tmpchk")"; hd=""
+  [ -f "$dstf" ] && hd="$(hash_of "$dstf")"
+  rm -f "$tmpchk"
+  [ -n "$hs" ] && [ "$hs" = "$hd" ] && continue
+
+  case "$src" in
+    */plugin/*.ts|*/lib/*.ts)
+      # 注意 set -e：smoke_ts 失败会退出 subshell 之外的当前 shell，故用 if 显式接住
+      if ! smoke_ts "$src"; then
+        echo "[INSTALL] FAIL: 插件冒烟加载失败，已中止下发（未写入任何文件）：$src" >&2
+        exit 1
+      fi ;;
+  esac
+  case "$src" in
+    */plugin/*.ts)
+      # vE2 工厂模拟（真根因防线）：每个导出函数都会被 Kilo 当工厂调用，
+      # 抛错/返回非对象 = 启动崩溃级缺陷，必须在此拦下
+      if ! smoke_ts_ve2 "$src"; then
+        echo "[INSTALL] FAIL: vE2 工厂模拟失败（存在裸导出工具函数或工厂返回非对象），已中止下发：$src" >&2
+        exit 1
+      fi ;;
+  esac
+  case "$src" in
+    */provider/hx-failover/dist/*.js|*/provider/hx-failover/dist/*.mjs)
+      if ! smoke_provider_js "$src"; then
+        echo "[INSTALL] FAIL: provider dist 冒烟加载失败，已中止下发（未写入任何文件）：$src" >&2
+        exit 1
+      fi ;;
+  esac
+done < "$PAIRS"
+
 # ---------- 下发 ----------
 CHANGED=0; SAME=0; WROTE=0
 while IFS=$'\t' read -r src dst; do

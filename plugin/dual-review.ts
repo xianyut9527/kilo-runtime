@@ -38,7 +38,12 @@ const TAG = "[dual-review] ";
 // ② 无 emit（quality-gate 钩子直调，只有 (input, output)）→ 降级 stderr 节流输出
 //    （CLI 终端可见；VS Code 扩展输出日志可查），消除交付节点黑盒等待。
 // stderr 路径按阶段去重节流（正反两路标题交替到达，单一计时器会失效）。
-export function makeTitle(emit, label) {
+//
+// 不得用 export function：Kilo vE2 加载器会把模块里每个导出的函数都当插件工厂
+// 用 (ctx, options) 调一遍——makeTitle(G, undefined) 不会抛但返回的闭包污染钩子
+// 数组。改为先定义函数，再通过命名空间对象 _export 暴露给测试/调用方（对象不是
+// 函数，kE2 的 a5M 检查直接跳过，不会被当插件调用）。
+function makeTitle(emit, label) {
   const useStream = typeof emit === "function";
   const doEmit = useStream
     ? (text, force) => emit(text, force)
@@ -121,7 +126,7 @@ ${neg}
 
 // 核心执行体：可被 tool: dual_review 调用（emit = bridgeProgress 注入流式进度），
 // 也可被 quality-gate 在交付节点直调（emit 为 null → stderr 降级输出，行为不变）
-export async function runDualReview(subject, overrides = {}, emit = null) {
+async function runDualReview(subject, overrides = {}, emit = null) {
   const cfg = await loadCfg();
   subject = String(subject ?? "").trim();
   if (!subject) return "dual_review: 缺少 subject 参数";
@@ -232,7 +237,7 @@ export async function runDualReview(subject, overrides = {}, emit = null) {
 }
 
 // tool 注册：模型仍可主动发起（传入自定义 subject，如审查某个具体方案而非本次改动）
-export const DualReview = async () => {
+const DualReviewImpl = async () => {
   return {
     tool: {
       dual_review: {
@@ -256,5 +261,21 @@ export const DualReview = async () => {
     },
   };
 };
+
+// never-throw 包装（爆炸半径收口，2026-09-22）：工厂抛错 → Kilo 插件注册表留洞 →
+// config hook 级联 → provider 列表全挂 → 模型选择器空。工厂期异常只禁用本插件。
+export const DualReview = async (ctx = {}) => {
+  try {
+    return await DualReviewImpl(ctx);
+  } catch (e) {
+    console.error(TAG, "init failed (插件已降级禁用，provider 不受影响):", e?.message ?? e);
+    return {};
+  }
+};
+
+// Kilo vE2 契约：模块唯一函数导出 = 工厂（DualReview/default 同引用被 Set 去重）。
+// 工具函数经此命名空间对象暴露（对象无 server 属性 → kE2 跳过，绝不会被当工厂调用）。
+// quality-gate 经 `(await import("./dual-review"))._export.runDualReview` 取用。
+export const _export = { makeTitle, runDualReview };
 
 export default DualReview;

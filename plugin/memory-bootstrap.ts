@@ -137,7 +137,7 @@ function bootstrap(dir) {
   return true;
 }
 
-export const MemoryBootstrap = async ({ directory }) => {
+const MemoryBootstrapImpl = async ({ directory }) => {
   // 进程启动时覆盖主工作区；其余目录（Agent Manager worktree 等）由 session.created 事件覆盖
   try {
     ensureGlobalNotes();
@@ -157,4 +157,15 @@ export const MemoryBootstrap = async ({ directory }) => {
       }
     },
   };
+};
+
+// never-throw 包装（爆炸半径收口，2026-09-22）：工厂抛错 → Kilo 插件注册表留洞 →
+// config hook 级联 → provider 列表全挂 → 模型选择器空。工厂期异常只禁用本插件。
+export const MemoryBootstrap = async (ctx = {}) => {
+  try {
+    return await MemoryBootstrapImpl(ctx);
+  } catch (e) {
+    console.error(TAG, "init failed (插件已降级禁用，provider 不受影响):", e?.message ?? e);
+    return {};
+  }
 };

@@ -46,15 +46,27 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { runDualReview } from "./dual-review";
+// runDualReview 走 hook 内动态 import——模块级爆炸半径隔离（非注册表原因：
+// vE2 只迭代各插件文件自身的导出，import 链不参与注册，静态 import 不会"污染"什么）。
+// 真实价值：静态 import 会把 dual-review 及其依赖链（lib/hx-client）的模块求值提前到
+// quality-gate 加载期，且发生在 never-throw 工厂包装之前（import 提升，try/catch 罩不住）——
+// 依赖链上任一模块级抛错都会让层1/2 宿主 quality-gate 陪葬 "failed to load plugin"，
+// 三层门禁全灭。动态 import 把故障压缩到层 3 执行期：层1/2 照常强制，层3 降级报错。
 
 // 内联 DATA_DIR（不从 hx-client 导入——避免插件模块缓存交互导致 Kilo 7.7.6 config hook 级联崩溃）
-const DATA_DIR = path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"), "kilo");
+// 防御包裹：任何模块级抛错都会让 Kilo 报 "failed to load plugin" 并触发 config hook 级联崩溃
+let DATA_DIR;
+try {
+  DATA_DIR = path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"), "kilo");
+} catch {
+  DATA_DIR = ".";
+}
 
 const TAG = "[quality-gate]";
 
 // ── 进程级（环境属性，跨会话共享）────────────────────────────
-let projectRoot = process.cwd();
+let projectRoot;
+try { projectRoot = process.cwd(); } catch { projectRoot = "."; }
 const probe = { tsc: null, ruff: null }; // null=未探测，true/false=可用性
 let tscInFlight = null; // 并发编辑单飞：共享同一次 tsc 全量输出
 const DIAG_DEBOUNCE_MS = 5_000; // 编辑后防抖：5s 无新动作才真正跑诊断（编辑路径零阻塞）
@@ -107,7 +119,11 @@ function cmdText(c) {
 // 退出码三段契约防御：output 显式字段 → metadata → 结果文本解析。
 // 文本解析只认**独占一行的退出码声明**（多行模式行首锚定）——测试日志中的
 // `Expected exit code: 0` 这类描述性文本不会被误采；成功时常无此行 → undefined=未知。
-export function exitCodeOf(output) {
+// 不得 export function：Kilo vE2 加载器把模块里每个导出函数都当插件工厂用
+// (ctx, options) 调一遍——本函数签名 (output) 收到 (ctx对象, undefined) 时虽不抛，
+// 但返回 undefined 进钩子数组 → "plugin config hook failed"(N.config on undefined)。
+// 工具函数一律模块私有，经文件末尾的 _export 命名空间对象暴露给离线测试。
+function exitCodeOf(output) {
   const o = output ?? {};
   for (const k of ["exitCode", "exit", "code"]) {
     const v = o?.[k] ?? o?.metadata?.[k];
@@ -136,7 +152,6 @@ function rememberCommand(s, cmd, exit, editV) {
 // 与直跑 test 前缀脚本（bun test-x.mjs——本仓离线测试的既定形态）也计入。
 const VERIFY_CMD_RE =
   /(?:^|[;|]|&&|\|\|)\s*(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test|lint|check|typecheck|type-check|build)\b|(?:npx|bunx)\s+(?:jest|vitest|tsc|eslint|ruff)\b|(?:jest|vitest|mypy|pytest|eslint|ruff|tsc)\s|go\s+(?:test|vet)\b|cargo\s+(?:test|check|clippy)\b|python[0-9.]*\s+-m\s+(?:pytest|unittest)\b|(?:mvn|gradlew?)\b[^;&|\n]*\btest\b|make\s+(?:test|check|lint)\b|dotnet\s+test\b|phpunit\b|(?:node|bun|deno|python[0-9.]*)\s+(?:[\w\/\\.-]*[\/\\])?tests?[\w\/\\.-]*\.(?:mjs|cjs|js|ts|tsx|py)\b)/i;
-export { VERIFY_CMD_RE };
 
 // ── 退出码遮蔽识别（P0-3 误报治理）──────────────────────────
 // 这些形态下命令自身的 exit 不可信（失败会被吞成 0）：只算「跑过」，不参与「跑赢」判定。
@@ -147,7 +162,7 @@ export { VERIFY_CMD_RE };
 // 已移出豁免（这类静默改写退出码的后段必须判遮蔽）。
 const PIPE_PASS_THROUGH = /\|\s*(?:tee|head|tail|cat|less|more|wc|sort|uniq|column|iconv|tr)\b[^|;&]*/gi;
 const SUCCESS_TAIL = /^(?:true|:|exit\s+0\b|echo)\b/i; // 以成功命令开头的分号尾段
-export function exitMasked(cmd) {
+function exitMasked(cmd) {
   const c = String(cmd ?? "");
   // || true / || : / || echo ok / || exit 0 / 行尾悬挂 ||：|| 在失败侧续接返回 0 的后段
   if (/\|\|\s*(?:true|:|exit\s+0\b|echo\b)/i.test(c) || /\|\|\s*$/.test(c)) return true;
@@ -216,7 +231,6 @@ function verifyFailureOf(s) {
   }
   return last;
 }
-export { hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker };
 
 function rememberEdit(s, p) {
   if (typeof p !== "string" || !p) return;
@@ -272,7 +286,7 @@ function hasAcceptMarker(s) {
 
 // 从裁决文本解析结论。fail = 裁决「不通过」或「必须修复项」段非空；
 // inconclusive = 文本里没有「## 裁决」段（上游失败/一路阵亡等），不阻断（fail-open）。
-export function parseReviewVerdict(text) {
+function parseReviewVerdict(text) {
   const t = String(text ?? "");
   // 段落提取：以「## 」标题定位，截到下一个「## 」或 <details> 为止（正则刻意不含换行转义）
   const sectionAfter = (heading) => {
@@ -298,7 +312,7 @@ export function parseReviewVerdict(text) {
 }
 
 function codeEditsOf(s) {
-  return [...s.edited].filter(isCodeFile);
+  return [...(s?.edited ?? [])].filter(isCodeFile);
 }
 
 // 层 3 触发口径（before/after 钩子共用，防两处漂移）：
@@ -308,7 +322,6 @@ function codeEditsOf(s) {
 function isComplexDelivery(s, codeEdits) {
   return (s?.highRisk?.size ?? 0) > 0 || ((codeEdits?.length ?? 0) > 0 && (s?.edited?.size ?? 0) >= 5);
 }
-export { isComplexDelivery };
 
 // ── todo 证据核对（层 1）──────────────────────────────────────
 // 停用词：todo 文本里的动词虚词，提取实义 token 用于与证据串匹配
@@ -326,7 +339,7 @@ function keywordsOf(text) {
 }
 
 function evidencePool(s) {
-  return [...s.commands.map(cmdText), ...s.reads, ...s.edited].join("\n").toLowerCase();
+  return [...(s?.commands ?? []).map(cmdText), ...(s?.reads ?? []), ...(s?.edited ?? [])].join("\n").toLowerCase();
 }
 
 function auditTodos(prev, next, pool) {
@@ -530,7 +543,6 @@ function appendToResult(output, text) {
 //    正因目录语义，order-system/ 这类仅前缀相似的目录不会误命中）。
 const HIGH_RISK_RE =
   /(?:^|[/\\])(?:auth|authentication|login|session|token|jwt|permission|acl|rbac|payment|pay|billing|charge|wallet|order|transaction|migration|migrate|ddl|schema|contract|api[-_]?design|public)(?:[-_.\w]*\.(?:ts|tsx|js|jsx|mjs|cjs|py|java|kt|go|rs|cs|sql)$|[/\\])/i;
-export { HIGH_RISK_RE };
 
 function isHighRiskFile(file) {
   return HIGH_RISK_RE.test(String(file ?? ""));
@@ -551,7 +563,12 @@ function extractTool(input) {
 // 已暂存改动仍可见（git diff HEAD 含 staged）；未跟踪新文件不在 diff 里——按「diff 中未出现」
 // 逐个补读全文（有界：最多 8 个 × 4000 字符）；无 git（非 repo / 命令失败）则降级为会话证据池。
 // 已提交的改动不在任何 diff 里（会话中途 commit 的场景）——由文件名清单兜底可见性。
-export async function reviewSubject(root, s, editedList) {
+// 2026-09-22 真根因修复：此处曾 export——Kilo vE2 加载器把每个导出函数都当插件工厂
+// 调 (ctx, options)，本函数 (root, s, ...) 收到 (ctx对象, undefined) 时第 566 行
+// [...s.edited] 以 s=undefined 求值 → "failed to load plugin"(s.edited) →
+// 钩子数组污染 → "plugin config hook failed"(N.config) → provider 全挂（模型选择器空）。
+// 绝不得恢复 export；测试经文件末尾 _export 命名空间访问。
+async function reviewSubject(root, s, editedList) {
   const parts = [`本次会话编辑了以下文件：\n${editedList}`];
   // pathspec 数量设上限：edited 可达 MAX_EDITED(500)，全列进命令行会超 Windows 32767 字符上限
   // 导致 git 进程启动失败（ENAMETOOLONG）。审查素材本就截断到 24000 字符，前 100 个代码文件的
@@ -584,7 +601,7 @@ export async function reviewSubject(root, s, editedList) {
   return parts.join("\n\n").slice(0, 24000);
 }
 
-export const QualityGate = async ({ directory } = {}) => {
+const QualityGateImpl = async ({ directory } = {}) => {
   // 工作区根由 Kilo 注入（同 compaction-anchor/memory-bootstrap 契约）；
   // 用它而非 process.cwd()，否则 worktree/monorepo 场景下 tsconfig 探测必败、检查静默关闭
   if (directory) projectRoot = directory;
@@ -767,7 +784,8 @@ export const QualityGate = async ({ directory } = {}) => {
                 console.error(`${TAG} 层 3 审查仍在进行… ${Math.round((Date.now() - reviewT0) / 1000)}s`);
               }, 30_000);
               try {
-                verdict = await runDualReview(subject);
+                const { _export } = await import("./dual-review");
+                verdict = await _export.runDualReview(subject);
                 const reviewSecs = ((Date.now() - reviewT0) / 1000).toFixed(1);
                 appendToResult(output, `\n${TAG} 层 3 双向审查（自动执行，正反异源模型+裁决，耗时 ${reviewSecs}s）\n${verdict}`);
                 s.reviewCache = { key: subjectKey, verdict };
@@ -816,6 +834,30 @@ export const QualityGate = async ({ directory } = {}) => {
       }
     },
   };
+};
+
+// never-throw 包装（爆炸半径收口，2026-09-22）：Kilo 启动时逐个求值插件工厂，
+// 任一工厂抛错会记 "failed to load plugin" 并在插件注册表留洞 →
+// "plugin config hook failed"（N.config）→ provider 列表/鉴权全挂 → 模型选择器空。
+// 工厂期异常只应禁用本插件，绝不能污染 provider 面：这里兜住并返回空钩子对象。
+export const QualityGate = async (ctx = {}) => {
+  try {
+    return await QualityGateImpl(ctx);
+  } catch (e) {
+    console.error(TAG, "init failed (插件已降级禁用，provider 不受影响):", e?.message ?? e);
+    return {};
+  }
+};
+
+// Kilo vE2 契约：模块唯一函数导出 = 工厂（QualityGate/default 同引用被 Set 去重）。
+// 工具函数经此命名空间对象暴露给离线测试（scripts/test-quality-gate.mjs）——
+// 对象无 server 属性，kE2 的 a5M 检查直接跳过，绝不会被当工厂调 (ctx, options)。
+// 这是 "failed to load plugin"(s.edited) / "plugin config hook failed"(N.config)
+// 真根因修复的核心机制——2026-09-22 启动崩溃复盘（逆向 kilo.exe vE2/iE2/kE2 确认）。
+export const _export = {
+  exitCodeOf, exitMasked, parseReviewVerdict, reviewSubject, isComplexDelivery,
+  hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker,
+  VERIFY_CMD_RE, HIGH_RISK_RE,
 };
 
 export default QualityGate;

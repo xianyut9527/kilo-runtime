@@ -27,7 +27,8 @@ execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "quality-g
 const mod = await import(pathToFileURL(bundle).href);
 fs.rmSync(bundle, { force: true });
 
-const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery } = mod;
+// 工具函数经 _export 命名空间暴露（非顶层导出——Kilo vE2 会把每个导出函数当工厂调用）
+const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery } = mod._export ?? mod;
 let pass = 0, fail = 0;
 const failed = [];
 const t = (name, cond) => {
@@ -199,13 +200,14 @@ t("isComplexDelivery：0 文件编辑 + 高风险空 → false", isComplexDelive
     "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${drBundle}`], { stdio: "inherit" });
   const dr = await import(pathToFileURL(drBundle).href);
   fs.rmSync(drBundle, { force: true });
+  const drT = dr._export ?? dr;
 
   const lines = [];
   const origErr = console.error;
   console.error = (...a) => lines.push(a.join(" "));
   try {
     // 无 emit（自动审查路径）→ stderr；阶段首次出现立即输出，同阶段重复按 10s 节流
-    const emit = dr.makeTitle(null, "双向审查两路并行");
+    const emit = drT.makeTitle(null, "双向审查两路并行");
     await emit("正向已收 1 字");
     await emit("正向已收 2 字");
     await emit("两路并行已收 9 字");
@@ -215,7 +217,7 @@ t("isComplexDelivery：0 文件编辑 + 高风险空 → false", isComplexDelive
 
     // 两路标题交替到达（正/反各一路）：不得因交替而每 chunk 都视为新阶段刷屏
     lines.length = 0;
-    const emit2 = dr.makeTitle(null, "双向审查两路并行");
+    const emit2 = drT.makeTitle(null, "双向审查两路并行");
     for (let i = 1; i <= 5; i++) {
       await emit2(`正向已收 ${i * 10} 字`);
       await emit2(`两路并行已收 ${i * 10} 字`);
@@ -225,7 +227,7 @@ t("isComplexDelivery：0 文件编辑 + 高风险空 → false", isComplexDelive
     // 有 emit（工具路径，preliminary 流式）→ 转发且不落 stderr；force 透传
     const titles = [];
     const emitFn = (text, force) => { titles.push(`${force ? "!" : ""}${text}`); };
-    const emitStream = dr.makeTitle(emitFn, "X");
+    const emitStream = drT.makeTitle(emitFn, "X");
     const before = lines.length;
     await emitStream("裁决生成中 10 字");
     await emitStream("阶段切换", true);

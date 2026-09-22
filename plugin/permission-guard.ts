@@ -93,7 +93,9 @@ function pathsInCommand(cmd) {
   return out;
 }
 
-export const PermissionGuard = async () => {
+// 不得 export：Kilo vE2 加载器会把模块里每个导出的函数都当插件工厂调用一遍
+// （与包装函数不同引用 → 钩子被重复注册两份）。实现保持模块私有，只导出包装后的工厂。
+const PermissionGuardImpl = async () => {
   return {
     "tool.execute.before": async (input, output) => {
       const tool = input?.tool;
@@ -147,4 +149,15 @@ export const PermissionGuard = async () => {
       }
     },
   };
+};
+
+// never-throw 包装（爆炸半径收口，2026-09-22）：工厂抛错 → Kilo 插件注册表留洞 →
+// config hook 级联 → provider 列表全挂 → 模型选择器空。工厂期异常只禁用本插件。
+export const PermissionGuard = async (ctx = {}) => {
+  try {
+    return await PermissionGuardImpl(ctx);
+  } catch (e) {
+    console.error("[permission-guard] init failed (插件已降级禁用，provider 不受影响):", e?.message ?? e);
+    return {};
+  }
 };

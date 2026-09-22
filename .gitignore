@@ -19,6 +19,10 @@ yarn.lock
 **/.kilo/agent-manager.json
 .kilo_tmp/
 .worktrees/
+# GLOBAL-NOTES.md 是运行时状态（不进下发清单）：离线测试加载仓库版
+# plugin/memory-bootstrap.ts 时，ensureGlobalNotes() 会按 import.meta.dir 在仓库根
+# 自愈创建它——属测试副产物，非仓库内容；真实运行时文件在 ~/.config/kilo/ 下
+/GLOBAL-NOTES.md
 
 # IDE / MCP 运行时产物
 .playwright-mcp/

@@ -44,7 +44,9 @@ function extractUserAsks(msg) {
     .filter((t) => t.length > 0);
 }
 
-export const CompactionAnchor = async ({ client, directory, $ }) => {
+// 不得 export：Kilo vE2 加载器会把模块里每个导出的函数都当插件工厂调用一遍
+// （与包装函数不同引用 → 钩子被重复注册两份）。实现保持模块私有，只导出包装后的工厂。
+const CompactionAnchorImpl = async ({ client, directory, $ }) => {
   return {
     "experimental.session.compacting": async (_input, output) => {
       const out = output ?? {};
@@ -122,4 +124,15 @@ export const CompactionAnchor = async ({ client, directory, $ }) => {
       out.context = lines;
     },
   };
+};
+
+// never-throw 包装（爆炸半径收口，2026-09-22）：工厂抛错 → Kilo 插件注册表留洞 →
+// config hook 级联 → provider 列表全挂 → 模型选择器空。工厂期异常只禁用本插件。
+export const CompactionAnchor = async (ctx = {}) => {
+  try {
+    return await CompactionAnchorImpl(ctx);
+  } catch (e) {
+    console.error("[compaction-anchor] init failed (插件已降级禁用，provider 不受影响):", e?.message ?? e);
+    return {};
+  }
 };

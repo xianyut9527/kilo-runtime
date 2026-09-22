@@ -8,6 +8,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// bun 守卫：bun 的 fetch 打桩/Response 语义与 node 不同，401 与网络错场景会假失败
+// （2026-09-22 实测 bun 3 假失败 / node 18 全绿）——必须用文档口径的 node 跑。
+if (typeof Bun !== "undefined") {
+  console.error("需要 node --experimental-strip-types 运行（bun 的 fetch/TS 语义差异会产生假失败）：node --experimental-strip-types scripts/test-circuit-breaker.mjs");
+  process.exit(2);
+}
+
 const PLUGIN_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "lib");
 const TMP = path.join(tmpdir(), "cb-test-" + Date.now());
 mkdirSync(TMP, { recursive: true });
