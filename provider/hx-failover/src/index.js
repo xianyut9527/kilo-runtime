@@ -52,16 +52,29 @@ let logDirReady = null;
 async function logFailover(record) {
   try {
     const p = failoverLogPath();
-    if (!logDirReady) logDirReady = mkdir(join(p, ".."), { recursive: true });
+    if (!logDirReady) {
+      // mkdir 失败时重置为 null：下次调用重试建目录，而不是永久复用 rejected Promise
+      // 导致后续遥测全部静默丢弃（与 lib/hx-client 同日审查必须项，同步移植）
+      logDirReady = mkdir(join(p, ".."), { recursive: true })
+        .catch((e2) => { logDirReady = null; throw e2; });
+    }
     await logDirReady;
-    // 简单轮转：超 5MB 归档为 .1（只保一代；事件频率低，足够排查用）
-    try {
-      const st = await stat(p);
-      if (st.size > LOG_ROTATE_BYTES) await rename(p, `${p}.1`);
-    } catch { /* 文件不存在或轮转失败都不影响写日志 */ }
+    // 简单轮转：超 5MB 归档为 .1（只保一代；事件频率低，足够排查用）。
+    // rename 原子覆盖（libuv Windows 走 MoveFileExW+REPLACE_EXISTING，本机实测；
+    // 常规本地路径成立，SMB/持锁等异常由 catch 诊断兜底），不先删旧归档——先 rm
+    // 反而引入丢归档窗口。stat 失败只跳过轮转；轮转失败留诊断。
+    const st = await stat(p).catch(() => null);
+    if (st && st.size > LOG_ROTATE_BYTES) {
+      try {
+        await rename(p, `${p}.1`);
+      } catch (e3) {
+        console.error(`hx-failover: telemetry rotate failed（日志将继续追加原文件）: ${e3?.message ?? e3}`);
+      }
+    }
     await appendFile(p, JSON.stringify({ ts: new Date().toISOString(), kind: "failover", ...record }) + "\n", "utf8");
-  } catch {
-    // 写日志失败绝不影响模型调用
+  } catch (e) {
+    // 写日志失败绝不影响模型调用，但必留 stderr 诊断——静默丢弃会让排障无迹可循
+    console.error(`hx-failover: telemetry write failed: ${e?.message ?? e}`);
   }
 }
 

@@ -1,16 +1,16 @@
 // hx 上游客户端共享层（W3.8）：moa.ts 与 dual-review.ts 的公共依赖。
 // 集中：配置目录/数据目录定位、kilo.json options + auth.json hx.key 读取（60s 缓存）、
-// OpenAI-compatible SSE 流式请求（首字节超时 + 空闲看门狗 + 总超时、指数退避重试、onDelta 进度回调）。
+// OpenAI-compatible SSE 流式请求（首字节超时 + 空闲看门狗 + 总超时、指数退避重试）。
 // ⚠️ 改动凭证布局或 baseURL 规则时只改这里；两处调用方不再各自维护副本。
 //
 // 2026-09-18 性能改造（原实现 stream:false 非流式，长任务整段等待 1-2 分钟无任何输出）：
-//   - 改 SSE 流式（stream:true）：首 token 即到，总耗时不变但可观测，且规避 natapp 隧道对
-//     长非流式请求的静默掐断（流式持续有数据，连接不会被中间设备回收）。
+//   - 改 SSE 流式（stream:true）：流式持续有数据，规避 natapp 隧道对长非流式请求的
+//     静默掐断（中间设备不回收活跃连接）——这是流式保留的真实理由（进度可视已证伪，见下）。
 //   - 超时拆三层：首字节（chunkTimeout 同源 60s）、chunk 间空闲（idle，60s）、总时长（total，300s）。
 //   - 网络类失败（非 HTTP 4xx）自动重试 2 次指数退避（400ms/1200ms）；HTTP 400/401/403/404/422
 //     视为确定性失败不重试，避免对死配置空烧时间。
-//   - onDelta(text) 回调：调用方（moa/dual-review）用它把生成进度实时写进 ctx.metadata
-//     工具标题（无 ctx 的自动审查路径由调用方降级 stderr），UI 可见「正在生成…已收 N 字」。
+//   - 2026-09-22 终裁：onDelta 进度回调已随进度机制整体拆除（插件工具无 UI 进度通道，
+//     三次证伪，详见文件末尾契约墓碑注释）——调用方只消费最终完整文本。
 //
 // 2026-09-22 可靠性修复（双向审查裁决必须项）：
 //   - 重试墙钟预算：总时长超时（上游滴流式拖满 timeoutMs）不再重试，且已耗时 ≥ timeoutMs
@@ -24,7 +24,10 @@
 //     fail fast、probe 失败回退 open、finally 兜底释放），见 4cfa939/5fa8dbf；
 //   - 遥测错误字段改固定分类枚举（不再落上游报文文本）：网关 4xx/内容策略类报文可能回显
 //     请求体片段，直写 message 有 prompt 泄漏面；
-//   - 轮转先删旧归档再 rename：Windows 不允许 rename 覆盖已存在目标，否则第二次轮转起静默失效。
+//   - 轮转用 rename 原子覆盖（libuv 在 Windows 走 MoveFileExW+REPLACE_EXISTING，
+//     2026-09-22 本机 Node 22 实测覆盖成功；常规本地路径成立，SMB/持锁等异常由
+//     rotate catch 诊断兜底）：无需先删旧归档；先 rm 反而引入「rm 成功、rename 失败」
+//     的丢归档窗口。轮转失败留 stderr 诊断不静默。
 //
 // 2026-09-22 三轮审查修复（重载后实测）：
 //   - half-open 跨代隔离：cbOnSuccess/cbOnOverloadFail/cbOnProbeFail 按请求身份（isProbe）
@@ -32,7 +35,7 @@
 //     （旧成功不得提前释放 probe 锁放进并发 fanout；旧失败不得丢弃其后的 probe 恢复证据）；
 //   - open 态迟到过载不再刷新 openedAt：冷却自 trip 时刻起算，防拖尾失败无限顺延停摆。
 
-import { appendFile, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -42,7 +45,7 @@ const CONFIG_DIR = process.env.KILO_CONFIG_DIR ||
 // memory-bootstrap.ts 复用此常量（同目录部署）；provider/hx-failover 与 scripts/memory-enable.mjs
 // 跨部署边界（独立打包/部署到别处），各自保留本地实现。
 export const DATA_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "kilo");
-export const CFG_TTL_MS = 60_000;
+const CFG_TTL_MS = 60_000; // 配置缓存 TTL（模块私有，无外部消费方）
 // 超时兜底（总时长）：配置缺失/非法时回退。流式后总时长放宽到 300s（生成中持续有 chunk 证明活着）。
 export const FALLBACK_TIMEOUT_MS = 300_000;
 // 首字节/空闲兜底：kilo.json provider.hx.options.chunkTimeout 同源（当前 60s）。
@@ -71,34 +74,16 @@ let cbProbeInFlight = false; // half-open 单 probe 锁：防并发 fanout 集�
 
 export function circuitState() { return cbState; }
 
-// ── 工具 execute 结果桥（2026-09-22 三修实证：execute 必须返回 Promise<string>）──
+// ── 工具 execute 契约（2026-09-22 三修实证 + 同日终裁：无进度通道）──
 // kilo.exe（Bun/JSC）插件工具管线对 execute 返回值有两道硬消费，由两次真实崩溃钉死：
-//   ① 提升层（Effect tryPromise 族适配器 zhD：`ET(()=>H(L)).then((D)=>A(W9(D)),(D)=>A(t$A(D)))`）
-//      对返回值直接调 .then —— 裸 generator/非 thenable → "ET(...).then is not a function"；
-//   ② 渲染层对 resolve 值调 .split —— Promise<generator> 的 resolve 值是 generator 对象
-//      → "evaluating 'f.split'"。
-//   ⇒ 唯一稳定形态：execute 返回 Promise，且 resolve 值必须是 string。
-// asyncIterator/preliminary 流式卡不适用于插件工具（三修实证作废该理论）——进度改
-// stderr 节流输出（CLI/输出日志可见，throttleMs 内去重，force=true 透传关键帧）。
-// 用法：execute(args, ctx) { return bridgeProgress((emit) => runXxx(args, emit)); }
-export function bridgeProgress(runWithEmit, { throttleMs = 800 } = {}) {
-  return new Promise((resolve, reject) => {
-    let last = 0;
-    const emit = (text, force) => {
-      if (typeof text !== "string" || !text) return;
-      const now = Date.now();
-      if (!force && now - last < throttleMs) return;
-      last = now;
-      try { console.error(text); } catch { /* 进度失败不影响主流程 */ }
-    };
-    Promise.resolve()
-      .then(() => runWithEmit(emit))
-      .then(
-        (r) => resolve(r ?? String(r)),
-        (e) => reject(e), // kilo t$A 错误通道：拒绝由管线捕获并归一化展示
-      );
-  });
-}
+//   ① 提升层（Effect tryPromise 族适配器）对返回值直接调 .then —— 裸 generator/非 thenable
+//      → "ET(...).then is not a function"；
+//   ② 渲染层对 resolve 值调 .split —— resolve 值非 string → "evaluating 'f.split'"。
+//   ⇒ execute 必须返回 Promise 且 resolve 值为 string——async 函数原生满足，无需任何包装。
+// 进度通道已三次证伪，勿再尝试：ctx.metadata 不存在于 server 7.7.6；asyncIterator/preliminary
+// 流式卡不适用插件工具；stderr 落 server 进程调试日志、对话视图不可见（2026-09-22 用户实测
+// 2.5min 工具卡无任何输出确认）。可观测性靠最终结果字符串自带（耗时/字数/参与模型）。
+// 历史：bridgeProgress（stderr 节流进度桥）已于同日删除——UI 不可达的死代码。
 
 // probe 锁兜底释放：ask() 的 finally 调用（仅持锁时），防异常/取消路径泄漏
 // cbProbeInFlight 导致 half-open 永久卡死。guard 双条件确保已正常释放时无操作。
@@ -197,15 +182,17 @@ async function logAskFailure(e, model, elapsedMs) {
         .catch((e2) => { logDirReady = null; throw e2; });
     }
     await logDirReady;
-    try {
-      const st = await stat(p);
-      // 轮转：先删旧归档再 rename——Windows 不允许 rename 覆盖已存在目标（EPERM），
-      // 直接 rename 会让第二次及以后的轮转静默失效（二轮审查必须项）
-      if (st.size > ASK_LOG_ROTATE_BYTES) {
-        await rm(`${p}.1`, { force: true });
+    // 轮转：rename 原子覆盖（见文件头注）；stat 任何失败（含不存在）都只是跳过轮转；
+    // 轮转失败留诊断线索不阻断写入（权限类 stat 失败时随后的 append 同样失败并由外层
+    // 诊断；AV 扫描/瞬时锁类失败自愈无害）。
+    const st = await stat(p).catch(() => null);
+    if (st && st.size > ASK_LOG_ROTATE_BYTES) {
+      try {
         await rename(p, `${p}.1`);
+      } catch (e3) {
+        console.error(`hx-client: telemetry rotate failed（日志将继续追加原文件）: ${e3?.message ?? e3}`);
       }
-    } catch { /* 文件不存在则跳过轮转 */ }
+    }
     // 错误字段只落固定分类枚举，不落 e.message 原文：OpenAI 兼容网关在 400/422/内容策略类
     // 错误中常回显请求体片段，直写 message 有 prompt 泄漏面（二轮审查必须项）。
     // 电路 open 的提示文案是我们自己构造的、无上游文本，属安全例外。
@@ -225,7 +212,10 @@ async function logAskFailure(e, model, elapsedMs) {
       error: cls,
       elapsedMs,
     }) + "\n", "utf8");
-  } catch { /* 遥测失败不影响主流程 */ }
+  } catch (e) {
+    // 遥测失败不影响主流程，但必留 stderr 诊断——静默丢弃会让排障无迹可循
+    console.error(`hx-client: telemetry write failed: ${e?.message ?? e}`);
+  }
 }
 
 export async function loadCfg() {
@@ -241,10 +231,37 @@ export async function loadCfg() {
   return cfgCache;
 }
 
+// 超时解析单点（moa/dual-review 共用口径）：配置值先显式 Number 转换（"1000" 字符串
+// 也接受），须为有限正数且 ≤ 2^31-1（setTimeout 超过该值会溢出立即触发），否则回退
+// 共享兜底常量（回退不抛错——病态配置最多损失长超时，绝不让调用路径崩溃）。
+// 收敛原因：该习语曾在 dual-review 漂移成 60_000 字面量。
+export function timeoutsOf(options) {
+  const t = Number(options?.timeout);
+  const c = Number(options?.chunkTimeout);
+  const ok = (n) => Number.isFinite(n) && n > 0 && n <= 2_147_483_647;
+  return {
+    timeoutMs: ok(t) ? t : FALLBACK_TIMEOUT_MS,
+    idleMs: ok(c) ? c : FALLBACK_CHUNK_TIMEOUT_MS,
+  };
+}
+
+// 截断并内联标注单点（prompt 组装共用，原 4 处重复习语）：截断事实随文本可见，
+// 消费方（审查者/聚合模型）明确知道自己在看残件，不在残缺输入上假装全量结论。
+// 软预算口径：截断后总长 = limit + 标注文本（下游均为 prompt 组装，无硬上限消费）；
+// 末位防切断 UTF-16 代理对（emoji/生僻字产出孤立代理项）。
+export function clipText(text, limit) {
+  const t = String(text ?? "");
+  if (t.length <= limit) return t;
+  let cut = t.slice(0, limit);
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return cut + `\n（截断：原始 ${t.length} 字符）`;
+}
+
 // 单次尝试：SSE 流式拉取，直到 done。返回完整文本。
 // 超时三层：首字节（headers 后到第一个 data:）、chunk 间空闲、总时长。
 // signal：可选外部取消信号（预留通道，当前调用方暂无来源）；触发即中止底层连接。
-async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, onDelta, signal }) {
+async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, signal }) {
   const totalMs = timeoutMs ?? FALLBACK_TIMEOUT_MS;
   const idleTimeoutMs = idleMs ?? FALLBACK_CHUNK_TIMEOUT_MS;
   const controller = new AbortController();
@@ -305,7 +322,6 @@ async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, onD
   const decoder = new TextDecoder();
   let buf = "";
   let text = "";
-  let usageTokens = null;
   try {
     armIdle();
     while (true) {
@@ -324,13 +340,9 @@ async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, onD
         if (payload === "[DONE]") { buf = ""; continue; }
         let json;
         try { json = JSON.parse(payload); } catch { continue; }
-        if (json?.usage && typeof json.usage === "object") {
-          usageTokens = json.usage.completion_tokens ?? usageTokens;
-        }
         const delta = json?.choices?.[0]?.delta?.content;
         if (typeof delta === "string" && delta) {
           text += delta;
-          try { onDelta?.(delta, text.length); } catch { /* 进度回调失败不影响主流程 */ }
         }
       }
     }
@@ -340,13 +352,9 @@ async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, onD
       if (payload && payload !== "[DONE]") {
         try {
           const json = JSON.parse(payload);
-          if (json?.usage && typeof json.usage === "object") {
-            usageTokens = json.usage.completion_tokens ?? usageTokens;
-          }
           const delta = json?.choices?.[0]?.delta?.content;
           if (typeof delta === "string" && delta) {
             text += delta;
-            try { onDelta?.(delta, text.length); } catch {}
           }
         } catch { /* 尾包非法 JSON 则放弃 */ }
       }
@@ -357,15 +365,15 @@ async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, onD
   }
 
   if (!text) throw new Error(`${model}: 空响应（流结束无 content）`);
-  return { text, tokens: usageTokens, elapsedMs: Date.now() - t0 };
+  return text;
 }
 
-// 对外接口（兼容旧签名：直接 await 返回字符串）。onDelta 可选注入进度回调；signal 可选取消透传。
+// 对外接口（兼容旧签名：直接 await 返回字符串）。signal 可选取消透传。
 // 重试墙钟预算（2026-09-22 审查必须项）：
 //   - 「总时长超时」类失败不重试——剩余预算已装不下一次完整尝试，重试只是再烧 timeoutMs；
 //   - 已耗时 ≥ timeoutMs 不再发起新尝试。
 //   单次 ask 最坏墙钟从 ~3×timeout 收敛到 ~2×timeout（快速失败类仍有重试保护）。
-export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, onDelta, attempts, signal }) {
+export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, attempts, signal }) {
   const maxAttempts = Number.isInteger(attempts) && attempts > 0 ? attempts : MAX_ATTEMPTS;
   const budgetMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : FALLBACK_TIMEOUT_MS;
   const t0 = Date.now();
@@ -384,9 +392,9 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, onDe
       }
       if (gate === "probe") holdProbe = true;
       try {
-        const r = await attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, onDelta, signal });
+        const text = await attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, signal });
         cbOnSuccess(holdProbe);
-        return r.text;
+        return text;
       } catch (e) {
         lastErr = e;
         const status = e?.statusCode;

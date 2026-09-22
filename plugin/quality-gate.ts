@@ -321,6 +321,48 @@ function codeEditsOf(s) {
   return [...(s?.edited ?? [])].filter(isCodeFile);
 }
 
+// ── 层 2 dist 新鲜度（待办④：推广 install.ps1 的检查到交付节点）────────────
+// 会话编辑过 provider/<pkg>/src × dist/index.js 不比 src 新 → 测试跑的是旧行为
+// （即使 exit 0 也是假信心），install -Check 还会拦下发。交付节点先行拦下要求重建。
+// 只比「会话编辑过的文件」：git checkout/touch 等非会话变更属 install -Check 职责，不归层 2。
+function providerEditsOf(editedPaths) {
+  const m = new Map(); // pkg → 该包 src 下被编辑文件的相对路径列表
+  for (const p of editedPaths ?? []) {
+    const hit = String(p).match(/(?:^|[\\/])provider[\\/]([^\\/]+)[\\/]src[\\/](.+)/i);
+    const pkg = hit?.[1];
+    if (!pkg || pkg === "." || pkg === "..") continue; // 点段逃逸防护
+    if (!m.has(pkg)) m.set(pkg, []);
+    m.get(pkg).push(hit[2]);
+  }
+  return m;
+}
+
+// 产物入口硬编码 dist/index.js：本仓唯一自研 provider（hx-failover）的 build 产物即此，
+// 从 package.json main/exports 动态解析属过度工程——出现第二个 provider 时再泛化。
+function distStaleOf(root, pkg, srcFiles) {
+  try {
+    const pkgDir = path.join(root, "provider", pkg);
+    const dist = path.join(pkgDir, "dist", "index.js");
+    if (!fs.existsSync(dist)) {
+      // 编辑过 src 而 dist 不存在 = 从未构建，恰是要拦的假信心场景（非 fail-open）
+      return { stale: true, missing: true };
+    }
+    const distMtime = fs.statSync(dist).mtimeMs;
+    let newestEdit = -Infinity;
+    for (const rel of srcFiles ?? []) {
+      const full = path.join(pkgDir, "src", rel);
+      if (!fs.existsSync(full)) continue; // 编辑后被删除/重命名：跳过，无 mtime 可比
+      newestEdit = Math.max(newestEdit, fs.statSync(full).mtimeMs);
+    }
+    // >= ：物理上 build 写 dist 晚于编辑 src，mtimeMs 亚秒精度下相等概率≈0，
+    // 取 >= 防极瞬间漏拦；未来时间戳等病态情形由 verify-skipped 逃生门兜底
+    return { stale: newestEdit >= distMtime, missing: false };
+  } catch (e) {
+    console.error(TAG, "distStaleOf 探测失败（fail-open 放行）：", e?.message ?? e);
+    return { stale: false, missing: false }; // fs 异常 fail-open 但必留日志，不静默
+  }
+}
+
 // 层 3 触发口径（before/after 钩子共用，防两处漂移）：
 // 高风险文件命中即触发（文件数无关）；普通改动须含代码且跨 ≥5 文件。
 // ≥3 口径 2026-09-22 上调为 ≥5：48h 遥测实测每次自动审查墙钟 5~8min（22 次共 35min），
@@ -671,6 +713,18 @@ const QualityGateImpl = async ({ directory } = {}) => {
         }
         if (codeEdits.length === 0) return; // 非代码编辑不受限
         if (hasSkipMarker(s)) return;
+        // dist 新鲜度：provider src 改了未重建 dist → 即使下面的验证 exit 0 也是旧行为
+        // （fail-closed：先于 hasVerified 判定，防止「测试通过」掩盖过期产物）
+        const provEdits = providerEditsOf(codeEdits);
+        const stalePkgs = [...provEdits.keys()].filter((pkg) => distStaleOf(projectRoot, pkg, provEdits.get(pkg)).stale);
+        if (stalePkgs.length > 0) {
+          throw new Error(
+            `[quality-gate] 层 2 dist 新鲜度：本会话编辑过 ${stalePkgs.map((p) => `provider/${p}/src`).join("、")}，` +
+            `但对应 dist/index.js 比 src 旧——验证跑的是旧行为，install -Check 也会拦截下发。` +
+            `在 ${stalePkgs.map((p) => `provider/${p}`).join("、")} 跑 npm run build 重建后再标记全部完成；` +
+            `确无法构建则执行 echo "verify-skipped: <原因>" 显式登记。`
+          );
+        }
         // 结果实证（P0-3）：只认末次代码编辑后 exit 0 的验证命令；
         // 跑过但失败 → 拦下要求修复重跑；exit 未知（契约落空/遮蔽形态）→ 降级旧口径放行
         if (hasVerified(s)) return;
@@ -827,14 +881,9 @@ const QualityGateImpl = async ({ directory } = {}) => {
               console.error(`${TAG} 层 3 审查素材+审查器指纹一致（hash 命中），复用既有裁决，不重复烧审查`);
               appendToResult(output, `\n${TAG} 层 3 审查素材与审查器配置均未变化（hash 命中），复用既有裁决，不重复烧审查。`);
             } else {
+              // 无进度通道（终裁见 lib/hx-client.ts）：审查 2~4min 的黑盒期属框架限制，
+              // 结果耗时由下方 appendToResult 回注，不再做不可见的 stderr 心跳
               const reviewT0 = Date.now();
-              // 钩子无 ctx.metadata 通道：runDualReview 内部已把进度标题降级 stderr
-              // （阶段首现立即输出、同阶段 10s 节流）；上游首字未到时 onDelta 不触发，
-              // 补一个 30s 心跳兜住这段死区，消除「黑盒卡死」观感
-              console.error(`${TAG} 层 3 双向审查执行中（正反两路异源模型 + 裁决，输出已限长，预计 2~4min）…`);
-              const hb = setInterval(() => {
-                console.error(`${TAG} 层 3 审查仍在进行… ${Math.round((Date.now() - reviewT0) / 1000)}s`);
-              }, 30_000);
               try {
                 verdict = await (drExport ?? (await import("./dual-review"))._export).runDualReview(subject);
                 const reviewSecs = ((Date.now() - reviewT0) / 1000).toFixed(1);
@@ -842,8 +891,6 @@ const QualityGateImpl = async ({ directory } = {}) => {
                 s.reviewCache = { key: subjectKey, verdict };
               } catch (e) {
                 console.error(TAG, "auto dual review failed:", e?.message ?? e);
-              } finally {
-                clearInterval(hb);
               }
             }
             if (verdict != null) {
@@ -908,6 +955,7 @@ export const QualityGate = async (ctx = {}) => {
 export const _export = {
   exitCodeOf, exitMasked, parseReviewVerdict, reviewSubject, isComplexDelivery,
   hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, diagCoversLastEdit,
+  providerEditsOf, distStaleOf,
   VERIFY_CMD_RE, HIGH_RISK_RE,
 };
 

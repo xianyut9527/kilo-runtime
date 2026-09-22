@@ -13,26 +13,22 @@
 // 全自动闭环（W3.9）：导出 runDualReview(subject) 供 quality-gate 在交付节点直接调用——
 // 不再「提醒模型手动调」，而是插件自身执行正反审查+裁决，结果回注工具结果流。
 // tool: dual_review 仍保留，供模型主动发起（例如覆盖更细粒度的审查对象）。
-//
-// 2026-09-18 性能改造：全链路 SSE 流式 + ctx.metadata 实时进度标题 + 聚合输入截断
-//（subject 8k / 两路结论各 10k），长 diff 审查不再静默等待 1-2 分钟。
-// 2026-09-20 可观测性补漏：quality-gate 钩子直调路径无 ctx.metadata，进度标题降级 stderr
-//（10s 节流、阶段首现立即输出），自动审查不再黑盒；makeTitle 具名导出供离线回归覆盖。
+// 2026-09-22 终裁：插件工具无 UI 进度通道（ctx.metadata/preliminary/stderr 三次证伪，
+// 详见 lib/hx-client.ts 契约注释）——进度机制已整体拆除，可观测性由结果字符串自带。
 
-import { loadCfg, ask, FALLBACK_TIMEOUT_MS, circuitState, bridgeProgress } from "../lib/hx-client";
+import { loadCfg, ask, circuitState, timeoutsOf, clipText } from "../lib/hx-client";
 import { randomUUID } from "node:crypto";
 
-// 超时统一走配置：kilo.json provider.hx.options.timeout（主链路同口径）；
-// 配置缺失/非法才回退，兜底值取 hx-client 共享常量。
-// 空闲看门狗与主链路 chunkTimeout 同源，流式中无 chunk 判死快速失败进重试。
+// 超时统一走配置：kilo.json provider.hx.options.timeout / chunkTimeout（timeoutsOf 单点解析，
+// 与 moa 同口径；空闲看门狗与主链路 chunkTimeout 同源，流式中无 chunk 判死快速失败进重试）。
 
-const STDERR_THROTTLE_MS = 10_000; // stderr 降级通道节流：按阶段各自计时，防两路交替标题刷屏
 const AGG_SUBJECT_LIMIT = 8_000;   // 聚合 prompt 中审查对象截断
 const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
 
 // 审查器版本（quality-gate 层 3 审查缓存键成分）：三路 prompt 协议、限长或裁决解析
 // 口径变更时必须递增——版本一变缓存全失效，旧裁决不再被复用。
-const REVIEWER_VERSION = "dr-2026-09-22.1";
+// dr-2026-09-22.2：clipText 增加代理对边界防护（截断点落在 emoji/生僻字中间时回退一位）。
+const REVIEWER_VERSION = "dr-2026-09-22.2";
 
 // 审查器指纹：审查器版本 + 配置的模型三元组。quality-gate 把它掺进审查素材缓存键：
 // 改 prompt（版本变）或换模型（三元组变）→ 指纹变 → 缓存失效，绝不为同一份 diff
@@ -45,40 +41,6 @@ async function reviewerFingerprint(cfg) {
 }
 
 const TAG = "[dual-review] ";
-
-// 进度发射助手（2026-09-22 三修终版：进度统一走 stderr）：
-// ① emit 存在（工具 execute 路径，bridgeProgress 注入）→ 转发给 bridgeProgress 的
-//    stderr 节流通道（CLI 终端可见；VS Code 扩展输出日志可查）；
-// ② 无 emit（quality-gate 钩子直调，只有 (input, output)）→ 本地 stderr 节流输出
-//    （阶段首现立即输出、同阶段 10s 节流），消除交付节点黑盒等待。
-// 两条路径都落 stderr，正反两路标题交替到达时按阶段去重节流防刷屏。
-//
-// 不得用 export function：Kilo vE2 加载器会把模块里每个导出的函数都当插件工厂
-// 用 (ctx, options) 调一遍——makeTitle(G, undefined) 不会抛但返回的闭包污染钩子
-// 数组。改为先定义函数，再通过命名空间对象 _export 暴露给测试/调用方（对象不是
-// 函数，kE2 的 a5M 检查直接跳过，不会被当插件调用）。
-function makeTitle(emit, label) {
-  const useStream = typeof emit === "function";
-  const doEmit = useStream
-    ? (text, force) => emit(text, force)
-    : (text) => console.error(`${TAG}${text || label}`);
-  const stageAt = new Map(); // stderr 路径：按阶段各自节流
-  // force=true 跳过节流：启动/阶段切换等低频关键节点，保证最后一帧不被节流吞掉（与 moa 同语义）
-  return async (text, force) => {
-    if (useStream) {
-      // 流式通道节流由 bridgeProgress 统一处理，force 透传保证阶段切换关键帧
-      doEmit(String(text || label), force);
-      return;
-    }
-    // stderr 不可原地刷新：阶段首次出现立即输出，同阶段后续按 10s 节流防刷屏
-    const now = Date.now();
-    const stage = String(text || label).replace(/\d+/g, "#");
-    const prev = stageAt.get(stage);
-    if (!force && prev !== undefined && now - prev < STDERR_THROTTLE_MS && text) return;
-    stageAt.set(stage, now);
-    doEmit(text);
-  };
-}
 
 // ── 正反两路 prompt 协议 ─────────────────────────────────────
 // 围栏标签由调用方每次随机生成（nonce）后以参数传入：审查对象/结论内容中即便出现
@@ -138,16 +100,14 @@ ${pos}
 ${neg}
 </${tag.n}>`;
 
-// 核心执行体：可被 tool: dual_review 调用（emit = bridgeProgress 注入流式进度），
-// 也可被 quality-gate 在交付节点直调（emit 为 null → stderr 降级输出，行为不变）
-async function runDualReview(subject, overrides = {}, emit = null) {
+// 核心执行体：tool: dual_review 的 execute 与 quality-gate 交付节点直调共用。
+async function runDualReview(subject, overrides = {}) {
   const cfg = await loadCfg();
   subject = String(subject ?? "").trim();
   if (!subject) return "dual_review: 缺少 subject 参数";
   if (subject.length < 50) return "dual_review: subject 过短（<50 字符），请带上改动摘要与关键代码片段";
 
-  const timeoutMs = Number(cfg.options?.timeout) > 0 ? Number(cfg.options?.timeout) : FALLBACK_TIMEOUT_MS;
-  const idleMs = Number(cfg.options?.chunkTimeout) > 0 ? Number(cfg.options?.chunkTimeout) : 60_000;
+  const { timeoutMs, idleMs } = timeoutsOf(cfg.options);
 
   // 模型唯一真源 = kilo.json provider.hx.options.dual_review（改模型只改配置文件，代码不留兜底默认值）
   const dr = cfg.options?.dual_review ?? {};
@@ -163,15 +123,9 @@ async function runDualReview(subject, overrides = {}, emit = null) {
     return "dual_review: 上游网关断路器开启（近期连续 503 过载）——请约 30s 后重试；本次审查跳过不阻塞交付，稍后可手动补审。";
   }
 
-  const setTitle = makeTitle(emit, "双向审查两路并行");
-  // 启动即发进度（不等首 chunk）：上游过载/断流时这里是黑盒期唯一可见反馈（2026-09-22，与 moa 同修）
-  await setTitle(`【双向审查】启动：正向 ${posModel} + 反向 ${negModel}`, true);
-
   // 输入上限（审查必须项）：正反两路 prompt 注入截断版 subject，防超大 diff 撑爆两次上游调用；
-  // 截断事实内联标注——审查者明确知道自己在看残件，不在残缺输入上假装全量结论
-  const subjectIn = subject.length > AGG_SUBJECT_LIMIT
-    ? subject.slice(0, AGG_SUBJECT_LIMIT) + `\n（截断：原始 ${subject.length} 字符）`
-    : subject;
+  // clipText 内联标注截断事实——审查者明确知道自己在看残件，不在残缺输入上假装全量结论
+  const subjectIn = clipText(subject, AGG_SUBJECT_LIMIT);
 
   // 本次审查的围栏 nonce（CSPRNG，固定 8 hex）：三路 prompt 共用，内容侧无法预测/闭合
   // s/p/n 必须各自独立——子审查模型可能回显它见过的 tag.s，若 p/n 复用 s 值则聚合阶段
@@ -181,10 +135,8 @@ async function runDualReview(subject, overrides = {}, emit = null) {
 
   // 正反两路并行；单路失败不废全局（与 moa 同语义）
   const [posRes, negRes] = await Promise.allSettled([
-    ask({ baseURL: cfg.baseURL, key: cfg.key, model: posModel, prompt: POSITIVE_PROMPT(subjectIn, tag.s), timeoutMs, idleMs,
-          onDelta: (_d, n) => setTitle(`【双向审查】正向已收 ${n} 字`) }),
-    ask({ baseURL: cfg.baseURL, key: cfg.key, model: negModel, prompt: NEGATIVE_PROMPT(subjectIn, tag.s), timeoutMs, idleMs,
-          onDelta: (_d, n) => setTitle(`【双向审查】反向已收 ${n} 字`) }),
+    ask({ baseURL: cfg.baseURL, key: cfg.key, model: posModel, prompt: POSITIVE_PROMPT(subjectIn, tag.s), timeoutMs, idleMs }),
+    ask({ baseURL: cfg.baseURL, key: cfg.key, model: negModel, prompt: NEGATIVE_PROMPT(subjectIn, tag.s), timeoutMs, idleMs }),
   ]);
 
   const posText = posRes.status === "fulfilled" ? posRes.value : null;
@@ -208,14 +160,10 @@ async function runDualReview(subject, overrides = {}, emit = null) {
     ].filter(Boolean).join("\n");
   }
 
-  // 聚合阶段：截断超长输入（正/反各 AGG_REVIEW_LIMIT），防聚合 prompt 爆上下文二次长等待
-  const clip = (t) => t.length > AGG_REVIEW_LIMIT ? t.slice(0, AGG_REVIEW_LIMIT) + `\n（截断：原始 ${t.length} 字符）` : t;
-  const posC = clip(posText);
-  const negC = clip(negText);
+  // 聚合阶段：截断超长输入（正/反各 AGG_REVIEW_LIMIT，clipText 内联标注），防聚合 prompt 爆上下文二次长等待
+  const posC = clipText(posText, AGG_REVIEW_LIMIT);
+  const negC = clipText(negText, AGG_REVIEW_LIMIT);
 
-  const aggTitle = makeTitle(emit, `裁决（${aggModel}）`);
-  // 聚合阶段切换进度不等待首 chunk：两路完成的事实立刻可见
-  await aggTitle(`【双向审查】两路完成 → 裁决生成中（${aggModel}）`, true);
   let verdict;
   try {
     verdict = await ask({
@@ -225,7 +173,6 @@ async function runDualReview(subject, overrides = {}, emit = null) {
       prompt: AGGREGATE_PROMPT(subjectIn, posC, negC, tag),
       timeoutMs,
       idleMs,
-      onDelta: (_d, total) => aggTitle(`【双向审查】裁决生成中 ${total} 字`),
     });
   } catch (e) {
     return [
@@ -266,12 +213,10 @@ const DualReviewImpl = async () => {
           aggregator: { type: "string", description: "裁决模型（可选，默认取配置）" },
         },
         // ⚠️ execute 契约（2026-09-22 两次工具路径崩溃实证钉死，详见 lib/hx-client.ts
-        // bridgeProgress 注释）：必须返回 Promise<string>（bridgeProgress 包装）——
-        // 裸 generator → 提升层 ET(()=>H(L)).then 崩；Promise<generator> → 渲染层
-        // f.split 崩。runDualReview 的快速失败（缺 subject/断路器 open）返回字符串，
-        // 经 bridgeProgress 包装后同为合规 Promise<string>；进度降级 stderr 节流。
-        execute(args, ctx) {
-          return bridgeProgress((emit) => runDualReview(args?.subject, args, emit));
+        // 契约注释）：必须返回 Promise<string>——async 函数原生满足。runDualReview 的
+        // 快速失败路径（缺 subject/断路器 open）返回的也是 string，同样合规。
+        async execute(args) {
+          return await runDualReview(args?.subject, args);
         },
       },
     },
@@ -292,6 +237,6 @@ export const DualReview = async (ctx = {}) => {
 // Kilo vE2 契约：模块唯一函数导出 = 工厂（DualReview/default 同引用被 Set 去重）。
 // 工具函数经此命名空间对象暴露（对象无 server 属性 → kE2 跳过，绝不会被当工厂调用）。
 // quality-gate 经 `(await import("./dual-review"))._export.runDualReview` 取用。
-export const _export = { makeTitle, runDualReview, reviewerFingerprint };
+export const _export = { runDualReview, reviewerFingerprint };
 
 export default DualReview;

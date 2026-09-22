@@ -5,7 +5,8 @@
 // 直接 import 会死在「./dual-review 无扩展名」的 Node ESM 解析上。
 // 覆盖：parseReviewVerdict 裁决解析 / VERIFY_CMD_RE 验证命令识别 / HIGH_RISK_RE 高风险路径
 // / reviewSubject 无 git 降级 / exitCodeOf 退出码三段契约 / exitMasked 遮蔽形态
-// / hasVerified·verifyFailureOf 结果实证判定 / makeTitle 进度通道选择与节流（含无 ctx 降级 stderr）。
+// / hasVerified·verifyFailureOf 结果实证判定 / reviewerFingerprint 审查缓存指纹
+// / providerEditsOf·distStaleOf 层 2 dist 新鲜度（src 改未重建 → 交付拦截）。
 // 正则、门禁逻辑与进度通道的任何回归（含 CJK 腐化）都会让本测试变红。
 // 注意：本文件必须在 scripts/ 下（不进 install.manifest）——放 plugin/ 会随整目录部署进生产配置。
 import { execFileSync } from "node:child_process";
@@ -28,7 +29,7 @@ const mod = await import(pathToFileURL(bundle).href);
 fs.rmSync(bundle, { force: true });
 
 // 工具函数经 _export 命名空间暴露（非顶层导出——Kilo vE2 会把每个导出函数当工厂调用）
-const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit } = mod._export ?? mod;
+const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf } = mod._export ?? mod;
 let pass = 0, fail = 0;
 const failed = [];
 const t = (name, cond) => {
@@ -200,10 +201,7 @@ t("diagCovers：后台仍在跑 → 不覆盖", dcls({ diagBusy: true }) === fal
 t("diagCovers：文档编辑不数（editVersion 变但 codeEditV 不变）→ 仍覆盖",
   diagCoversLastEdit({ codeEditV: 2, editVersion: 9, pendingDiags: new Set(), diagBusy: false }, 2) === true);
 
-// ── makeTitle（plugin/dual-review.ts）：进度通道选择与节流 ──
-// 2026-09-22 通道根因修复后签名 makeTitle(emit, label)：emit 函数（工具路径，
-// bridgeProgress 注入）→ 转发流式进度；无 emit（quality-gate 钩子直调路径）→
-// 降级 stderr（阶段首现立即输出、同阶段 10s 节流、正反交替不误判刷屏）。
+// ── reviewerFingerprint（plugin/dual-review.ts）：审查缓存键成分 ──
 {
   const drBundle = path.join(os.tmpdir(), `dr-test-${process.pid}.mjs`);
   execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "dual-review.ts"),
@@ -212,80 +210,56 @@ t("diagCovers：文档编辑不数（editVersion 变但 codeEditV 不变）→ �
   fs.rmSync(drBundle, { force: true });
   const drT = dr._export ?? dr;
 
-  const lines = [];
-  const origErr = console.error;
-  console.error = (...a) => lines.push(a.join(" "));
+  // 缓存键 = 指纹 + 素材 sha1：改 prompt（版本变）或换模型（三元组变）→ 指纹变 →
+  // 缓存失效，绝不复用异构模型旧裁决。cfg 注入，不依赖真实配置。
+  const fpCfg = (dual_review) => ({ options: { dual_review } });
+  const fpA = await drT.reviewerFingerprint(fpCfg({ positive: "m-a", negative: "m-b", aggregator: "m-c" }));
+  t("指纹含版本与模型三元组", /^v=\S+\|p=m-a\|n=m-b\|a=m-c$/.test(fpA));
+  t("换任一模型 → 指纹变（缓存即失效）",
+    fpA !== (await drT.reviewerFingerprint(fpCfg({ positive: "m-x", negative: "m-b", aggregator: "m-c" }))));
+  t("配置缺 dual_review → 指纹稳定（空三元组，不抛错）",
+    /^v=\S+\|p=\|n=\|a=$/.test(await drT.reviewerFingerprint(fpCfg(undefined))));
+}
+
+// ── providerEditsOf / distStaleOf（层 2 dist 新鲜度）──
+{
+  const m1 = providerEditsOf(["provider/hx-failover/src/index.js", "plugin\\moa.ts",
+    "provider\\hx-failover\\src\\util.js", "provider/../src/escape.js", "lib/hx-client.ts"]);
+  t("providerEditsOf：正反斜杠提取 + 点段逃逸防护 + 非 src 忽略",
+    m1.size === 1 && m1.get("hx-failover").length === 2 && m1.get("hx-failover").includes("index.js") && m1.get("hx-failover").includes("util.js"));
+  const m2 = providerEditsOf(["a/Provider/Pkg/Src/x.js"]);
+  t("providerEditsOf：大小写不敏感（Windows 形态）命中", m2.size === 1 && m2.get("Pkg")?.[0] === "x.js");
+  const m3 = providerEditsOf(["provider/pkg/dist/index.js", "src/a.ts", null]);
+  t("providerEditsOf：dist 路径与普通文件不误报", m3.size === 0);
+}
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qg-dist-"));
   try {
-    // 无 emit（自动审查路径）→ stderr；阶段首次出现立即输出，同阶段重复按 10s 节流
-    const emit = drT.makeTitle(null, "双向审查两路并行");
-    await emit("正向已收 1 字");
-    await emit("正向已收 2 字");
-    await emit("两路并行已收 9 字");
-    await emit("两路并行已收 88 字");
-    t("无 emit：进度降级 stderr，阶段首现不被节流吞掉、同阶段重复被抑制",
-      lines.length === 2 && lines[0].includes("正向") && lines[1].includes("两路并行"));
-
-    // 两路标题交替到达（正/反各一路）：不得因交替而每 chunk 都视为新阶段刷屏
-    lines.length = 0;
-    const emit2 = drT.makeTitle(null, "双向审查两路并行");
-    for (let i = 1; i <= 5; i++) {
-      await emit2(`正向已收 ${i * 10} 字`);
-      await emit2(`两路并行已收 ${i * 10} 字`);
-    }
-    t("无 emit：正反交替标题不被误判为阶段切换（仅各输出一次）", lines.length === 2);
-
-    // 有 emit（工具路径，preliminary 流式）→ 转发且不落 stderr；force 透传
-    const titles = [];
-    const emitFn = (text, force) => { titles.push(`${force ? "!" : ""}${text}`); };
-    const emitStream = drT.makeTitle(emitFn, "X");
-    const before = lines.length;
-    await emitStream("裁决生成中 10 字");
-    await emitStream("阶段切换", true);
-    t("有 emit：转发流式进度且不写 stderr（force 透传）",
-      titles.length === 2 && titles[0].includes("裁决生成中") && titles[1].startsWith("!") && lines.length === before);
-
-    // ── reviewerFingerprint：审查缓存键成分（2026-09-22 三模型裁决必须项）──
-    // 缓存键 = 指纹 + 素材 sha1：改 prompt（版本变）或换模型（三元组变）→ 指纹变 →
-    // 缓存失效，绝不复用异构模型旧裁决。cfg 注入，不依赖真实配置。
-    const fpCfg = (dual_review) => ({ options: { dual_review } });
-    const fpA = await drT.reviewerFingerprint(fpCfg({ positive: "m-a", negative: "m-b", aggregator: "m-c" }));
-    t("指纹含版本与模型三元组", /^v=\S+\|p=m-a\|n=m-b\|a=m-c$/.test(fpA));
-    t("换任一模型 → 指纹变（缓存即失效）",
-      fpA !== (await drT.reviewerFingerprint(fpCfg({ positive: "m-x", negative: "m-b", aggregator: "m-c" }))));
-    t("配置缺 dual_review → 指纹稳定（空三元组，不抛错）",
-      /^v=\S+\|p=\|n=\|a=$/.test(await drT.reviewerFingerprint(fpCfg(undefined))));
-
-    // bridgeProgress（lib/hx-client.ts）：execute 契约桥（三修终版）——返回 Promise<string>，
-    // emit 降级 stderr 节流（force 透传），run 抛错 → Promise 拒绝（kilo t$A 错误通道）
-    const hxBundle = path.join(os.tmpdir(), `hx-test-${process.pid}.mjs`);
-    execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "lib", "hx-client.ts"),
-      "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${hxBundle}`], { stdio: "inherit" });
-    const hx = await import(pathToFileURL(hxBundle).href);
-    fs.rmSync(hxBundle, { force: true });
-    const stream = hx.bridgeProgress(async (emit3) => {
-      emit3("启动：模型 A + 模型 B", true);
-      await new Promise((r) => setTimeout(r, 10)); // 越过短节流窗
-      emit3("进度 1");
-      emit3("进度 1"); // 节流窗内重复 → 被抑制
-      emit3("阶段完成", true); // force 跳过节流
-      await new Promise((r) => setTimeout(r, 30));
-      return "最终结果";
-    }, { throttleMs: 5 });
-    const errLines = [];
-    const origErr2 = console.error;
-    console.error = (...a) => errLines.push(a.join(" "));
-    let finalVal;
-    try { finalVal = await stream; } finally { console.error = origErr2; }
-    t("bridgeProgress：返回 Promise 且 resolve 为 string（ET 提升/f.split 渲染双契约）",
-      typeof finalVal === "string" && finalVal === "最终结果");
-    t("bridgeProgress：进度走 stderr 节流去重 + force 透传",
-      errLines.length === 3 && errLines[0].includes("启动") && errLines[1] === "进度 1" && errLines[2] === "阶段完成");
-    let rejected = false;
-    try { await hx.bridgeProgress(async () => { throw new Error("boom"); }); }
-    catch { rejected = true; }
-    t("bridgeProgress：run 抛错 → Promise 拒绝（不吞错）", rejected === true);
+    const mkPkg = (name) => {
+      const pkgDir = path.join(tmp, "provider", name);
+      fs.mkdirSync(path.join(pkgDir, "src"), { recursive: true });
+      fs.mkdirSync(path.join(pkgDir, "dist"), { recursive: true });
+      return pkgDir;
+    };
+    const fresh = mkPkg("fresh");
+    fs.writeFileSync(path.join(fresh, "src", "index.js"), "src");
+    fs.writeFileSync(path.join(fresh, "dist", "index.js"), "dist");
+    fs.utimesSync(path.join(fresh, "dist", "index.js"), new Date(), new Date(Date.now() + 60_000));
+    t("distStaleOf：dist 比会话编辑文件新 → 不过期",
+      distStaleOf(tmp, "fresh", ["index.js"]).stale === false);
+    const stale = mkPkg("stale");
+    fs.writeFileSync(path.join(stale, "dist", "index.js"), "dist");
+    fs.writeFileSync(path.join(stale, "src", "late.js"), "newer");
+    fs.utimesSync(path.join(stale, "src", "late.js"), new Date(), new Date(Date.now() + 60_000));
+    t("distStaleOf：会话编辑文件比 dist 新 → 过期（>= 口径）",
+      distStaleOf(tmp, "stale", ["late.js"]).stale === true);
+    const noDist = mkPkg("nodist");
+    fs.writeFileSync(path.join(noDist, "src", "index.js"), "src");
+    fs.rmSync(path.join(noDist, "dist"), { recursive: true, force: true });
+    t("distStaleOf：编辑过 src 但 dist 缺失（从未构建）→ 拦截", distStaleOf(tmp, "nodist", ["index.js"]).stale === true);
+    t("distStaleOf：编辑文件已删除 → 跳过不抛", distStaleOf(tmp, "stale", ["gone.js"]).stale === false);
   } finally {
-    console.error = origErr;
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
 

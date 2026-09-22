@@ -76,7 +76,7 @@
 - **自研 provider 必须声明 LanguageModel spec `v3`**：声明 `v2` 会走兼容桥丢掉 finishReason/usage，表现为 UI 报「模型未提供结束原因」。
 - 本地 `plugin/*.ts` 自动加载，不必登记进 `plugin` 数组。
 - **插件模块只导出工厂函数**：kilo vE2 加载器会把模块里**每个导出函数**都当插件工厂用 `(ctx, options)` 调用——非工厂导出抛错即 `"failed to load plugin"`、返回 undefined 即 `"plugin config hook failed"`，级联炸掉 provider 列表/模型选择器（2026-09-22 复盘实证）。工具函数一律经 `_export` 命名空间对象暴露（对象无 `server` 属性即被跳过）；`*Impl` 不得导出（钩子双重注册）。install.ps1/sh 冒烟 + test-plugin-contract.mjs 会强制拦截。
-- **插件工具 execute 必须返回 `Promise<string>`**（2026-09-22 三修实证终版）：kilo 插件工具管线对 execute 返回值有两道硬消费——① 提升层适配器（Effect tryPromise 族：`ET(()=>H(L)).then(...)`）对返回值直接调 `.then`，裸 generator 报 `"...then is not a function"`；② 渲染层对 resolve 值调 `.split`，`Promise<generator>` 报 `"evaluating 'f.split'"`。唯一稳定形态：`execute(args){ return bridgeProgress((emit)=>runXxx(...,emit)) }`（bridgeProgress 返回 Promise<string>，emit 为 stderr 节流进度——asyncIterator/preliminary 流式卡不适用于插件工具）。test-plugin-contract.mjs ⑤ 强制拦截。
+- **插件工具 execute 必须返回 `Promise<string>`**（2026-09-22 三修实证 + 同日终裁）：kilo 插件工具管线对 execute 返回值有两道硬消费——① 提升层适配器（Effect tryPromise 族）对返回值直接调 `.then`，裸 generator 报 `"...then is not a function"`；② 渲染层对 resolve 值调 `.split`，非 string 报 `"evaluating 'f.split'"`。唯一稳定形态：**`async execute(args) { ... return "结果字符串"; }`**（async 函数原生满足）。插件工具**无 UI 进度通道**：ctx.metadata（server 7.7.6 不存在）、asyncIterator/preliminary 流式卡、stderr（只落 server 进程调试日志，对话视图不可见——用户实测确认）三次证伪，勿再加进度机制；可观测性由结果字符串自带（耗时/字数）。test-plugin-contract.mjs ⑤ 强制拦截。
 - **不要**在内置 agent 名下写同名 `.md`（会整体覆盖内置提示词）；`verify` 这类非内置 agent 才用 `.md`。
 
 ## 版本口径

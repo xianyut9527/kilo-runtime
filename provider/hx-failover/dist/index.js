@@ -28149,15 +28149,24 @@ var logDirReady = null;
 async function logFailover(record2) {
   try {
     const p = failoverLogPath();
-    if (!logDirReady) logDirReady = mkdir(join(p, ".."), { recursive: true });
+    if (!logDirReady) {
+      logDirReady = mkdir(join(p, ".."), { recursive: true }).catch((e2) => {
+        logDirReady = null;
+        throw e2;
+      });
+    }
     await logDirReady;
-    try {
-      const st = await stat(p);
-      if (st.size > LOG_ROTATE_BYTES) await rename(p, `${p}.1`);
-    } catch {
+    const st = await stat(p).catch(() => null);
+    if (st && st.size > LOG_ROTATE_BYTES) {
+      try {
+        await rename(p, `${p}.1`);
+      } catch (e3) {
+        console.error(`hx-failover: telemetry rotate failed\uFF08\u65E5\u5FD7\u5C06\u7EE7\u7EED\u8FFD\u52A0\u539F\u6587\u4EF6\uFF09: ${e3?.message ?? e3}`);
+      }
     }
     await appendFile(p, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), kind: "failover", ...record2 }) + "\n", "utf8");
-  } catch {
+  } catch (e) {
+    console.error(`hx-failover: telemetry write failed: ${e?.message ?? e}`);
   }
 }
 var cooldown = /* @__PURE__ */ new Map();
