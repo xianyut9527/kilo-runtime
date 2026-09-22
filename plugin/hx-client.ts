@@ -58,12 +58,26 @@ let cbProbeInFlight = false; // half-open 单 probe 锁：防并发 fanout 集�
 
 export function circuitState() { return cbState; }
 
+// probe 锁兜底释放：ask() 的 finally 调用（仅持锁时），防异常/取消路径泄漏
+// cbProbeInFlight 导致 half-open 永久卡死。guard 双条件确保已正常释放时无操作。
+function cbReleaseProbeIfStuck() {
+  if (cbState === "half-open" && cbProbeInFlight) {
+    // probe 异常退出（未走 cbOnSuccess/cbOnProbeFail/cbOnOverloadFail）→ 回退 open 重试
+    cbState = "open";
+    cbOpenedAt = Date.now();
+    cbProbeInFlight = false;
+  }
+}
+
 function isOverloadErr(err) {
   if (err?.statusCode === 503) return true;
   return /system cpu overloaded|overloaded/i.test(String(err?.message ?? ""));
 }
 
 function cbOnSuccess() {
+  // open 态的迟到成功不关断：在途旧请求（open 前发出）成功不代表网关已恢复，
+  // 冷却窗口必须走完——只有 half-open probe 成功才允许关断（防绕过冷却直砸过载网关）
+  if (cbState === "open") return;
   cbConsecutiveOverloads = 0;
   cbProbeInFlight = false;
   cbState = "closed";
@@ -88,7 +102,7 @@ function cbOnProbeFail() {
 }
 
 function cbAllowRequest() {
-  if (cbState === "closed") return true;
+  if (cbState === "closed") return "closed";
   if (cbState === "open") {
     if (Date.now() - cbOpenedAt >= CB_COOLDOWN_MS) {
       cbState = "half-open"; // 转 half-open，下面走单 probe 锁
@@ -99,7 +113,7 @@ function cbAllowRequest() {
   // half-open：单 probe 锁——已有 probe 在途时其余请求 fail fast（防并发穿透）
   if (cbProbeInFlight) return false;
   cbProbeInFlight = true;
-  return true;
+  return "probe"; // 调用方凭此在 finally 兜底释放（防异常路径锁泄漏）
 }
 
 let cfgCache = null;
@@ -282,55 +296,65 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, onDe
   const budgetMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : FALLBACK_TIMEOUT_MS;
   const t0 = Date.now();
   let lastErr;
-  for (let i = 0; i < maxAttempts; i++) {
-    // 断路器 open：fail fast 不发请求（省掉每路 8-15s 空烧 + 不继续锤过载网关）
-    if (!cbAllowRequest()) {
-      const cooldownLeft = Math.ceil((cbOpenedAt + CB_COOLDOWN_MS - Date.now()) / 1000);
-      const e = new Error(`${model}: 断路器 open（上游网关过载），${cooldownLeft}s 后探测恢复。跳过请求。`);
-      e.circuitOpen = true;
-      await logAskFailure(e, model, Date.now() - t0);
-      throw e;
-    }
-    try {
-      const r = await attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, onDelta, signal });
-      cbOnSuccess();
-      return r.text;
-    } catch (e) {
-      lastErr = e;
-      const status = e?.statusCode;
-      // 确定性失败（HTTP 4xx 已知状态码）不重试；中断（AbortError 由我们主动 abort 触发）按超时算可重试
-      if (NON_RETRYABLE_STATUS.has(status)) {
-        cbOnProbeFail(); // half-open probe 遭 4xx：网关仍不可信，回退 open
+  let holdProbe = false; // 本次 ask 是否持有 half-open probe 锁（finally 兜底仅限持锁者）
+  try {
+    for (let i = 0; i < maxAttempts; i++) {
+      // 断路器检查：open → fail fast；half-open → 放单 probe（cbProbeInFlight 锁防并发穿透）
+      const gate = cbAllowRequest();
+      if (!gate) {
+        const cooldownLeft = Math.ceil((cbOpenedAt + CB_COOLDOWN_MS - Date.now()) / 1000);
+        const e = new Error(`${model}: 断路器 open（上游网关过载），${cooldownLeft}s 后探测恢复。跳过请求。`);
+        e.circuitOpen = true;
         await logAskFailure(e, model, Date.now() - t0);
         throw e;
       }
-      // 墙钟预算耗尽（总时长超时或已耗时过半途预算）：不再重试
-      const totalTimeout = typeof e?.message === "string" && e.message.includes("总时长超过");
-      if (totalTimeout || Date.now() - t0 >= budgetMs) {
-        if (isOverloadErr(e)) cbOnOverloadFail();
-        else cbOnProbeFail(); // probe 超时/网络错：同样回退 open
-        await logAskFailure(e, model, Date.now() - t0);
-        throw e;
-      }
-      // 503 过载：断路器计数 + 专用退避（2s/6s 给上游喘息，而非 400ms 火上浇油）
-      if (isOverloadErr(e)) {
-        cbOnOverloadFail();
-        // 断路器已翻 open（含 half-open probe 过载失败）：剩余重试不再发请求
-        if (cbState === "open" && i < maxAttempts - 1) {
-          continue; // 下一轮 cbAllowRequest() 判定，open 时直接 fail fast
+      if (gate === "probe") holdProbe = true;
+      try {
+        const r = await attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, onDelta, signal });
+        cbOnSuccess();
+        return r.text;
+      } catch (e) {
+        lastErr = e;
+        const status = e?.statusCode;
+        // 确定性失败（HTTP 4xx 已知状态码）不重试；中断（AbortError 由我们主动 abort 触发）按超时算可重试
+        if (NON_RETRYABLE_STATUS.has(status)) {
+          cbOnProbeFail(); // half-open probe 遭 4xx：网关仍不可信，回退 open
+          await logAskFailure(e, model, Date.now() - t0);
+          throw e;
         }
-        if (i < maxAttempts - 1) {
-          await new Promise((r2) => setTimeout(r2, OVERLOAD_BACKOFF_MS[i] ?? 6000));
+        // 墙钟预算耗尽（总时长超时或已耗时过半途预算）：不再重试
+        const totalTimeout = typeof e?.message === "string" && e.message.includes("总时长超过");
+        if (totalTimeout || Date.now() - t0 >= budgetMs) {
+          if (isOverloadErr(e)) cbOnOverloadFail();
+          else cbOnProbeFail(); // probe 超时/网络错：同样回退 open
+          await logAskFailure(e, model, Date.now() - t0);
+          throw e;
         }
-      } else {
-        cbOnProbeFail(); // 非 overload 失败：probe 态回退（closed 态无操作）
-        if (i < maxAttempts - 1) {
-          await new Promise((r2) => setTimeout(r2, BACKOFF_MS[i] ?? 1200));
+        // 503 过载：断路器计数 + 专用退避（2s/6s 给上游喘息，而非 400ms 火上浇油）
+        if (isOverloadErr(e)) {
+          cbOnOverloadFail();
+          // 断路器已翻 open（含 half-open probe 过载失败）：剩余重试不再发请求
+          if (cbState === "open" && i < maxAttempts - 1) {
+            continue; // 下一轮 cbAllowRequest() 判定，open 时直接 fail fast
+          }
+          if (i < maxAttempts - 1) {
+            await new Promise((r2) => setTimeout(r2, OVERLOAD_BACKOFF_MS[i] ?? 6000));
+          }
+        } else {
+          cbOnProbeFail(); // 非 overload 失败：probe 态回退（closed 态无操作）
+          if (i < maxAttempts - 1) {
+            await new Promise((r2) => setTimeout(r2, BACKOFF_MS[i] ?? 1200));
+          }
         }
       }
     }
+    cbOnProbeFail(); // 重试耗尽的最终失败：probe 态同样回退
+    await logAskFailure(lastErr, model, Date.now() - t0);
+    throw lastErr;
+  } finally {
+    // probe 锁兜底（仅本次 ask 持锁时）：正常路径已由 cbOnSuccess/cbOnProbeFail/
+    // cbOnOverloadFail 释放；异常/取消/未分类错误路径可能跳过结局处理器——finally 确保
+    // 不永久卡死 half-open。未持锁的并发请求（fail fast 路径）不触发，防破坏在途 probe。
+    if (holdProbe) cbReleaseProbeIfStuck();
   }
-  cbOnProbeFail(); // 重试耗尽的最终失败：probe 态同样回退
-  await logAskFailure(lastErr, model, Date.now() - t0);
-  throw lastErr;
 }
