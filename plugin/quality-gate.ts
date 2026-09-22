@@ -19,7 +19,7 @@
 //   全量，损坏自动删除重建）。工具可用性一次性探测、并发单飞共享一次 tsc、同文件 mtime
 //   缓存复用语义不变。
 // 层 3 全自动闭环（W3.9/W3.11）：交付节点（todo 全 completed + 高风险文件，或含代码改动
-//   且跨 ≥5 文件——纯文档会话不烧审查费）由插件直调 dual-review 的 runDualReview。
+//   且跨 ≥3 文件——纯文档会话不烧审查费）由插件直调 dual-review 的 runDualReview。
 //   审查对象自动构建：编辑文件清单 + git diff HEAD -- <本会话编辑的代码文件>（范围对齐本会话改动，
 //   不审别会话的累积改动/tmp 脚本；含已暂存，截断防 prompt 爆炸）+ 未跟踪新文件全文（不在 diff 里，
 //   审查者原本看不见），降级为会话证据池（脱敏命令）。
@@ -364,11 +364,14 @@ function distStaleOf(root, pkg, srcFiles) {
 }
 
 // 层 3 触发口径（before/after 钩子共用，防两处漂移）：
-// 高风险文件命中即触发（文件数无关）；普通改动须含代码且跨 ≥5 文件。
-// ≥3 口径 2026-09-22 上调为 ≥5：48h 遥测实测每次自动审查墙钟 5~8min（22 次共 35min），
-// 常规 3~4 文件任务的质量收益不抵交付节点卡顿；纯文档会话依旧不烧审查费。
+// 高风险文件命中即触发（文件数无关）；普通改动须含代码且跨 ≥3 文件。
+// ⚠️ 「跨 ≥3 文件」按 s.edited 计**全部编辑文件（含文档）**，非仅代码文件——
+// 「1 代码 + 2 文档」也会触发；口径与旧 ≥5 时代一致，阈值降低后触发面相应扩大。
+// 阈值 2026-09-22 两调：先 ≥3→≥5（48h 遥测 22 次审查累计墙钟 35min，触发过频），
+// 同日用户决策回调 ≥3——人工复检多遍的返工成本高于单次自动审查（输出限长前
+// 5~8min/次、限长后 2~4min/次，见 README 性能基线），质量优先；纯文档会话不烧审查费。
 function isComplexDelivery(s, codeEdits) {
-  return (s?.highRisk?.size ?? 0) > 0 || ((codeEdits?.length ?? 0) > 0 && (s?.edited?.size ?? 0) >= 5);
+  return (s?.highRisk?.size ?? 0) > 0 || ((codeEdits?.length ?? 0) > 0 && (s?.edited?.size ?? 0) >= 3);
 }
 
 // ── todo 证据核对（层 1）──────────────────────────────────────
@@ -700,7 +703,7 @@ const QualityGateImpl = async ({ directory } = {}) => {
         const codeEdits = codeEditsOf(s);
         // 层 3 闭环硬阻断（交付前）：上轮审查未通过且其后没有任何新编辑（= 未尝试修复）→ 否决。
         // 修复过文件则放行本次 todowrite，由 after 钩子在交付节点重新审查（修复→再审循环）。
-        // 触发口径与 after 钩子一致：高风险文件，或含代码改动且跨 ≥5 文件——
+        // 触发口径与 after 钩子一致：高风险文件，或含代码改动且跨 ≥3 文件——
         // 纯文档会话不送付费审查（层 2 同样豁免文档，口径对齐）。
         const complexEarly = isComplexDelivery(s, codeEdits);
         if (complexEarly && s.reviewPending && !hasAcceptMarker(s) && s.editVersion === s.reviewPending.editVersion) {

@@ -54,7 +54,7 @@
     ]
   },
 
-  // ── 智能体路由（前 5 个是内置 agent 的模型覆盖，verify 是自定义）──
+  // ── 智能体路由（前 6 个是内置 agent 的模型覆盖，verify 是自定义）──
   // code         默认执行者：写代码/跑命令，glm-5.3-flash（实测最快档）。
   //              ⚠️ 性能红线：49f8ed9 曾把 code 换成 deepseek-v4.1-flash，日常 95% 任务走 code
   //              agent → 体感全面变慢（git 49f8ed9 即"快→慢"分界，同期还开了 remote_control）。
@@ -62,6 +62,9 @@
   // plan         规划模式：出方案不动手，用 kimi 换个视角思考
   // general      深度子任务：难啃的实现/分析，用 glm-5.2 大杯
   // explore      探索代理（subagent）：只读侦察，用最便宜模型扫代码
+  // compaction   上下文压缩：钉 glm-5.3-flash + variant low（2026-09-22 空响应专项：
+  //              max 档推理吃光输出预算 → 摘要为空 → "empty response"；schema 规定
+  //              variant 仅对 agent 自己配置的 model 生效，model+variant 必须同设）
   // orchestrator 多代理编排：拆解任务分派子代理
   // verify       自定义复核代理（subagent）：异源模型 kimi 复核 glm 的产出
   //              —— 不同厂商交叉验证，只读不许改（edit/bash写通道均 deny）
@@ -80,6 +83,16 @@
     },
     "explore": {
       "model": "hx/minimax-m3"
+    },
+    "compaction": {
+      // 压缩是摘要任务，不需要深度推理。实测 kilo.db 30 条 compaction 全跑 variant=max，
+      // 其中 output=0（空补全）→ "Compaction worker returned an empty response" 偶发报错。
+      // max 档思考预算深、首字间隔长，纯推理打满则 0 输出（与 upstream_thinking_budget_pure_reasoning_failure 同模式）。
+      // schema 约束：variant 仅在 agent 用「自己配置的 model」时生效——必须同时钉死 model，
+      // 否则 compaction 继续继承会话当前模型+variant，覆盖不生效。
+      // 钉 glm-5.3-flash：样本内空响应最少（11 跑 0 空），且压缩不再随会话模型漂移。
+      "model": "hx/glm-5.3-flash",
+      "variant": "low"
     },
     "orchestrator": {
       "model": "hx/kimi-k2.6"
@@ -358,16 +371,18 @@
       "npm": "file:///__KILO_CONFIG__/provider/hx-failover",
       "options": {
         // 上游 OpenAI 兼容端点
-        "baseURL": "https://xianyu1.natapp4.cc/v1",
+        "baseURL": "http://127.0.0.1:9527/v1",
         // MoA/dual_review 分析调用总时长上限（kilo.json options.timeout 唯一消费方 = 这两个工具）。
         // ⚠️ 主模型循环不消费本键（provider/hx-failover 不读它，2026-09-21 DB 实证：
         // 27 例 >120s 的 step-finish 正常完成，120s 从未生效于主链路；主链路只有 chunkTimeout 空闲看门狗）。
         // 120s→300s：与 hx-client 流式设计口径对齐（其缺省兜底即 300s），避免长审查被 2 分钟硬切。
         "timeout": 300000,
-        // 流式空闲看门狗：相邻 chunk 间隔超 60s 主动断流（provider 内实现；
+        // 流式空闲看门狗：相邻 chunk 间隔超 90s 主动断流（provider 内实现；
         // fetch timeout 只覆盖到响应头，body 阶段挂死靠它兜底）。
-        // 60s = 正常流远小于此间隔，又不误伤超长思考不吐字的场景
-        "chunkTimeout": 60000,
+        // 60s→90s（2026-09-22 compaction 空响应专项）：max 档思考在网关侧完全静默时，
+        // 首 chunk 可等 60s+；60s 看门狗会把「慢思考」误杀成流中断 → 重试风暴 →
+        // 空响应。90s 仍远小于真挂死场景，正常流不受影响。
+        "chunkTimeout": 90000,
         // thinking 模式协议兜底（2026-09-21 reasoning_content 400 专项）：
         // DeepSeek V4/Kimi K2.6/GLM-5.x/MiniMax 上游要求历史 assistant 消息回传
         // reasoning_content（工具循环续跑必查）；Kilo 历史重放不保留该字段 →

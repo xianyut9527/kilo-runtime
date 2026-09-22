@@ -172,22 +172,26 @@ t("hasAcceptMarker：无关命令不误报", hasAcceptMarker(mk([{ cmd: "npm tes
 }
 
 // ── isComplexDelivery：层 3 触发口径 ──
-// 高风险命中与文件数无关；普通改动须含代码且跨 ≥5 文件（2026-09-22 由 ≥3 上调）
+// 高风险命中与文件数无关；普通改动须含代码且跨 ≥3 文件（2026-09-22 两调：≥3→≥5→回调 ≥3）
 t("isComplexDelivery：高风险文件命中（1 个编辑也触发）", (() => {
   const s = { highRisk: new Set(["src/auth/x.ts"]), edited: new Set(["src/auth/x.ts"]) };
   return isComplexDelivery(s, ["src/auth/x.ts"]) === true;
 })());
-t("isComplexDelivery：4 文件改动不触发（≥3 旧口径已上调）", (() => {
-  const edited = new Set(["a.ts", "b.ts", "c.ts", "d.ts"]);
-  return isComplexDelivery({ highRisk: new Set(), edited }, ["a.ts", "b.ts", "c.ts", "d.ts"]) === false;
+t("isComplexDelivery：2 文件改动不触发（阈值以下）", (() => {
+  const edited = new Set(["a.ts", "b.ts"]);
+  return isComplexDelivery({ highRisk: new Set(), edited }, ["a.ts", "b.ts"]) === false;
 })());
-t("isComplexDelivery：5 文件改动触发", (() => {
-  const files = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"];
+t("isComplexDelivery：3 文件改动触发（2026-09-22 回调口径）", (() => {
+  const files = ["a.ts", "b.ts", "c.ts"];
   return isComplexDelivery({ highRisk: new Set(), edited: new Set(files) }, files) === true;
 })());
-t("isComplexDelivery：无代码编辑不触发（纯文档）", (() => {
-  const edited = new Set(["README.md", "docs/a.md"]);
+t("isComplexDelivery：无代码编辑不触发（纯文档 ≥3 文件压边界）", (() => {
+  const edited = new Set(["README.md", "docs/a.md", "docs/b.md"]);
   return isComplexDelivery({ highRisk: new Set(), edited }, []) === false;
+})());
+t("isComplexDelivery：高风险命中 + codeEdits 为空 → 仍触发（与代码编辑解耦）", (() => {
+  const s = { highRisk: new Set(["src/auth/x.md"]), edited: new Set(["src/auth/x.md"]) };
+  return isComplexDelivery(s, []) === true;
 })());
 t("isComplexDelivery：0 文件编辑 + 高风险空 → false", isComplexDelivery({ highRisk: new Set(), edited: new Set() }, []) === false);
 
