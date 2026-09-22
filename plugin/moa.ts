@@ -16,26 +16,26 @@
 //   - 启动即写标题（不等首 chunk）：「MoA 启动：<模型列表>」；
 //   - 每路独立计数（字数/✓完成/✗失败）合成单行标题，实时看各路差异；
 //   - 聚合阶段立即切换标题，不再等待聚合首个 chunk；
+//
+// 2026-09-22 进度通道根因修复（用户二次实测仍黑盒）：
+//   - ctx.metadata 在 server 7.7.6 中不存在（execute 第二参数只有 toolCallId/messages/
+//     abortSignal/experimental_context），此前所有 title 更新被静默吞掉；
+//   - 改走 preliminary 流：execute 返回 bridgeProgress async generator，每个 yield 的
+//     中文进度文本流式显示在工具卡正文（不进对话历史），最后 yield 最终结果；
+//   - 进度文本全面中文化（用户反馈 "moa"/"dual_review" 不语义化）。
 
-import { loadCfg, ask, FALLBACK_TIMEOUT_MS, FALLBACK_CHUNK_TIMEOUT_MS, circuitState } from "./hx-client";
+import { loadCfg, ask, FALLBACK_TIMEOUT_MS, FALLBACK_CHUNK_TIMEOUT_MS, circuitState, bridgeProgress } from "./hx-client";
 
 const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合）
 const AGG_VIEW_LIMIT = 12_000; // 聚合 prompt 单路参考截断上限（字符）
 const MAX_TASK_CHARS = 50_000; // 任务输入上限：防无界文本多次灌入上游（成本/上下文）
-const TITLE_THROTTLE_MS = 800; // 标题刷新节流（防高频 metadata 调用）
 
-// 进度标题助手：把调用方已格式化的进度消息写进工具卡。失败静默（老版本无此能力时退化为无进度）。
-// force=true 跳过节流——用于启动/阶段切换/完成态等低频关键节点，保证最后一帧不被节流吞掉。
-function makeTitle(ctx, label) {
-  let last = 0;
+// 进度发射助手：emit 存在（工具路径，bridgeProgress 注入）时转发流式进度；
+// 不存在（异常降级路径）时静默——节流由 bridgeProgress 统一处理。
+function makeTitle(emit, label) {
   return async (text, force) => {
-    if (!ctx || typeof ctx.metadata !== "function") return;
-    const now = Date.now();
-    if (!force && now - last < TITLE_THROTTLE_MS && text) return;
-    last = now;
-    try {
-      await ctx.metadata({ title: text || label });
-    } catch { /* metadata 不可用则静默 */ }
+    if (typeof emit !== "function") return;
+    emit(String(text || label), force);
   };
 }
 
@@ -92,105 +92,109 @@ export const Moa = async () => {
             return "moa: 上游网关断路器开启（近期连续 503 过载）——并行请求会加剧过载，请约 30s 后重试，或稍后再跑本任务。";
           }
 
-          const setTitle = makeTitle(ctx, `MoA 参考并行中`);
+          // 主体走 preliminary 流式进度（bridgeProgress）：每个 yield 的中文进度实时显示在工具卡
+          return bridgeProgress((emit) => (async () => {
+            const setTitle = makeTitle(emit, `【多模型协作】参考并行中`);
 
-          // 分路进度账本：单行标题聚合各路状态（生成中：N字… / 完成：✓N字 / 失败：✗）
-          const kb = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
-          const refState = refs.map((m) => ({ model: m, chars: 0, done: false, failed: false, t0: 0, ms: 0 }));
-          const renderRefs = (prefix, force) => {
-            const line = refState
-              .map((s) => `${s.model} ${s.failed ? "✗" : s.done ? `✓${kb(s.chars)}字` : `${kb(s.chars)}字…`}`)
-              .join(" | ");
-            return setTitle(`${prefix} ${line}`, force);
-          };
+            // 分路进度账本：单行进度聚合各路状态（生成中：N字… / 完成：✓N字 / 失败：✗）
+            const kb = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+            const refState = refs.map((m) => ({ model: m, chars: 0, done: false, failed: false, t0: 0, ms: 0 }));
+            const renderRefs = (prefix, force) => {
+              const line = refState
+                .map((s) => `${s.model} ${s.failed ? "✗" : s.done ? `✓${kb(s.chars)}字` : `${kb(s.chars)}字…`}`)
+                .join(" | ");
+              return setTitle(`${prefix} ${line}`, force);
+            };
 
-          // 参考阶段：启动即写标题（不等首 chunk——断流/过载时这里是唯一的可见反馈），
-          // 各路 onDelta 更新自己的计数；promise 落定即打 ✓/✗，不等整批 allSettled。
-          await renderRefs(`MoA 启动（${refs.length} 路并行）：`, true);
-          const promises = refs.map((m, i) => {
-            refState[i].t0 = Date.now();
-            const p = ask({
-              baseURL: cfg.baseURL, key: cfg.key, model: m, prompt: task,
-              timeoutMs: totalMs, idleMs,
-              onDelta: (_d, total) => { refState[i].chars = total; renderRefs(`MoA ${refs.length} 路并行`); },
+            // 参考阶段：启动即发进度（不等首 chunk——断流/过载时这里是唯一的可见反馈），
+            // 各路 onDelta 更新自己的计数；promise 落定即打 ✓/✗，不等整批 allSettled。
+            await renderRefs(`【多模型协作】启动（${refs.length} 路并行）：`, true);
+            const promises = refs.map((m, i) => {
+              refState[i].t0 = Date.now();
+              const p = ask({
+                baseURL: cfg.baseURL, key: cfg.key, model: m, prompt: task,
+                timeoutMs: totalMs, idleMs,
+                onDelta: (_d, total) => { refState[i].chars = total; renderRefs(`【多模型协作】${refs.length} 路并行`); },
+              });
+              p.then(
+                () => { refState[i].done = true; refState[i].ms = Date.now() - refState[i].t0; renderRefs(`【多模型协作】${refs.length} 路并行`, true); },
+                () => { refState[i].failed = true; refState[i].ms = Date.now() - refState[i].t0; renderRefs(`【多模型协作】${refs.length} 路并行`, true); },
+              );
+              return p;
             });
-            p.then(
-              () => { refState[i].done = true; refState[i].ms = Date.now() - refState[i].t0; renderRefs(`MoA ${refs.length} 路并行`, true); },
-              () => { refState[i].failed = true; refState[i].ms = Date.now() - refState[i].t0; renderRefs(`MoA ${refs.length} 路并行`, true); },
-            );
-            return p;
-          });
-          const settled = await Promise.allSettled(promises);
+            const settled = await Promise.allSettled(promises);
 
-          const views = [];
-          const failures = [];
-          const perf = [];
-          settled.forEach((r, i) => {
-            if (r.status === "fulfilled") {
-              views.push({ model: refs[i], text: r.value });
-              perf.push(`${refs[i]}：${r.value.length} 字 / ${(refState[i].ms / 1000).toFixed(1)}s`);
-            } else {
-              failures.push(`${refs[i]}: ${r.reason?.message ?? r.reason}（${(refState[i].ms / 1000).toFixed(1)}s）`);
+            const views = [];
+            const failures = [];
+            const perf = [];
+            settled.forEach((r, i) => {
+              if (r.status === "fulfilled") {
+                views.push({ model: refs[i], text: r.value });
+                perf.push(`${refs[i]}：${r.value.length} 字 / ${(refState[i].ms / 1000).toFixed(1)}s`);
+              } else {
+                failures.push(`${refs[i]}: ${r.reason?.message ?? r.reason}（${(refState[i].ms / 1000).toFixed(1)}s）`);
+              }
+            });
+
+            if (views.length === 0) {
+              return `moa: 所有参考模型失败\n${failures.join("\n")}`;
             }
-          });
 
-          if (views.length === 0) {
-            return `moa: 所有参考模型失败\n${failures.join("\n")}`;
-          }
+            // 聚合阶段：截断超长参考，防聚合 prompt 爆上下文
+            const clipped = views.map((v) => ({
+              ...v,
+              text: v.text.length > AGG_VIEW_LIMIT
+                ? v.text.slice(0, AGG_VIEW_LIMIT) + `\n（截断：原始 ${v.text.length} 字符）`
+                : v.text,
+            }));
 
-          // 聚合阶段：截断超长参考，防聚合 prompt 爆上下文
-          const clipped = views.map((v) => ({
-            ...v,
-            text: v.text.length > AGG_VIEW_LIMIT
-              ? v.text.slice(0, AGG_VIEW_LIMIT) + `\n（截断：原始 ${v.text.length} 字符）`
-              : v.text,
-          }));
-
-          const aggregatePrompt = [
-            "你是聚合器。下面是同一任务由多个模型给出的独立分析。",
-            "综合它们，输出一份更可靠的结论：保留有共识的部分，指出分歧并给出你的取舍与理由；不要简单罗列各家观点。",
-            "",
-            `## 任务\n${task}`,
-            "",
-            ...clipped.map((v) => `## 参考模型 ${v.model}\n${v.text}`),
-          ].join("\n");
-
-          const aggTitle = makeTitle(ctx, `MoA 聚合（${aggregator}）`);
-          // 聚合阶段切换标题不等待首 chunk：参考阶段的结果差异（成功/失败数）立刻可见
-          await aggTitle(`MoA 聚合启动（${aggregator}，参考成功 ${views.length}/${refs.length}）`, true);
-          let conclusion;
-          try {
-            conclusion = await ask({
-              baseURL: cfg.baseURL,
-              key: cfg.key,
-              model: aggregator,
-              prompt: aggregatePrompt,
-              timeoutMs: totalMs,
-              idleMs,
-              onDelta: (_d, total) => aggTitle(`聚合生成中 ${total} 字`),
-            });
-          } catch (e) {
-            // 聚合失败也要返回可用结果（不丢参考视角）
-            return [
-              `moa: 聚合模型（${aggregator}）失败：${e.message}`,
+            const aggregatePrompt = [
+              "你是聚合器。下面是同一任务由多个模型给出的独立分析。",
+              "综合它们，输出一份更可靠的结论：保留有共识的部分，指出分歧并给出你的取舍与理由；不要简单罗列各家观点。",
               "",
-              "以下为各参考模型原始结论：",
-              ...views.map((v) => `### ${v.model}\n${v.text}`),
-              failures.length ? `\n（未参与模型）${failures.join("; ")}` : "",
+              `## 任务\n${task}`,
+              "",
+              ...clipped.map((v) => `## 参考模型 ${v.model}\n${v.text}`),
             ].join("\n");
-          }
 
-          const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-          return [
-            `## MoA 结论（聚合模型：${aggregator}，总耗时 ${elapsed}s）`,
-            conclusion,
-            "",
-            `## 参与参考模型（${views.map((v) => v.model).join(", ")}）`,
-            perf.length ? `产出规模：${perf.join("，")}` : "",
-            failures.length ? `## 失败/未参与：${failures.join("; ")}` : "",
-          ]
-            .filter(Boolean)
-            .join("\n");
+            const aggTitle = makeTitle(emit, `【多模型协作】聚合中`);
+            // 聚合阶段切换进度不等待首 chunk：参考阶段的结果差异（成功/失败数）立刻可见
+            await aggTitle(`【多模型协作】参考完成 ${views.length}/${refs.length} → 聚合中（${aggregator}）`, true);
+            let conclusion;
+            try {
+              conclusion = await ask({
+                baseURL: cfg.baseURL,
+                key: cfg.key,
+                model: aggregator,
+                prompt: aggregatePrompt,
+                timeoutMs: totalMs,
+                idleMs,
+                onDelta: (_d, total) => aggTitle(`【多模型协作】聚合生成中 ${total} 字`),
+              });
+            } catch (e) {
+              // 聚合失败也要返回可用结果（不丢参考视角）
+              return [
+                `moa: 聚合模型（${aggregator}）失败：${e.message}`,
+                "",
+                "以下为各参考模型原始结论：",
+                ...views.map((v) => `### ${v.model}\n${v.text}`),
+                failures.length ? `\n（未参与模型）${failures.join("; ")}` : "",
+              ].join("\n");
+            }
+
+            await aggTitle(`【多模型协作】完成`, true);
+            const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+            return [
+              `## MoA 结论（聚合模型：${aggregator}，总耗时 ${elapsed}s）`,
+              conclusion,
+              "",
+              `## 参与参考模型（${views.map((v) => v.model).join(", ")}）`,
+              perf.length ? `产出规模：${perf.join("，")}` : "",
+              failures.length ? `## 失败/未参与：${failures.join("; ")}` : "",
+            ]
+              .filter(Boolean)
+              .join("\n");
+          })());
         },
       },
     },

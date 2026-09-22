@@ -19,55 +19,45 @@
 // 2026-09-20 可观测性补漏：quality-gate 钩子直调路径无 ctx.metadata，进度标题降级 stderr
 //（10s 节流、阶段首现立即输出），自动审查不再黑盒；makeTitle 具名导出供离线回归覆盖。
 
-import { loadCfg, ask, FALLBACK_TIMEOUT_MS, circuitState } from "./hx-client";
+import { loadCfg, ask, FALLBACK_TIMEOUT_MS, circuitState, bridgeProgress } from "./hx-client";
 import { randomUUID } from "node:crypto";
 
 // 超时统一走配置：kilo.json provider.hx.options.timeout（主链路同口径）；
 // 配置缺失/非法才回退，兜底值取 hx-client 共享常量。
 // 空闲看门狗与主链路 chunkTimeout 同源，流式中无 chunk 判死快速失败进重试。
 
-const TITLE_THROTTLE_MS = 800;
 const STDERR_THROTTLE_MS = 10_000; // stderr 降级通道节流：按阶段各自计时，防两路交替标题刷屏
 const AGG_SUBJECT_LIMIT = 8_000;   // 聚合 prompt 中审查对象截断
 const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
 
 const TAG = "[dual-review] ";
 
-export function makeTitle(ctx, label) {
-  // 优先 ctx.metadata 实时进度（手动 dual_review 工具调用有此通道）；
-  // quality-gate 钩子自动审查只有 (input, output)，无 ctx —— 降级 stderr 节流输出，
-  // 与层 3 开头那条「双向审查执行中…」同通道（CLI 终端可见；VS Code 扩展是否转发
-  // 插件 stderr 取决于其实现，可在扩展输出日志查看），消除交付节点黑盒等待。
-  const useMeta = !!(ctx && typeof ctx.metadata === "function");
-  const throttleMs = useMeta ? TITLE_THROTTLE_MS : STDERR_THROTTLE_MS;
-  const emit = useMeta
-    // 同步抛错（metadata 异常）与异步 rejection 都必须吞掉：onDelta 由 hx-client 的
-    // try/catch 包裹且不 await，逃逸会变成未处理 rejection。
-    ? (text) => {
-        try {
-          const r = ctx.metadata({ title: text || label });
-          if (r && typeof r.catch === "function") r.catch(() => {});
-        } catch { /* metadata 不可用则静默 */ }
-      }
+// 进度发射助手（2026-09-22 通道根因修复）：
+// ① emit 存在（工具 execute 路径，bridgeProgress 注入）→ preliminary 流式进度，
+//    实时显示在工具卡正文（ctx.metadata 通道在 server 7.7.6 不存在，已废弃）；
+// ② 无 emit（quality-gate 钩子直调，只有 (input, output)）→ 降级 stderr 节流输出
+//    （CLI 终端可见；VS Code 扩展输出日志可查），消除交付节点黑盒等待。
+// stderr 路径按阶段去重节流（正反两路标题交替到达，单一计时器会失效）。
+export function makeTitle(emit, label) {
+  const useStream = typeof emit === "function";
+  const doEmit = useStream
+    ? (text, force) => emit(text, force)
     : (text) => console.error(`${TAG}${text || label}`);
-  let last = 0;
-  const stageAt = new Map(); // stderr 路径：按阶段各自节流（正反两路标题交替到达，单一计时器会失效）
+  const stageAt = new Map(); // stderr 路径：按阶段各自节流
   // force=true 跳过节流：启动/阶段切换等低频关键节点，保证最后一帧不被节流吞掉（与 moa 同语义）
   return async (text, force) => {
-    const now = Date.now();
-    if (useMeta) {
-      // 工具卡标题可原地刷新：维持原全局节流语义
-      if (!force && now - last < throttleMs && text) return;
-      last = now;
-      emit(text);
+    if (useStream) {
+      // 流式通道节流由 bridgeProgress 统一处理，force 透传保证阶段切换关键帧
+      doEmit(String(text || label), force);
       return;
     }
     // stderr 不可原地刷新：阶段首次出现立即输出，同阶段后续按 10s 节流防刷屏
+    const now = Date.now();
     const stage = String(text || label).replace(/\d+/g, "#");
     const prev = stageAt.get(stage);
-    if (!force && prev !== undefined && now - prev < throttleMs && text) return;
+    if (!force && prev !== undefined && now - prev < STDERR_THROTTLE_MS && text) return;
     stageAt.set(stage, now);
-    emit(text);
+    doEmit(text);
   };
 }
 
@@ -125,9 +115,9 @@ ${pos}
 ${neg}
 </${tag.n}>`;
 
-// 核心执行体：可被 tool: dual_review 调用，也可被 quality-gate 在交付节点直调（全自动闭环）
-// ctx 可选：传入工具 execute 的第二参数即可获得实时进度标题（quality-gate 直调时不传，无进度但行为不变）
-export async function runDualReview(subject, overrides = {}, ctx = null) {
+// 核心执行体：可被 tool: dual_review 调用（emit = bridgeProgress 注入流式进度），
+// 也可被 quality-gate 在交付节点直调（emit 为 null → stderr 降级输出，行为不变）
+export async function runDualReview(subject, overrides = {}, emit = null) {
   const cfg = await loadCfg();
   subject = String(subject ?? "").trim();
   if (!subject) return "dual_review: 缺少 subject 参数";
@@ -150,9 +140,9 @@ export async function runDualReview(subject, overrides = {}, ctx = null) {
     return "dual_review: 上游网关断路器开启（近期连续 503 过载）——请约 30s 后重试；本次审查跳过不阻塞交付，稍后可手动补审。";
   }
 
-  const setTitle = makeTitle(ctx, "双向审查两路并行");
-  // 启动即写标题（不等首 chunk）：上游过载/断流时这里是黑盒期唯一可见反馈（2026-09-22，与 moa 同修）
-  await setTitle(`双向审查启动：正向 ${posModel} + 反向 ${negModel}`, true);
+  const setTitle = makeTitle(emit, "双向审查两路并行");
+  // 启动即发进度（不等首 chunk）：上游过载/断流时这里是黑盒期唯一可见反馈（2026-09-22，与 moa 同修）
+  await setTitle(`【双向审查】启动：正向 ${posModel} + 反向 ${negModel}`, true);
 
   // 输入上限（审查必须项）：正反两路 prompt 注入截断版 subject，防超大 diff 撑爆两次上游调用；
   // 截断事实内联标注——审查者明确知道自己在看残件，不在残缺输入上假装全量结论
@@ -169,9 +159,9 @@ export async function runDualReview(subject, overrides = {}, ctx = null) {
   // 正反两路并行；单路失败不废全局（与 moa 同语义）
   const [posRes, negRes] = await Promise.allSettled([
     ask({ baseURL: cfg.baseURL, key: cfg.key, model: posModel, prompt: POSITIVE_PROMPT(subjectIn, tag.s), timeoutMs, idleMs,
-          onDelta: (_d, n) => setTitle(`正向已收 ${n} 字`) }),
+          onDelta: (_d, n) => setTitle(`【双向审查】正向已收 ${n} 字`) }),
     ask({ baseURL: cfg.baseURL, key: cfg.key, model: negModel, prompt: NEGATIVE_PROMPT(subjectIn, tag.s), timeoutMs, idleMs,
-          onDelta: (_d, n) => setTitle(`两路并行已收 ${n} 字`) }),
+          onDelta: (_d, n) => setTitle(`【双向审查】反向已收 ${n} 字`) }),
   ]);
 
   const posText = posRes.status === "fulfilled" ? posRes.value : null;
@@ -200,7 +190,9 @@ export async function runDualReview(subject, overrides = {}, ctx = null) {
   const posC = clip(posText);
   const negC = clip(negText);
 
-  const aggTitle = makeTitle(ctx, `裁决（${aggModel}）`);
+  const aggTitle = makeTitle(emit, `裁决（${aggModel}）`);
+  // 聚合阶段切换进度不等待首 chunk：两路完成的事实立刻可见
+  await aggTitle(`【双向审查】两路完成 → 裁决生成中（${aggModel}）`, true);
   let verdict;
   try {
     verdict = await ask({
@@ -210,7 +202,7 @@ export async function runDualReview(subject, overrides = {}, ctx = null) {
       prompt: AGGREGATE_PROMPT(subjectIn, posC, negC, tag),
       timeoutMs,
       idleMs,
-      onDelta: (_d, total) => aggTitle(`裁决生成中 ${total} 字`),
+      onDelta: (_d, total) => aggTitle(`【双向审查】裁决生成中 ${total} 字`),
     });
   } catch (e) {
     return [
@@ -251,7 +243,10 @@ export const DualReview = async () => {
           aggregator: { type: "string", description: "裁决模型（可选，默认取配置）" },
         },
         async execute(args, ctx) {
-          return runDualReview(args?.subject, args, ctx);
+          // preliminary 流式进度：执行期间的中文进度实时显示在工具卡（bridgeProgress），
+          // 最终结果作为最后一个 yield 值成为 final。快速失败（缺参数/断路器 open）由
+          // runDualReview 直接返回字符串，generator 只 yield final——行为不变。
+          return bridgeProgress((emit) => runDualReview(args?.subject, args, emit));
         },
       },
     },

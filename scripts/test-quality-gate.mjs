@@ -4,7 +4,8 @@
 // 原理：用 esbuild（provider 的既有依赖）把 plugin/quality-gate.ts 打包到临时文件再 import——
 // 直接 import 会死在「./dual-review 无扩展名」的 Node ESM 解析上。
 // 覆盖：parseReviewVerdict 裁决解析 / VERIFY_CMD_RE 验证命令识别 / HIGH_RISK_RE 高风险路径
-// / reviewSubject 无 git 降级 / makeTitle 进度通道选择与节流（含无 ctx 降级 stderr）。
+// / reviewSubject 无 git 降级 / exitCodeOf 退出码三段契约 / exitMasked 遮蔽形态
+// / hasVerified·verifyFailureOf 结果实证判定 / makeTitle 进度通道选择与节流（含无 ctx 降级 stderr）。
 // 正则、门禁逻辑与进度通道的任何回归（含 CJK 腐化）都会让本测试变红。
 // 注意：本文件必须在 scripts/ 下（不进 install.manifest）——放 plugin/ 会随整目录部署进生产配置。
 import { execFileSync } from "node:child_process";
@@ -26,9 +27,13 @@ execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "quality-g
 const mod = await import(pathToFileURL(bundle).href);
 fs.rmSync(bundle, { force: true });
 
-const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject } = mod;
+const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf } = mod;
 let pass = 0, fail = 0;
-const t = (name, cond) => { if (cond) { pass++; } else { fail++; console.error(`  FAIL: ${name}`); } };
+const failed = [];
+const t = (name, cond) => {
+  if (cond) { pass++; }
+  else { fail++; failed.push(name); console.error(`  FAIL: ${name}`); }
+};
 
 // ── parseReviewVerdict ──
 t("通过+必须修复项为空 → fail=false", (() => {
@@ -58,6 +63,47 @@ t("仅前缀相似目录不命中 reorder", !HIGH_RISK_RE.test("src/reorder/util
 t("仅前缀相似目录不命中 order-system", !HIGH_RISK_RE.test("src/order-system/utils.ts"));
 t("普通文件不命中", !HIGH_RISK_RE.test("src/components/button.vue"));
 t("README.md 不命中", !HIGH_RISK_RE.test("README.md"));
+
+// ── exitCodeOf：退出码三段契约防御 ──
+t("exitCodeOf：output.exitCode 显式字段", exitCodeOf({ exitCode: 1 }) === 1);
+t("exitCodeOf：output.exit 显式字段", exitCodeOf({ exit: 0 }) === 0);
+t("exitCodeOf：metadata 降级", exitCodeOf({ metadata: { exit: 2 } }) === 2);
+t("exitCodeOf：结果文本解析（失败形态）", exitCodeOf({ output: "oops\nExit code: 1" }) === 1);
+t("exitCodeOf：成功无退出信息 → undefined（降级旧口径）", exitCodeOf({ output: "all tests passed" }) === undefined);
+t("exitCodeOf：output 缺失 → undefined", exitCodeOf(null) === undefined);
+
+// ── exitMasked：退出码遮蔽形态 ──
+t("exitMasked：|| true 遮蔽", exitMasked("npm test || true") === true);
+t("exitMasked：|| echo ok 遮蔽", exitMasked('npm test || echo "ok"') === true);
+t("exitMasked：; echo ok 遮蔽（分号不短路）", exitMasked("npm test; echo done") === true);
+t("exitMasked：无 pipefail 管道遮蔽", exitMasked("npm test | cat") === true);
+t("exitMasked：pipefail 管道不遮蔽", exitMasked("set -o pipefail && npm test | cat") === false);
+t("exitMasked：&& 不吞码（不得误标）", exitMasked("cd x && npm test && echo done") === false);
+t("exitMasked：普通验证命令不遮蔽", exitMasked("npm test") === false);
+t("exitMasked：行尾悬挂 ||", exitMasked("npm test ||") === true);
+
+// ── hasVerified / verifyFailureOf：结果实证判定 ──
+const mk = (commands, codeEditV) => ({ commands, codeEditV });
+t("跑赢：末次代码编辑后 exit 0", hasVerified(mk([{ cmd: "npm test", exit: 0, editV: 1 }], 1)) === true);
+t("未验证：验证命令 exit 非 0", hasVerified(mk([{ cmd: "npm test", exit: 1, editV: 1 }], 1)) === false);
+t("失败可查：exit 非 0 → verifyFailureOf 命中", (() => {
+  const f = verifyFailureOf(mk([{ cmd: "npm test", exit: 1, editV: 1 }], 1));
+  return f && f.exit === 1 && f.cmd === "npm test";
+})());
+t("过时验证：测试通过后又改代码 → 不算跑赢", hasVerified(mk([{ cmd: "npm test", exit: 0, editV: 1 }], 2)) === false);
+t("先失败后修好：最后一次是 exit 0 → 跑赢", hasVerified(mk([{ cmd: "npm test", exit: 1, editV: 1 }, { cmd: "npm test", exit: 0, editV: 2 }], 2)) === true);
+t("遮蔽成功不算跑赢：npm test || true", hasVerified(mk([{ cmd: "npm test || true", exit: 0, editV: 1 }], 1)) === false);
+t("exit 未知：不算跑赢（降级旧口径由 hasRanVerify 兜底）", hasVerified(mk([{ cmd: "npm test", exit: undefined, editV: 1 }], 1)) === false);
+t("exit 未知：不算失败（不误杀）", verifyFailureOf(mk([{ cmd: "npm test", exit: undefined, editV: 1 }], 1)) === null);
+t("旧形态纯字符串（升级前记录）：不算跑赢不算失败", (() => {
+  const s = mk(["npm test"], 1);
+  return hasVerified(s) === false && verifyFailureOf(s) === null;
+})());
+t("无代码编辑（codeEditV=0）：验证不判跑赢", hasVerified(mk([{ cmd: "npm test", exit: 0, editV: 0 }], 0)) === false);
+t("编辑后只改文档不作废验证", (() => {
+  // editV 只数代码文件：验证后 model 改了 README（editVersion+1 但 codeEditV 不变）
+  return hasVerified(mk([{ cmd: "npm test", exit: 0, editV: 1 }], 1)) === true;
+})());
 
 // ── reviewSubject（无 git 目录 → 降级路径） ──
 {
@@ -98,8 +144,9 @@ t("README.md 不命中", !HIGH_RISK_RE.test("README.md"));
 }
 
 // ── makeTitle（plugin/dual-review.ts）：进度通道选择与节流 ──
-// quality-gate 钩子直调 runDualReview 时不传 ctx，进度必须降级 stderr（否则交付节点黑盒）；
-// 有 ctx.metadata 时仍走工具卡标题。阶段切换不受节流影响，metadata 异常必须静默不逃逸。
+// 2026-09-22 通道根因修复后签名 makeTitle(emit, label)：emit 函数（工具路径，
+// bridgeProgress 注入）→ 转发流式进度；无 emit（quality-gate 钩子直调路径）→
+// 降级 stderr（阶段首现立即输出、同阶段 10s 节流、正反交替不误判刷屏）。
 {
   const drBundle = path.join(os.tmpdir(), `dr-test-${process.pid}.mjs`);
   execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "dual-review.ts"),
@@ -111,13 +158,13 @@ t("README.md 不命中", !HIGH_RISK_RE.test("README.md"));
   const origErr = console.error;
   console.error = (...a) => lines.push(a.join(" "));
   try {
-    // 无 ctx（自动审查路径）→ stderr；阶段首次出现立即输出，同阶段重复按 10s 节流
+    // 无 emit（自动审查路径）→ stderr；阶段首次出现立即输出，同阶段重复按 10s 节流
     const emit = dr.makeTitle(null, "双向审查两路并行");
     await emit("正向已收 1 字");
     await emit("正向已收 2 字");
     await emit("两路并行已收 9 字");
     await emit("两路并行已收 88 字");
-    t("无 ctx：进度降级 stderr，阶段首现不被节流吞掉、同阶段重复被抑制",
+    t("无 emit：进度降级 stderr，阶段首现不被节流吞掉、同阶段重复被抑制",
       lines.length === 2 && lines[0].includes("正向") && lines[1].includes("两路并行"));
 
     // 两路标题交替到达（正/反各一路）：不得因交替而每 chunk 都视为新阶段刷屏
@@ -127,29 +174,42 @@ t("README.md 不命中", !HIGH_RISK_RE.test("README.md"));
       await emit2(`正向已收 ${i * 10} 字`);
       await emit2(`两路并行已收 ${i * 10} 字`);
     }
-    t("无 ctx：正反交替标题不被误判为阶段切换（仅各输出一次）", lines.length === 2);
+    t("无 emit：正反交替标题不被误判为阶段切换（仅各输出一次）", lines.length === 2);
 
-    // 有 ctx.metadata → 走工具卡标题，不落 stderr
+    // 有 emit（工具路径，preliminary 流式）→ 转发且不落 stderr；force 透传
     const titles = [];
-    const emitMeta = dr.makeTitle({ metadata: (m) => { titles.push(m.title); return Promise.resolve(); } }, "X");
+    const emitFn = (text, force) => { titles.push(`${force ? "!" : ""}${text}`); };
+    const emitStream = dr.makeTitle(emitFn, "X");
     const before = lines.length;
-    await emitMeta("裁决生成中 10 字");
-    t("有 ctx.metadata：刷新工具卡标题且不写 stderr",
-      titles.length === 1 && titles[0].includes("裁决生成中") && lines.length === before);
+    await emitStream("裁决生成中 10 字");
+    await emitStream("阶段切换", true);
+    t("有 emit：转发流式进度且不写 stderr（force 透传）",
+      titles.length === 2 && titles[0].includes("裁决生成中") && titles[1].startsWith("!") && lines.length === before);
 
-    // metadata 同步抛错 / 返回非 Promise：静默，不得逃逸成未处理 rejection
-    let escaped = false;
-    try {
-      const emitThrow = dr.makeTitle({ metadata: () => { throw new Error("boom"); } }, "Y");
-      await emitThrow("x");
-      const emitVoid = dr.makeTitle({ metadata: () => undefined }, "Z");
-      await emitVoid("y");
-    } catch { escaped = true; }
-    t("ctx.metadata 抛错/返回非 Promise → 静默不逃逸", escaped === false);
+    // bridgeProgress（plugin/hx-client.ts）：yield 进度序列 + 最终结果 + 节流 + force 透传
+    const hxBundle = path.join(os.tmpdir(), `hx-test-${process.pid}.mjs`);
+    execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "hx-client.ts"),
+      "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${hxBundle}`], { stdio: "inherit" });
+    const hx = await import(pathToFileURL(hxBundle).href);
+    fs.rmSync(hxBundle, { force: true });
+    const stream = hx.bridgeProgress(async (emit3) => {
+      emit3("启动：模型 A + 模型 B", true);
+      await new Promise((r) => setTimeout(r, 10)); // 越过短节流窗
+      emit3("进度 1");
+      emit3("进度 1"); // 节流窗内重复 → 被抑制
+      emit3("阶段完成", true); // force 跳过节流
+      await new Promise((r) => setTimeout(r, 30));
+      return "最终结果";
+    }, { throttleMs: 5 });
+    const got = [];
+    for await (const x of stream) got.push(x);
+    t("bridgeProgress：进度按序 yield、节流去重、force 透传、末值为最终结果",
+      got.length === 4 && got[0].startsWith("启动") && got[1] === "进度 1" && got[2] === "阶段完成" && got[3] === "最终结果");
   } finally {
     console.error = origErr;
   }
 }
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} quality-gate 回归：${pass} 通过 / ${fail} 失败`);
+if (fail > 0) console.log(`失败用例：\n  - ${failed.join("\n  - ")}`);
 process.exit(fail === 0 ? 0 : 1);

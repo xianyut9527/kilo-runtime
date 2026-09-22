@@ -71,6 +71,47 @@ let cbProbeInFlight = false; // half-open 单 probe 锁：防并发 fanout 集�
 
 export function circuitState() { return cbState; }
 
+// ── 工具卡流式进度桥（2026-09-22 可见性根因修复）─────────────────────────────
+// Kilo server（7.7.6 源码确认）对 execute 返回 async iterable 的工具：每个 yield 值作为
+// preliminary 结果流式显示在工具卡，最后一个 yield 值成为 final；preliminary 不进对话历史。
+// 旧通道 ctx.metadata({title}) 不存在——execute 第二参数只有 toolCallId/messages/abortSignal/
+// experimental_context，此前基于它的全部进度标题被静默吞掉（「工具卡黑盒、像卡死」的根因）。
+// 用法：execute 返回 bridgeProgress((emit) => runXxx(emit))；runXxx 内部 emit("进度文本", force)
+// 发流式进度、return 最终字符串。emit 自带节流（force=true 跳过，用于阶段切换等关键帧）。
+export function bridgeProgress(runWithEmit, { throttleMs = 800 } = {}) {
+  const q = [];
+  let wake = null;
+  let last = 0;
+  let done = false;
+  let result = null;
+  let error = null;
+  const emit = (text, force) => {
+    if (typeof text !== "string" || !text) return;
+    const now = Date.now();
+    if (!force && now - last < throttleMs) return;
+    last = now;
+    q.push(text);
+    wake?.();
+    wake = null;
+  };
+  Promise.resolve()
+    .then(() => runWithEmit(emit))
+    .then(
+      (r) => { result = r ?? String(r); },
+      (e) => { error = e; },
+    )
+    .finally(() => { done = true; wake?.(); wake = null; });
+  return (async function* () {
+    for (;;) {
+      while (q.length) yield q.shift();
+      if (done) break;
+      await new Promise((r) => { wake = r; });
+    }
+    if (error) throw error;
+    yield result;
+  })();
+}
+
 // probe 锁兜底释放：ask() 的 finally 调用（仅持锁时），防异常/取消路径泄漏
 // cbProbeInFlight 导致 half-open 永久卡死。guard 双条件确保已正常释放时无操作。
 function cbReleaseProbeIfStuck() {
