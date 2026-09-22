@@ -71,52 +71,33 @@ let cbProbeInFlight = false; // half-open 单 probe 锁：防并发 fanout 集�
 
 export function circuitState() { return cbState; }
 
-// ── 工具卡流式进度桥（2026-09-22 可见性根因修复）─────────────────────────────
-// Kilo server（7.7.6 源码确认）对 execute 返回 async iterable 的工具：每个 yield 值作为
-// preliminary 结果流式显示在工具卡，最后一个 yield 值成为 final；preliminary 不进对话历史。
-// 旧通道 ctx.metadata({title}) 不存在——execute 第二参数只有 toolCallId/messages/abortSignal/
-// experimental_context，此前基于它的全部进度标题被静默吞掉（「工具卡黑盒、像卡死」的根因）。
-// 用法：execute 返回 bridgeProgress((emit) => runXxx(emit))；runXxx 内部 emit("进度文本", force)
-// 发流式进度、return 最终字符串。emit 自带节流（force=true 跳过，用于阶段切换等关键帧）。
-//
-// ⚠️ 契约红线（2026-09-22 moa/dual_review 连续 f.split 崩溃根因）：execute 本身必须是普通
-// 函数（非 async）——kilo 消费端（a5$）先同步检查 execute 返回值是否带 Symbol.asyncIterator，
-// async 函数返回 Promise<AsyncGenerator> 不带 → generator 对象被 await 后当 final output
-// 整体下发，下游渲染对它取字段得 undefined 再 .split →
-// "undefined is not an object (evaluating 'f.split')"（17ms 必现、与参数无关）。
-// 含 await 的逻辑放进 runWithEmit（可 async），early-return 字符串即 final yield。
+// ── 工具 execute 结果桥（2026-09-22 三修实证：execute 必须返回 Promise<string>）──
+// kilo.exe（Bun/JSC）插件工具管线对 execute 返回值有两道硬消费，由两次真实崩溃钉死：
+//   ① 提升层（Effect tryPromise 族适配器 zhD：`ET(()=>H(L)).then((D)=>A(W9(D)),(D)=>A(t$A(D)))`）
+//      对返回值直接调 .then —— 裸 generator/非 thenable → "ET(...).then is not a function"；
+//   ② 渲染层对 resolve 值调 .split —— Promise<generator> 的 resolve 值是 generator 对象
+//      → "evaluating 'f.split'"。
+//   ⇒ 唯一稳定形态：execute 返回 Promise，且 resolve 值必须是 string。
+// asyncIterator/preliminary 流式卡不适用于插件工具（三修实证作废该理论）——进度改
+// stderr 节流输出（CLI/输出日志可见，throttleMs 内去重，force=true 透传关键帧）。
+// 用法：execute(args, ctx) { return bridgeProgress((emit) => runXxx(args, emit)); }
 export function bridgeProgress(runWithEmit, { throttleMs = 800 } = {}) {
-  const q = [];
-  let wake = null;
-  let last = 0;
-  let done = false;
-  let result = null;
-  let error = null;
-  const emit = (text, force) => {
-    if (typeof text !== "string" || !text) return;
-    const now = Date.now();
-    if (!force && now - last < throttleMs) return;
-    last = now;
-    q.push(text);
-    wake?.();
-    wake = null;
-  };
-  Promise.resolve()
-    .then(() => runWithEmit(emit))
-    .then(
-      (r) => { result = r ?? String(r); },
-      (e) => { error = e; },
-    )
-    .finally(() => { done = true; wake?.(); wake = null; });
-  return (async function* () {
-    for (;;) {
-      while (q.length) yield q.shift();
-      if (done) break;
-      await new Promise((r) => { wake = r; });
-    }
-    if (error) throw error;
-    yield result;
-  })();
+  return new Promise((resolve, reject) => {
+    let last = 0;
+    const emit = (text, force) => {
+      if (typeof text !== "string" || !text) return;
+      const now = Date.now();
+      if (!force && now - last < throttleMs) return;
+      last = now;
+      try { console.error(text); } catch { /* 进度失败不影响主流程 */ }
+    };
+    Promise.resolve()
+      .then(() => runWithEmit(emit))
+      .then(
+        (r) => resolve(r ?? String(r)),
+        (e) => reject(e), // kilo t$A 错误通道：拒绝由管线捕获并归一化展示
+      );
+  });
 }
 
 // probe 锁兜底释放：ask() 的 finally 调用（仅持锁时），防异常/取消路径泄漏

@@ -46,12 +46,12 @@ async function reviewerFingerprint(cfg) {
 
 const TAG = "[dual-review] ";
 
-// 进度发射助手（2026-09-22 通道根因修复）：
-// ① emit 存在（工具 execute 路径，bridgeProgress 注入）→ preliminary 流式进度，
-//    实时显示在工具卡正文（ctx.metadata 通道在 server 7.7.6 不存在，已废弃）；
-// ② 无 emit（quality-gate 钩子直调，只有 (input, output)）→ 降级 stderr 节流输出
-//    （CLI 终端可见；VS Code 扩展输出日志可查），消除交付节点黑盒等待。
-// stderr 路径按阶段去重节流（正反两路标题交替到达，单一计时器会失效）。
+// 进度发射助手（2026-09-22 三修终版：进度统一走 stderr）：
+// ① emit 存在（工具 execute 路径，bridgeProgress 注入）→ 转发给 bridgeProgress 的
+//    stderr 节流通道（CLI 终端可见；VS Code 扩展输出日志可查）；
+// ② 无 emit（quality-gate 钩子直调，只有 (input, output)）→ 本地 stderr 节流输出
+//    （阶段首现立即输出、同阶段 10s 节流），消除交付节点黑盒等待。
+// 两条路径都落 stderr，正反两路标题交替到达时按阶段去重节流防刷屏。
 //
 // 不得用 export function：Kilo vE2 加载器会把模块里每个导出的函数都当插件工厂
 // 用 (ctx, options) 调一遍——makeTitle(G, undefined) 不会抛但返回的闭包污染钩子
@@ -265,11 +265,11 @@ const DualReviewImpl = async () => {
           negative_model: { type: "string", description: "反向审查模型（可选，默认取配置）" },
           aggregator: { type: "string", description: "裁决模型（可选，默认取配置）" },
         },
-        // ⚠️ 不得改为 async（2026-09-22 f.split 工具崩溃根因）：kilo 消费端同步检查 execute
-        // 返回值的 Symbol.asyncIterator；async 返回 Promise<AsyncGenerator> 不带该属性，
-        // generator 对象被当 final output 整体下发，下游 f.split 必崩（17ms 必现、与参数无关）。
-        // runDualReview 自身是 async，由 bridgeProgress 内部 Promise.resolve().then() 接管；
-        // 快速失败（缺 subject/断路器 open）返回字符串 = 唯一（final）yield，行为不变。
+        // ⚠️ execute 契约（2026-09-22 两次工具路径崩溃实证钉死，详见 lib/hx-client.ts
+        // bridgeProgress 注释）：必须返回 Promise<string>（bridgeProgress 包装）——
+        // 裸 generator → 提升层 ET(()=>H(L)).then 崩；Promise<generator> → 渲染层
+        // f.split 崩。runDualReview 的快速失败（缺 subject/断路器 open）返回字符串，
+        // 经 bridgeProgress 包装后同为合规 Promise<string>；进度降级 stderr 节流。
         execute(args, ctx) {
           return bridgeProgress((emit) => runDualReview(args?.subject, args, emit));
         },

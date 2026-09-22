@@ -20,12 +20,11 @@
 // 2026-09-22 进度通道根因修复（用户二次实测仍黑盒）：
 //   - ctx.metadata 在 server 7.7.6 中不存在（execute 第二参数只有 toolCallId/messages/
 //     abortSignal/experimental_context），此前所有 title 更新被静默吞掉；
-//   - 改走 preliminary 流：execute 返回 bridgeProgress async generator，每个 yield 的
-//     中文进度文本流式显示在工具卡正文（不进对话历史），最后 yield 最终结果；
 //   - 进度文本全面中文化（用户反馈 "moa"/"dual_review" 不语义化）。
-//   - 三修（工具路径实测 f.split 崩溃，与 dual-review 同根因）：execute 曾为 async——
-//     Promise 包装使 kilo a5$ 判非 iterable，generator 对象被当 final output 下发致下游
-//     崩溃；execute 必须 sync 返回 iterable（契约红线详见 lib/hx-client.ts 注释）。
+//   - 三修终版（2026-09-22 两次工具路径崩溃实证：f.split + ET(...).then）：插件工具
+//     execute 必须返回 Promise<string>（bridgeProgress 包装）——裸 generator 在提升层
+//     "ET(...).then is not a function"、Promise<generator> 在渲染层 "f.split" 崩；
+//     进度走 stderr 节流（契约红线详见 lib/hx-client.ts bridgeProgress 注释）。
 
 import { loadCfg, ask, FALLBACK_TIMEOUT_MS, FALLBACK_CHUNK_TIMEOUT_MS, circuitState, bridgeProgress } from "../lib/hx-client";
 
@@ -33,8 +32,8 @@ const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合�
 const AGG_VIEW_LIMIT = 12_000; // 聚合 prompt 单路参考截断上限（字符）
 const MAX_TASK_CHARS = 50_000; // 任务输入上限：防无界文本多次灌入上游（成本/上下文）
 
-// 进度发射助手：emit 存在（工具路径，bridgeProgress 注入）时转发流式进度；
-// 不存在（异常降级路径）时静默——节流由 bridgeProgress 统一处理。
+// 进度发射助手：emit 存在（工具路径，bridgeProgress 注入）时转发进度（bridgeProgress
+// 统一落 stderr 节流）；不存在（异常降级路径）时静默。
 function makeTitle(emit, label) {
   return async (text, force) => {
     if (typeof emit !== "function") return;
@@ -57,12 +56,10 @@ const MoaImpl = async () => {
           },
           aggregator: { type: "string", description: "聚合模型 id（可选，默认取配置）" },
         },
-        // ⚠️ 不得改为 async（2026-09-22 f.split 工具崩溃根因，kilo.exe a5$ 逆向 + 17ms 复现实证）：
-        // kilo 消费端先同步检查 execute 返回值是否带 Symbol.asyncIterator（preliminary 流式契约）；
-        // async 函数返回 Promise<AsyncGenerator> 不带该属性 → generator 对象被 await 后当
-        // final output 整体下发，下游渲染对它取字段得 undefined 再 .split →
-        // "undefined is not an object (evaluating 'f.split')"（必现、与参数无关）。
-        // 含 await 的逻辑与快速失败路径全部移入 run 函数，early-return 字符串成为唯一（final）yield。
+        // ⚠️ execute 契约（2026-09-22 两次工具路径崩溃实证钉死，详见 lib/hx-client.ts
+        // bridgeProgress 注释）：必须返回 Promise<string>——裸 generator 会让提升层
+        // ET(()=>H(L)).then 崩（"is not a function"），Promise<generator> 会让渲染层
+        // f.split 崩。bridgeProgress 即该契约的实现（进度降级 stderr 节流）。
         execute(args, ctx) {
           return bridgeProgress((emit) => (async () => {
           const t0 = Date.now();

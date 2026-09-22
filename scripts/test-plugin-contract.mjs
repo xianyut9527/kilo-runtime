@@ -116,12 +116,13 @@ if (fs.existsSync(LIB_DIR)) {
   }
 }
 
-// ── 断言 6：流式工具 execute 契约（2026-09-22 moa/dual_review f.split 崩溃根因）──
-// kilo 消费端（a5$，逆向实证）同步检查 execute 返回值是否带 Symbol.asyncIterator：
-// async execute 返回 Promise<AsyncGenerator> 不带该属性 → generator 对象被 await 后当
-// final output 整体下发 → 下游渲染 f.split 崩溃（"undefined is not an object
-// (evaluating 'f.split')"，17ms 必现、与参数无关）。契约：execute 为普通函数（非 async）、
-// 同步返回 async iterable；模拟 a5$ 消费到结束，final yield 必须是字符串。
+// ── 断言 6：工具 execute 契约（2026-09-22 三修实证：execute 必须返回 Promise<string>）──
+// kilo 插件工具管线对 execute 返回值有两道硬消费（kilo.exe 逆向 + 两次真实崩溃钉死）：
+//   ① 提升层（Effect tryPromise 族适配器 zhD：ET(()=>H(L)).then((D)=>A(W9(D)),(D)=>A(t$A(D)))）
+//      对返回值直接调 .then —— 裸 generator/非 thenable → "ET(...).then is not a function"；
+//   ② 渲染层对 resolve 值调 .split —— Promise<generator> 的 resolve 值是 generator 对象
+//      → "evaluating 'f.split'"。
+// 契约：execute 返回 Promise（thenable）且 resolve 值必须是 string。
 const STREAM_TOOLS = [
   { plugin: "moa.ts", tool: "moa", args: { task: "" } },
   { plugin: "dual-review.ts", tool: "dual_review", args: { subject: "" } },
@@ -136,17 +137,18 @@ for (const { plugin, tool, args } of STREAM_TOOLS) {
     continue;
   }
   const r = execute(args, {});
-  assert(`execute 非 Promise（async 污染 → kilo f.split 崩溃）：plugin/${plugin}#${tool}`, !(r && typeof r.then === "function"));
-  assert(`execute 同步返回 async iterable：plugin/${plugin}#${tool}`, r != null && typeof r[Symbol.asyncIterator] === "function");
+  // ① ET 消费模拟（zhD 提升层）：对返回值直接调 .then —— 非 thenable 即崩
+  assert(`返回值是 thenable（否则提升层 ET(...).then 崩）：plugin/${plugin}#${tool}`, r != null && typeof r.then === "function");
   try {
-    let last = undefined, n = 0;
-    for await (const chunk of r) { last = chunk; n++; }
-    assert(`a5$ 消费到结束 final 为字符串：plugin/${plugin}#${tool}（${n} 个 yield，final="${String(last).slice(0, 40)}"）`, typeof last === "string");
+    // ② f.split 消费模拟（渲染层）：resolve 值必须是 string 且可 .split
+    const final = await r;
+    assert(`resolve 值是 string（否则渲染层 f.split 崩）：plugin/${plugin}#${tool}（final="${String(final).slice(0, 40)}"）`, typeof final === "string");
+    assert(`final 可被 .split 消费：plugin/${plugin}#${tool}`, Array.isArray(final.split("\n")));
   } catch (e) {
     const msg = String(e?.message ?? e);
     // 环境缺 kilo.json/auth.json（CI 等）时 loadCfg 抛错属环境问题，不算契约失败
     const envMissing = /hx-client|baseURL|auth\.json/.test(msg);
-    assert(`a5$ 消费：plugin/${plugin}#${tool}${envMissing ? "（环境缺配置，final 断言跳过）" : `: ${msg}`}`, envMissing);
+    assert(`resolve：plugin/${plugin}#${tool}${envMissing ? "（环境缺配置，final 断言跳过）" : `: ${msg}`}`, envMissing);
   }
 }
 

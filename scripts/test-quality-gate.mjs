@@ -244,13 +244,6 @@ t("diagCovers：文档编辑不数（editVersion 变但 codeEditV 不变）→ �
     t("有 emit：转发流式进度且不写 stderr（force 透传）",
       titles.length === 2 && titles[0].includes("裁决生成中") && titles[1].startsWith("!") && lines.length === before);
 
-    // bridgeProgress（lib/hx-client.ts）：yield 进度序列 + 最终结果 + 节流 + force 透传
-    const hxBundle = path.join(os.tmpdir(), `hx-test-${process.pid}.mjs`);
-    execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "lib", "hx-client.ts"),
-      "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${hxBundle}`], { stdio: "inherit" });
-    const hx = await import(pathToFileURL(hxBundle).href);
-    fs.rmSync(hxBundle, { force: true });
-
     // ── reviewerFingerprint：审查缓存键成分（2026-09-22 三模型裁决必须项）──
     // 缓存键 = 指纹 + 素材 sha1：改 prompt（版本变）或换模型（三元组变）→ 指纹变 →
     // 缓存失效，绝不复用异构模型旧裁决。cfg 注入，不依赖真实配置。
@@ -261,6 +254,14 @@ t("diagCovers：文档编辑不数（editVersion 变但 codeEditV 不变）→ �
       fpA !== (await drT.reviewerFingerprint(fpCfg({ positive: "m-x", negative: "m-b", aggregator: "m-c" }))));
     t("配置缺 dual_review → 指纹稳定（空三元组，不抛错）",
       /^v=\S+\|p=\|n=\|a=$/.test(await drT.reviewerFingerprint(fpCfg(undefined))));
+
+    // bridgeProgress（lib/hx-client.ts）：execute 契约桥（三修终版）——返回 Promise<string>，
+    // emit 降级 stderr 节流（force 透传），run 抛错 → Promise 拒绝（kilo t$A 错误通道）
+    const hxBundle = path.join(os.tmpdir(), `hx-test-${process.pid}.mjs`);
+    execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "lib", "hx-client.ts"),
+      "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${hxBundle}`], { stdio: "inherit" });
+    const hx = await import(pathToFileURL(hxBundle).href);
+    fs.rmSync(hxBundle, { force: true });
     const stream = hx.bridgeProgress(async (emit3) => {
       emit3("启动：模型 A + 模型 B", true);
       await new Promise((r) => setTimeout(r, 10)); // 越过短节流窗
@@ -270,10 +271,19 @@ t("diagCovers：文档编辑不数（editVersion 变但 codeEditV 不变）→ �
       await new Promise((r) => setTimeout(r, 30));
       return "最终结果";
     }, { throttleMs: 5 });
-    const got = [];
-    for await (const x of stream) got.push(x);
-    t("bridgeProgress：进度按序 yield、节流去重、force 透传、末值为最终结果",
-      got.length === 4 && got[0].startsWith("启动") && got[1] === "进度 1" && got[2] === "阶段完成" && got[3] === "最终结果");
+    const errLines = [];
+    const origErr2 = console.error;
+    console.error = (...a) => errLines.push(a.join(" "));
+    let finalVal;
+    try { finalVal = await stream; } finally { console.error = origErr2; }
+    t("bridgeProgress：返回 Promise 且 resolve 为 string（ET 提升/f.split 渲染双契约）",
+      typeof finalVal === "string" && finalVal === "最终结果");
+    t("bridgeProgress：进度走 stderr 节流去重 + force 透传",
+      errLines.length === 3 && errLines[0].includes("启动") && errLines[1] === "进度 1" && errLines[2] === "阶段完成");
+    let rejected = false;
+    try { await hx.bridgeProgress(async () => { throw new Error("boom"); }); }
+    catch { rejected = true; }
+    t("bridgeProgress：run 抛错 → Promise 拒绝（不吞错）", rejected === true);
   } finally {
     console.error = origErr;
   }
