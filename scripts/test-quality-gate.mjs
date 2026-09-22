@@ -27,7 +27,7 @@ execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "quality-g
 const mod = await import(pathToFileURL(bundle).href);
 fs.rmSync(bundle, { force: true });
 
-const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf } = mod;
+const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker } = mod;
 let pass = 0, fail = 0;
 const failed = [];
 const t = (name, cond) => {
@@ -104,6 +104,14 @@ t("编辑后只改文档不作废验证", (() => {
   // editV 只数代码文件：验证后 model 改了 README（editVersion+1 但 codeEditV 不变）
   return hasVerified(mk([{ cmd: "npm test", exit: 0, editV: 1 }], 1)) === true;
 })());
+
+// ── 逃生门标记（commands 已对象化，标记必须从 cmd 文本里找——曾整体失效的真 bug） ──
+t("hasSkipMarker：对象形态命令命中 verify-skipped", hasSkipMarker(mk([{ cmd: 'echo "verify-skipped: 无测试环境"' }])) === true);
+t("hasSkipMarker：旧形态纯字符串仍兼容", hasSkipMarker(mk(["echo verify-skipped: x"])) === true);
+t("hasSkipMarker：无关命令不误报", hasSkipMarker(mk([{ cmd: "npm test" }])) === false);
+t("hasAcceptMarker：对象形态命令命中 review-accepted", hasAcceptMarker(mk([{ cmd: 'echo "review-accepted: 残余风险可接受"' }])) === true);
+t("hasAcceptMarker：旧形态纯字符串仍兼容", hasAcceptMarker(mk(["echo review-accepted: x"])) === true);
+t("hasAcceptMarker：无关命令不误报", hasAcceptMarker(mk([{ cmd: "npm test" }])) === false);
 
 // ── reviewSubject（无 git 目录 → 降级路径） ──
 {

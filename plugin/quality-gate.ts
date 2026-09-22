@@ -10,9 +10,11 @@
 //   不允许静默。仅代码后缀触发；文档/配置编辑不受限。
 //   验证命令按「命令动词位」锚定识别——子串匹配会把 `git tag v0.1-test` 这类
 //   含 test 字样的普通命令误判成「已验证」，方向是吞掉警告。
-// 附加：edit/write 后按后缀跑静态检查（ruff / tsc --noEmit），诊断即时回注。
-//   工具可用性一次性探测（缺失则永久跳过，不再每轮烧超时）；并发编辑单飞共享一次 tsc；
-//   同文件未变更（mtime 未变）直接复用上次诊断，tsc 全量运行不再受时间窗陈旧性影响。
+// 附加：edit/write 后按后缀跑静态检查（ruff / tsc --noEmit）——2026-09-22 改异步防抖：
+//   编辑不再阻塞工具返回（5s 防抖 + 单飞后台跑，stderr 可观测），诊断积压在交付节点
+//   强制冲刷回注（质量兜底不丢，成本集中支付一次）；tsc 加 --incremental（tsbuildinfo
+//   存 Kilo 数据目录按项目哈希隔离，不污染用户项目；老 TS/写失败自动降级全量，损坏自动
+//   删除重建）。工具可用性一次性探测、并发单飞共享一次 tsc、同文件 mtime 缓存复用语义不变。
 // 层 3 全自动闭环（W3.9/W3.11）：交付节点（todo 全 completed + 高风险文件，或含代码改动
 //   且跨 ≥3 文件——纯文档会话不烧审查费）由插件直调 dual-review 的 runDualReview。
 //   审查对象自动构建：编辑文件清单 + git diff HEAD -- <本会话编辑的代码文件>（范围对齐本会话改动，
@@ -30,10 +32,20 @@
 //     工具探测结果进程级共享（环境属性与会话无关）。
 //   - bash 命令原文入桶前做凭证脱敏（authorization/token/key/password、URL 内嵌密码），
 //     原文只用于关键词匹配，不回显。
+// 2026-09-22 结果实证（P0-3）+ 审查素材缓存（P0-2）：
+//   - bash 采集 exit code：证据池升级为 {cmd, exit, editV}，层 2 从「跑过验证命令」收紧为
+//     「末次编辑后 exit===0 且退出形态可靠」（堵 compaction 丢失失败输出/合理化跳过/
+//     跨会话盲区/撒谎四类尾巴）。退出码三段契约防御：output 显式字段 → metadata →
+//     结果文本解析；全部落空 = 未知 → 降级旧口径放行（fail-open 不误杀）。遮蔽形态
+//     （|| true / || echo / ; exit 0 / 无 pipefail 管道）只算「跑过」，不参与「跑赢」判定。
+//   - 层 3 审查素材缓存：subject sha1 与上次完全一致 → 复用既有裁决（含未通过状态），
+//     不为同一份 diff 重烧 30s~2min；diff/文件清单有任何变化立即失效。
 
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { DATA_DIR } from "./hx-client";
 import { runDualReview } from "./dual-review";
 
 const TAG = "[quality-gate]";
@@ -42,6 +54,8 @@ const TAG = "[quality-gate]";
 let projectRoot = process.cwd();
 const probe = { tsc: null, ruff: null }; // null=未探测，true/false=可用性
 let tscInFlight = null; // 并发编辑单飞：共享同一次 tsc 全量输出
+const DIAG_DEBOUNCE_MS = 5_000; // 编辑后防抖：5s 无新动作才真正跑诊断（编辑路径零阻塞）
+let tscIncrementalOk = null; // null=未探测；false=项目 TS 过老/写失败，永久降级全量
 
 // ── 会话级状态（sessionID 分桶）──────────────────────────────
 const sessions = new Map(); // sessionID -> { commands, reads, lastTodos, edited, fileChecks }
@@ -54,7 +68,7 @@ function bucketOf(input) {
   const id = String(input?.sessionID ?? "__global__");
   let s = sessions.get(id);
   if (!s) {
-    s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0 };
+    s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null };
     sessions.set(id, s);
     if (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
   }
@@ -76,8 +90,25 @@ function scrubCommand(cmd) {
     .replace(/(https?:\/\/[^\s:/@]+:)[^\s@]+@/gi, "$1***@");
 }
 
-function rememberCommand(s, cmd) {
-  s.commands.push(scrubCommand(cmd));
+// 证据池条目统一取文本：新版为 {cmd, exit, editV}，旧版/测试夹具可能是纯字符串
+function cmdText(c) {
+  return typeof c === "string" ? c : String(c?.cmd ?? "");
+}
+
+// 退出码三段契约防御：output 显式字段 → metadata → 结果文本解析
+// （失败形态常见 "Exit code: N"；成功时常无此行 → undefined = 未知，层 2 降级旧口径不误杀）。
+export function exitCodeOf(output) {
+  const o = output ?? {};
+  for (const k of ["exitCode", "exit", "code"]) {
+    const v = o?.[k] ?? o?.metadata?.[k];
+    if (typeof v === "number") return v;
+  }
+  const m = String(o?.output ?? "").match(/\bexit(?:\s+code)?\s*[:=]\s*(\d{1,3})\b/i);
+  return m ? Number(m[1]) : undefined;
+}
+
+function rememberCommand(s, cmd, exit, editV) {
+  s.commands.push({ cmd: scrubCommand(cmd), exit, editV });
   if (s.commands.length > MAX_COMMANDS) s.commands.shift();
 }
 
@@ -89,14 +120,67 @@ const VERIFY_CMD_RE =
   /(?:^|[;|]|&&|\|\|)\s*(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test|lint|check|typecheck|type-check|build)\b|(?:npx|bunx)\s+(?:jest|vitest|tsc|eslint|ruff)\b|(?:jest|vitest|mypy|pytest|eslint|ruff|tsc)\s|go\s+(?:test|vet)\b|cargo\s+(?:test|check|clippy)\b|python[0-9.]*\s+-m\s+(?:pytest|unittest)\b|(?:mvn|gradlew?)\b[^;&|\n]*\btest\b|make\s+(?:test|check|lint)\b|dotnet\s+test\b|phpunit\b|(?:node|bun|deno|python[0-9.]*)\s+(?:[\w\/\\.-]*[\/\\])?tests?[\w\/\\.-]*\.(?:mjs|cjs|js|ts|tsx|py)\b)/i;
 export { VERIFY_CMD_RE };
 
-function hasRanVerify(s) {
-  return s.commands.some((c) => VERIFY_CMD_RE.test(c));
+// ── 退出码遮蔽识别（P0-3 误报治理）──────────────────────────
+// 这些形态下命令自身的 exit 不可信（失败会被吞成 0）：只算「跑过」，不参与「跑赢」判定。
+// 注意 && 不吞码（短路，左侧失败整体即失败），不得标记。
+export function exitMasked(cmd) {
+  const c = String(cmd ?? "");
+  // || true / || echo ok / 行尾悬挂 ||：|| 在失败侧续接后段，失败被吞
+  if (/\|\|\s*(?:true|false|exit\b|echo\b|:)/i.test(c) || /\|\|\s*$/.test(c)) return true;
+  // ; true / ; exit 0 / ; echo ok：分号不短路，后段 exit 覆盖前段失败
+  if (/;\s*(?:true|exit\s+0|echo\b)/i.test(c)) return true;
+  // 无 pipefail 的管道：管道前段失败被后段吞掉（保守整命令判定，宁降级不误判「跑赢」）
+  if (/(?<!\|)\|(?!\|)/.test(c) && !/pipefail/i.test(c)) return true;
+  return false;
 }
+
+// 层 2 判定（结果实证版）：
+//   hasRanVerify —— 旧口径「跑过」：存在任何验证命令（无论 exit/时序/遮蔽），降级兜底用
+//   hasVerified  —— 新口径「跑赢」：最近一次验证命令 exit===0、无遮蔽形态、且发生在
+//                   末次代码编辑之后（editV 为命令执行时的代码编辑计数）。exit 未知
+//                   （钩子契约落空）不算跑赢，由 hasRanVerify 降级放行（fail-open 不误杀）
+//   verifyFailureOf —— 最近一次验证「跑了但失败」（exit 非 0）：交付节点回注 + 层 2 拦截
+function verifyScan(s) {
+  const cmds = s.commands ?? [];
+  for (let i = cmds.length - 1; i >= 0; i--) {
+    const c = cmds[i];
+    if (!VERIFY_CMD_RE.test(cmdText(c))) continue;
+    return { idx: i, entry: c };
+  }
+  return null;
+}
+
+function hasRanVerify(s) {
+  return verifyScan(s) !== null;
+}
+
+function hasVerified(s) {
+  const hit = verifyScan(s);
+  if (!hit) return false;
+  const { entry } = hit;
+  const exit = typeof entry === "object" ? entry.exit : undefined;
+  const editV = typeof entry === "object" ? entry.editV : undefined;
+  if (exit !== 0) return false; // 未知 → 降级；非 0 → 没跑赢
+  if (exitMasked(cmdText(entry))) return false; // 遮蔽形态不算跑赢
+  // 末次代码编辑之后跑的才算（防「先跑过、后改坏」）——editV 相等 = 其后无代码编辑
+  return (s.codeEditV ?? 0) > 0 && editV !== undefined && editV >= (s.codeEditV ?? 0);
+}
+
+function verifyFailureOf(s) {
+  const hit = verifyScan(s);
+  if (!hit) return null;
+  const { entry } = hit;
+  const exit = typeof entry === "object" ? entry.exit : undefined;
+  if (typeof exit !== "number" || exit === 0) return null; // 未知不算失败（降级旧口径）
+  return { cmd: cmdText(entry), exit };
+}
+export { hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker };
 
 function rememberEdit(s, p) {
   if (typeof p !== "string" || !p) return;
   s.edited.add(p);
-  s.editVersion = (s.editVersion ?? 0) + 1; // 层 3 闭环：编辑计数，审查后有无修复靠它判定
+  s.editVersion = (s.editVersion ?? 0) + 1; // 层 3 闭环：编辑计数（所有文件），审查后有无修复靠它判定
+  if (isCodeFile(p)) s.codeEditV = (s.codeEditV ?? 0) + 1; // 层 2 验证新鲜度：只数代码文件，验证后改文档不作废
   if (s.edited.size > MAX_EDITED) s.edited.delete(s.edited.values().next().value);
 }
 
@@ -133,7 +217,7 @@ function isCodeFile(f) {
 const VERIFY_SKIP_RE = /verify-skipped\s*:/i;
 
 function hasSkipMarker(s) {
-  return s.commands.some((c) => VERIFY_SKIP_RE.test(c));
+  return s.commands.some((c) => VERIFY_SKIP_RE.test(cmdText(c)));
 }
 
 // ── 层 3 闭环（审查未通过 → 阻断交付，修复后自动再审，直到通过或升级人工）──
@@ -141,7 +225,7 @@ const MAX_REVIEW_ROUNDS = 2; // 自动审查轮次上限：超限放行并回注
 const REVIEW_ACCEPT_RE = /review-accepted\s*:/i;
 
 function hasAcceptMarker(s) {
-  return s.commands.some((c) => REVIEW_ACCEPT_RE.test(c));
+  return s.commands.some((c) => REVIEW_ACCEPT_RE.test(cmdText(c)));
 }
 
 // 从裁决文本解析结论。fail = 裁决「不通过」或「必须修复项」段非空；
@@ -191,7 +275,7 @@ function keywordsOf(text) {
 }
 
 function evidencePool(s) {
-  return [...s.commands, ...s.reads, ...s.edited].join("\n").toLowerCase();
+  return [...s.commands.map(cmdText), ...s.reads, ...s.edited].join("\n").toLowerCase();
 }
 
 function auditTodos(prev, next, pool) {
@@ -255,10 +339,39 @@ function fileMtime(file) {
   }
 }
 
-// 单飞：并发到达的多个编辑共享同一次 tsc 全量运行
+// 单飞：并发到达的多个编辑共享同一次 tsc 运行（--incremental 暖机秒级，失败自动降级全量）
+// tsbuildinfo 放 Kilo 数据目录按项目哈希隔离——不写进用户项目（不污染仓库/不进 git status）
+let tsbuildInfoPath = null;
+function tsbuildInfoFor(dir) {
+  if (tsbuildInfoPath !== null) return tsbuildInfoPath;
+  try {
+    const h = createHash("sha1").update(fs.realpathSync(dir)).digest("hex").slice(0, 12);
+    const d = path.join(DATA_DIR, "tsc-cache");
+    fs.mkdirSync(d, { recursive: true });
+    tsbuildInfoPath = path.join(d, `${h}.tsbuildinfo`);
+  } catch {
+    tsbuildInfoPath = ""; // 拿不到数据目录 → 不传 --incremental（全量）
+  }
+  return tsbuildInfoPath;
+}
+
 function runTscOnce(dir) {
   if (!tscInFlight) {
-    tscInFlight = runCmd("npx", ["tsc", "--noEmit", "--pretty", "false"], 20_000, dir)
+    const args = ["tsc", "--noEmit", "--pretty", "false"];
+    const tsb = tscIncrementalOk !== false ? tsbuildInfoFor(dir) : "";
+    if (tsb) args.push("--incremental", `--tsBuildInfoFile`, tsb);
+    tscInFlight = runCmd("npx", args, 20_000, dir)
+      .then((r) => {
+        // 首次带增量参数运行：TS 过老报未知选项 → 永久降级全量，本次立即重跑出真诊断
+        if (tsb && tscIncrementalOk === null && /unknown option|TS5023|TS6046/i.test(r.out)) {
+          tscIncrementalOk = false;
+          console.error(`${TAG} tsc 不支持 --incremental，降级全量检查`);
+          try { fs.rmSync(tsb, { force: true }); } catch { }
+          return runCmd("npx", ["tsc", "--noEmit", "--pretty", "false"], 20_000, dir);
+        }
+        if (tsb && tscIncrementalOk === null) tscIncrementalOk = true;
+        return r;
+      })
       .finally(() => { tscInFlight = null; });
   }
   return tscInFlight;
@@ -293,6 +406,56 @@ async function staticDiagnose(file, dir, s) {
   if (ext === "py") return ruffDiagnose(file, dir, s);
   if (["ts", "tsx", "mts", "cts"].includes(ext)) return tsDiagnose(file, dir, s);
   return null; // 其他后缀 v1 不做（js/eslint 与 go vet 后续按需加）
+}
+
+// ── 异步诊断调度（P0-1：编辑路径零阻塞）──────────────────────
+// 编辑 → 登记待诊文件 + 5s 防抖 → 后台单飞跑诊断 → 结果进 s.diagNotes（stderr 可观测）
+// → 交付节点（todowrite 全 completed）flushDiags 强制等待冲刷回注。质量兜底不丢，
+//  成本从「每次编辑都阻塞」变成「交付时集中付一次」。
+function scheduleDiags(s) {
+  if (s.pendingDiags.size === 0) return;
+  if (s.diagTimer) clearTimeout(s.diagTimer);
+  s.diagTimer = setTimeout(() => { s.diagTimer = null; void runDiags(s); }, DIAG_DEBOUNCE_MS);
+  // 定时器只需让事件循环等到它触发：unref 防止 Kilo 关闭时被挂起进程拖住
+  try { s.diagTimer.unref?.(); } catch { }
+}
+
+async function runDiags(s) {
+  if (s.diagBusy) return; // 上一次还在跑：文件已入 pendingDiags，下轮防抖会再跑
+  s.diagBusy = true;
+  const files = [...s.pendingDiags];
+  s.pendingDiags.clear();
+  try {
+    for (const f of files) {
+      const diags = await staticDiagnose(f, projectRoot, s);
+      if (diags && diags.length > 0) s.diagNotes.set(f, diags);
+    }
+    if (files.length > 0) {
+      const bad = [...s.diagNotes.keys()].length;
+      console.error(`${TAG} 后台静态检查完成：${files.length} 个文件，${bad} 个有诊断待交付冲刷`);
+    }
+  } catch (e) {
+    console.error(TAG, "async diagnose failed:", e?.message ?? e);
+  } finally {
+    s.diagBusy = false;
+  }
+}
+
+// 交付节点冲刷：跳过防抖立即跑完积压诊断（若有），返回所有未修复诊断的回注文本
+async function flushDiags(s) {
+  if (s.diagTimer) { clearTimeout(s.diagTimer); s.diagTimer = null; }
+  if (s.pendingDiags.size > 0 && !s.diagBusy) await runDiags(s);
+  // 正在后台跑的最后一轮：等它落地（有界等待防卡交付）
+  let waited = 0;
+  while (s.diagBusy && waited < 21_000) {
+    await new Promise((r) => setTimeout(r, 200));
+    waited += 200;
+  }
+  if (s.diagNotes.size === 0) return null;
+  const parts = [...s.diagNotes.entries()].map(([f, diags]) =>
+    `${f}（共 ${diags.length} 条）：\n  ${diags.slice(0, 20).join("\n  ")}`);
+  s.diagNotes.clear();
+  return `静态检查诊断（后台汇总，需修复后再交付）：\n${parts.join("\n")}`;
 }
 
 // ── 回注通道 ─────────────────────────────────────────────────
@@ -365,7 +528,7 @@ export async function reviewSubject(root, s, editedList) {
     } catch { /* 文件已移走则跳过 */ }
   }
   if (diffText.trim().length <= 50 && unseen.length === 0) {
-    parts.push(`会话内执行过的命令（已脱敏）：\n${s.commands.slice(-30).join("\n") || "（无）"}`);
+    parts.push(`会话内执行过的命令（已脱敏）：\n${s.commands.slice(-30).map(cmdText).join("\n") || "（无）"}`);
   }
   return parts.join("\n\n").slice(0, 24000);
 }
@@ -400,7 +563,19 @@ export const QualityGate = async ({ directory } = {}) => {
           );
         }
         if (codeEdits.length === 0) return; // 非代码编辑不受限
-        if (hasRanVerify(s) || hasSkipMarker(s)) return;
+        if (hasSkipMarker(s)) return;
+        // 结果实证（P0-3）：只认末次代码编辑后 exit 0 的验证命令；
+        // 跑过但失败 → 拦下要求修复重跑；exit 未知（契约落空/遮蔽形态）→ 降级旧口径放行
+        if (hasVerified(s)) return;
+        const failure = verifyFailureOf(s);
+        if (failure) {
+          throw new Error(
+            `[quality-gate] 层 2 结果实证：验证命令已运行但失败（exit=${failure.exit}）：\n  ${failure.cmd.slice(0, 160)}\n` +
+              `「跑过」不算数，要「跑赢」——修复后重跑该验证拿到 exit 0 再标记全部完成；` +
+              `确无法验证则执行 echo "verify-skipped: <原因>" 显式登记。`
+          );
+        }
+        if (hasRanVerify(s)) return; // 降级：有验证痕迹但退出码未知（fail-open，与旧口径一致）
         const names = codeEdits.slice(0, 3).map((f) => f.split(/[\\/]/).pop()).join(", ");
         throw new Error(
           `[quality-gate] 层 2 硬门禁：本次会话编辑过 ${codeEdits.length} 个代码文件（${names}${codeEdits.length > 3 ? " 等" : ""}），` +
@@ -421,10 +596,11 @@ export const QualityGate = async ({ directory } = {}) => {
         const args = extractArgs(input, output);
         const s = bucketOf(input);
 
-        // ① 记录 bash 命令（脱敏后入证据池 + 验证判定）
+        // ① 记录 bash 命令（脱敏后入证据池 + 验证判定）；P0-3 同时采集退出码
+        //    （三段契约防御，拿不到=undefined，层 2 降级旧口径）
         if (tool === "bash" || tool === "shell") {
           const cmd = typeof args === "string" ? args : String(args?.command ?? "");
-          rememberCommand(s, cmd);
+          rememberCommand(s, cmd, exitCodeOf(output), s.codeEditV ?? 0);
           return;
         }
 
@@ -442,20 +618,14 @@ export const QualityGate = async ({ directory } = {}) => {
           return;
         }
 
-        // ② 记录编辑 + 静态检查回注
+        // ② 记录编辑 + 异步防抖静态检查（P0-1：编辑路径零阻塞，诊断由交付节点冲刷回注）
         if (tool === "edit" || tool === "write") {
           const file = String(args?.filePath ?? args?.path ?? "");
           if (file) {
             rememberEdit(s, file);
             if (isHighRiskFile(file)) s.highRisk.add(file);
-            const diags = await staticDiagnose(file, projectRoot, s);
-            if (diags && diags.length > 0) {
-              appendToResult(
-                output,
-                `\n${TAG} 编辑后静态检查（仅本次编辑文件相关诊断，共 ${diags.length} 条，需修复后再交付）：\n` +
-                  diags.slice(0, 20).join("\n")
-              );
-            }
+            s.pendingDiags.add(file); // 刚写过 mtime 必变，mtime 缓存必失效 → 一律入队防抖
+            scheduleDiags(s);
           }
           return;
         }
@@ -477,6 +647,19 @@ export const QualityGate = async ({ directory } = {}) => {
             );
           }
           const codeEdits = codeEditsOf(s);
+          const allDone = todos.length > 0 && todos.every((t) => t?.status === "completed");
+          // P0-1b：交付节点强制冲刷积压诊断（编辑已零阻塞，成本集中在此付一次）
+          if (allDone) {
+            try {
+              const flushText = await flushDiags(s);
+              if (flushText) {
+                notes.push(`⚠️ ${flushText}`);
+                console.error(`${TAG} 交付冲刷：后台静态检查有未修复诊断，已回注`);
+              }
+            } catch (e) {
+              console.error(TAG, "flush diags failed:", e?.message ?? e);
+            }
+          }
           if (codeEdits.length > 0 && !hasRanVerify(s)) {
             if (hasSkipMarker(s)) {
               notes.push(
@@ -489,6 +672,19 @@ export const QualityGate = async ({ directory } = {}) => {
                   `交付前必须真跑（贴出命令与结果，「应该能过」不算）；确无法验证则 echo "verify-skipped: 原因" 显式登记。`
               );
             }
+          } else if (codeEdits.length > 0 && !hasVerified(s) && !hasSkipMarker(s)) {
+            // 「跑过」但没「跑赢」且未被 before 拦下（= 退出码未知降级放行）→ 提示性回注
+            const failure = verifyFailureOf(s);
+            if (failure) {
+              notes.push(
+                `⚠️ 结果实证：验证命令运行失败（exit=${failure.exit}）：${failure.cmd.slice(0, 160)}。` +
+                  `修复后重跑拿到 exit 0 再交付，「跑过」不算数。`
+              );
+            } else {
+              notes.push(
+                `ℹ️ 验证命令退出码未知（钩子契约未采集到），本次按旧口径放行——建议贴出验证输出佐证。`
+              );
+            }
           }
 
           // 层 3 全自动执行 + 闭环：todo 全部 completed（交付节点）+ 高风险/复杂改动
@@ -497,21 +693,35 @@ export const QualityGate = async ({ directory } = {}) => {
           // 修复后重新标记完成 → 此处自动再审；通过才置 dualReviewed。
           // 轮次上限（MAX_REVIEW_ROUNDS）后仍不过 → 放行并回注残余项（升级人工，防死循环）。
           // 无法解析的裁决（上游失败等）→ fail-open 不阻断（质量降质但不卡交付）。
-          const allDone = todos.length > 0 && todos.every((t) => t?.status === "completed");
+          // P0-2 素材缓存：审查素材 sha1 与上次完全一致 → 复用既有裁决，不为同一份 diff
+          // 重烧 30s~2min；diff/文件清单有任何变化即失效。
           // 与 before 钩子同一口径：高风险文件，或含代码改动且跨 ≥3 文件（纯文档不烧审查费）
           const complex = s.highRisk.size > 0 || (codeEdits.length > 0 && s.edited.size >= 3);
           if (allDone && complex && !s.dualReviewed && !hasAcceptMarker(s)) {
             const editedList = [...s.edited].slice(0, 30).join("\n");
             const subject = await reviewSubject(projectRoot, s, editedList);
-            const reviewT0 = Date.now();
-            // 钩子无 ctx.metadata 通道：runDualReview 内部已把进度标题降级 stderr
-            // （阶段切换立即输出、5s 节流），此处只补一条总起提示，避免「静默卡住」观感
-            console.error(`${TAG} 层 3 双向审查执行中（正反两路异源模型 + 裁决，预计 30s~2min）…`);
-            try {
-              const verdict = await runDualReview(subject);
+            const subjectKey = createHash("sha1").update(subject).digest("hex");
+            let verdict = null;
+            if (s.reviewCache && s.reviewCache.key === subjectKey) {
+              verdict = s.reviewCache.verdict;
+              console.error(`${TAG} 层 3 审查素材与上次完全一致（hash 命中），复用既有裁决，不重复烧审查`);
+              appendToResult(output, `\n${TAG} 层 3 审查素材与上次完全一致（hash 命中），复用既有裁决，不重复烧审查。`);
+            } else {
+              const reviewT0 = Date.now();
+              // 钩子无 ctx.metadata 通道：runDualReview 内部已把进度标题降级 stderr
+              // （阶段切换立即输出、5s 节流），此处只补一条总起提示，避免「静默卡住」观感
+              console.error(`${TAG} 层 3 双向审查执行中（正反两路异源模型 + 裁决，预计 30s~2min）…`);
+              try {
+                verdict = await runDualReview(subject);
+                const reviewSecs = ((Date.now() - reviewT0) / 1000).toFixed(1);
+                appendToResult(output, `\n${TAG} 层 3 双向审查（自动执行，正反异源模型+裁决，耗时 ${reviewSecs}s）\n${verdict}`);
+                s.reviewCache = { key: subjectKey, verdict };
+              } catch (e) {
+                console.error(TAG, "auto dual review failed:", e?.message ?? e);
+              }
+            }
+            if (verdict != null) {
               const v = parseReviewVerdict(verdict);
-              const reviewSecs = ((Date.now() - reviewT0) / 1000).toFixed(1);
-              appendToResult(output, `\n${TAG} 层 3 双向审查（自动执行，正反异源模型+裁决，耗时 ${reviewSecs}s）\n${verdict}`);
               if (v.inconclusive) {
                 // 上游失败/一路阵亡：不阻断（fail-open），但一次为限防重复烧钱
                 s.dualReviewed = true;
@@ -538,8 +748,6 @@ export const QualityGate = async ({ directory } = {}) => {
                 s.reviewPending = null;
                 appendToResult(output, `\n${TAG} ✅ 审查通过，闭环结束。`);
               }
-            } catch (e) {
-              console.error(TAG, "auto dual review failed:", e?.message ?? e);
             }
           }
           if (notes.length > 0) {
