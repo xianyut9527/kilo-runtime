@@ -45,13 +45,11 @@
   // 属运行时状态非配置；install 不清理清单外文件），/evolve 定期修剪并升格成熟条目
   "instructions": [
     "__KILO_HOME__/.config/kilo/INSTRUCTIONS.md",
-    "__KILO_HOME__/.config/kilo/GLOBAL-NOTES.md"
+    "__KILO_HOME__/.config/kilo/GLOBAL-NOTES.md",
   ],
   // 技能目录：agent 可按需加载领域知识（技能增删无需改配置）
   "skills": {
-    "paths": [
-      "__KILO_HOME__/.agents/skills"
-    ]
+    "paths": ["__KILO_HOME__/.agents/skills"],
   },
 
   // ── 智能体路由（前 6 个是内置 agent 的模型覆盖，verify 是自定义）──
@@ -73,16 +71,16 @@
   // 思考强度（模型级 variants 已注册 low/medium/high/max）。
   "agent": {
     "code": {
-      "model": "hx/glm-5.3-flash"
+      "model": "hx/glm-5.3-flash",
     },
     "plan": {
-      "model": "hx/kimi-k2.6"
+      "model": "hx/kimi-k2.6",
     },
     "general": {
-      "model": "hx/glm-5.2"
+      "model": "hx/glm-5.2",
     },
     "explore": {
-      "model": "hx/minimax-m3"
+      "model": "hx/minimax-m3",
     },
     "compaction": {
       // 压缩是摘要任务，不需要深度推理。实测 kilo.db 30 条 compaction 全跑 variant=max，
@@ -92,10 +90,10 @@
       // 否则 compaction 继续继承会话当前模型+variant，覆盖不生效。
       // 钉 glm-5.3-flash：样本内空响应最少（11 跑 0 空），且压缩不再随会话模型漂移。
       "model": "hx/glm-5.3-flash",
-      "variant": "low"
+      "variant": "low",
     },
     "orchestrator": {
-      "model": "hx/kimi-k2.6"
+      "model": "hx/kimi-k2.6",
     },
     "verify": {
       "mode": "subagent",
@@ -125,10 +123,10 @@
           "git clean*": "deny",
           "npm install*": "deny",
           "npm ci*": "deny",
-          "npm publish*": "deny"
-        }
-      }
-    }
+          "npm publish*": "deny",
+        },
+      },
+    },
   },
 
   // ── 上下文压缩（长会话不丢关键信息）─────────────────────────────
@@ -144,7 +142,7 @@
     // 给压缩过程本身留 3.2 万 token 缓冲（防溢出）
     "reserved": 32000,
     // 触发阈值（7.6.2 官方字段）
-    "threshold_percent": 85
+    "threshold_percent": 85,
   },
 
   // ── 工具输出截断（防单条输出撑爆上下文）─────────────────────────
@@ -152,7 +150,7 @@
   // 51200 让大输出常驻上下文，每轮 prefill 重复付费；落盘的文件模型需要时可重读，无损。
   "tool_output": {
     "max_lines": 2000,
-    "max_bytes": 20480
+    "max_bytes": 20480,
   },
 
   // ── 文件监视忽略（watcher 不盯这些，省 CPU）────────────────────
@@ -166,13 +164,13 @@
       "**/coverage/**",
       ".venv/**",
       "build/**",
-      "target/**"
-    ]
+      "target/**",
+    ],
   },
 
   // ── git 提交信息生成规则（中文 commit）──────────────────────────
   "commit_message": {
-    "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
+    "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）",
   },
 
   // ── 权限（安全核心，语义实测与官方文档不同，注意两条）────────────
@@ -246,7 +244,7 @@
       "python *": "allow",
       // 递归强删：绝对禁止（插件层还会按内容二次拦截）
       "rm -rf *": "deny",
-      "Remove-Item -Recurse -Force *": "deny"
+      "Remove-Item -Recurse -Force *": "deny",
     },
     // 只读类工具全放行
     "read": "allow",
@@ -269,7 +267,7 @@
       "**/pnpm-lock.yml": "deny",
       "bun.lockb": "deny",
       "*.lock": "deny",
-      "**/*.lock": "deny"
+      "**/*.lock": "deny",
     },
     // 访问工作目录之外：要确认
     "external_directory": "ask",
@@ -305,7 +303,7 @@
     // notebook 只读放行，写/执行要确认
     "notebook_read": "allow",
     "notebook_edit": "ask",
-    "notebook_execute": "ask"
+    "notebook_execute": "ask",
   },
 
   // ── MCP 服务器（外挂工具集，工具名前缀 = 服务器名）───────────────
@@ -315,38 +313,25 @@
     // 浏览器自动化（导航/截图/表单/快照）——低频，按需开
     "playwright": {
       "type": "local",
-      "command": [
-        "npx",
-        "-y",
-        "@playwright/mcp@0.0.38"
-      ],
+      "command": ["npx", "-y", "@playwright/mcp@0.0.38"],
       "enabled": false,
-      "timeout": 30000
+      "timeout": 30000,
     },
     // 最新库文档查询（防模型用过期 API）——低频，按需开
     "context7": {
       "type": "local",
-      "command": [
-        "npx",
-        "-y",
-        "@upstash/context7-mcp"
-      ],
+      "command": ["npx", "-y", "@upstash/context7-mcp"],
       "enabled": false,
-      "timeout": 30000
+      "timeout": 30000,
     },
     // 代码知识图谱：impact 影响面分析/依赖查询。默认关闭——只对建过索引的项目有用，
     // 未索引项目白占启动进程和 prompt 体积；改已索引项目前 /mcps 现开
     "gitnexus": {
       "type": "local",
-      "command": [
-        "npx",
-        "-y",
-        "gitnexus@1.6.12",
-        "mcp"
-      ],
+      "command": ["npx", "-y", "gitnexus@1.6.12", "mcp"],
       "enabled": false,
-      "timeout": 30000
-    }
+      "timeout": 30000,
+    },
   },
 
   // ── 主子代理共享任务看板（7.7.6 从 experimental 升格为顶层键）──
@@ -359,7 +344,7 @@
     "task_model_selection": true,
     "batch_tool": true,
     // OpenTelemetry 关闭
-    "openTelemetry": false
+    "openTelemetry": false,
   },
 
   // ── 自研 provider：hx（带四级故障降级）──────────────────────────
@@ -371,7 +356,7 @@
       "npm": "file:///__KILO_CONFIG__/provider/hx-failover",
       "options": {
         // 上游 OpenAI 兼容端点
-        "baseURL": "http://127.0.0.1:9527/v1",
+        "baseURL": "https://llamas.nat100.top/v1",
         // MoA/dual_review 分析调用总时长上限（kilo.json options.timeout 唯一消费方 = 这两个工具）。
         // ⚠️ 主模型循环不消费本键（provider/hx-failover 不读它，2026-09-21 DB 实证：
         // 27 例 >120s 的 step-finish 正常完成，120s 从未生效于主链路；主链路只有 chunkTimeout 空闲看门狗）。
@@ -401,26 +386,23 @@
               "glm-5.3-flash",
               "kimi-k2.6",
               "deepseek-v4.1-flash",
-              "glm-5.2"
-            ]
-          }
+              "glm-5.2",
+            ],
+          },
         },
         // moa 工具配置（plugin/moa.ts 读这里）：高风险判断时
         // 2 个参考模型独立分析 → kimi 聚合交叉结论
         "moa": {
-          "references": [
-            "glm-5.2",
-            "deepseek-v4.1-flash"
-          ],
-          "aggregator": "kimi-k2.6"
+          "references": ["glm-5.2", "deepseek-v4.1-flash"],
+          "aggregator": "kimi-k2.6",
         },
         // dual_review 工具配置（plugin/dual-review.ts 读这里）：三层交付检查层 3，
         // quality-gate 在交付节点直调（正反异源并行 → 第三方裁决）；三模型均与主执行模型异源
         "dual_review": {
           "positive": "deepseek-v4.1-flash",
           "negative": "glm-5.2",
-          "aggregator": "kimi-k2.6"
-        }
+          "aggregator": "kimi-k2.6",
+        },
       },
       // 模型注册表（catalog：能力/上下文窗口/输出上限）
       // variants 必须显式声明：hx 的 npm 是 file:/// 本地包，不命中
@@ -435,12 +417,12 @@
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
             "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" }
+            "max": { "reasoningEffort": "max" },
           },
           "limit": {
             "context": 200000,
-            "output": 32000
-          }
+            "output": 32000,
+          },
         },
         "deepseek-v4.1-flash": {
           "reasoning": true,
@@ -448,21 +430,16 @@
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
             "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" }
+            "max": { "reasoningEffort": "max" },
           },
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"],
           },
           "limit": {
             "context": 200000,
-            "output": 32000
-          }
+            "output": 32000,
+          },
         },
         "glm-5.2": {
           "reasoning": true,
@@ -470,12 +447,12 @@
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
             "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" }
+            "max": { "reasoningEffort": "max" },
           },
           "limit": {
             "context": 200000,
-            "output": 32000
-          }
+            "output": 32000,
+          },
         },
         "glm-5.3": {
           "reasoning": true,
@@ -483,34 +460,29 @@
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
             "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" }
+            "max": { "reasoningEffort": "max" },
           },
           "limit": {
             "context": 200000,
-            "output": 32000
-          }
-        },        
+            "output": 32000,
+          },
+        },
         "glm-5.3-flash": {
           "reasoning": true,
           "variants": {
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
             "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" }
+            "max": { "reasoningEffort": "max" },
           },
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"],
           },
           "limit": {
             "context": 200000,
-            "output": 32000
-          }
+            "output": 32000,
+          },
         },
         "kimi-k2.6": {
           "reasoning": true,
@@ -518,21 +490,16 @@
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
             "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" }
+            "max": { "reasoningEffort": "max" },
           },
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"],
           },
           "limit": {
             "context": 200000,
-            "output": 32000
-          }
+            "output": 32000,
+          },
         },
         "minimax-m3": {
           "reasoning": true,
@@ -540,23 +507,18 @@
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
             "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" }
+            "max": { "reasoningEffort": "max" },
           },
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"],
           },
           "limit": {
             "context": 200000,
-            "output": 32000
-          }
-        }
-      }
-    }
-  }
+            "output": 32000,
+          },
+        },
+      },
+    },
+  },
 }
