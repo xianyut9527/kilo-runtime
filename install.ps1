@@ -296,6 +296,11 @@ foreach ($w in $toWrite) {
     [System.IO.File]::WriteAllText($tmpPath, $w.NewText, [System.Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $tmpPath -Destination $w.DstPath -Force
     $wrote++
+    # 部署≠生效提醒（2026-09-24 ⑥）：Kilo 不热加载插件——运行中的旧进程（含旧 Kilo/VS Code
+    # 窗口会话）仍执行旧逻辑，须重载窗口才生效；quality-gate ⑥ 检测也会在交付节点告警。
+    if ($w.Dst -match '^plugin[\\/].+\.tsx?$' -or $w.Dst -match '^plugin[\\/]') {
+        $script:pluginWritten = $true
+    }
 }
 
 # ---------- 多余文件检测（漂移的另一面：部署目录里清单管不到的文件） ----------
@@ -328,6 +333,11 @@ if ($strayList.Count -gt 0) {
 Write-Host "  model    : $($cfg.model)"
 Write-Host "  small    : $($cfg.small_model)"
 Write-Host "  agents   : $(($cfg.agent.PSObject.Properties.Name) -join ', ')"
+# ⑥ 部署≠生效提醒：只在真实写盘且含 plugin 文件时提示（DryRun/Check/纯文档下发不打扰）
+if (-not $DryRun -and -not $Check -and $script:pluginWritten) {
+    Write-Host ''
+    Write-Host "[INSTALL] 提示：本次更新了 plugin/ 文件。Kilo 不热加载插件——运行中的 Kilo/VS Code 窗口仍执行旧逻辑，重载窗口后新版才生效（quality-gate ⑥ 检测亦会在交付节点告警）。"
+}
 
 if ($Check -and ($changed -gt 0 -or $strayList.Count -gt 0)) {
     Write-Host ''

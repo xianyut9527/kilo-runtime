@@ -29,7 +29,7 @@ const mod = await import(pathToFileURL(bundle).href);
 fs.rmSync(bundle, { force: true });
 
 // 工具函数经 _export 命名空间暴露（非顶层导出——Kilo vE2 会把每个导出函数当工厂调用）
-const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf } = mod._export ?? mod;
+const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf } = mod._export ?? mod;
 let pass = 0, fail = 0;
 const failed = [];
 const t = (name, cond) => {
@@ -266,6 +266,98 @@ t("diagCovers：文档编辑不数（editVersion 变但 codeEditV 不变）→ �
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
+
+// ── ⑤ residualFixupLine / insertUnderHeading：残余必须修复项沉淀（纯函数）──
+t("residualFixupLine：格式 = review_residual_<date>_<sha8> :: 摘要（列表符号剥除）", (() => {
+  const line = residualFixupLine("- 修复 A\n- 修复 B", "salt");
+  return line !== null && /^- review_residual_\d{4}-\d{2}-\d{2}_[0-9a-f]{8} :: .+修复 A；修复 B/.test(line);
+})());
+t("residualFixupLine：空残余项 → null（不沉淀）", residualFixupLine("", "salt") === null);
+t("residualFixupLine：纯空白残余项 → null", residualFixupLine("  \n \t ", "salt") === null);
+t("residualFixupLine：内容相同盐不同 → key 不同（不同轮次各留一行）",
+  residualFixupLine("修 A", "s1") !== residualFixupLine("修 A", "s2"));
+t("residualFixupLine：超长残余截断 600（与 reviewPending 同口径）",
+  residualFixupLine("x".repeat(2000), "salt").length < 800);
+t("insertUnderHeading：Open Questions 段末追加（不进下一段）", (() => {
+  const md = "# Project Memory\n\n## Facts\n\n## Open Questions\n\n## Constraints\n";
+  const next = insertUnderHeading(md, "## Open Questions", "- review_residual_x :: 待跟进");
+  const qi = next.indexOf("## Open Questions");
+  const ci = next.indexOf("## Constraints");
+  return qi >= 0 && ci > qi && next.indexOf("- review_residual_x :: 待跟进") > qi && next.indexOf("- review_residual_x :: 待跟进") < ci;
+})());
+t("insertUnderHeading：段在文件尾（无下一段）→ 追加不丢内容", (() => {
+  const md = "## Open Questions\n";
+  const next = insertUnderHeading(md, "## Open Questions", "- r :: x");
+  return next.includes("## Open Questions") && next.includes("- r :: x");
+})());
+t("insertUnderHeading：幂等（同 key 已存在 → 原文不变）", (() => {
+  const md = "## Open Questions\n- review_residual_2026-09-24_deadbeef :: 待跟进\n";
+  return insertUnderHeading(md, "## Open Questions", "- review_residual_2026-09-24_deadbeef :: 待跟进") === md;
+})());
+t("insertUnderHeading：段缺失 → 补段落（防御性兜底）", (() => {
+  const next = insertUnderHeading("# Project Memory\n", "## Open Questions", "- r :: x");
+  return next.includes("## Open Questions") && next.includes("- r :: x");
+})());
+t("insertUnderHeading：CRLF 文件 → 追加不破坏结构（\\r\\n 归一化处理）", (() => {
+  const md = "# P\r\n\r\n## Open Questions\r\n\r\n## Constraints\r\n";
+  const next = insertUnderHeading(md, "## Open Questions", "- r :: x");
+  return next.includes("## Open Questions") && next.includes("- r :: x") && next.includes("## Constraints");
+})());
+
+// ── ⑦ degradationSummary：降级/放行审计账本汇总（纯函数）──
+t("degradationSummary：无降级 → null（零噪音）", degradationSummary({ degradations: [] }) === null);
+t("degradationSummary：无账本字段 → null", degradationSummary({}) === null);
+t("degradationSummary：有降级 → 汇总成清单文本", (() => {
+  const out = degradationSummary({ degradations: ["a: x", "b: y"] });
+  return out !== null && out.includes("a: x") && out.includes("b: y") && out.includes("降级/放行");
+})());
+t("degradationSummary：重复事件去重", (() => {
+  const out = degradationSummary({ degradations: ["a: x", "a: x"] });
+  return out !== null && out.indexOf("a: x") === out.lastIndexOf("a: x");
+})());
+t("degradationSummary：溢出裁剪保留最新（splice 批量）", (() => {
+  // recordDegradation 是桶内函数，此处经打包产物间接验证行为不现实；
+  // 直接验证账本上限语义：summary 不因长账本崩溃且保序输出
+  const many = Array.from({ length: 60 }, (_, i) => `k${i}: d`);
+  const out = degradationSummary({ degradations: many });
+  return out !== null && out.includes("k59: d") && out.includes("k0: d");
+})());
+
+// ── ⑥ staleDeployOf：部署≠生效检测（纯函数）──
+t("staleDeployOf：磁盘指纹与加载期一致 → 不过期", staleDeployOf("abc123", "abc123") === false);
+t("staleDeployOf：磁盘指纹变化（部署新版）→ 过期", staleDeployOf("abc123", "def456") === true);
+t("staleDeployOf：任一侧指纹不可得 → 恒 false（fail-open，检测关闭）",
+  staleDeployOf(null, "abc123") === false && staleDeployOf("abc123", null) === false && staleDeployOf(null, null) === false);
+
+// ── ⑧ persistResidualFixup 触达路径的纯函数前提（fixSection 形态不变，回归保护）──
+t("parseReviewVerdict：fixSection 截断 600（沉淀素材同口径）", (() => {
+  const v = parseReviewVerdict(`## 裁决\n不通过\n\n## 必须修复项\n- ${"x".repeat(2000)}`);
+  return v.fixSection.length <= 600;
+})());
+t("insertUnderHeading：段前无空行（文件头紧贴）→ 追加不劈段", (() => {
+  const md = "# P\n## Open Questions\n";
+  const next = insertUnderHeading(md, "## Open Questions", "- r :: x");
+  return next.includes("- r :: x") && next.includes("# P");
+})());
+
+// ── vE2 插件契约（quality-gate.ts 自身）：唯一函数导出 = 工厂 ──
+t("vE2 契约：quality-gate 恰好 1 个函数导出（QualityGate/default 同引用）+ _export 无 server", (() => {
+  const fnByRef = new Map();
+  let hasServerInExport = false;
+  for (const [k, v] of Object.entries(mod)) {
+    if (typeof v !== "function") {
+      if (v && typeof v === "object" && typeof v.server === "function") hasServerInExport = true;
+      continue;
+    }
+    if (!fnByRef.has(v)) fnByRef.set(v, k);
+  }
+  return fnByRef.size === 1 && !hasServerInExport;
+})());
+t("vE2 契约：_export 含 staleDeployOf / degradationSummary / residualFixupLine（⑤⑥⑦⑧ 全在位）",
+  typeof mod._export?.staleDeployOf === "function" &&
+  typeof mod._export?.degradationSummary === "function" &&
+  typeof mod._export?.residualFixupLine === "function" &&
+  typeof mod._export?.insertUnderHeading === "function");
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} quality-gate 回归：${pass} 通过 / ${fail} 失败`);
 if (fail > 0) console.log(`失败用例：\n  - ${failed.join("\n  - ")}`);

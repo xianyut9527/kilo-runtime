@@ -26,6 +26,16 @@
 //   闭环硬约束（W3.11）：裁决存在「必须修复项」→ 阻断交付（before 钩子，修复须有新编辑，
 //   重标记即自动复审，直到裁决通过）；自动审查上限 2 轮，超限放行并回注残余项升级人工确认；
 //   接受残余风险须显式 echo "review-accepted: 原因"（可审计），防死循环烧钱。
+// ⑤⑥⑦⑧ 审计闭环（2026-09-24）：⑤ 残余必须修复项自动沉淀进项目记忆 Open Questions
+//   （review_residual_<date>_<sha8> 行，与 kilo_memory_recall token 检索兼容）；
+//   ⑥ 部署≠生效检测——插件代码部署更新后，运行中的旧进程仍执行内存里的旧逻辑
+//   （plugin_deploy_no_hot_reload 实证），交付节点以内容指纹节流比对磁盘，发现自身
+//   过期即告警升级人工（fail-open 不拦截，部署动作本身合法）；
+//   ⑦ 会话内全部 fail-open/显式放行事件记 s.degradations 账本，交付节点一次性汇总回注——
+//   覆盖所有静默降级分支（诊断工具异常/审查链路异常/证据降级），「查了也看不见」变可见；
+//   ⑧ 二轮起审查不可解析（上游阵亡）或 runDualReview 抛错时，前轮未确认修复的
+//   必须修复项不再丢失——沉淀项目记忆 + 入账本后按未审查交付。
+//   以上全部零模型调用、纯本地 fs/字符串操作，不增加交付延迟（⑥ 内容比对 <1ms、节流限频）。
 //
 // 设计红线：
 //   - fail-closed 仅两处：层 2 测试缺口门禁与层 3 审查闭环（均带显式逃生门），
@@ -51,6 +61,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 // runDualReview 走 hook 内动态 import——模块级爆炸半径隔离（非注册表原因：
 // vE2 只迭代各插件文件自身的导出，import 链不参与注册，静态 import 不会"污染"什么）。
 // 真实价值：静态 import 会把 dual-review 及其依赖链（lib/hx-client）的模块求值提前到
@@ -66,6 +77,20 @@ try {
 } catch {
   DATA_DIR = ".";
 }
+
+// ⑥ 部署≠生效检测（2026-09-24 查漏补缺）：Kilo 不热加载插件——install.ps1 下发新版后，
+// 运中的旧进程仍执行旧逻辑（plugin_deploy_no_hot_reload 实证：⑤⑦ 落地当轮残余项未沉淀即此因）。
+// 加载期记自身指纹（源码 sha1，经 fileURLToPath 定位——URL 对象直读在部分平台有边缘兼容问题，
+// 2026-09-24 层 3 终审反向审查捕获：new URL(x, "url") 非法 base 必抛 → 指纹恒 null → 检测成死代码）；
+// 交付节点按会话节流复读磁盘比对——内容指纹而非 mtime，幂等重装（内容不变）不会误报；
+// 发现过期告警 stderr + 降级账本，fail-open 不拦截。指纹不可得（打包/内联场景）→ 检测静默关闭。
+let selfFingerprint = null;
+try {
+  selfFingerprint = createHash("sha1").update(fs.readFileSync(fileURLToPath(import.meta.url), "utf8")).digest("hex");
+} catch {
+  selfFingerprint = null; // 读不到自身（打包/内联场景）→ 检测静默关闭
+}
+const STALE_DEPLOY_CHECK_INTERVAL_MS = 5 * 60_000; // 每会话至少 5min 才复检一次（节流为防极端高频 todowrite）
 
 const TAG = "[quality-gate]";
 
@@ -282,6 +307,178 @@ function hasSkipMarker(s) {
   return (s.commands ?? []).some((c) => VERIFY_SKIP_RE.test(cmdText(c)));
 }
 
+// ── ⑤ 残余必须修复项沉淀（2026-09-24 审计闭环）────────────────
+// 轮次上限放行 / review-accepted 带残余项交付时，fixSection 已随 todowrite 回注，
+// 但回注是会话内瞬态信号——关窗即忘。此处把残余项落进项目记忆 project.md 的
+// ## Open Questions 段（kilo_memory_recall 可检索的持久层），下次会话自动注入，
+// 由用户/后续会话决定处理；插件不主动回滚记忆文件（写入与 Kilo 记忆归档格式同构：
+// 段落下一行一条 `- key :: text`，kilo_memory_recall 按 token 检索天然兼容）。
+// 记忆根定位复用 memory-bootstrap 的 canonicalRoot 布局：<dataDir>/memory/<dir>/
+// manifest.json 的 canonical 字段 == projectRoot 时视为本项目记忆根（worktree 归并主仓）。
+// 全程 try-catch fail-open：沉淀失败只打 stderr 日志，绝不影响交付主流程。
+// 纯函数（前 3 个）经 _export 暴露给离线测试。
+
+function memoryRootFor(root) {
+  try {
+    const memDir = path.join(DATA_DIR, "memory");
+    if (!fs.existsSync(memDir)) return null;
+    // 仅 canonical realpath 精确匹配（2026-09-24 层 3 审查必须修复项）：
+    // basename 前缀兜底会让 proj / proj-v2 相似目录误命中 → 残余项串号写进
+    // 错误项目的记忆。匹配失败即返回 null 放弃沉淀（宁可不沉淀，不串号）。
+    let canonical = null;
+    try { canonical = fs.realpathSync.native(root); } catch { return null; }
+    for (const name of fs.readdirSync(memDir)) {
+      const mf = path.join(memDir, name, "manifest.json");
+      let m;
+      try { m = JSON.parse(fs.readFileSync(mf, "utf8")); } catch { continue; }
+      if (m?.canonical === canonical) return path.join(memDir, name);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// 生成沉淀行：- review_residual_2026-09-24_a1b2c3d4 :: <fixSection 单行化>（截 600 与 reviewPending 同口径）
+// key 带日期+素材指纹：同会话重复触发只追加一次（指纹相同→视为已沉淀，由调用方比对），
+// 不同轮次内容变化 → 指纹变 → 追加新行，历史不覆盖（审计线索保留）。
+function residualFixupLine(fixSection, salt) {
+  const raw = String(fixSection ?? "")
+    // 每行剥列表符号：沉淀行自身是「- key :: text」形态，嵌套列表符号会污染记忆行
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim())
+    .filter(Boolean)
+    .join("；");
+  // 按码点截断（UTF-16 slice 会劈裂 surrogate pair → 记忆文件乱码）
+  const body = Array.from(raw).slice(0, 600).join("");
+  if (!body) return null;
+  const date = new Date().toISOString().slice(0, 10);
+  const h = createHash("sha1").update(`${salt}\n${body}`).digest("hex").slice(0, 8);
+  return `- review_residual_${date}_${h} :: 审查残余必须修复项（层 3 轮次上限放行/显式接受，待跟进）:: ${body}`;
+}
+
+// 在 markdown 的 ## <heading> 段末尾追加一行（保持段落结构：插在下一个 ## 或文件尾之前）
+function insertUnderHeading(md, heading, line) {
+  const text = String(md ?? "");
+  const h = String(heading ?? "");
+  if (!h.startsWith("##")) return text + `\n${line}\n`;
+  // 段定位兼容文件头（段前无换行）与段前有内容两种形态
+  let i = text.indexOf(`\n${h}`);
+  if (i < 0 && text.startsWith(h)) i = 0;
+  if (i < 0) return `${text}\n\n${h}\n\n${line}\n`; // 段缺失 → 补段落（writeIfAbsent 脚手架已含，防御性兜底）
+  const after = i + h.length + (i === 0 ? 0 : 1);
+  const end = text.indexOf("\n## ", after);
+  const seg = end < 0 ? text.slice(after) : text.slice(after, end);
+  if (seg.includes(line)) return text; // 幂等：同 key 已存在不重复追加
+  const insertAt = end < 0 ? text.length : end;
+  return `${text.slice(0, insertAt)}\n${line}${text.slice(insertAt)}`;
+}
+
+// 沉淀入口（fail-open）：写入 <memRoot>/project.md 的 ## Open Questions 段。
+// 并发 lost update 防护（2026-09-24 层 3 二轮审查必须项处置）：tmp+rename 只保证
+// 单次写原子，多会话并发读-改-写仍可能互相覆盖。采用「写后回读验证 + 有界重试」：
+// rename 后立即回读确认自己的行存活，丢失（被并发写者覆盖）→ 基于最新内容重合再写，
+// 3 次封顶放弃（fail-open，残余内容另有 ⑦ 账本与工具回注双通道兜底，不丢可见性）。
+// 不上文件锁：审计侧通道的复杂度/收益不成立（gate_scope_narrowing 教训）。
+async function persistResidualFixup(fixSection) {
+  try {
+    const memRoot = memoryRootFor(projectRoot);
+    if (!memRoot) {
+      // ⑤ 排查线索（此前静默）：记忆根定位失败 ≠ 正常情况——原生记忆未启用/manifest 缺失
+      console.error(`${TAG} 残余项沉淀跳过：未定位到本项目记忆根（原生记忆未启用或 manifest 不含本路径）`);
+      return false;
+    }
+    const file = path.join(memRoot, "project.md");
+    const line = residualFixupLine(fixSection, projectRoot);
+    if (!line) {
+      console.error(`${TAG} 残余项沉淀跳过：fixSection 单行化后为空`);
+      return false;
+    }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const md = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+      const next = insertUnderHeading(md, "## Open Questions", line);
+      if (next === md) return true; // 已沉淀过（幂等）
+      // 原子写：Node 在 Windows 走 MoveFileExW+REPLACE_EXISTING，rename 直接覆盖
+      // （windows_rename_overwrite_rotation 教训：先 rm 反而引入丢档窗口）
+      const tmp = `${file}.qg-tmp-${process.pid}-${Date.now() % 100000}-${attempt}`;
+      fs.writeFileSync(tmp, next, "utf8");
+      fs.renameSync(tmp, file);
+      const after = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+      if (after.includes(line)) {
+        console.error(`${TAG} 残余必须修复项已沉淀进项目记忆 Open Questions（review_residual）`);
+        return true;
+      } // 行丢失 = 并发写者以旧内容覆盖 → 重试（下次循环从最新内容重合）
+    }
+    console.error(`${TAG} 残余项沉淀连续 3 次遇并发覆盖放弃（fail-open，内容仍见降级账本与交付回注）`);
+    return false;
+  } catch (e) {
+    console.error(TAG, "残余项沉淀失败（fail-open，不影响交付）:", e?.message ?? e);
+    return false;
+  }
+}
+
+// 沉淀安全包装（终审必须修复项）：persistResidualFixup 内部虽全 try-catch，防御性隔离
+// await 点——任何意外抛错都不得跳过调用方的降级入账与 reviewPending 清理（false=未沉淀）
+async function persistResidualSafe(fixSection) {
+  try {
+    return await persistResidualFixup(fixSection);
+  } catch (e) {
+    console.error(TAG, "persistResidualFixup 意外抛错（已隔离）:", e?.message ?? e);
+    return false;
+  }
+}
+
+// ── ⑦ 降级/放行审计账本（2026-09-24 审计闭环）──────────────────
+// 会话内所有 fail-open / 显式放行事件记账（s.degradations），交付节点一次性回注。
+// 动机：各通道放行时的回注散落在不同 todowrite 结果里，模型容易只见单条；
+// 交付节点汇总一条「本次交付带了哪些降级」的完整清单，把「查了也看不见」变可见。
+// 记账零成本（push 一行字符串），回注纯本地拼接，无任何模型调用——不拖慢交付。
+const MAX_DEGRADATIONS = 40;
+function recordDegradation(s, kind, detail) {
+  try {
+    if (!Array.isArray(s.degradations)) s.degradations = [];
+    const entry = `${kind}: ${String(detail ?? "").slice(0, 200)}`;
+    if (s.degradations.includes(entry)) return; // 同事件不重复记（幂等）
+    s.degradations.push(entry);
+    // 突发大超限时一次裁到位（splice），shift 逐个淘汰在批量记账场景会反复越界
+    if (s.degradations.length > MAX_DEGRADATIONS) s.degradations.splice(0, s.degradations.length - MAX_DEGRADATIONS);
+  } catch { /* 记账失败静默 */ }
+}
+
+// 汇总（纯函数）：账本 → 交付回注文本；无降级返回 null（零噪音）
+function degradationSummary(s) {
+  const list = s?.degradations;
+  if (!Array.isArray(list) || list.length === 0) return null;
+  const uniq = [...new Set(list)];
+  return `本次交付包含以下降级/放行（逐条已显式留痕，交付说明须如实引用）：\n${uniq.map((x) => `  - ${x}`).join("\n")}`;
+}
+
+// ── ⑥ 部署≠生效检测（2026-09-24 查漏补缺）──────────────────────
+// 纯函数（经 _export 暴露离线回归）：磁盘当前插件源码指纹 vs 加载期指纹。
+// 内容指纹而非 mtime：幂等重装（install 幂等跳过/touch）不误报；指纹不可得（任一侧
+// 读失败/打包内联场景）→ 恒 false 静默关闭（fail-open，绝不因检测自身故障拦截交付）。
+function staleDeployOf(diskFingerprint, loadedFingerprint) {
+  if (!diskFingerprint || !loadedFingerprint) return false;
+  return diskFingerprint !== loadedFingerprint;
+}
+
+// 交付节点入口（按会话节流——进程级单变量会让并发会话互相静默，终审建议项）：
+// 过期 → stderr 告警 + 降级账本（升级人工重载），fail-open。
+function probeStaleDeploy(s) {
+  try {
+    const now = Date.now();
+    if (now - (s.lastStaleCheck ?? 0) < STALE_DEPLOY_CHECK_INTERVAL_MS) return; // 会话内节流
+    s.lastStaleCheck = now;
+    if (!selfFingerprint) return; // 自身指纹不可得 → 检测关闭
+    let disk = null;
+    try { disk = createHash("sha1").update(fs.readFileSync(fileURLToPath(import.meta.url), "utf8")).digest("hex"); } catch { return; }
+    if (staleDeployOf(disk, selfFingerprint)) {
+      console.error(`${TAG} 部署≠生效：磁盘插件代码已更新，但本进程仍执行旧逻辑——本次交付的检查口径可能过期，请重载 Kilo/VS Code 窗口后复核关键交付`);
+      recordDegradation(s, "插件部署后未重载（⑥ 部署≠生效）", "运行中进程执行旧检查逻辑，交付口径可能过期——建议重载后复核");
+    }
+  } catch { /* 检测失败静默（fail-open） */ }
+}
+
 // ── 层 3 闭环（审查未通过 → 阻断交付，修复后自动再审，直到通过或升级人工）──
 const MAX_REVIEW_ROUNDS = 2; // 自动审查轮次上限：超限放行并回注残余项（升级人工），防死循环烧钱
 const REVIEW_ACCEPT_RE = /review-accepted\s*:/i;
@@ -359,7 +556,7 @@ function distStaleOf(root, pkg, srcFiles) {
     return { stale: newestEdit >= distMtime, missing: false };
   } catch (e) {
     console.error(TAG, "distStaleOf 探测失败（fail-open 放行）：", e?.message ?? e);
-    return { stale: false, missing: false }; // fs 异常 fail-open 但必留日志，不静默
+    return { stale: false, missing: false, error: String(e?.message ?? e).slice(0, 120) }; // fs 异常 fail-open 但必留日志，不静默
   }
 }
 
@@ -493,12 +690,18 @@ function runTscOnce(dir) {
 }
 
 async function tsDiagnose(file, dir, s) {
-  if (!(await probeTool("tsc"))) return [];
+  if (!(await probeTool("tsc"))) {
+    recordDegradation(s, "静态检查缺位（tsc 不可用）", "工具探测失败，TS 诊断静默跳过——交付前建议人工 tsc --noEmit 复核");
+    return [];
+  }
   if (tsconfigMtimeOf(dir) === null) return []; // 无 tsconfig（非 TS 项目）→ 跳过
   const mtimeMs = fileMtime(file);
   const cached = s.fileChecks.get(file);
   if (cached && cached.kind === "ts" && cached.mtimeMs === mtimeMs) return cached.diags;
-  const { out } = await runTscOnce(dir);
+  const { err, out } = await runTscOnce(dir);
+  if (err) {
+    recordDegradation(s, "静态检查异常（tsc 运行失败）", `${file.split(/[\\/]/).pop()}：${String(err?.message ?? err).slice(0, 80)}——诊断可能缺失`);
+  }
   const lines = String(out ?? "").split(/\r?\n/).filter((l) => /\((\d+),(\d+)\)|error TS\d+/.test(l));
   const diags = lines.filter((l) => l.includes(file));
   s.fileChecks.set(file, { kind: "ts", mtimeMs, diags });
@@ -506,11 +709,17 @@ async function tsDiagnose(file, dir, s) {
 }
 
 async function ruffDiagnose(file, dir, s) {
-  if (!(await probeTool("ruff"))) return [];
+  if (!(await probeTool("ruff"))) {
+    recordDegradation(s, "静态检查缺位（ruff 不可用）", "工具探测失败，Python 诊断静默跳过——交付前建议人工 ruff check 复核");
+    return [];
+  }
   const mtimeMs = fileMtime(file);
   const cached = s.fileChecks.get(file);
   if (cached && cached.kind === "py" && cached.mtimeMs === mtimeMs) return cached.diags;
-  const { out } = await runCmd("ruff", ["check", "--no-cache", "--output-format=concise", file], 10_000, dir);
+  const { err, out } = await runCmd("ruff", ["check", "--no-cache", "--output-format=concise", file], 10_000, dir);
+  if (err) {
+    recordDegradation(s, "静态检查异常（ruff 运行失败）", `${file.split(/[\\/]/).pop()}：${String(err?.message ?? err).slice(0, 80)}——诊断可能缺失`);
+  }
   const diags = String(out ?? "").split(/\r?\n/).filter((l) => l.trim());
   s.fileChecks.set(file, { kind: "py", mtimeMs, diags });
   return diags;
@@ -565,6 +774,11 @@ async function runDiags(s, hasBudget) {
     }
   } catch (e) {
     console.error(TAG, "async diagnose failed:", e?.message ?? e);
+    // ⑦：后台诊断整轮异常 → 诊断静默缺失，经 diagNotes 占位行让交付冲刷回注可见 + 入账本
+    try {
+      s.diagNotes.set("<async-diagnose-failed>", [String(e?.message ?? e).slice(0, 200)]);
+      recordDegradation(s, "后台静态检查异常（诊断可能缺失）", String(e?.message ?? e).slice(0, 120));
+    } catch { }
   } finally {
     s.diagBusy = false;
   }
@@ -575,6 +789,11 @@ async function runDiags(s, hasBudget) {
 // 只比 codeEditV：文档编辑不产生代码诊断，不应触发补跑轮）
 function diagCoversLastEdit(s, v0) {
   return (s?.codeEditV ?? 0) === (v0 ?? 0) && (s?.pendingDiags?.size ?? 0) === 0 && !s?.diagBusy;
+}
+
+// 冲刷异常/不新鲜入账本（⑦：交付时诊断缺口必须可见，不许只留 stderr）
+function recordFlushGap(s, kind, detail) {
+  recordDegradation(s, kind, detail);
 }
 
 // 交付节点冲刷（三模型裁决必须项——预算上限 + 编辑计数比对）：
@@ -603,6 +822,7 @@ async function flushDiags(s) {
   const staleNote = stale
     ? "（注意：部分诊断未覆盖末次编辑——冲刷期间仍有编辑或超等待预算，修复后建议重新交付验证）"
     : "";
+  if (stale) recordDegradation(s, "交付冲刷诊断不新鲜", "部分诊断未覆盖末次编辑（冲刷期间仍有编辑/超预算），结果可能过期");
   return `静态检查诊断（后台汇总${staleNote}，需修复后再交付）：\n${parts.join("\n")}`;
 }
 
@@ -719,7 +939,12 @@ const QualityGateImpl = async ({ directory } = {}) => {
         // dist 新鲜度：provider src 改了未重建 dist → 即使下面的验证 exit 0 也是旧行为
         // （fail-closed：先于 hasVerified 判定，防止「测试通过」掩盖过期产物）
         const provEdits = providerEditsOf(codeEdits);
-        const stalePkgs = [...provEdits.keys()].filter((pkg) => distStaleOf(projectRoot, pkg, provEdits.get(pkg)).stale);
+        const stalePkgs = [];
+        for (const pkg of provEdits.keys()) {
+          const st = distStaleOf(projectRoot, pkg, provEdits.get(pkg));
+          if (st.error) recordDegradation(s, "dist 新鲜度探测异常（按新鲜放行）", `provider/${pkg}：${st.error}`);
+          if (st.stale) stalePkgs.push(pkg);
+        }
         if (stalePkgs.length > 0) {
           throw new Error(
             `[quality-gate] 层 2 dist 新鲜度：本会话编辑过 ${stalePkgs.map((p) => `provider/${p}/src`).join("、")}，` +
@@ -816,6 +1041,8 @@ const QualityGateImpl = async ({ directory } = {}) => {
           const allDone = todos.length > 0 && todos.every((t) => t?.status === "completed");
           // P0-1b：交付节点强制冲刷积压诊断（编辑已零阻塞，成本集中在此付一次）
           if (allDone) {
+            // ⑥ 部署≠生效检测（节流，fail-open）：运行中进程可能还在执行旧插件逻辑
+            probeStaleDeploy(s);
             try {
               const flushText = await flushDiags(s);
               if (flushText) {
@@ -824,10 +1051,12 @@ const QualityGateImpl = async ({ directory } = {}) => {
               }
             } catch (e) {
               console.error(TAG, "flush diags failed:", e?.message ?? e);
+              recordDegradation(s, "交付冲刷异常（诊断可能缺失）", String(e?.message ?? e).slice(0, 120));
             }
           }
           if (codeEdits.length > 0 && !hasRanVerify(s)) {
             if (hasSkipMarker(s)) {
+              recordDegradation(s, "验证显式跳过（verify-skipped）", "原因见命令记录");
               notes.push(
                 `ℹ️ 已登记跳过验证（verify-skipped，原因在命令记录中可审计）——交付说明必须引用该原因。`
               );
@@ -847,10 +1076,21 @@ const QualityGateImpl = async ({ directory } = {}) => {
                   `修复后重跑拿到 exit 0 再交付，「跑过」不算数。`
               );
             } else {
+              recordDegradation(s, "验证退出码未知（降级旧口径放行）", "钩子契约未采集到退出码");
               notes.push(
                 `ℹ️ 验证命令退出码未知（钩子契约未采集到），本次按旧口径放行——建议贴出验证输出佐证。`
               );
             }
+          }
+          if (allDone && hasAcceptMarker(s) && s.reviewPending) {
+            // ⑤：review-accepted 带残余项交付 → 同样沉淀（显式接受 ≠ 残余项消失）
+            const persisted = await persistResidualSafe(s.reviewPending.fixSection);
+            recordDegradation(s, `残余风险显式接受（review-accepted）${persisted ? "（残余项已沉淀项目记忆 Open Questions）" : "（残余项沉淀失败）"}`, s.reviewPending.fixSection);
+          }
+          if (allDone && hasAcceptMarker(s) && !s.reviewPending && !s.dualReviewed && isComplexDelivery(s, codeEdits)) {
+            // ⑦ 补口：accept 早于任何审查（无 reviewPending、无裁决）——「接受了不存在的残余」
+            // 或纯规避审查，必须留痕可见
+            recordDegradation(s, "review-accepted 但从未生成审查裁决", "显式接受先于审查执行，接受对象不明——建议交付后人工补审");
           }
 
           // 层 3 全自动执行 + 闭环：todo 全部 completed（交付节点）+ 高风险/复杂改动
@@ -868,6 +1108,10 @@ const QualityGateImpl = async ({ directory } = {}) => {
           if (allDone && complex && !s.dualReviewed && !hasAcceptMarker(s)) {
             const editedList = [...s.edited].slice(0, 30).join("\n");
             const subject = await reviewSubject(projectRoot, s, editedList);
+            // ⑦ 补口：git 失败降级为会话证据池——审查视野缩水必须可见
+            if (subject.includes("会话内执行过的命令")) {
+              recordDegradation(s, "审查素材降级（git diff 不可得）", "退化为会话证据池，审查视野受限——建议人工核对 diff");
+            }
             let drExport = null;
             let reviewerFp = "";
             try {
@@ -894,22 +1138,44 @@ const QualityGateImpl = async ({ directory } = {}) => {
                 s.reviewCache = { key: subjectKey, verdict };
               } catch (e) {
                 console.error(TAG, "auto dual review failed:", e?.message ?? e);
+                // ⑧：runDualReview 抛错且前轮有未确认修复的残余项 → 不能随 throw 丢失
+                if (s.reviewPending?.fixSection) {
+                  const persisted = await persistResidualSafe(s.reviewPending.fixSection);
+                  recordDegradation(s, `审查执行异常，前轮残余必须修复项未确认修复${persisted ? "（已沉淀项目记忆 Open Questions）" : "（沉淀失败，人工须记录）"}`, s.reviewPending.fixSection);
+                  s.reviewPending = null; // 已沉淀持久层，会话内状态清掉防二次入账
+                } else {
+                  recordDegradation(s, "审查执行异常（本次按未审查交付）", String(e?.message ?? e).slice(0, 120));
+                }
+                // 终审建议项：与 inconclusive 路径同构「一次为限」——执行异常也置 dualReviewed，
+                // 防同会话后续交付节点对同一素材反复重烧审查（隧道抖动重试的期望收益低于重复成本）
+                s.dualReviewed = true;
               }
             }
             if (verdict != null) {
               const v = parseReviewVerdict(verdict);
               if (v.inconclusive) {
-                // 上游失败/一路阵亡：不阻断（fail-open），但一次为限防重复烧钱
+                // 上游失败/一路阵亡：不阻断（fail-open），但一次为限防重复烧钱。
+                // ⑧：第 2 轮起 inconclusive 意味着前轮必须修复项未被确认修复——
+                // 随放行丢失前先沉淀（轮次上限放行路径同构，只是触发者不同）
+                if (s.reviewRounds > 0 && s.reviewPending?.fixSection) {
+                  const persisted = await persistResidualSafe(s.reviewPending.fixSection);
+                  recordDegradation(s, `审查第 ${s.reviewRounds + 1} 轮上游失败，前轮残余未确认修复${persisted ? "（已沉淀项目记忆 Open Questions）" : "（沉淀失败，人工须记录）"}`, s.reviewPending.fixSection);
+                }
+                s.reviewPending = null; // 无条件清（空 fixSection 防御性清理，防 before 钩子按旧裁决误拦）
                 s.dualReviewed = true;
+                recordDegradation(s, "审查上游失败（按未审查交付）", (v.verdictLine || "裁决不可解析").slice(0, 120));
                 appendToResult(output, `\n${TAG} ⚠️ 审查结果无法解析（上游失败），本次按未审查交付，请人工留意。`);
               } else if (v.fail) {
                 s.reviewRounds += 1;
                 if (s.reviewRounds >= MAX_REVIEW_ROUNDS) {
                   s.dualReviewed = true;
+                  // ⑤ 残余项沉淀进项目记忆 Open Questions（fail-open，关闭即忘 → 持久可见）
+                  const persisted = await persistResidualSafe(v.fixSection);
+                  recordDegradation(s, `审查 ${s.reviewRounds} 轮未过按上限放行${persisted ? "（残余项已沉淀项目记忆 Open Questions）" : "（残余项沉淀失败，人工须记录）"}`, v.fixSection);
                   appendToResult(
                     output,
                     `\n${TAG} ⚠️ 已连续 ${s.reviewRounds} 轮审查未通过，达到自动审查上限，放行交付。\n` +
-                      `残余必须修复项（交付前请人工确认）：\n${v.fixSection}`
+                      `残余必须修复项（交付前请人工确认${persisted ? "，已沉淀进项目记忆 Open Questions 待后续会话跟进" : ""}）：\n${v.fixSection}`
                   );
                 } else {
                   s.reviewPending = { editVersion: s.editVersion, verdictLine: v.verdictLine, fixSection: v.fixSection };
@@ -925,6 +1191,11 @@ const QualityGateImpl = async ({ directory } = {}) => {
                 appendToResult(output, `\n${TAG} ✅ 审查通过，闭环结束。`);
               }
             }
+          }
+          // ⑦ 交付节点降级/放行汇总回注（账本非空才出声，零降级零噪音）
+          if (allDone) {
+            const degr = degradationSummary(s);
+            if (degr) notes.push(`⚠️ ${degr}`);
           }
           if (notes.length > 0) {
             appendToResult(output, `\n${TAG} 交付检查\n${notes.join("\n\n")}`);
@@ -958,7 +1229,8 @@ export const QualityGate = async (ctx = {}) => {
 export const _export = {
   exitCodeOf, exitMasked, parseReviewVerdict, reviewSubject, isComplexDelivery,
   hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, diagCoversLastEdit,
-  providerEditsOf, distStaleOf,
+  providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary,
+  staleDeployOf,
   VERIFY_CMD_RE, HIGH_RISK_RE,
 };
 
