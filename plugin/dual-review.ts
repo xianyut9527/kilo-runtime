@@ -28,7 +28,8 @@ const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
 // 审查器版本（quality-gate 层 3 审查缓存键成分）：三路 prompt 协议、限长或裁决解析
 // 口径变更时必须递增——版本一变缓存全失效，旧裁决不再被复用。
 // dr-2026-09-22.2：clipText 增加代理对边界防护（截断点落在 emoji/生僻字中间时回退一位）。
-const REVIEWER_VERSION = "dr-2026-09-22.2";
+// dr-2026-09-24.1：hx-client loadCfg 尾随逗号容错（工具全挂修复）——指纹变，旧缓存全失效。
+const REVIEWER_VERSION = "dr-2026-09-24.1";
 
 // 审查器指纹：审查器版本 + 配置的模型三元组。quality-gate 把它掺进审查素材缓存键：
 // 改 prompt（版本变）或换模型（三元组变）→ 指纹变 → 缓存失效，绝不为同一份 diff

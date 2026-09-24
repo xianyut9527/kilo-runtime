@@ -344,3 +344,100 @@ const p5e = createHxFailover({
   reasoningEcho: true, failover: { chain: { models: [] } },
 });
 console.log("PASS strip-ext-keys         :", p5e !== null && typeof p5e.chatModel === "function");
+
+// ── 回归 6：网关排队回执拦截（2026-09-24 queued-ack 专项）────────────────
+// 生产形态（07:05 实证 ses_f2dc6e20affe）：上游过载时返回 200 + JSON
+// {"request_id":"...","seq":1,"position":0,"phase":"queued"} 而非 SSE 流 →
+// AI_TypeValidationError 绕过 withFailover catch 且 Kilo 重试门不认 → 直达用户。
+// 修复：fetch 层拦截转 503（isRetryable → hop 内 retry + 降级链）。
+const QUEUED_ACK = JSON.stringify({ request_id: "req-queued-1", seq: 1, position: 0, phase: "queued" });
+const sseOk = (model) => [
+  `data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", created: 1, model, choices: [{ index: 0, delta: { role: "assistant", content: `[ok ${model}]` }, finish_reason: null }] })}\n\n`,
+  `data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", created: 1, model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`,
+  "data: [DONE]\n\n",
+].join("");
+
+// 6a：主模型连续排队 → 拦截转 503 → hop 内重试后仍排队 → 降级链切换到备用模型成功
+let queuedCalls6a = [];
+const queuedModels = new Set(["glm-5.3-flash", "glm-5.2"]);
+const fakeFetch6a = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  queuedCalls6a.push(model);
+  if (queuedModels.has(model)) {
+    return new Response(QUEUED_ACK, { status: 200, headers: { "content-type": "application/json" } });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p6a = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch6a,
+  failover: { chain: { models: ["kimi-k2.6"] } },
+});
+let out6a = "", err6a = null;
+try {
+  const { stream } = await p6a.languageModel("glm-5.3-flash").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+  for await (const part of stream) {
+    if (part.type === "text-delta") out6a += part.delta ?? part.textDelta ?? "";
+  }
+} catch (e) { err6a = e; }
+console.log("");
+console.log("6a output:", JSON.stringify(out6a), "| fetch calls:", JSON.stringify(queuedCalls6a));
+console.log("  error:", err6a?.name ?? "(none)");
+console.log("PASS queued-ack-fallback    :", err6a === null && out6a.includes("[ok kimi-k2.6]"));
+console.log("PASS queued-ack-retried     :", queuedCalls6a.filter((m) => m === "glm-5.3-flash").length === 3 && queuedCalls6a.includes("kimi-k2.6"));
+
+// 6b：全链排队 → 耗尽后抛 APICallError{isRetryable:true}（Kilo 会话级重试兜底）
+const p6b = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub",
+  fetch: async () => new Response(QUEUED_ACK, { status: 200, headers: { "content-type": "application/json" } }),
+  failover: { chain: { models: [] } },
+});
+let err6b = null;
+try {
+  await p6b.languageModel("glm-5.3-flash").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+} catch (e) { err6b = e; }
+console.log("PASS queued-ack-exhausted   :", err6b?.statusCode === 503 && err6b?.isRetryable === true);
+
+// 6c：正常补全 JSON（有 choices）与 SSE 不被误伤——只有 queued/pending 空回执才拦
+let fetchCount6c = 0;
+const fakeFetch6c = async (url, init) => {
+  fetchCount6c++;
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p6c = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch6c,
+  failover: { chain: { models: [] } },
+});
+let out6c = "", err6c = null;
+try {
+  const { stream } = await p6c.languageModel("glm-5.3-flash").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+  for await (const part of stream) {
+    if (part.type === "text-delta") out6c += part.delta ?? part.textDelta ?? "";
+  }
+} catch (e) { err6c = e; }
+console.log("PASS sse-unaffected         :", err6c === null && out6c.includes("[ok glm-5.3-flash]") && fetchCount6c === 1);
+
+// 6d：拦截器对「choices 齐全的正常 JSON 响应」（doGenerate 路径）不误伤
+const p6d = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub",
+  fetch: async () => new Response(JSON.stringify({ id: "1", object: "chat.completion", choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }), { status: 200, headers: { "content-type": "application/json" } }),
+  failover: { chain: { models: [] } },
+});
+let gen6d = null, err6d = null;
+try {
+  gen6d = await p6d.languageModel("glm-5.3-flash").doGenerate({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+  });
+} catch (e) { err6d = e; }
+console.log("PASS completion-json-unaffected :", err6d === null && String(gen6d?.content?.[0]?.text ?? gen6d?.text ?? "").includes("hi"));

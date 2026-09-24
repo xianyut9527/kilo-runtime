@@ -28188,6 +28188,50 @@ function patchReasoningContent(bodyText) {
   }
   return changed ? JSON.stringify(parsed) : bodyText;
 }
+function looksLikeQueuedAck(response) {
+  if (!response || response.status !== 200) return false;
+  const ct = String(response.headers?.get?.("content-type") ?? "");
+  if (!/json/i.test(ct)) return false;
+  return response.clone().text().then((text) => {
+    if (text.length > 4096) return false;
+    const trimmed = text.trim();
+    if (!trimmed.startsWith("{")) return false;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed.choices !== void 0 || parsed.error !== void 0) return false;
+      const phase = String(parsed.phase ?? "");
+      return phase === "queued" || phase === "pending";
+    } catch {
+      return false;
+    }
+  }).catch(() => false);
+}
+function queuedAckResponse(original) {
+  const headers = new Headers();
+  headers.set("content-type", "application/json");
+  headers.set("retry-after", "2");
+  return new Response(
+    JSON.stringify({
+      error: {
+        message: "hx-failover: \u4E0A\u6E38\u7F51\u5173\u8FD4\u56DE\u6392\u961F\u56DE\u6267\uFF08phase=queued\uFF0C\u672A\u5F00\u59CB\u63A8\u7406\uFF09\uFF0C\u5DF2\u8F6C\u4E49\u4E3A\u53EF\u91CD\u8BD5 503 \u2014\u2014 \u539F\u59CB\u56DE\u6267\u89C1 error.cause_fields",
+        type: "upstream_queued",
+        cause_fields: { intercepted_from_status: 200, content_type: original.headers?.get?.("content-type") }
+      }
+    }),
+    { status: 503, headers }
+  );
+}
+function withQueuedAckGuard(baseFetch) {
+  const call = baseFetch ?? globalThis.fetch;
+  return async function queuedAckFetch(input2, init) {
+    const response = await call(input2, init);
+    try {
+      if (await looksLikeQueuedAck(response)) return queuedAckResponse(response);
+    } catch {
+    }
+    return response;
+  };
+}
 function withReasoningEcho(baseFetch) {
   const call = baseFetch ?? globalThis.fetch;
   return async function reasoningEchoFetch(input2, init) {
@@ -28261,6 +28305,8 @@ function isStreamBreakError(err) {
     if (String(err.message ?? "").includes("Failed to process successful response")) return true;
   }
   if (String(err?.message ?? "").includes("chunkTimeout \u770B\u95E8\u72D7")) return true;
+  const qMsg = `${String(err?.name ?? "")} ${String(err?.message ?? "")}`;
+  if (err?.name === "AI_TypeValidationError" && /phase[":\s]+(?:queued|pending)/.test(qMsg)) return true;
   const msg = `${String(err?.message ?? err)} ${String(err?.cause?.message ?? err?.cause?.code ?? "")}`;
   return /terminated|socket hang up|ECONNRESET|ECONNABORTED|ERR_STREAM_PREMATURE_CLOSE|premature close|underlying socket/i.test(msg);
 }
@@ -28289,13 +28335,14 @@ function createHxFailover(options) {
   }
   const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "timeout", "dual_review"];
   const reasoningEcho = options?.reasoningEcho === true;
+  const guardedFetch = withQueuedAckGuard(customFetch);
   const sdkOptions = {
     ...rest,
     name: name15,
     apiKey,
     headers,
     // 关闭时原样透传 customFetch（含 undefined → SDK 走全局 fetch），行为零变化
-    fetch: reasoningEcho ? withReasoningEcho(customFetch) : customFetch
+    fetch: reasoningEcho ? withReasoningEcho(guardedFetch) : guardedFetch
   };
   for (const k of EXTENSION_KEYS) delete sdkOptions[k];
   const cooldownMs = Number(failoverOpts?.cooldownMs) > 0 ? Number(failoverOpts.cooldownMs) : DEFAULT_COOLDOWN_MS;

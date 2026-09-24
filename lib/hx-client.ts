@@ -218,9 +218,48 @@ async function logAskFailure(e, model, elapsedMs) {
   }
 }
 
+// 部署副本 kilo.json 允许尾随逗号（installer 只剥行首 // 注释，Kilo 主程序 JSONC 宽松解析
+// 接受尾随逗号），但严格 JSON.parse 在 JSC/Bun 下报 "Unexpected comma at the end of array
+// expression"、V8 下报 "Unexpected token ]"——moa/dual_review 的 loadCfg 因此全挂（2026-09-24
+// 实证：模板 commit ad2e312 加尾随逗号后 6 次工具调用全部立即报错）。这里先按严格解析，
+// 失败再剥尾随逗号重试。剥离走字符级状态机而非正则：正则 /,(\s*[}\]])/g 会误伤字符串
+// 字面量内的 ",}"（如 commit_message prompt 文本，单测实证），状态机跟踪引号/转义，
+// 只在「逗号后紧跟空白+}或]」且不在字符串内时删除逗号。
+function parseJsonTolerant(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return JSON.parse(stripTrailingCommas(text));
+  }
+}
+
+function stripTrailingCommas(text) {
+  let out = "";
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      out += c;
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { inStr = true; out += c; continue; }
+    if (c === ",") {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (j < text.length && (text[j] === "}" || text[j] === "]")) continue; // 剥掉尾随逗号
+    }
+    out += c;
+  }
+  return out;
+}
+
 export async function loadCfg() {
   if (cfgCache && Date.now() - cfgCacheAt < CFG_TTL_MS) return cfgCache;
-  const kilo = JSON.parse(await readFile(join(CONFIG_DIR, "kilo.json"), "utf8"));
+  const kilo = parseJsonTolerant(await readFile(join(CONFIG_DIR, "kilo.json"), "utf8"));
   const opts = kilo?.provider?.hx?.options ?? {};
   const auth = JSON.parse(await readFile(join(DATA_DIR, "auth.json"), "utf8"));
   const key = auth?.hx?.key;

@@ -171,6 +171,24 @@ foreach ($p in $pairs) {
 # 式加载失败）——因此 lib/ 只作共享依赖目录，plugin/ 只放真正的插件入口。
 $bunCmd = Get-Command bun -ErrorAction SilentlyContinue
 $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+# dist 冒烟需要 node>=18（Web Streams 全局：TransformStream/Headers/TextDecoderStream）。
+# 默认 PATH 上的 node 可能是老版本（本机实证 v14 冒烟必炸 "TransformStream is not defined"，
+# 而 dist 本身在 node18+/bun/kilo 运行时全部正常）——探测失败则回退 hermes node22。
+$nodeSmokeCmd = $null
+$nodeSmokeSrc = $null
+foreach ($cand in @((Get-Command node -ErrorAction SilentlyContinue)?.Source, (Join-Path $env:LOCALAPPDATA "hermes\node\node.exe"))) {
+    if ($cand -and (Test-Path $cand)) {
+        & $cand -e "process.exit(typeof TransformStream === 'function' && typeof Headers === 'function' ? 0 : 1)" *> $null
+        if ($LASTEXITCODE -eq 0) {
+            $nodeSmokeCmd = $cand
+            $nodeSmokeSrc = $cand
+            break
+        }
+    }
+}
+if ($nodeCmd -and -not $nodeSmokeCmd) {
+    Write-Warning "[INSTALL] 无 node>=18 可用（PATH node 与 hermes 均缺 Web Streams 全局），dist 冒烟跳过"
+}
 # vE2 模拟脚本（写入临时 .mjs 再用 bun 跑——inline -e 传参时 PowerShell 会吃掉 JS 里的
 # 双引号，导致语法错；文件形式彻底规避引号转义问题）。
 $ve2SmokeMjs = @'
@@ -249,17 +267,17 @@ foreach ($w in $toWrite) {
     # provider dist 冒烟：hx-failover dist/index.js 是 server 启动时加载的模块，
     # 语法错/半写文件同样会让整个 provider 注册失败。node 真加载一遍。
     if ($w.Src -match '[\\/]provider[\\/]hx-failover[\\/]dist[\\/].*\.m?js$') {
-        if ($nodeCmd) {
+        if ($nodeSmokeCmd) {
             $fileUrl = 'file:///' + ($w.Src -replace '\\', '/')
             $smokeJs = "import('$fileUrl').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })"
-            $null = & node --input-type=module -e $smokeJs 2>&1
+            $null = & $nodeSmokeSrc --input-type=module -e $smokeJs 2>&1
             if ($LASTEXITCODE -ne 0) {
                 Write-Error "[INSTALL] FAIL: provider dist 冒烟加载失败，已中止下发（未写入任何文件）：$($w.Src)"
                 exit 1
             }
         }
         else {
-            Write-Warning "[INSTALL] WARN: node 不可用，跳过 provider dist 冒烟检查（$($w.Src)）"
+            Write-Warning "[INSTALL] WARN: 无 node>=18 可用，跳过 provider dist 冒烟检查（$($w.Src)）"
         }
     }
 }

@@ -98,6 +98,68 @@ function patchReasoningContent(bodyText) {
   return changed ? JSON.stringify(parsed) : bodyText;
 }
 
+// ── 网关排队回执拦截（2026-09-24 queued-ack 专项）────────────────────
+// 生产形态：上游网关过载时对 chat/completions 返回 200 + JSON
+// {"request_id":"...","seq":1,"position":0,"phase":"queued"} 而非 SSE 流。
+// SDK 校验失败抛 AI_TypeValidationError（无 statusCode，body 是该回执），
+// 它在建流/流消费期从 SDK 内部抛出，绕过 withFailover 的 catch，且
+// Kilo 自动重试门不认 → 错误直达用户（07:05 实证，failover 遥测零记录）。
+// 解法：fetch 层识别该形态，转成 503 + Retry-After 的 Response——
+// status>=500 命中 isRetryable → 正常走 hop 内 retry + 降级链；
+// 保留原始 request_id/phase 于 body，可诊断性不丢。
+// 严格限定：仅拦 content-type 含 json 且 body 顶层含 "phase":"queued" 的
+// 200 响应；正常 SSE（text/event-stream）与真实补全 JSON（有 choices）不受影响。
+function looksLikeQueuedAck(response) {
+  if (!response || response.status !== 200) return false;
+  const ct = String(response.headers?.get?.("content-type") ?? "");
+  if (!/json/i.test(ct)) return false;
+  return response
+    .clone()
+    .text()
+    .then((text) => {
+      if (text.length > 4096) return false;
+      const trimmed = text.trim();
+      if (!trimmed.startsWith("{")) return false;
+      try {
+        const parsed = JSON.parse(trimmed);
+        // 只认网关排队回执的签名字段：choices/error 都不该有，phase 必须是 queued/pending 类
+        if (parsed.choices !== undefined || parsed.error !== undefined) return false;
+        const phase = String(parsed.phase ?? "");
+        return phase === "queued" || phase === "pending";
+      } catch {
+        return false;
+      }
+    })
+    .catch(() => false);
+}
+
+function queuedAckResponse(original) {
+  const headers = new Headers();
+  headers.set("content-type", "application/json");
+  headers.set("retry-after", "2");
+  return new Response(
+    JSON.stringify({
+      error: {
+        message: "hx-failover: 上游网关返回排队回执（phase=queued，未开始推理），已转义为可重试 503 —— 原始回执见 error.cause_fields",
+        type: "upstream_queued",
+        cause_fields: { intercepted_from_status: 200, content_type: original.headers?.get?.("content-type") },
+      },
+    }),
+    { status: 503, headers },
+  );
+}
+
+function withQueuedAckGuard(baseFetch) {
+  const call = baseFetch ?? globalThis.fetch;
+  return async function queuedAckFetch(input, init) {
+    const response = await call(input, init);
+    try {
+      if (await looksLikeQueuedAck(response)) return queuedAckResponse(response);
+    } catch { /* 拦截器永不阻断正常响应 */ }
+    return response;
+  };
+}
+
 function withReasoningEcho(baseFetch) {
   const call = baseFetch ?? globalThis.fetch;
   return async function reasoningEchoFetch(input, init) {
@@ -211,6 +273,11 @@ function isStreamBreakError(err) {
   }
   // chunkTimeout 看门狗主动中断（流静默挂死）
   if (String(err?.message ?? "").includes("chunkTimeout 看门狗")) return true;
+  // 网关排队回执穿透形态（2026-09-24）：AI_TypeValidationError 的 body 是
+  // {"phase":"queued"} 排队回执而非补全/错误——fetch 层拦截是主防线，此为
+  // 兜底（拦截器被绕过/新变体时仍标记可重试，让 Kilo 会话级重试接管）
+  const qMsg = `${String(err?.name ?? "")} ${String(err?.message ?? "")}`;
+  if (err?.name === "AI_TypeValidationError" && /phase[":\s]+(?:queued|pending)/.test(qMsg)) return true;
   // 裸 body 读取断裂（socket 层错误直接从底层流抛出的变体）
   const msg = `${String(err?.message ?? err)} ${String(err?.cause?.message ?? err?.cause?.code ?? "")}`;
   return /terminated|socket hang up|ECONNRESET|ECONNABORTED|ERR_STREAM_PREMATURE_CLOSE|premature close|underlying socket/i.test(msg);
@@ -250,13 +317,16 @@ export function createHxFailover(options) {
   const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "timeout", "dual_review"];
   // thinking 模式 reasoning_content 回传兜底（kilo.json options.reasoningEcho；缺省 = 关闭）
   const reasoningEcho = options?.reasoningEcho === true;
+  // fetch 组装顺序（内→外）：用户/SDK 注入 fetch → queued 回执拦截 → reasoningEcho。
+  // queued 拦截恒开（生产事故形态，无需配置开关）；reasoningEcho 按配置。
+  const guardedFetch = withQueuedAckGuard(customFetch);
   const sdkOptions = {
     ...rest,
     name,
     apiKey,
     headers,
     // 关闭时原样透传 customFetch（含 undefined → SDK 走全局 fetch），行为零变化
-    fetch: reasoningEcho ? withReasoningEcho(customFetch) : customFetch,
+    fetch: reasoningEcho ? withReasoningEcho(guardedFetch) : guardedFetch,
   };
   for (const k of EXTENSION_KEYS) delete sdkOptions[k];
 

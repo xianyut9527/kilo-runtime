@@ -20,6 +20,12 @@
   // 无显式指定 agent 时的默认入口
   "default_agent": "code",
 
+  // ── 官方默认模型过滤 ────────────────────────────────────────────
+  // 白名单口径：只启用自研 provider，内置 kilo 网关及 anthropic/openai/google 等
+  // 官方默认模型全部不出现在模型选择器（也堵住环境变量自动探测的 provider）。
+  // 若将来想精确到 provider 内的单个模型，再用 provider 级 whitelist/blacklist（如 "claude-*"）。
+  "enabled_providers": ["hx"],
+
   // ── 基础行为 ────────────────────────────────────────────────────
   // 会话级快照：每次编辑前存档，可回滚（checkpoint 功能）。安全网，性能专项验证后保持开启。
   "snapshot": true,
