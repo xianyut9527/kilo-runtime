@@ -3,7 +3,7 @@
 English quick start: **[GUIDE-EN.md](GUIDE-EN.md)**
 
 **改配置**：编辑 `kilo.json.tmpl` → `.\install.ps1` → 重载 VS Code 窗口。
-**换 API Key**：两种方式任选——① 改 `~/.local/share/kilo/auth.json` 的 `hx.key`（不用 install，即时生效）；② VS Code 里 Kilo 面板的模型选择器直接编辑自定义模型/更新 Key（会话内生效）。
+**换 API Key**：改 `~/.local/share/kilo/auth.json` 的 `hx.key`（不用 install，即时生效）。
 
 ## 架构
 

@@ -3,7 +3,7 @@
 中文版（Chinese version): **[GUIDE.md](GUIDE.md)** · Maintainer deep-dive: [HISTORY.md](HISTORY.md)
 
 > **Change config**: edit `kilo.json.tmpl` → `.\install.ps1` → reload the VS Code window.
-> **Change API key**: edit `hx.key` in `~/.local/share/kilo/auth.json` (no install needed).
+> **Change API key**: edit `hx.key` in `~/.local/share/kilo/auth.json` (no install needed, takes effect immediately).
 
 ## Architecture
 
