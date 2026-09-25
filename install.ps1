@@ -39,6 +39,34 @@ function Test-NeedsSubst([string]$Path) {
     return ($n -eq 'kilo.json' -or $n -eq 'kilo.json.tmpl' -or $n -eq 'INSTRUCTIONS.md')
 }
 
+# 剥离 JSON 尾随逗号（模板 ad2e312 起允许尾随逗号风格，部署副本必须回归纯 JSON：
+# PS5.1 ConvertFrom-Json / python json.load / bun JSON.parse 均拒绝尾随逗号）。
+# 字符级状态机跟踪引号/转义——正则 ,\s*[}\]] 会误伤字符串字面量内的 ",}"（commit_message
+# prompt 实证，lib/hx-client.ts stripTrailingCommas 同款语义）。注意：PS7 的 ?. 等语法禁用。
+function Remove-TrailingCommas([string]$Text) {
+    $sb = New-Object System.Text.StringBuilder
+    $inStr = $false; $esc = $false
+    $chars = $Text.ToCharArray()
+    for ($i = 0; $i -lt $chars.Length; $i++) {
+        $c = $chars[$i]
+        if ($inStr) {
+            [void]$sb.Append($c)
+            if ($esc) { $esc = $false }
+            elseif ($c -eq '\') { $esc = $true }
+            elseif ($c -eq '"') { $inStr = $false }
+            continue
+        }
+        if ($c -eq '"') { $inStr = $true; [void]$sb.Append($c); continue }
+        if ($c -eq ',') {
+            $j = $i + 1
+            while ($j -lt $chars.Length -and ($chars[$j] -eq ' ' -or $chars[$j] -eq "`t" -or $chars[$j] -eq "`r" -or $chars[$j] -eq "`n")) { $j++ }
+            if ($j -lt $chars.Length -and ($chars[$j] -eq '}' -or $chars[$j] -eq ']')) { continue }
+        }
+        [void]$sb.Append($c)
+    }
+    return $sb.ToString()
+}
+
 # 展开清单 -> @{ Src; Dst }
 $pairs = @()
 foreach ($raw in Get-Content $Manifest) {
@@ -80,10 +108,16 @@ function Render-Content([string]$SrcPath) {
     $text = [System.IO.File]::ReadAllText($SrcPath, [System.Text.UTF8Encoding]::new($false))
     if ($SrcPath -like '*.tmpl') {
         $text = ($text -split "`r?`n" | Where-Object { $_ -notmatch '^\s*//' }) -join "`n"
+        # 尾随逗号在注释剥离之后去除（注释行可能含未配对引号，会干扰状态机）；
+        # 仅 *.tmpl 走此分支，INSTRUCTIONS.md 等文档绝不能做逗号剥离。
+        $text = Remove-TrailingCommas $text
         $text = $text.Replace('__KILO_CONFIG__', $TargetNative)
         $text = $text.Replace('__KILO_HOME__', $HomeSlash)
     }
     elseif (Test-NeedsSubst $SrcPath) {
+        # 归一 LF：与 install.sh 对齐（Git Bash sed 输出 LF），否则两端部署副本行尾漂移、
+        # check 永远报差异互相打架（2026-09-25 实测：ps1 透传 CRLF vs sh LF）。
+        $text = $text -replace "`r`n", "`n"
         $text = $text.Replace('__KILO_CONFIG__', $TargetNative)
         $text = $text.Replace('__KILO_HOME__', $HomeSlash)
     }
@@ -176,7 +210,9 @@ $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
 # 而 dist 本身在 node18+/bun/kilo 运行时全部正常）——探测失败则回退 hermes node22。
 $nodeSmokeCmd = $null
 $nodeSmokeSrc = $null
-foreach ($cand in @((Get-Command node -ErrorAction SilentlyContinue)?.Source, (Join-Path $env:LOCALAPPDATA "hermes\node\node.exe"))) {
+# PS 5.1 无 ?. 运算符（PS7+ 专属，实测解析即炸），用 if 表达式取 Source。
+$nodePath = if ($nodeCmd) { $nodeCmd.Source } else { $null }
+foreach ($cand in @($nodePath, (Join-Path $env:LOCALAPPDATA "hermes\node\node.exe"))) {
     if ($cand -and (Test-Path $cand)) {
         & $cand -e "process.exit(typeof TransformStream === 'function' && typeof Headers === 'function' ? 0 : 1)" *> $null
         if ($LASTEXITCODE -eq 0) {

@@ -27,9 +27,9 @@
 // 补空串（四家上游直连实测均接受）。开关 reasoningEcho，缺省关，kilo.json 显式开。
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { APICallError } from "@ai-sdk/provider";
-import { appendFile, mkdir, rename, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 const DEFAULT_COOLDOWN_MS = 60_000;
 const MAX_RETRIES_PER_HOP = 2;
@@ -54,48 +54,33 @@ function failoverLogPath() {
 }
 
 let logDirReady = null;
-// 遥测写队列：appendFile+轮转都是读-判-写多步异步，无锁并发会交错/重复轮转/
-// 乱序（dual_review 正反两路并行审查 + moa 并行参考 = 天然并发调用方）。
-// 链式 catch 保底：单条失败不阻断后续条目，也不让队列 Promise 永久 rejected。
-let logQueue = Promise.resolve();
 async function logFailover(record) {
-  // then 回调体内整体 try/catch 已兜住所有 IO 异常（含 mkdir 重抛/appendFile/stat），
-  // 回调必以 fulfilled 结束——但防御性再加链尾 .catch：即便未来改动在 try 外引入
-  // 抛点（如 record 序列化前访问 undefined），队列仍恢复 fulfilled，绝不永久 rejected
-  // 静默吞掉后续遥测（二轮审查必须项）。
-  logQueue = logQueue
-    .then(async () => {
+  try {
+    const p = failoverLogPath();
+    if (!logDirReady) {
+      // mkdir 失败时重置为 null：下次调用重试建目录，而不是永久复用 rejected Promise
+      // 导致后续遥测全部静默丢弃（与 lib/hx-client 同日审查必须项，同步移植）
+      logDirReady = mkdir(join(p, ".."), { recursive: true })
+        .catch((e2) => { logDirReady = null; throw e2; });
+    }
+    await logDirReady;
+    // 简单轮转：超 5MB 归档为 .1（只保一代；事件频率低，足够排查用）。
+    // rename 原子覆盖（libuv Windows 走 MoveFileExW+REPLACE_EXISTING，本机实测；
+    // 常规本地路径成立，SMB/持锁等异常由 catch 诊断兜底），不先删旧归档——先 rm
+    // 反而引入丢归档窗口。stat 失败只跳过轮转；轮转失败留诊断。
+    const st = await stat(p).catch(() => null);
+    if (st && st.size > LOG_ROTATE_BYTES) {
       try {
-        const p = failoverLogPath();
-        if (!logDirReady) {
-          // mkdir 失败时重置为 null：下次调用重试建目录，而不是永久复用 rejected Promise
-          // 导致后续遥测全部静默丢弃（与 lib/hx-client 同日审查必须项，同步移植）
-          logDirReady = mkdir(dirname(p), { recursive: true })
-            .catch((e2) => { logDirReady = null; throw e2; });
-        }
-        await logDirReady;
-        // 简单轮转：超 5MB 归档为 .1（只保一代；事件频率低，足够排查用）。
-        // rename 原子覆盖（libuv Windows 走 MoveFileExW+REPLACE_EXISTING，本机实测；
-        // 常规本地路径成立，SMB/持锁等异常由下方降级兜底）。
-        const st = await stat(p).catch(() => null);
-        if (st && st.size > LOG_ROTATE_BYTES) {
-          try {
-            await rename(p, `${p}.1`);
-          } catch (e3) {
-            // 轮转失败降级（Windows 归档被占用 rename 必败）：清空主文件阻断无限膨胀，
-            // 保住「日志可继续追加」这条底线；归档丢了只丢一代历史（低频事件可接受）
-            await writeFile(p, "", "utf8");
-            console.error(`hx-failover: telemetry rotate failed（已清空主文件继续记录）: ${e3?.message ?? e3}`);
-          }
-        }
-        await appendFile(p, JSON.stringify({ ts: new Date().toISOString(), kind: "failover", ...record }) + "\n", "utf8");
-      } catch (e) {
-        // 写日志失败绝不影响模型调用，但必留 stderr 诊断——静默丢弃会让排障无迹可循
-        console.error(`hx-failover: telemetry write failed: ${e?.message ?? e}`);
+        await rename(p, `${p}.1`);
+      } catch (e3) {
+        console.error(`hx-failover: telemetry rotate failed（日志将继续追加原文件）: ${e3?.message ?? e3}`);
       }
-    })
-    .catch((e) => { console.error(`hx-failover: telemetry queue guard: ${e?.message ?? e}`); });
-  return logQueue;
+    }
+    await appendFile(p, JSON.stringify({ ts: new Date().toISOString(), kind: "failover", ...record }) + "\n", "utf8");
+  } catch (e) {
+    // 写日志失败绝不影响模型调用，但必留 stderr 诊断——静默丢弃会让排障无迹可循
+    console.error(`hx-failover: telemetry write failed: ${e?.message ?? e}`);
+  }
 }
 
 const cooldown = new Map(); // modelId -> 失效截止时间戳
@@ -191,183 +176,6 @@ function withReasoningEcho(baseFetch) {
       }
     } catch { /* 兜底永不阻断请求 */ }
     return call(input, init);
-  };
-}
-
-// ── 推理门控（2026-09-24「推理吃光输出预算」专项，2026-09-26 自 dangling blob 恢复）──
-// 死因（kilo.db 全库 95 条 finish=length 地面真值 + 网关直连探针复现）：thinking
-// 模型推理与正文共享输出预算（kilo.exe 发 max_tokens = min(32000, max(1024,
-// 200000−input−2048))），推理 token ≥ 预算时正文为空、finish_reason=length——
-// Kilo 报「The model hit its output limit while reasoning, produced no actionable
-// output」。该失败是「正常流结束」：不抛错、不触发降级/重试（降级层只拦错误不检
-// 流内容），每次都要人工重发；长会话按条件猝死率累计，百次调用 ≥1 死概率 ~40%。
-// 线上 9527 网关是无源码的 new-api 二进制，改不了服务端 → 本层在 fetch 出口做客户端门控：
-//   - 扣留 2xx 响应 body 直到出现「可行动输出」（非空 content / tool_calls）才回放直通；
-//     正常响应唯一变化是思考段不再逐 chunk 实时到达（content 出现时一次性补放）；
-//   - 流结束仍无任何可行动输出且 finish=length 或 stop → 判定死亡，用「扩预算 + 降推理档」
-//     的 body 原地重发（默认 1 次）；重试响应走同一门控；
-//     ① finish=length：推理吃光输出预算，正文为空（2026-09-24 专项）；
-//     ② finish=stop：流「正常」结束但正文/tool_calls 全空——思考型模型把全部产出
-//       写进 reasoning_content 后自行停止（2026-09-24 19:34 空摘要压缩事故实证：
-//       配额 429 令压缩降级到 kimi，7219 字摘要全在 reasoning、content 空、
-//       finish=stop，Kilo 报「Compaction did not run: empty summary」只能手动 /compact）；
-//   - 重试仍死 / 重试失败（非 2xx/网络错）→ 原样回放死亡流，字节与不启用门控时一致，绝不劣化；
-//   - 扣留超过 holdMs 仍未出现可行动输出 → 放弃门控转直通（不再重试），防超长思考被误杀；
-//   - 非 POST / 非字符串 body / 非 JSON 聊天体 / URL 不含 /chat/completions → 零接触透传。
-// 判定用文本特征而非 JSON.parse 整包（SSE 分帧边界鲁棒，且只扫增量累计文本）：
-//   - "reasoning_content" 不命中 content 锚（content 前是 '_' 不是 '"'）；
-//   - 空 content（""）不算可行动；正文 JSON 字符串内转义形态 \"content\" 不命中。
-// 代价说明：死亡→重试使该请求最坏墙钟 ×2（思考期重跑），Kilo 侧整体超时/中止语义不变。
-const GATE_ACTIONABLE = /"(?:content|tool_calls)"\s*:\s*(?:"[^"]+"|\[)/;
-// 死亡 finish 形态：length=推理吃光预算（经典）；stop=正常收尾但正文全空（空摘要事故形态）。
-// stop 必须与 !GATE_ACTIONABLE 联合判定（在 gateConsume 调用点保证）：出现正文时早已
-// 提前放行，流尾仍无正文的 stop 才是死亡；不匹配 finish（缺字段/其他值）不重试，
-// 原样回放——宁可不救也不误伤合法流。
-const GATE_LENGTH_FINISH = /"finish_reason"\s*:\s*"(?:length|stop)"/;
-const GATE_EFFORT_DOWN = { max: "high", high: "medium", medium: "low", low: "low" };
-
-// 构造死亡重试 body（基于原请求字符串重新序列化的副本；非聊天体返回 null 不重试）：
-// max_tokens/max_completion_tokens 扩至 clamp(原值×2, minTokens, maxTokens)
-// （都缺省时注入 minTokens——上游默认小预算也是死因）；reasoning_effort 降一档，
-// 未设置视为最高档起步降（部分上游对 effort 不敏感，如 kimi 实测降档不缩短推理，
-// 此时仅靠扩预算起效；两者都不奏效则重试仍死，由调用方原样回放）。
-function gatePatchRetryBody(bodyText, minTokens, maxTokens) {
-  let parsed;
-  try { parsed = JSON.parse(bodyText); } catch { return null; }
-  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.messages)) return null;
-  const cur = Number(parsed.max_tokens ?? parsed.max_completion_tokens ?? Number.NaN);
-  const boosted = Math.max(
-    minTokens,
-    Math.min(maxTokens, Number.isFinite(cur) && cur > 0 ? cur * 2 : minTokens),
-  );
-  if (parsed.max_tokens !== undefined || parsed.max_completion_tokens !== undefined) {
-    if (parsed.max_tokens !== undefined) parsed.max_tokens = boosted;
-    if (parsed.max_completion_tokens !== undefined) parsed.max_completion_tokens = boosted;
-  } else {
-    parsed.max_tokens = boosted;
-  }
-  parsed.reasoning_effort = GATE_EFFORT_DOWN[String(parsed.reasoning_effort ?? "")] ?? "low";
-  return JSON.stringify(parsed);
-}
-
-// 用已缓冲 chunk + 仍持有的 reader 构造回放流（release/hold 超时后的直通接管）。
-function gateReplayStream(reader, chunks) {
-  return new ReadableStream({
-    async start(controller) { for (const c of chunks) controller.enqueue(c); },
-    async pull(controller) {
-      try {
-        const { done, value } = await reader.read();
-        if (done) controller.close();
-        else controller.enqueue(value);
-      } catch (e) { controller.error(e); }
-    },
-    cancel(reason) { return reader.cancel(reason).catch(() => {}); },
-  });
-}
-
-// 纯缓冲回放流（流已结束：死亡/非死亡整包原样透传）。
-function gateBufferedStream(chunks) {
-  let i = 0;
-  return new ReadableStream({
-    pull(controller) {
-      if (i < chunks.length) controller.enqueue(chunks[i++]);
-      else controller.close();
-    },
-  });
-}
-
-// 扣留观察一个 2xx 响应 body 并裁决（递归有界：每 hop retryLeft-1、独立 holdDeadline）。
-// 返回 Response：
-//   - 出现可行动输出 → 回放缓冲 + 剩余直通；
-//   - hold 超时（在 chunk 到达时评估）/ 缓冲超字节上限 → 放弃门控转直通
-//     （回放缓冲 + 接管剩余，字节零丢失）。完全静默的流由外层兜底：Kilo 的
-//     chunkTimeout 看门狗/abort signal 会让 reader.read() 以 AbortError 拒绝并
-//     原样上抛——不在本层用读超时竞争：race 输掉的一方仍占着 read 队列，
-//     会把后续 chunk 吞给已被放弃的读取（实测数据丢失）。
-//   - 流结束：死亡且可重试 → mkRetry() 下一跳同样门控；其余 → 原始字节原样回放。
-async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes) {
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  const chunks = [];
-  let text = "";
-  let bufferedBytes = 0;
-  const deadline = Date.now() + holdMs;
-
-  // 放弃门控：回放已缓冲 + 接管剩余（真正的直通，不丢后续字节）
-  const passthrough = () => new Response(gateReplayStream(reader, chunks), {
-    status: res.status, statusText: res.statusText, headers: res.headers,
-  });
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    bufferedBytes += value.byteLength ?? value.length ?? 0;
-    text += dec.decode(value, { stream: true });
-    if (GATE_ACTIONABLE.test(text)) {
-      return new Response(gateReplayStream(reader, chunks), {
-        status: res.status, statusText: res.statusText, headers: res.headers,
-      });
-    }
-    if (Date.now() > deadline) return passthrough(); // 扣留超时：放弃门控转直通
-    // 缓冲字节上限：快速上游可在时限内灌爆内存（并发放大）——超限放弃门控转直通
-    if (bufferedBytes > bufferLimitBytes) return passthrough();
-  }
-  // 流结束仍无可行动输出 → 死亡判定
-  if (retryLeft > 0 && GATE_LENGTH_FINISH.test(text) && !GATE_ACTIONABLE.test(text)) {
-    let next = null;
-    try { next = await mkRetry(); } catch { next = null; } // 重试网络错 → 回退原样回放
-    if (next && next.ok && next.body) {
-      try { reader.cancel().catch(() => {}); } catch { /* 已结束则忽略 */ }
-      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes);
-    }
-    try { next?.body?.cancel?.()?.catch?.(() => {}); } catch { /* 忽略 */ }
-  }
-  return new Response(gateBufferedStream(chunks), {
-    status: res.status, statusText: res.statusText, headers: res.headers,
-  });
-}
-
-// 推理门控 fetch 包装：options.reasoningGate = true | {holdMs, retries, minTokens, maxTokens}
-function withReasoningGate(baseFetch, cfg) {
-  const call = baseFetch ?? globalThis.fetch;
-  const retries = Math.max(0, Math.floor(Number(cfg?.retries ?? 1)));
-  const minTokens = Number(cfg?.minTokens) > 0 ? Number(cfg.minTokens) : 32_768;
-  const maxTokens = Math.max(minTokens, Number(cfg?.maxTokens) > 0 ? Number(cfg.maxTokens) : 65_536);
-  const holdMs = Number(cfg?.holdMs) > 0 ? Number(cfg.holdMs) : 180_000;
-  // 扣留缓冲字节上限（默认 16MB，超限放弃门控转直通）：思考段常态 ~百 KB 量级，
-  // 上限只防「快速异常上游在时限内灌爆内存」的资源风险，正常流量永远达不到。
-  const bufferLimitBytes = Number(cfg?.bufferLimitBytes) > 0 ? Number(cfg.bufferLimitBytes) : 16 * 1024 * 1024;
-
-  return async function reasoningGateFetch(input, init) {
-    const method = init?.method ?? "POST";
-    const url = String(typeof input === "object" && input !== null && "url" in input ? input.url : input);
-    const bodyText = typeof init?.body === "string" ? init.body : null;
-    if (method !== "POST" || bodyText === null || !/\/(chat\/)?completions(\?|$)/.test(url)) {
-      return call(input, init);
-    }
-    let model = null;
-    try { model = JSON.parse(bodyText)?.model ?? null; } catch { return call(input, init); }
-
-    let attempt = 0;
-    const mkRetry = async () => {
-      const patched = gatePatchRetryBody(bodyText, minTokens, maxTokens);
-      if (patched === null) throw new Error("hx-failover: reasoning-gate retry body patch failed");
-      attempt++;
-      await logFailover({ action: "reasoning_gate_retry", from: model, attempt });
-      console.error(`hx-failover: reasoning-gate ${model} 推理吃光输出预算/正文为空（finish=length|stop 无可行动输出），第 ${attempt} 次重试（扩预算+降推理档）`);
-      return call(input, { ...init, body: patched });
-    };
-
-    const res = await call(input, init);
-    if (!res.ok || !res.body) return res;
-    // 扣留期读断/取消会从 gateConsume 原样上抛：取消直通、断流按可重试错误走降级链
-    // ——与无门控时 body 读取断裂的错误语义一致，只是发生点从流消费期提前到 fetch 期。
-    const gated = await gateConsume(res, mkRetry, retries, holdMs, bufferLimitBytes);
-    if (attempt > 0) {
-      await logFailover({ action: "reasoning_gate_applied", from: model, attempt });
-    }
-    return gated;
   };
 }
 
@@ -524,23 +332,19 @@ export function createHxFailover(options) {
 
   // Kilo/自研扩展键不可透传给 @ai-sdk/openai-compatible（SDK 只读已知键，未知键静默丢弃——
   // 但留在 settings 里易被误当 SDK 能力排查，统一剥除；timeout/dual_review 由 plugin 侧直读 kilo.json）
-  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "reasoningGate", "timeout", "dual_review"];
+  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "timeout", "dual_review"];
   // thinking 模式 reasoning_content 回传兜底（kilo.json options.reasoningEcho；缺省 = 关闭）
   const reasoningEcho = options?.reasoningEcho === true;
-  // 推理门控（kilo.json options.reasoningGate = true | {holdMs,retries,minTokens,maxTokens}；缺省 = 关闭）。
-  // 组装顺序（内→外）：queuedAckGuard 恒开 → echo → gate——gate 的重发体先经 echo 补丁
-  // （幂等，已带 reasoning_content 则无变化），排队回执先在源头被拦。
-  const gateCfg = options?.reasoningGate === true ? {} : (options?.reasoningGate && typeof options.reasoningGate === "object" ? options.reasoningGate : null);
-  let fetchFn = withQueuedAckGuard(customFetch);
-  if (reasoningEcho) fetchFn = withReasoningEcho(fetchFn);
-  if (gateCfg !== null) fetchFn = withReasoningGate(fetchFn, gateCfg);
+  // fetch 组装顺序（内→外）：用户/SDK 注入 fetch → queued 回执拦截 → reasoningEcho。
+  // queued 拦截恒开（生产事故形态，无需配置开关）；reasoningEcho 按配置。
+  const guardedFetch = withQueuedAckGuard(customFetch);
   const sdkOptions = {
     ...rest,
     name,
     apiKey,
     headers,
-    // 未启用任何包装时仅 queuedAckGuard 生效（恒开防线），行为与既往一致
-    fetch: fetchFn,
+    // 关闭时原样透传 customFetch（含 undefined → SDK 走全局 fetch），行为零变化
+    fetch: reasoningEcho ? withReasoningEcho(guardedFetch) : guardedFetch,
   };
   for (const k of EXTENSION_KEYS) delete sdkOptions[k];
 

@@ -216,6 +216,59 @@ const tripCircuit = async (ask) => {
   assert("冷却自 trip 时刻起算（31s 后 probe 成功关断）", r === "hello" && circuitState() === "closed" && fetchCalls === 1);
 }
 
+// 10. 排队回执拦截（2026-09-24 专项）：200+JSON {"phase":"queued"} 必须按过载处理
+//     ——旧路径 SSE 解析器丢弃无 data: 前缀的 JSON 行 → 「空响应」通用错误，
+//     不过载分类、不进 CB 计数（比 provider 侧晚一个身位的同口径补齐）。
+{
+  const { ask, circuitState } = await freshLoad(11);
+  // 10a：单次 ask → 抛「排队回执」且 statusCode 503、消息含 overloaded 措辞
+  const queuedBody = JSON.stringify({ request_id: "req-q", seq: 1, position: 0, phase: "queued" });
+  globalThis.fetch = async () => {
+    fetchCalls++;
+    return {
+      ok: true, status: 200, body: {},
+      headers: { get: (h) => (String(h).toLowerCase() === "content-type" ? "application/json" : null) },
+      text: async () => queuedBody,
+    };
+  };
+  fetchCalls = 0;
+  let err10 = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "q1", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); }
+  catch (e) { err10 = e; }
+  assert("排队回执转 503 语义错误", err10 && /排队回执/.test(err10.message) && err10.statusCode === 503 && /overloaded/.test(err10.message) && fetchCalls === 1);
+
+  // 10b：连续 3 次排队回执 → 断路器 open（证明被 isOverloadErr 分类计数，而非通用错误）
+  for (let i = 0; i < 2; i++) {
+    try { await ask({ baseURL: "http://x/v1", key: "k", model: `q2-${i}`, prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); } catch {}
+  }
+  assert("排队回执计入断路器（3 连 → open）", circuitState() === "open");
+
+  // 10c：200+json 非 SSE 且非排队回执 → 显式「非 SSE 响应」错误，不进 CB 计数
+  fakeTime += 31_000; // 出冷却进 half-open
+  const oddJson = JSON.stringify({ foo: "bar" });
+  globalThis.fetch = async () => ({
+    ok: true, status: 200, body: {},
+    headers: { get: (h) => (String(h).toLowerCase() === "content-type" ? "application/json" : null) },
+    text: async () => oddJson,
+  });
+  let err10c = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "q3", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); }
+  catch (e) { err10c = e; }
+  assert("非排队 JSON 显式报错", err10c && /非 SSE 响应/.test(err10c.message) && err10c.statusCode === undefined);
+
+  // 10d：正常 SSE（无 headers 属性的旧打桩形状）不受拦截影响。
+  //     10c 的 probe 失败已把 CB 打回 open，推进冷却进 half-open 再探。
+  fakeTime += 31_000;
+  const enc = new TextEncoder();
+  const chunk = enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "hello" } }] })}\n\ndata: [DONE]\n\n`);
+  globalThis.fetch = async () => {
+    let sent = false;
+    return { ok: true, status: 200, body: { getReader: () => ({ read: async () => { if (sent) return { done: true }; sent = true; return { done: false, value: chunk }; } }) } };
+  };
+  const r10 = await ask({ baseURL: "http://x/v1", key: "k", model: "q4", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }).catch((e) => `ERR:${e.message}`);
+  assert("SSE 正常路径不受拦截影响", r10 === "hello");
+}
+
 Date.now = realNow;
 console.log(results.join("\n"));
 rmSync(TMP, { recursive: true, force: true });

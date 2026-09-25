@@ -371,7 +371,8 @@ const fakeFetch6a = async (url, init) => {
 };
 const p6a = createHxFailover({
   name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch6a,
-  failover: { chain: { models: ["kimi-k2.6"] } },
+  // 排队回执转 503 后走过载退避档（生产 2s/6s），注入小值保测试速度
+  failover: { chain: { models: ["kimi-k2.6"] }, overloadBackoffMs: [50, 60] },
 });
 let out6a = "", err6a = null;
 try {
@@ -393,7 +394,7 @@ console.log("PASS queued-ack-retried     :", queuedCalls6a.filter((m) => m === "
 const p6b = createHxFailover({
   name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub",
   fetch: async () => new Response(QUEUED_ACK, { status: 200, headers: { "content-type": "application/json" } }),
-  failover: { chain: { models: [] } },
+  failover: { chain: { models: [] }, overloadBackoffMs: [50, 60] },
 });
 let err6b = null;
 try {
@@ -441,3 +442,75 @@ try {
   });
 } catch (e) { err6d = e; }
 console.log("PASS completion-json-unaffected :", err6d === null && String(gen6d?.content?.[0]?.text ?? gen6d?.text ?? "").includes("hi"));
+
+// ── 回归 7：过载感知退避（2026-09-24 Tool execution aborted 专项）────────────
+// 生产形态（17:01:45 实证）：网关 CPU 99%+ 对所有模型回 503 system cpu overloaded；
+// 旧固定 500/1500ms 快退避 = 对过载网关连环补刀（3 会话 × 4 模型 × 2 重试，~2.3s/轮）。
+// 修复：过载类错误（503 / cpu overloaded / Retry-After）换长退避（生产 2000/6000，
+// 对齐 lib/hx-client OVERLOAD_BACKOFF_MS），普通可重试错误维持快退避不变。
+// 验证：注入 overloadBackoffMs [300,700] —— ① 950ms ≤ elapsed < 5000ms（过载档生效
+// 且注入生效：回落生产值会 ~8000ms，未走慢档则遥测无标记）；② retry 遥测带 overload:true；
+// ③ 调用次数仍为 3（1+2 重试，档位不改重试次数）。
+let calls7 = [];
+const fakeFetch7 = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls7.push(model);
+  return new Response(
+    JSON.stringify({ error: { message: "system cpu overloaded (current: 99.9%, threshold: 90%)" } }),
+    { status: 503, headers: { "content-type": "application/json" } },
+  );
+};
+const p7 = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch7,
+  failover: { chain: { models: [] }, overloadBackoffMs: [300, 700] },
+});
+let err7 = null;
+const t7 = Date.now();
+try {
+  await p7.languageModel("overload-probe").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+} catch (e) { err7 = e; }
+const elapsed7 = Date.now() - t7;
+let retry7Overload = [];
+try {
+  const log7 = await readFile(join(process.env.XDG_DATA_HOME, "kilo", "failover-events.jsonl"), "utf8");
+  retry7Overload = log7.trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.action === "retry" && e.at === "overload-probe");
+} catch { /* 无日志文件视为未写入 */ }
+console.log("");
+console.log("7 overload elapsed(ms):", elapsed7, "| calls:", calls7.join(", "), "| flagged retries:", retry7Overload.filter((e) => e.overload === true).length);
+console.log("PASS overload-backoff-used  :", calls7.length === 3 && err7?.statusCode === 503 && elapsed7 >= 950 && elapsed7 < 5000);
+console.log("PASS overload-flag-logged    :", retry7Overload.length === 2 && retry7Overload.every((e) => e.overload === true));
+
+// 7b：普通 500 错误不走慢档——退避仍为 BACKOFF_MS（500/1500），遥测无 overload 标记。
+// 用 500 而非 503：同链同重试次数，唯一差异就是档位与标记；耗时下界 500+1500=2000ms
+// 不作断言（过慢），只断言遥测干净 + 重试次数不变。
+let calls7b = [];
+const fakeFetch7b = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls7b.push(model);
+  return new Response(
+    JSON.stringify({ error: { message: "simulated upstream 500" } }),
+    { status: 500, headers: { "content-type": "application/json" } },
+  );
+};
+const p7b = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch7b,
+  failover: { chain: { models: [] } },
+});
+let err7b = null;
+try {
+  await p7b.languageModel("nonoverload-probe").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+} catch (e) { err7b = e; }
+let retry7bLines = [];
+try {
+  const log7b = await readFile(join(process.env.XDG_DATA_HOME, "kilo", "failover-events.jsonl"), "utf8");
+  retry7bLines = log7b.trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.action === "retry" && e.at === "nonoverload-probe");
+} catch { /* 无日志文件视为未写入 */ }
+console.log("PASS normal-backoff-kept     :", calls7b.length === 3 && err7b?.statusCode === 500 && retry7bLines.length === 2 && retry7bLines.every((e) => e.overload !== true));

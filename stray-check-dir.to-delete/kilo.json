@@ -1,0 +1,394 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+
+  "model": "hx/glm-5.3-flash",
+  "small_model": "hx/deepseek-v4.1-flash",
+  "subagent_model": "hx/glm-5.3-flash",
+  "subagent_depth": 2,
+  "default_agent": "code",
+
+  "enabled_providers": ["hx"],
+
+  "snapshot": true,
+  "autoupdate": true,
+  "share": "disabled",
+  "privacy_mode": true,
+  "web_search": true,
+  "formatter": true,
+  "lsp": true,
+  "remote_control": false,
+
+  "instructions": [
+    "C:/Users/Administrator/.config/kilo/INSTRUCTIONS.md",
+    "C:/Users/Administrator/.config/kilo/GLOBAL-NOTES.md"
+  ],
+  "skills": {
+    "paths": ["C:/Users/Administrator/.agents/skills"]
+  },
+
+  "agent": {
+    "code": {
+      "model": "hx/glm-5.3-flash"
+    },
+    "plan": {
+      "model": "hx/kimi-k2.6"
+    },
+    "general": {
+      "model": "hx/glm-5.2"
+    },
+    "explore": {
+      "model": "hx/deepseek-v4.1-flash"
+    },
+    "compaction": {
+      "model": "hx/glm-5.3-flash",
+      "variant": "low"
+    },
+    "orchestrator": {
+      "model": "hx/kimi-k2.6"
+    },
+    "verify": {
+      "mode": "subagent",
+      "model": "hx/kimi-k2.6",
+      "description": "独立验证视角（异源模型复核高风险改动，只读不改动）。仅在认证/权限/支付/数据迁移/公共契约等高风险改动时按需调用。",
+      "permission": {
+        "edit": "deny",
+        "bash": {
+          "sed -i*": "deny",
+          "Set-Content *": "deny",
+          "Out-File *": "deny",
+          "Add-Content *": "deny",
+          "tee *": "deny",
+          "Remove-Item *": "deny",
+          "rm *": "deny",
+          "mv *": "deny",
+          "git add*": "deny",
+          "git commit*": "deny",
+          "git push*": "deny",
+          "git merge*": "deny",
+          "git rebase*": "deny",
+          "git reset*": "deny",
+          "git checkout*": "deny",
+          "git restore*": "deny",
+          "git clean*": "deny",
+          "npm install*": "deny",
+          "npm ci*": "deny",
+          "npm publish*": "deny"
+        }
+      }
+    }
+  },
+
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "tail_turns": 6,
+    "preserve_recent_tokens": 40000,
+    "reserved": 32000,
+    "threshold_percent": 85
+  },
+
+  "tool_output": {
+    "max_lines": 2000,
+    "max_bytes": 20480
+  },
+
+  "watcher": {
+    "ignore": [
+      "node_modules/**",
+      "dist/**",
+      ".git/**",
+      "**/*.log",
+      "**/__pycache__/**",
+      "**/coverage/**",
+      ".venv/**",
+      "build/**",
+      "target/**"
+    ]
+  },
+
+  "commit_message": {
+    "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）"
+  },
+
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git show*": "allow",
+      "git branch*": "allow",
+      "git add*": "allow",
+      "git commit*": "allow",
+      "git stash*": "allow",
+      "git fetch*": "allow",
+      "git remote*": "allow",
+      "git tag*": "allow",
+      "git rev-parse*": "allow",
+      "git check-ignore*": "allow",
+      "git ls-files*": "allow",
+      "git describe*": "allow",
+      "git blame*": "allow",
+      "git config --get*": "allow",
+      "git push*": "ask",
+      "git merge*": "ask",
+      "git rebase*": "ask",
+      "git reset*": "ask",
+      "git checkout*": "ask",
+      "git restore*": "ask",
+      "git revert*": "ask",
+      "git clean*": "deny",
+      "npm run*": "allow",
+      "npm test*": "allow",
+      "npm install*": "allow",
+      "npm ci*": "allow",
+      "npm ls*": "allow",
+      "npm view*": "allow",
+      "npm outdated*": "allow",
+      "npm publish*": "deny",
+      "npm unpublish*": "deny",
+      "npm pack*": "deny",
+      "Get-ChildItem *": "allow",
+      "Get-Content *": "allow",
+      "Get-Item *": "allow",
+      "Get-FileHash *": "allow",
+      "Select-String *": "allow",
+      "Test-Path *": "allow",
+      "Measure-Object *": "allow",
+      "Get-Process *": "allow",
+      "node *": "allow",
+      "rg *": "allow",
+      "bun *": "allow",
+      "bunx *": "allow",
+      "npx *": "allow",
+      "ruff *": "allow",
+      "python *": "allow",
+      "rm -rf *": "deny",
+      "Remove-Item -Recurse -Force *": "deny"
+    },
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "task": "allow",
+    "edit": {
+      "*": "ask",
+      "src/**": "allow",
+      "npm-shrinkwrap.json": "deny",
+      "**/npm-shrinkwrap.json": "deny",
+      "pnpm-lock.yaml": "deny",
+      "**/pnpm-lock.yaml": "deny",
+      "pnpm-lock.yml": "deny",
+      "**/pnpm-lock.yml": "deny",
+      "bun.lockb": "deny",
+      "*.lock": "deny",
+      "**/*.lock": "deny"
+    },
+    "external_directory": "ask",
+    "webfetch": "allow",
+    "websearch": "allow",
+    "moa": "ask",
+    "dual_review": "allow",
+    "kilo_memory_save": "allow",
+    "kilo_memory_recall": "allow",
+    "lsp": "allow",
+    "skill": "allow",
+    "semantic_search": "allow",
+    "playwright_*": "ask",
+    "todowrite": "allow",
+    "todoread": "allow",
+    "question": "allow",
+    "doom_loop": "allow",
+    "markdown_source": "allow",
+    "notebook_read": "allow",
+    "notebook_edit": "ask",
+    "notebook_execute": "ask"
+  },
+
+  "mcp": {
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp@0.0.38"],
+      "enabled": false,
+      "timeout": 30000
+    },
+    "context7": {
+      "type": "local",
+      "command": ["npx", "-y", "@upstash/context7-mcp"],
+      "enabled": false,
+      "timeout": 30000
+    },
+    "gitnexus": {
+      "type": "local",
+      "command": ["npx", "-y", "gitnexus@1.6.12", "mcp"],
+      "enabled": false,
+      "timeout": 30000
+    }
+  },
+
+  "shared_agent_board": true,
+
+  "experimental": {
+    "task_model_selection": true,
+    "batch_tool": true,
+    "openTelemetry": false
+  },
+
+  "provider": {
+    "hx": {
+      "name": "hx",
+      "npm": "file:///--check/provider/hx-failover",
+      "options": {
+        "baseURL": "http://127.0.0.1:9527/v1",
+        "timeout": 300000,
+        "chunkTimeout": 90000,
+        "reasoningEcho": true,
+        "failover": {
+          "chain": {
+            "models": [
+              "glm-5.3-flash",
+              "kimi-k2.6",
+              "deepseek-v4.1-flash",
+              "glm-5.2"
+            ]
+          }
+        },
+        "moa": {
+          "references": ["glm-5.2", "deepseek-v4.1-flash"],
+          "aggregator": "kimi-k2.6"
+        },
+        "dual_review": {
+          "positive": "deepseek-v4.1-flash",
+          "negative": "glm-5.2",
+          "aggregator": "kimi-k2.6"
+        }
+      },
+      "models": {
+        "deepseek-v4-flash": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        },
+        "deepseek-v4.1-flash": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        },
+        "glm-5.2": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        },
+        "glm-5.3": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        },
+        "glm-5.3-flash": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        },
+        "kimi-k2.6": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        },
+        "minimax-m3": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        },
+        "qwen3.8-flash": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" }
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        }
+      }
+    }
+  }
+}

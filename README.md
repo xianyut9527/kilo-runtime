@@ -54,7 +54,7 @@ macOS / Linux（bash）：
 |------|---------------------------|---------------------|
 | 质量门禁 | 三层门禁体系、双 checker、证据契约（文档约定） | `plugin/quality-gate.ts` 三层硬门禁——层 1 步骤符合性 / 层 2 验证实证（只认末次编辑后 exit 0，fail-closed 否决「全部完成」）/ 层 3 双向审查闭环（不过即阻断交付）；模型绕不过 |
 | 多模型审查 | ensemble 交叉审查、三角验证、MMO 审计 | `plugin/dual-review.ts` 异源双向（正向查遗漏 × 反向红队）+ 第三方裁决，交付节点自动触发 |
-| 可靠性 | 编排层断路器 / 熔断阈值（prompt 约定） | `lib/hx-client.ts` + `provider/hx-failover`——三级超时、断路器、failover 降级链、reasoningEcho 协议兜底 |
+| 可靠性 | 编排层断路器 / 熔断阈值（prompt 约定） | `lib/hx-client.ts` + `provider/hx-failover`——三级超时、断路器、failover 降级链、reasoningEcho 协议兜底、reasoningGate 推理门控（推理吃光输出预算 → 空响应的客户端根治） |
 | 经验沉淀 | knowledge-base FX / fact_store / lessons 三件套 | Kilo 原生记忆（memory-bootstrap 自举）+ `/evolve` 复盘 + GLOBAL-NOTES.md 跨项目经验层 |
 | 模型路由 | agent frontmatter + plan.md 路由表（先过期失真） | `kilo.json.tmpl` 唯一真源，plugin / provider 代码零内置默认（2026-09-20 起） |
 
@@ -80,8 +80,10 @@ macOS / Linux（bash）：
 | `scripts/memory-enable.mjs` | 记忆批量启用/体检 | 部署到 `~/.config/kilo/scripts/`：无参=全量状态体检，`<dir>`=显式启用（含非 git 目录），`--db`=从 kilo.db 项目表批量启用；`/memory-setup` 命令的执行体 |
 | `command/memory-setup.md` | 全局命令 | 非 git 目录显式启用记忆 + 排查修复自举失效 |
 | `command/evolve.md` | 全局命令 | 复盘进化：蒸馏近期会话入库 + 修正过期记忆 + 反哺 SSOT（改动需确认） |
-| `provider/hx-failover/` | 模型故障自动降级 + 全链路 SSE 流式 + 三级超时 + thinking 协议兜底 | Kilo 原生只会同模型退避重试；这是可靠性的核心。**SSE 流式**（2026-09-19）：上游流式直通 + 进度可视，超时拆三级（首字节 / chunk 空闲 `chunkTimeout` / 总时长）。**流中断专项**（2026-09-15）：「200 OK + SSE 中途断开」错误重包装为 isRetryable:true → Kilo 会话级自动重试接管，无需手动重发。**reasoning_content 400 专项**（2026-09-21）：DeepSeek V4/K2.6/GLM-5.x/MiniMax thinking 模式要求历史 assistant 消息回传 reasoning_content，Kilo 重放丢失 → 工具循环续跑 400 直达用户（400 不重试不降级、降级日志无痕）；`reasoningEcho: true` 出站补空串兜底 + fatal 错误入 failover-events.jsonl 遥测（5MB 轮转）。**模型唯一真源**：降级链 / moa / dual_review 全部读 kilo.json `provider.hx.options`，代码零内置默认（未配链 = 仅当前模型直通 + stderr 告警）。⚠️ 降级只覆盖模型级故障，baseURL（natapp 隧道）单点故障全链失效——多端点容灾待规划。⚠️ provider 随 kilo server 进程启动加载（file:// 包整包入内存）：更新 dist 并 install 后，**必须重载 VS Code 窗口才生效**（2026-09-16 实测：9:22 部署的断流修复因 9:20 启动的旧进程未重载，当日仍裸穿报错） |
+| `provider/hx-failover/` | 模型故障自动降级 + 全链路 SSE 流式 + 三级超时 + thinking 协议兜底 | Kilo 原生只会同模型退避重试；这是可靠性的核心。**SSE 流式**（2026-09-19）：上游流式直通 + 进度可视，超时拆三级（首字节 / chunk 空闲 `chunkTimeout` / 总时长）。**流中断专项**（2026-09-15）：「200 OK + SSE 中途断开」错误重包装为 isRetryable:true → Kilo 会话级自动重试接管，无需手动重发。**reasoning_content 400 专项**（2026-09-21）：DeepSeek V4/K2.6/GLM-5.x/MiniMax thinking 模式要求历史 assistant 消息回传 reasoning_content，Kilo 重放丢失 → 工具循环续跑 400 直达用户（400 不重试不降级、降级日志无痕）；`reasoningEcho: true` 出站补空串兜底 + fatal 错误入 failover-events.jsonl 遥测（5MB 轮转）。**推理吃光预算专项**（2026-09-24）：thinking 模型推理与正文共享 max_tokens，推理打满 → 正文空 + finish=length（正常流结束，不触发降级/重试，每次都要人工重发；长会话百次调用 ≥1 死概率 ~40%）；`reasoningGate: true` 在 fetch 出口扣留 2xx 响应直到出现正文/tool_calls 才放行，判定死亡则扩预算（×2，clamp 32768~65536）+降推理档自动重发 1 次，仍死原样透传绝不劣化（hold 超时/缓冲超 16MB 放弃门控转直通，字节零丢失）。**模型唯一真源**：降级链 / moa / dual_review 全部读 kilo.json `provider.hx.options`，代码零内置默认（未配链 = 仅当前模型直通 + stderr 告警）。⚠️ 降级只覆盖模型级故障，baseURL（natapp 隧道）单点故障全链失效——多端点容灾待规划。⚠️ provider 随 kilo server 进程启动加载（file:// 包整包入内存）：更新 dist 并 install 后，**必须重载 VS Code 窗口才生效**（2026-09-16 实测：9:22 部署的断流修复因 9:20 启动的旧进程未重载，当日仍裸穿报错） |
 | `provider/hx-failover/test-failover.mjs` | provider 离线回归（21 例，不打真实网络） | `node provider/hx-failover/test-failover.mjs`：假 fetch 驱动真实 doStream——降级切换/通知注入/冷却不污染/看门狗触发/流中断 isRetryable/reasoningEcho 补写/fatal 透传+遥测落盘/扩展键剥除全覆盖；改 `src/index.js` 后先 `npm run build` 再必跑（测的是 dist 行为） |
+| `provider/hx-failover/test-reasoning-gate.mjs` | 推理门控离线回归（12 例，不打真实网络） | `node provider/hx-failover/test-reasoning-gate.mjs`：假 fetch 注入死亡/成功响应驱动真实 dist 门控——SSE/非流式救活、扩预算+降档 body 断言、耗尽原样透传、门控关闭零接触、hold 超时直通、buffer-cap、tool_calls 判定、echo 组合、缺省字段注入；与 test-failover 同口径改 src 后必跑 |
+| `provider/hx-failover/e2e-rescue.mjs` | 推理门控手动 E2E（打真实网关） | `node provider/hx-failover/e2e-rescue.mjs`：真实上游死亡 → 门控自动扩预算重试 → 救活断言；单发未死输出 E2E-SKIP（死亡是概率事件，不构成失败）。日常不跑，验证根治效果时手动执行 |
 | `install.*` | 下发器 | 清单驱动 / 幂等 / 备份 / 漂移检测（含 provider dist 新鲜度检查）；备份只保留最近 2 个（`KILO_KEEP_BACKUPS` 可调，需 ≥1 整数；非法值告警后按默认 2，绝不中断下发）。`install.sh` 用 `--dry-run/--check`，`install.ps1` 用 `-DryRun/-Check`，**参数风格不同** |
 | `.vscode/settings.json` | 仓库级编辑器体验 | 把 `kilo.json.tmpl` 关联为 `jsonc`——模板获得语法高亮 / 括号匹配 / 语法错误红线（VS Code 打开本仓库即生效）；非运行时资产，不进 `install.manifest` |
 | `db-maintain.sh` | kilo.db 在线瘦身 | 清事件溯源/过期会话（实测 14.2GB→1.1GB），不碰记忆与凭证；分批短事务 + VACUUM 写者门禁 + WAL checkpoint |
@@ -237,6 +239,9 @@ node scripts\test-quality-gate.mjs
 
 # provider 离线回归（改 provider/hx-failover/src 后先 npm run build 再跑；测的是 dist 行为）
 node provider\hx-failover\test-failover.mjs
+
+# 推理门控回归（同上，改 src 或门控逻辑后必跑）
+node provider\hx-failover\test-reasoning-gate.mjs
 ```
 
 `cleanup.sh` / `db-maintain.sh` 是 bash 脚本，Windows 在 Git Bash 里直接跑（`bash cleanup.sh --status`），或经上面的 PowerShell 包装调用。

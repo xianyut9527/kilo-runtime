@@ -4,7 +4,7 @@ var __export = (target, all) => {
     __defProp(target, name15, { get: all[name15], enumerable: true });
 };
 
-// provider/hx-failover/node_modules/@ai-sdk/provider/dist/index.mjs
+// node_modules/@ai-sdk/provider/dist/index.mjs
 var marker = "vercel.ai.error";
 var symbol = Symbol.for(marker);
 var _a;
@@ -350,7 +350,7 @@ var UnsupportedFunctionalityError = class extends (_b14 = AISDKError, _a14 = sym
   }
 };
 
-// provider/hx-failover/node_modules/zod/v4/classic/external.js
+// node_modules/zod/v4/classic/external.js
 var external_exports = {};
 __export(external_exports, {
   $brand: () => $brand,
@@ -613,7 +613,7 @@ __export(external_exports, {
   xor: () => xor
 });
 
-// provider/hx-failover/node_modules/zod/v4/core/index.js
+// node_modules/zod/v4/core/index.js
 var core_exports2 = {};
 __export(core_exports2, {
   $ZodAny: () => $ZodAny,
@@ -930,7 +930,7 @@ __export(core_exports2, {
   withParser: () => withParser
 });
 
-// provider/hx-failover/node_modules/zod/v4/core/util.js
+// node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
   BIGINT_FORMAT_RANGES: () => BIGINT_FORMAT_RANGES,
@@ -1773,7 +1773,7 @@ function constantCatch(value) {
   return fn;
 }
 
-// provider/hx-failover/node_modules/zod/v4/core/core.js
+// node_modules/zod/v4/core/core.js
 var _a15;
 var NEVER = /* @__PURE__ */ Object.freeze({
   status: "aborted"
@@ -1895,7 +1895,7 @@ function config(newConfig) {
   return globalConfig;
 }
 
-// provider/hx-failover/node_modules/zod/v4/core/errors.js
+// node_modules/zod/v4/core/errors.js
 function _getMessage() {
   const internals = this._zod;
   internals.message ?? (internals.message = JSON.stringify(internals.def, jsonStringifyReplacer, 2));
@@ -2087,7 +2087,7 @@ function prettifyError(error62) {
   return lines.join("\n");
 }
 
-// provider/hx-failover/node_modules/zod/v4/core/parse.js
+// node_modules/zod/v4/core/parse.js
 function finalizeParams(callee, params) {
   return { callee: params?.callee ?? callee, Err: params?.Err };
 }
@@ -2247,7 +2247,7 @@ var _safeDecodeAsync = (_Err) => async (schema, value, _ctx) => {
 };
 var safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync($ZodRealError);
 
-// provider/hx-failover/node_modules/zod/v4/core/regexes.js
+// node_modules/zod/v4/core/regexes.js
 var regexes_exports = {};
 __export(regexes_exports, {
   anyString: () => anyString,
@@ -2419,7 +2419,7 @@ var sha512_hex = /^[0-9a-fA-F]{128}$/;
 var sha512_base64 = /* @__PURE__ */ fixedBase64(86, "==");
 var sha512_base64url = /* @__PURE__ */ fixedBase64url(86);
 
-// provider/hx-failover/node_modules/zod/v4/core/checks.js
+// node_modules/zod/v4/core/checks.js
 var $ZodCheck = /* @__PURE__ */ $constructor("$ZodCheck", (inst, def) => {
   var _a18;
   inst._zod ?? (inst._zod = {});
@@ -2895,7 +2895,7 @@ var $ZodCheckOverwrite = /* @__PURE__ */ $constructor("$ZodCheckOverwrite", (ins
   };
 });
 
-// provider/hx-failover/node_modules/zod/v4/core/doc.js
+// node_modules/zod/v4/core/doc.js
 var Doc = class {
   constructor(args = [], closed = {}) {
     this.content = [];
@@ -2936,14 +2936,14 @@ ${content.join("\n")}
   }
 };
 
-// provider/hx-failover/node_modules/zod/v4/core/versions.js
+// node_modules/zod/v4/core/versions.js
 var version = {
   major: 4,
   minor: 6,
   patch: 5
 };
 
-// provider/hx-failover/node_modules/zod/v4/core/schemas.js
+// node_modules/zod/v4/core/schemas.js
 var $ZodType = /* @__PURE__ */ $constructor("$ZodType", (inst, def) => {
   var _a18;
   inst ?? (inst = {});
@@ -5357,7 +5357,7 @@ function handleRefineResult(result, payload, input2, inst) {
   }
 }
 
-// provider/hx-failover/node_modules/zod/v4/core/memoizer.js
+// node_modules/zod/v4/core/memoizer.js
 var $ZodCyclicError = class extends Error {
   constructor() {
     super(`Cannot parse a reference cycle that closes through a transform`);
@@ -5634,7 +5634,7 @@ function isBackEdge(ctx, value) {
   return backEdges !== void 0 && isRef(value) && backEdges.has(value);
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/index.js
+// node_modules/zod/v4/locales/index.js
 var locales_exports = {};
 __export(locales_exports, {
   ar: () => ar_default,
@@ -5702,7 +5702,7 @@ __export(locales_exports, {
   zhTW: () => zh_TW_default
 });
 
-// provider/hx-failover/node_modules/zod/v4/locales/ar.js
+// node_modules/zod/v4/locales/ar.js
 var error = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0641", verb: "\u0623\u0646 \u064A\u062D\u0648\u064A" },
@@ -5814,7 +5814,7 @@ function ar_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/az.js
+// node_modules/zod/v4/locales/az.js
 var error2 = () => {
   const Sizable = {
     string: { unit: "simvol", verb: "olmal\u0131d\u0131r" },
@@ -5925,7 +5925,7 @@ function az_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/be.js
+// node_modules/zod/v4/locales/be.js
 function getBelarusianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -6094,7 +6094,7 @@ function be_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/bg.js
+// node_modules/zod/v4/locales/bg.js
 var error4 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0430", verb: "\u0434\u0430 \u0441\u044A\u0434\u044A\u0440\u0436\u0430" },
@@ -6220,7 +6220,7 @@ function bg_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/bn.js
+// node_modules/zod/v4/locales/bn.js
 var error5 = () => {
   const Sizable = {
     string: { unit: "\u0985\u0995\u09CD\u09B7\u09B0", verb: "\u09A5\u09BE\u0995\u09A4\u09C7 \u09B9\u09AC\u09C7" },
@@ -6334,7 +6334,7 @@ function bn_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ca.js
+// node_modules/zod/v4/locales/ca.js
 var error6 = () => {
   const Sizable = {
     string: { unit: "car\xE0cters", verb: "contenir" },
@@ -6448,7 +6448,7 @@ function ca_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ckb.js
+// node_modules/zod/v4/locales/ckb.js
 var error7 = () => {
   const Sizable = {
     string: { unit: "\u067E\u06CC\u062A", verb: "\u0628\u06CE\u062A" },
@@ -6581,7 +6581,7 @@ function ckb_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/cs.js
+// node_modules/zod/v4/locales/cs.js
 var error8 = () => {
   const Sizable = {
     string: { unit: "znak\u016F", verb: "m\xEDt" },
@@ -6698,7 +6698,7 @@ function cs_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/da.js
+// node_modules/zod/v4/locales/da.js
 var error9 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "havde" },
@@ -6819,7 +6819,7 @@ function da_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/de.js
+// node_modules/zod/v4/locales/de.js
 var error10 = () => {
   const Sizable = {
     string: { unit: "Zeichen", verb: "zu haben" },
@@ -6933,7 +6933,7 @@ function de_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/el.js
+// node_modules/zod/v4/locales/el.js
 var error11 = () => {
   const Sizable = {
     string: { unit: "\u03C7\u03B1\u03C1\u03B1\u03BA\u03C4\u03AE\u03C1\u03B5\u03C2", verb: "\u03BD\u03B1 \u03AD\u03C7\u03B5\u03B9" },
@@ -7046,7 +7046,7 @@ function el_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/en.js
+// node_modules/zod/v4/locales/en.js
 var error12 = () => {
   const Sizable = {
     string: { unit: "characters", verb: "to have" },
@@ -7171,7 +7171,7 @@ function en_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/eo.js
+// node_modules/zod/v4/locales/eo.js
 var error13 = () => {
   const Sizable = {
     string: { unit: "karaktrojn", verb: "havi" },
@@ -7286,7 +7286,7 @@ function eo_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/es.js
+// node_modules/zod/v4/locales/es.js
 var error14 = () => {
   const Sizable = {
     string: { unit: "caracteres", verb: "tener" },
@@ -7423,7 +7423,7 @@ function es_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/fa.js
+// node_modules/zod/v4/locales/fa.js
 var error15 = () => {
   const Sizable = {
     string: { unit: "\u06A9\u0627\u0631\u0627\u06A9\u062A\u0631", verb: "\u062F\u0627\u0634\u062A\u0647 \u0628\u0627\u0634\u062F" },
@@ -7543,7 +7543,7 @@ function fa_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/fi.js
+// node_modules/zod/v4/locales/fi.js
 var error16 = () => {
   const Sizable = {
     string: { unit: "merkki\xE4", subject: "merkkijonon" },
@@ -7661,7 +7661,7 @@ function fi_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/fr.js
+// node_modules/zod/v4/locales/fr.js
 var error17 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
@@ -7791,7 +7791,7 @@ function fr_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/fr-CA.js
+// node_modules/zod/v4/locales/fr-CA.js
 var error18 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
@@ -7904,7 +7904,7 @@ function fr_CA_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/gu.js
+// node_modules/zod/v4/locales/gu.js
 var error19 = () => {
   const Sizable = {
     string: { unit: "\u0A85\u0A95\u0ACD\u0AB7\u0AB0", verb: "\u0AB9\u0ACB\u0AB5\u0ABE \u0A9C\u0ACB\u0A88\u0A8F" },
@@ -8018,7 +8018,7 @@ function gu_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/he.js
+// node_modules/zod/v4/locales/he.js
 var error20 = () => {
   const TypeNames = {
     string: { label: "\u05DE\u05D7\u05E8\u05D5\u05D6\u05EA", gender: "f" },
@@ -8220,7 +8220,7 @@ function he_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/hi.js
+// node_modules/zod/v4/locales/hi.js
 var error21 = () => {
   const Sizable = {
     string: { unit: "\u0905\u0915\u094D\u0937\u0930", verb: "\u0930\u0916\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F" },
@@ -8332,7 +8332,7 @@ function hi_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/hr.js
+// node_modules/zod/v4/locales/hr.js
 var error22 = () => {
   const Sizable = {
     string: { unit: "znakova", verb: "imati" },
@@ -8459,7 +8459,7 @@ function hr_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/hu.js
+// node_modules/zod/v4/locales/hu.js
 var error23 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "legyen" },
@@ -8573,7 +8573,7 @@ function hu_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/hy.js
+// node_modules/zod/v4/locales/hy.js
 function getArmenianPlural(count, one, many) {
   return Math.abs(count) === 1 ? one : many;
 }
@@ -8732,7 +8732,7 @@ function hy_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/id.js
+// node_modules/zod/v4/locales/id.js
 var error25 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "memiliki" },
@@ -8844,7 +8844,7 @@ function id_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/is.js
+// node_modules/zod/v4/locales/is.js
 var error26 = () => {
   const Sizable = {
     string: { unit: "stafi", verb: "a\xF0 hafa" },
@@ -8959,7 +8959,7 @@ function is_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/it.js
+// node_modules/zod/v4/locales/it.js
 var error27 = () => {
   const Sizable = {
     string: { unit: "caratteri", verb: "avere" },
@@ -9073,7 +9073,7 @@ function it_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ja.js
+// node_modules/zod/v4/locales/ja.js
 var error28 = () => {
   const Sizable = {
     string: { unit: "\u6587\u5B57", verb: "\u3067\u3042\u308B" },
@@ -9186,7 +9186,7 @@ function ja_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ka.js
+// node_modules/zod/v4/locales/ka.js
 var error29 = () => {
   const Sizable = {
     string: { unit: "\u10E1\u10D8\u10DB\u10D1\u10DD\u10DA\u10DD", verb: "\u10E3\u10DC\u10D3\u10D0 \u10E8\u10D4\u10D8\u10EA\u10D0\u10D5\u10D3\u10D4\u10E1" },
@@ -9304,7 +9304,7 @@ function ka_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/km.js
+// node_modules/zod/v4/locales/km.js
 var error30 = () => {
   const Sizable = {
     string: { unit: "\u178F\u17BD\u17A2\u1780\u17D2\u179F\u179A", verb: "\u1782\u17BD\u179A\u1798\u17B6\u1793" },
@@ -9420,12 +9420,12 @@ function km_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/kh.js
+// node_modules/zod/v4/locales/kh.js
 function kh_default() {
   return km_default();
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/kn.js
+// node_modules/zod/v4/locales/kn.js
 var error31 = () => {
   const Sizable = {
     string: { unit: "\u0C85\u0C95\u0CCD\u0CB7\u0CB0\u0C97\u0CB3\u0CC1", verb: "\u0CB9\u0CCA\u0C82\u0CA6\u0CB2\u0CC1" },
@@ -9541,7 +9541,7 @@ function kn_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ko.js
+// node_modules/zod/v4/locales/ko.js
 var error32 = () => {
   const Sizable = {
     string: { unit: "\uBB38\uC790", verb: "to have" },
@@ -9658,7 +9658,7 @@ function ko_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/lt.js
+// node_modules/zod/v4/locales/lt.js
 var capitalizeFirstCharacter = (text) => {
   return text.charAt(0).toUpperCase() + text.slice(1);
 };
@@ -9866,7 +9866,7 @@ function lt_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/mk.js
+// node_modules/zod/v4/locales/mk.js
 var error34 = () => {
   const Sizable = {
     string: { unit: "\u0437\u043D\u0430\u0446\u0438", verb: "\u0434\u0430 \u0438\u043C\u0430\u0430\u0442" },
@@ -9981,7 +9981,7 @@ function mk_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ms.js
+// node_modules/zod/v4/locales/ms.js
 var error35 = () => {
   const Sizable = {
     string: { unit: "aksara", verb: "mempunyai" },
@@ -10094,7 +10094,7 @@ function ms_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ne.js
+// node_modules/zod/v4/locales/ne.js
 var error36 = () => {
   const Sizable = {
     string: { unit: "\u0905\u0915\u094D\u0937\u0930", verb: "\u0939\u0941\u0928\u0941\u092A\u0930\u094D\u091B" },
@@ -10206,7 +10206,7 @@ function ne_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/nl.js
+// node_modules/zod/v4/locales/nl.js
 var error37 = () => {
   const Sizable = {
     string: { unit: "tekens", verb: "heeft" },
@@ -10322,7 +10322,7 @@ function nl_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/nn.js
+// node_modules/zod/v4/locales/nn.js
 var error38 = () => {
   const Sizable = {
     string: { unit: "teikn", verb: "\xE5 ha" },
@@ -10436,7 +10436,7 @@ function nn_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/no.js
+// node_modules/zod/v4/locales/no.js
 var error39 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "\xE5 ha" },
@@ -10550,7 +10550,7 @@ function no_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ota.js
+// node_modules/zod/v4/locales/ota.js
 var error40 = () => {
   const Sizable = {
     string: { unit: "harf", verb: "olmal\u0131d\u0131r" },
@@ -10665,7 +10665,7 @@ function ota_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ps.js
+// node_modules/zod/v4/locales/ps.js
 var error41 = () => {
   const Sizable = {
     string: { unit: "\u062A\u0648\u06A9\u064A", verb: "\u0648\u0644\u0631\u064A" },
@@ -10785,7 +10785,7 @@ function ps_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/pl.js
+// node_modules/zod/v4/locales/pl.js
 var error42 = () => {
   const Sizable = {
     string: { unit: "znak\xF3w", verb: "mie\u0107" },
@@ -10900,7 +10900,7 @@ function pl_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/pt.js
+// node_modules/zod/v4/locales/pt.js
 var error43 = () => {
   const Sizable = {
     string: { unit: "caracteres" },
@@ -11044,7 +11044,7 @@ function pt_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/pt-BR.js
+// node_modules/zod/v4/locales/pt-BR.js
 var error44 = () => {
   const Sizable = {
     string: { unit: "caracteres" },
@@ -11189,7 +11189,7 @@ function pt_BR_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ro.js
+// node_modules/zod/v4/locales/ro.js
 var error45 = () => {
   const Sizable = {
     string: { unit: "caractere", verb: "s\u0103 aib\u0103" },
@@ -11312,7 +11312,7 @@ function ro_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ru.js
+// node_modules/zod/v4/locales/ru.js
 function getRussianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -11481,7 +11481,7 @@ function ru_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/sk.js
+// node_modules/zod/v4/locales/sk.js
 var error47 = () => {
   const Sizable = {
     string: { unit: "znakov", verb: "ma\u0165" },
@@ -11598,7 +11598,7 @@ function sk_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/sl.js
+// node_modules/zod/v4/locales/sl.js
 var error48 = () => {
   const Sizable = {
     string: { unit: "znakov", verb: "imeti" },
@@ -11713,7 +11713,7 @@ function sl_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/sv.js
+// node_modules/zod/v4/locales/sv.js
 var error49 = () => {
   const Sizable = {
     string: { unit: "tecken", verb: "att ha" },
@@ -11829,7 +11829,7 @@ function sv_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ta.js
+// node_modules/zod/v4/locales/ta.js
 var error50 = () => {
   const Sizable = {
     string: { unit: "\u0B8E\u0BB4\u0BC1\u0BA4\u0BCD\u0BA4\u0BC1\u0B95\u0BCD\u0B95\u0BB3\u0BCD", verb: "\u0B95\u0BCA\u0BA3\u0BCD\u0B9F\u0BBF\u0BB0\u0BC1\u0B95\u0BCD\u0B95 \u0BB5\u0BC7\u0BA3\u0BCD\u0B9F\u0BC1\u0BAE\u0BCD" },
@@ -11945,7 +11945,7 @@ function ta_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/tg.js
+// node_modules/zod/v4/locales/tg.js
 var error51 = () => {
   const Sizable = {
     string: { unit: "\u0430\u043B\u043E\u043C\u0430\u0442", verb: "\u0434\u043E\u0448\u0442\u0430 \u0431\u043E\u0448\u0430\u0434" },
@@ -12062,7 +12062,7 @@ function tg_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/th.js
+// node_modules/zod/v4/locales/th.js
 var error52 = () => {
   const Sizable = {
     string: { unit: "\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23", verb: "\u0E04\u0E27\u0E23\u0E21\u0E35" },
@@ -12178,7 +12178,7 @@ function th_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/tk.js
+// node_modules/zod/v4/locales/tk.js
 var error53 = () => {
   const Sizable = {
     string: { unit: "simwol", verb: "bolmaly" },
@@ -12286,7 +12286,7 @@ function tk_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/tr.js
+// node_modules/zod/v4/locales/tr.js
 var error54 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "olmal\u0131" },
@@ -12397,7 +12397,7 @@ function tr_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/uk.js
+// node_modules/zod/v4/locales/uk.js
 var error55 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0456\u0432", verb: "\u043C\u0430\u0442\u0438\u043C\u0435" },
@@ -12511,12 +12511,12 @@ function uk_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ua.js
+// node_modules/zod/v4/locales/ua.js
 function ua_default() {
   return uk_default();
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/ur.js
+// node_modules/zod/v4/locales/ur.js
 var error56 = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0648\u0641", verb: "\u06C1\u0648\u0646\u0627" },
@@ -12632,7 +12632,7 @@ function ur_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/uz.js
+// node_modules/zod/v4/locales/uz.js
 var error57 = () => {
   const Sizable = {
     string: { unit: "belgi", verb: "bo\u2018lishi kerak" },
@@ -12746,7 +12746,7 @@ function uz_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/vi.js
+// node_modules/zod/v4/locales/vi.js
 var error58 = () => {
   const Sizable = {
     string: { unit: "k\xFD t\u1EF1", verb: "c\xF3" },
@@ -12860,7 +12860,7 @@ function vi_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/zh-CN.js
+// node_modules/zod/v4/locales/zh-CN.js
 var error59 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u7B26", verb: "\u5305\u542B" },
@@ -12975,7 +12975,7 @@ function zh_CN_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/zh-TW.js
+// node_modules/zod/v4/locales/zh-TW.js
 var error60 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u5143", verb: "\u64C1\u6709" },
@@ -13088,7 +13088,7 @@ function zh_TW_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/locales/yo.js
+// node_modules/zod/v4/locales/yo.js
 var error61 = () => {
   const Sizable = {
     string: { unit: "\xE0mi", verb: "n\xED" },
@@ -13201,7 +13201,7 @@ function yo_default() {
   };
 }
 
-// provider/hx-failover/node_modules/zod/v4/core/registries.js
+// node_modules/zod/v4/core/registries.js
 var _a16;
 var $output = /* @__PURE__ */ Symbol("ZodOutput");
 var $input = /* @__PURE__ */ Symbol("ZodInput");
@@ -13251,7 +13251,7 @@ function registry() {
 (_a16 = globalThis).__zod_globalRegistry ?? (_a16.__zod_globalRegistry = registry());
 var globalRegistry = globalThis.__zod_globalRegistry;
 
-// provider/hx-failover/node_modules/zod/v4/core/compile.js
+// node_modules/zod/v4/core/compile.js
 var INVALID = Symbol.for("zod.compile.invalid");
 var FALLBACK_FLAG = Symbol.for("zod.compile.fallback");
 var ZodCompileAsyncError = class extends Error {
@@ -14853,7 +14853,7 @@ function generateTransformCheck(doc, ctx, schema, accessor) {
   return accessor;
 }
 
-// provider/hx-failover/node_modules/zod/v4/core/api.js
+// node_modules/zod/v4/core/api.js
 function snapshotChecks(def) {
   if (def.checks)
     def.checks = [...def.checks];
@@ -15912,7 +15912,7 @@ function _stringFormat(Class2, format, fnOrRegex, _params = {}) {
   return inst;
 }
 
-// provider/hx-failover/node_modules/zod/v4/core/to-json-schema.js
+// node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target, ...sources) {
   for (const source of sources) {
     for (const key of Reflect.ownKeys(source)) {
@@ -16442,7 +16442,7 @@ var createStandardJSONSchemaMethod = (schema, io, processors = {}) => (params) =
   return finalize(ctx, schema);
 };
 
-// provider/hx-failover/node_modules/zod/v4/core/json-schema-processors.js
+// node_modules/zod/v4/core/json-schema-processors.js
 var narrowMin = (agg, key, value) => {
   if (agg[key] === void 0 || value > agg[key])
     agg[key] = value;
@@ -17190,7 +17190,7 @@ function toJSONSchema(input2, params) {
   return finalize(ctx, input2);
 }
 
-// provider/hx-failover/node_modules/zod/v4/core/json-schema-generator.js
+// node_modules/zod/v4/core/json-schema-generator.js
 var JSONSchemaGenerator = class {
   /** @deprecated Access via ctx instead */
   get metadataRegistry() {
@@ -17268,10 +17268,10 @@ var JSONSchemaGenerator = class {
   }
 };
 
-// provider/hx-failover/node_modules/zod/v4/core/json-schema.js
+// node_modules/zod/v4/core/json-schema.js
 var json_schema_exports = {};
 
-// provider/hx-failover/node_modules/zod/v4/classic/schemas.js
+// node_modules/zod/v4/classic/schemas.js
 var schemas_exports2 = {};
 __export(schemas_exports2, {
   ZodAny: () => ZodAny,
@@ -17452,7 +17452,7 @@ __export(schemas_exports2, {
   xor: () => xor
 });
 
-// provider/hx-failover/node_modules/zod/v4/classic/checks.js
+// node_modules/zod/v4/classic/checks.js
 var checks_exports2 = {};
 __export(checks_exports2, {
   endsWith: () => _endsWith,
@@ -17487,7 +17487,7 @@ __export(checks_exports2, {
   uppercase: () => _uppercase
 });
 
-// provider/hx-failover/node_modules/zod/v4/classic/errors.js
+// node_modules/zod/v4/classic/errors.js
 var _installedErrorProtos = /* @__PURE__ */ new WeakSet([Object.prototype, Error.prototype]);
 function _lazyMethod(proto, key, make) {
   Object.defineProperty(proto, key, {
@@ -17533,7 +17533,7 @@ var ZodRealError = /* @__PURE__ */ $constructor("ZodError", initializer2, void 0
   Parent: Error
 });
 
-// provider/hx-failover/node_modules/zod/v4/classic/parse.js
+// node_modules/zod/v4/classic/parse.js
 var parse2 = /* @__PURE__ */ _parse(ZodRealError);
 var parseAsync2 = /* @__PURE__ */ _parseAsync(ZodRealError);
 var safeParse2 = /* @__PURE__ */ _safeParse(ZodRealError);
@@ -17547,7 +17547,7 @@ var safeDecode2 = /* @__PURE__ */ _safeDecode(ZodRealError);
 var safeEncodeAsync2 = /* @__PURE__ */ _safeEncodeAsync(ZodRealError);
 var safeDecodeAsync2 = /* @__PURE__ */ _safeDecodeAsync(ZodRealError);
 
-// provider/hx-failover/node_modules/zod/v4/classic/schemas.js
+// node_modules/zod/v4/classic/schemas.js
 function _ensureDefaultLocale() {
   if (!globalConfig.localeError)
     config(en_default());
@@ -19012,7 +19012,7 @@ function preprocess(fn, schema) {
   });
 }
 
-// provider/hx-failover/node_modules/zod/v4/classic/compat.js
+// node_modules/zod/v4/classic/compat.js
 var ZodIssueCode = {
   invalid_type: "invalid_type",
   too_big: "too_big",
@@ -19038,7 +19038,7 @@ var ZodFirstPartyTypeKind;
 /* @__PURE__ */ (function(ZodFirstPartyTypeKind3) {
 })(ZodFirstPartyTypeKind || (ZodFirstPartyTypeKind = {}));
 
-// provider/hx-failover/node_modules/zod/v4/classic/iso.js
+// node_modules/zod/v4/classic/iso.js
 var iso_exports = {};
 __export(iso_exports, {
   ZodISODate: () => ZodISODate,
@@ -19063,7 +19063,7 @@ function duration2(params) {
   return _isoDuration(ZodISODuration, params);
 }
 
-// provider/hx-failover/node_modules/zod/v4/classic/from-json-schema.js
+// node_modules/zod/v4/classic/from-json-schema.js
 var z = {
   ...schemas_exports2,
   ...checks_exports2,
@@ -19796,7 +19796,7 @@ function fromJSONSchema(schema, params) {
   return convertSchema(normalized, ctx);
 }
 
-// provider/hx-failover/node_modules/zod/v4/core/visit.js
+// node_modules/zod/v4/core/visit.js
 var RESOLVING = Symbol("z.visit/resolving");
 function visit(schema, fnOrHandlers) {
   const fn = typeof fnOrHandlers === "function" ? fnOrHandlers : (node2, rewritten) => {
@@ -19951,7 +19951,7 @@ function visit(schema, fnOrHandlers) {
   return run(schema);
 }
 
-// provider/hx-failover/node_modules/zod/v4/classic/deep-partial.js
+// node_modules/zod/v4/classic/deep-partial.js
 function deepPartial(schema) {
   return visit(schema, {
     object: (s) => s.partial(),
@@ -19963,7 +19963,7 @@ function deepPartial(schema) {
   });
 }
 
-// provider/hx-failover/node_modules/zod/v4/classic/in-out.js
+// node_modules/zod/v4/classic/in-out.js
 function withChecks(side, checks) {
   if (!checks?.length)
     return side;
@@ -19993,7 +19993,7 @@ function output(schema) {
   });
 }
 
-// provider/hx-failover/node_modules/zod/v4/classic/coerce.js
+// node_modules/zod/v4/classic/coerce.js
 var coerce_exports = {};
 __export(coerce_exports, {
   bigint: () => bigint3,
@@ -20018,7 +20018,7 @@ function date4(params) {
   return _coercedDate(ZodDate, params);
 }
 
-// provider/hx-failover/node_modules/zod/v3/helpers/util.js
+// node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {
@@ -20152,7 +20152,7 @@ var getParsedType2 = (data) => {
   }
 };
 
-// provider/hx-failover/node_modules/zod/v3/ZodError.js
+// node_modules/zod/v3/ZodError.js
 var ZodIssueCode2 = util.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -20281,7 +20281,7 @@ ZodError2.create = (issues) => {
   return error62;
 };
 
-// provider/hx-failover/node_modules/zod/v3/locales/en.js
+// node_modules/zod/v3/locales/en.js
 var errorMap = (issue2, _ctx) => {
   let message;
   switch (issue2.code) {
@@ -20384,13 +20384,13 @@ var errorMap = (issue2, _ctx) => {
 };
 var en_default2 = errorMap;
 
-// provider/hx-failover/node_modules/zod/v3/errors.js
+// node_modules/zod/v3/errors.js
 var overrideErrorMap = en_default2;
 function getErrorMap2() {
   return overrideErrorMap;
 }
 
-// provider/hx-failover/node_modules/zod/v3/helpers/parseUtil.js
+// node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
   const { data, path, errorMaps, issueData } = params;
   const fullPath = [...path, ...issueData.path || []];
@@ -20499,14 +20499,14 @@ var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
-// provider/hx-failover/node_modules/zod/v3/helpers/errorUtil.js
+// node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil || (errorUtil = {}));
 
-// provider/hx-failover/node_modules/zod/v3/types.js
+// node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
   constructor(parent, value, path, key) {
     this._cachedPath = [];
@@ -23914,7 +23914,7 @@ var nullableType = ZodNullable2.create;
 var preprocessType = ZodEffects.createWithPreprocess;
 var pipelineType = ZodPipeline.create;
 
-// provider/hx-failover/node_modules/eventsource-parser/dist/index.js
+// node_modules/eventsource-parser/dist/index.js
 var ParseError = class extends Error {
   constructor(message, options) {
     super(message), this.name = "ParseError", this.type = options.type, this.field = options.field, this.value = options.value, this.line = options.line;
@@ -24090,7 +24090,7 @@ function isEventPrefix(chunk, i, firstCharCode) {
   return firstCharCode === 101 && chunk.charCodeAt(i + 1) === 118 && chunk.charCodeAt(i + 2) === 101 && chunk.charCodeAt(i + 3) === 110 && chunk.charCodeAt(i + 4) === 116 && chunk.charCodeAt(i + 5) === 58;
 }
 
-// provider/hx-failover/node_modules/eventsource-parser/dist/stream.js
+// node_modules/eventsource-parser/dist/stream.js
 var EventSourceParserStream = class extends TransformStream {
   constructor({ onError, onRetry, onComment, maxBufferSize } = {}) {
     let parser;
@@ -24115,7 +24115,7 @@ var EventSourceParserStream = class extends TransformStream {
   }
 };
 
-// provider/hx-failover/node_modules/@ai-sdk/provider-utils/dist/index.mjs
+// node_modules/@ai-sdk/provider-utils/dist/index.mjs
 function combineHeaders(...headers) {
   return headers.reduce(
     (combinedHeaders, currentHeaders) => ({
@@ -26399,7 +26399,7 @@ function withoutTrailingSlash(url2) {
   return url2 == null ? void 0 : url2.replace(/\/$/, "");
 }
 
-// provider/hx-failover/node_modules/@ai-sdk/openai-compatible/dist/index.mjs
+// node_modules/@ai-sdk/openai-compatible/dist/index.mjs
 function toCamelCase(str) {
   return str.replace(/[_-]([a-z])/g, (g) => g[1].toUpperCase());
 }
@@ -28133,10 +28133,10 @@ function createOpenAICompatible(options) {
   return provider;
 }
 
-// provider/hx-failover/src/index.js
-import { appendFile, mkdir, rename, stat, writeFile } from "node:fs/promises";
+// src/index.js
+import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 var DEFAULT_COOLDOWN_MS = 6e4;
 var MAX_RETRIES_PER_HOP = 2;
 var BACKOFF_MS = [500, 1500];
@@ -28147,35 +28147,28 @@ function failoverLogPath() {
   return join(dataHome, "kilo", "failover-events.jsonl");
 }
 var logDirReady = null;
-var logQueue = Promise.resolve();
 async function logFailover(record2) {
-  logQueue = logQueue.then(async () => {
-    try {
-      const p = failoverLogPath();
-      if (!logDirReady) {
-        logDirReady = mkdir(dirname(p), { recursive: true }).catch((e2) => {
-          logDirReady = null;
-          throw e2;
-        });
-      }
-      await logDirReady;
-      const st = await stat(p).catch(() => null);
-      if (st && st.size > LOG_ROTATE_BYTES) {
-        try {
-          await rename(p, `${p}.1`);
-        } catch (e3) {
-          await writeFile(p, "", "utf8");
-          console.error(`hx-failover: telemetry rotate failed\uFF08\u5DF2\u6E05\u7A7A\u4E3B\u6587\u4EF6\u7EE7\u7EED\u8BB0\u5F55\uFF09: ${e3?.message ?? e3}`);
-        }
-      }
-      await appendFile(p, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), kind: "failover", ...record2 }) + "\n", "utf8");
-    } catch (e) {
-      console.error(`hx-failover: telemetry write failed: ${e?.message ?? e}`);
+  try {
+    const p = failoverLogPath();
+    if (!logDirReady) {
+      logDirReady = mkdir(join(p, ".."), { recursive: true }).catch((e2) => {
+        logDirReady = null;
+        throw e2;
+      });
     }
-  }).catch((e) => {
-    console.error(`hx-failover: telemetry queue guard: ${e?.message ?? e}`);
-  });
-  return logQueue;
+    await logDirReady;
+    const st = await stat(p).catch(() => null);
+    if (st && st.size > LOG_ROTATE_BYTES) {
+      try {
+        await rename(p, `${p}.1`);
+      } catch (e3) {
+        console.error(`hx-failover: telemetry rotate failed\uFF08\u65E5\u5FD7\u5C06\u7EE7\u7EED\u8FFD\u52A0\u539F\u6587\u4EF6\uFF09: ${e3?.message ?? e3}`);
+      }
+    }
+    await appendFile(p, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), kind: "failover", ...record2 }) + "\n", "utf8");
+  } catch (e) {
+    console.error(`hx-failover: telemetry write failed: ${e?.message ?? e}`);
+  }
 }
 var cooldown = /* @__PURE__ */ new Map();
 function patchReasoningContent(bodyText) {
@@ -28251,153 +28244,6 @@ function withReasoningEcho(baseFetch) {
     } catch {
     }
     return call(input2, init);
-  };
-}
-var GATE_ACTIONABLE = /"(?:content|tool_calls)"\s*:\s*(?:"[^"]+"|\[)/;
-var GATE_LENGTH_FINISH = /"finish_reason"\s*:\s*"(?:length|stop)"/;
-var GATE_EFFORT_DOWN = { max: "high", high: "medium", medium: "low", low: "low" };
-function gatePatchRetryBody(bodyText, minTokens, maxTokens) {
-  let parsed;
-  try {
-    parsed = JSON.parse(bodyText);
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.messages)) return null;
-  const cur = Number(parsed.max_tokens ?? parsed.max_completion_tokens ?? Number.NaN);
-  const boosted = Math.max(
-    minTokens,
-    Math.min(maxTokens, Number.isFinite(cur) && cur > 0 ? cur * 2 : minTokens)
-  );
-  if (parsed.max_tokens !== void 0 || parsed.max_completion_tokens !== void 0) {
-    if (parsed.max_tokens !== void 0) parsed.max_tokens = boosted;
-    if (parsed.max_completion_tokens !== void 0) parsed.max_completion_tokens = boosted;
-  } else {
-    parsed.max_tokens = boosted;
-  }
-  parsed.reasoning_effort = GATE_EFFORT_DOWN[String(parsed.reasoning_effort ?? "")] ?? "low";
-  return JSON.stringify(parsed);
-}
-function gateReplayStream(reader, chunks) {
-  return new ReadableStream({
-    async start(controller) {
-      for (const c of chunks) controller.enqueue(c);
-    },
-    async pull(controller) {
-      try {
-        const { done, value } = await reader.read();
-        if (done) controller.close();
-        else controller.enqueue(value);
-      } catch (e) {
-        controller.error(e);
-      }
-    },
-    cancel(reason) {
-      return reader.cancel(reason).catch(() => {
-      });
-    }
-  });
-}
-function gateBufferedStream(chunks) {
-  let i = 0;
-  return new ReadableStream({
-    pull(controller) {
-      if (i < chunks.length) controller.enqueue(chunks[i++]);
-      else controller.close();
-    }
-  });
-}
-async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes) {
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  const chunks = [];
-  let text = "";
-  let bufferedBytes = 0;
-  const deadline = Date.now() + holdMs;
-  const passthrough = () => new Response(gateReplayStream(reader, chunks), {
-    status: res.status,
-    statusText: res.statusText,
-    headers: res.headers
-  });
-  for (; ; ) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    bufferedBytes += value.byteLength ?? value.length ?? 0;
-    text += dec.decode(value, { stream: true });
-    if (GATE_ACTIONABLE.test(text)) {
-      return new Response(gateReplayStream(reader, chunks), {
-        status: res.status,
-        statusText: res.statusText,
-        headers: res.headers
-      });
-    }
-    if (Date.now() > deadline) return passthrough();
-    if (bufferedBytes > bufferLimitBytes) return passthrough();
-  }
-  if (retryLeft > 0 && GATE_LENGTH_FINISH.test(text) && !GATE_ACTIONABLE.test(text)) {
-    let next = null;
-    try {
-      next = await mkRetry();
-    } catch {
-      next = null;
-    }
-    if (next && next.ok && next.body) {
-      try {
-        reader.cancel().catch(() => {
-        });
-      } catch {
-      }
-      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes);
-    }
-    try {
-      next?.body?.cancel?.()?.catch?.(() => {
-      });
-    } catch {
-    }
-  }
-  return new Response(gateBufferedStream(chunks), {
-    status: res.status,
-    statusText: res.statusText,
-    headers: res.headers
-  });
-}
-function withReasoningGate(baseFetch, cfg) {
-  const call = baseFetch ?? globalThis.fetch;
-  const retries = Math.max(0, Math.floor(Number(cfg?.retries ?? 1)));
-  const minTokens = Number(cfg?.minTokens) > 0 ? Number(cfg.minTokens) : 32768;
-  const maxTokens = Math.max(minTokens, Number(cfg?.maxTokens) > 0 ? Number(cfg.maxTokens) : 65536);
-  const holdMs = Number(cfg?.holdMs) > 0 ? Number(cfg.holdMs) : 18e4;
-  const bufferLimitBytes = Number(cfg?.bufferLimitBytes) > 0 ? Number(cfg.bufferLimitBytes) : 16 * 1024 * 1024;
-  return async function reasoningGateFetch(input2, init) {
-    const method = init?.method ?? "POST";
-    const url2 = String(typeof input2 === "object" && input2 !== null && "url" in input2 ? input2.url : input2);
-    const bodyText = typeof init?.body === "string" ? init.body : null;
-    if (method !== "POST" || bodyText === null || !/\/(chat\/)?completions(\?|$)/.test(url2)) {
-      return call(input2, init);
-    }
-    let model = null;
-    try {
-      model = JSON.parse(bodyText)?.model ?? null;
-    } catch {
-      return call(input2, init);
-    }
-    let attempt = 0;
-    const mkRetry = async () => {
-      const patched = gatePatchRetryBody(bodyText, minTokens, maxTokens);
-      if (patched === null) throw new Error("hx-failover: reasoning-gate retry body patch failed");
-      attempt++;
-      await logFailover({ action: "reasoning_gate_retry", from: model, attempt });
-      console.error(`hx-failover: reasoning-gate ${model} \u63A8\u7406\u5403\u5149\u8F93\u51FA\u9884\u7B97/\u6B63\u6587\u4E3A\u7A7A\uFF08finish=length|stop \u65E0\u53EF\u884C\u52A8\u8F93\u51FA\uFF09\uFF0C\u7B2C ${attempt} \u6B21\u91CD\u8BD5\uFF08\u6269\u9884\u7B97+\u964D\u63A8\u7406\u6863\uFF09`);
-      return call(input2, { ...init, body: patched });
-    };
-    const res = await call(input2, init);
-    if (!res.ok || !res.body) return res;
-    const gated = await gateConsume(res, mkRetry, retries, holdMs, bufferLimitBytes);
-    if (attempt > 0) {
-      await logFailover({ action: "reasoning_gate_applied", from: model, attempt });
-    }
-    return gated;
   };
 }
 function isCooling(id, cooldownMs) {
@@ -28496,19 +28342,16 @@ function createHxFailover(options) {
   if (failoverOpts?.nested === true || Array.isArray(failoverOpts?.nested)) {
     throw new Error("hx-failover: \u7981\u6B62\u5D4C\u5957 failover \u914D\u7F6E\uFF08legacy \u8BED\u4E49\uFF0C\u9632\u5FAA\u73AF\u4F9D\u8D56\uFF09");
   }
-  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "reasoningGate", "timeout", "dual_review"];
+  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "timeout", "dual_review"];
   const reasoningEcho = options?.reasoningEcho === true;
-  const gateCfg = options?.reasoningGate === true ? {} : options?.reasoningGate && typeof options.reasoningGate === "object" ? options.reasoningGate : null;
-  let fetchFn = withQueuedAckGuard(customFetch);
-  if (reasoningEcho) fetchFn = withReasoningEcho(fetchFn);
-  if (gateCfg !== null) fetchFn = withReasoningGate(fetchFn, gateCfg);
+  const guardedFetch = withQueuedAckGuard(customFetch);
   const sdkOptions = {
     ...rest,
     name: name15,
     apiKey,
     headers,
-    // 未启用任何包装时仅 queuedAckGuard 生效（恒开防线），行为与既往一致
-    fetch: fetchFn
+    // 关闭时原样透传 customFetch（含 undefined → SDK 走全局 fetch），行为零变化
+    fetch: reasoningEcho ? withReasoningEcho(guardedFetch) : guardedFetch
   };
   for (const k of EXTENSION_KEYS) delete sdkOptions[k];
   const cooldownMs = Number(failoverOpts?.cooldownMs) > 0 ? Number(failoverOpts.cooldownMs) : DEFAULT_COOLDOWN_MS;

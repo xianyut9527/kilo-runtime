@@ -60,6 +60,81 @@ PY=""
 if command -v python >/dev/null 2>&1 && python -c "import json" >/dev/null 2>&1; then PY="python"
 elif command -v python3 >/dev/null 2>&1 && python3 -c "import json" >/dev/null 2>&1; then PY="python3"; fi
 
+# ---------- 尾随逗号剥离工具探测 ----------
+# kilo.json.tmpl 自 ad2e312 起允许尾随逗号风格，部署副本必须回归纯 JSON
+# （python json.load / bun JSON.parse / PS5.1 ConvertFrom-Json 均拒绝尾随逗号）。
+# 剥离必须走字符级状态机：正则 ,\s*[}\]] 会误伤字符串字面量内的 ",}"（commit_message
+# prompt 实证，lib/hx-client.ts stripTrailingCommas / install.ps1 Remove-TrailingCommas 同款语义）。
+# 解释器全缺时原样透传（Kilo 主程序 JSONC 宽松解析可接受的降级，但严格解析工具会拒）。
+STRIP_TC=""
+if [ -n "$PY" ]; then STRIP_TC="$PY"
+elif command -v bun >/dev/null 2>&1; then STRIP_TC="bun"
+elif command -v node >/dev/null 2>&1; then STRIP_TC="node"
+else
+  echo "[INSTALL] WARN: 无 python/bun/node 可用，尾随逗号不剥离，部署副本将带尾随逗号" >&2
+fi
+
+# 单引号包裹的 python/bash 载荷内不得再出现单引号 → 用 chr(34)/chr(92) 表示引号与反斜杠。
+STRIP_TC_PY='
+import sys
+try: sys.stdout.reconfigure(newline="")  # Windows python 文本模式会把 \n 写回 \r\n，禁译保 LF
+except Exception: pass
+DQ = chr(34); BS = chr(92)
+s = sys.stdin.read()
+out = []; instr = False; esc = False; i = 0; n = len(s)
+while i < n:
+    c = s[i]
+    if instr:
+        out.append(c)
+        if esc: esc = False
+        elif c == BS: esc = True
+        elif c == DQ: instr = False
+    elif c == DQ:
+        instr = True; out.append(c)
+    elif c == ",":
+        j = i + 1
+        while j < n and s[j] in " \t\r\n": j += 1
+        if j >= n or s[j] not in "}]": out.append(c)
+    else:
+        out.append(c)
+    i += 1
+sys.stdout.write("".join(out))
+'
+STRIP_TC_JS='
+const DQ = String.fromCharCode(34), BS = String.fromCharCode(92);
+let s = "";
+process.stdin.on("data", (d) => { s += d; });
+process.stdin.on("end", () => {
+  let out = ""; let instr = false, esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (instr) {
+      out += c;
+      if (esc) esc = false;
+      else if (c === BS) esc = true;
+      else if (c === DQ) instr = false;
+      continue;
+    }
+    if (c === DQ) { instr = true; out += c; continue; }
+    if (c === ",") {
+      let j = i + 1;
+      while (j < s.length && " \t\r\n".includes(s[j])) j++;
+      if (j < s.length && (s[j] === "}" || s[j] === "]")) continue;
+    }
+    out += c;
+  }
+  process.stdout.write(out);
+});
+'
+strip_tc() { # stdin -> stdout
+  case "$STRIP_TC" in
+    python|python3) "$PY" -c "$STRIP_TC_PY" ;;
+    bun)            bun -e "$STRIP_TC_JS" ;;
+    node)           node -e "$STRIP_TC_JS" ;;
+    *)              cat ;;
+  esac
+}
+
 hash_of() { # $1 = file
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
   elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
@@ -83,7 +158,7 @@ render_file() { # $1=src $2=dst
   case "$src" in
     *.tmpl)
       sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$src" \
-        | sed -e '/^[[:space:]]*\/\//d' > "$tmp" ;;
+        | sed -e '/^[[:space:]]*\/\//d' | strip_tc > "$tmp" ;;
     *)
       if needs_subst "$1"; then
         sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$src" > "$tmp"
@@ -150,7 +225,8 @@ if [ -f "$SRC_JS" ] && [ -f "$DIST_JS" ] && [ "$SRC_JS" -nt "$DIST_JS" ]; then
 fi
 
 # ---------- 校验：kilo.json.tmpl 渲染后必须是合法 JSON，且不得残留占位符 ----------
-RENDERED_JSON="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | sed -e '/^[[:space:]]*\/\//d')"
+# （strip_tc 已剥尾随逗号，这里严格校验的正是将要落盘的内容）
+RENDERED_JSON="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | sed -e '/^[[:space:]]*\/\//d' | strip_tc)"
 if printf '%s' "$RENDERED_JSON" | grep -q '__KILO_\(HOME\|CONFIG\)__'; then
   echo "[INSTALL] FAIL: kilo.json.tmpl 渲染后仍残留占位符（provider 将初始化失败）" >&2
   exit 1
@@ -375,9 +451,10 @@ if [ "$STRAYS" -gt 0 ]; then
   printf '%s\n' "$STRAY_LIST" | sed 's/^/    /'
 fi
 if [ -n "$PY" ]; then
-  MODEL="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | sed -e '/^[[:space:]]*\/\//d' | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('model','(none)'))")"
-  SMALL="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | sed -e '/^[[:space:]]*\/\//d' | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('small_model','(none)'))")"
-  AGENTS="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | sed -e '/^[[:space:]]*\/\//d' | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(', '.join(c.get('agent',{}).keys()) or '(none)')")"
+  # 复用已剥离尾随逗号的 RENDERED_JSON（与落盘内容一致），不再重复渲染
+  MODEL="$(printf '%s' "$RENDERED_JSON" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('model','(none)'))")"
+  SMALL="$(printf '%s' "$RENDERED_JSON" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(c.get('small_model','(none)'))")"
+  AGENTS="$(printf '%s' "$RENDERED_JSON" | "$PY" -c "import json,sys; c=json.load(sys.stdin); print(', '.join(c.get('agent',{}).keys()) or '(none)')")"
   echo "  model    : $MODEL"
   echo "  small    : $SMALL"
   echo "  agents   : $AGENTS"
