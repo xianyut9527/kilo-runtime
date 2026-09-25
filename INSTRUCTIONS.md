@@ -1,4 +1,4 @@
-# 全局工程原则（由 kilo_config 下发）
+# 全局工程原则（由 Kilo Runtime 下发）
 
 ## 认知中心
 - 默认由主 agent 持有完整上下文并自主决策；子代理是按需调用的工具，不是流程节点。
@@ -40,7 +40,7 @@
   explore 只做粗扫定位（检索质量不承载实现输入）；实现所依赖的关键文件上下文由主 agent 亲自 read，
   不拿子代理的转述当编辑依据。
 - 改配置类文件前，先确认改的是「SSOT 仓库」还是「部署副本」：`~/.config/kilo/` 下的
-  `kilo.json` / `plugin/` / `agent/` 都由 kilo_config 仓库（本仓库，`git remote -v` 可查）下发，
+  `kilo.json` / `plugin/` / `agent/` 都由 Kilo Runtime 仓库（本仓库，`git remote -v` 可查）下发，
   直接改本机副本会在下次下发时被覆盖。
 
 ## 验证按风险触发（不是流水线）

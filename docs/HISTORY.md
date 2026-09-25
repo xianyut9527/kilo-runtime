@@ -1,4 +1,4 @@
-# 历史演变与维护者文档（HISTORY）
+# Kilo Runtime — 历史演变与维护者文档（HISTORY）
 
 > 本文档面向维护者：架构演变、资产清单、性能/维护专题、隐私边界、完整约定与验收。使用者请看仓库首页 README（中文）或 [docs/GUIDE-EN.md](GUIDE-EN.md)（English）。
 

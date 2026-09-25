@@ -1,4 +1,4 @@
-# Quick Start
+# Kilo Runtime — Quick Start
 
 <div align="center">
 

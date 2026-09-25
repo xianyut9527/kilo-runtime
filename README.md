@@ -1,4 +1,4 @@
-# kilo_config — KiloCode 全局配置仓库
+# Kilo Runtime — KiloCode 全局配置与运行时增强
 
 <div align="center">
 
