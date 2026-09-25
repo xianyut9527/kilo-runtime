@@ -12,14 +12,32 @@
 ## 架构
 
 ```
-本仓库 ─install→ ~/.config/kilo/（运行时副本，别直接改；改了会被覆盖回仓库版）
-
-kilo.json.tmpl    → kilo.json   全部配置：模型路由 / 网关 / 权限 / 开关
-provider/hx-failover           模型网关客户端：流式、超时、故障自动降级、推理门控
-plugin/                        quality-gate 质量门禁 · dual-review 双向审查 ·
-                               moa 多模型分析 · permission-guard 危险命令拦截
-INSTRUCTIONS.md                每会话注入的工程原则
+                    ┌─────────────────────────────────────────────┐
+                    │            VS Code + Kilo 扩展              │
+                    └────────────────────┬────────────────────────┘
+                                         │ 读取
+                                         ▼
+本仓库（唯一真源） ─install.ps1/sh→ ~/.config/kilo/（运行时副本，别直接改）
+│                                          │
+├─ kilo.json.tmpl ──渲染──▶ kilo.json      │← 全部配置：模型路由 / 网关 / 权限 / 开关
+├─ provider/hx-failover                    │← 模型网关客户端：流式、超时、故障自动降级、
+│   src/ → build → dist/                   │   推理门控（thinking 模型救活）
+├─ plugin/（随进程自动加载，改后需重载窗口） │
+│   ├─ quality-gate                        │← 三层交付质量门禁：防"声称完成但没做"
+│   ├─ dual-review                         │← 双向异源审查：正向查遗漏 × 反向红队 + 裁决
+│   ├─ moa                                 │← 多模型交叉分析（高风险决策）
+│   ├─ permission-guard                    │← 动态拦截危险命令与密钥路径
+│   ├─ compaction-anchor                   │← 长会话压缩后保留任务锚点
+│   └─ memory-bootstrap                    │← git 项目自动启用原生记忆
+├─ INSTRUCTIONS.md                         │← 每会话注入的工程原则
+└─ command/evolve.md 等                    │← 全局命令（/evolve 复盘进化）
+                                           │
+                              ~/.local/share/kilo/（数据目录：会话库 / 记忆 / 凭证 auth.json）
 ```
+
+数据流：Kilo 会话 → provider（网关客户端）→ 上游模型网关（OpenAI 兼容 API）；
+主模型故障时按 `failover.chain.models` 依次自动降级；交付节点由 quality-gate 按
+风险触发 dual-review 自动审查。
 
 ## 改模型（都在 kilo.json.tmpl）
 

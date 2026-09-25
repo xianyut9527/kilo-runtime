@@ -12,14 +12,32 @@
 ## Architecture
 
 ```
-This repo ─install→ ~/.config/kilo/ (runtime copy — edit nothing there; changes get overwritten)
-
-kilo.json.tmpl    → kilo.json   All config: model routing / gateway / permissions / switches
-provider/hx-failover           Model gateway client: streaming, timeouts, auto failover, reasoning gate
-plugin/                        quality-gate delivery checks · dual-review cross review ·
-                               moa multi-model analysis · permission-guard dangerous-command blocking
-INSTRUCTIONS.md                Engineering principles injected into every session
+                 ┌─────────────────────────────────────────────┐
+                 │           VS Code + Kilo extension          │
+                 └───────────────────┬─────────────────────────┘
+                                     │ reads
+                                     ▼
+This repo (source of truth) ─install→ ~/.config/kilo/ (runtime copy — never edit directly)
+│                                         │
+├─ kilo.json.tmpl ──render──▶ kilo.json   │← All config: model routing / gateway / permissions / switches
+├─ provider/hx-failover                   │← Model gateway client: streaming, timeouts, auto failover,
+│   src/ → build → dist/                  │   reasoning gate (rescues thinking models)
+├─ plugin/ (auto-loaded; reload window after changes)
+│   ├─ quality-gate                       │← 3-layer delivery gate: prevents fake completion claims
+│   ├─ dual-review                        │← dual cross review: omission check × red team + verdict
+│   ├─ moa                                │← multi-model cross analysis (high-risk decisions)
+│   ├─ permission-guard                   │← blocks dangerous commands and secret paths
+│   ├─ compaction-anchor                  │← keeps task anchors after long-session compaction
+│   └─ memory-bootstrap                   │← auto-enables native memory for git projects
+├─ INSTRUCTIONS.md                        │← engineering principles injected every session
+└─ command/evolve.md etc.                 │← global commands (/evolve retrospective)
+                                          │
+                           ~/.local/share/kilo/ (data dir: sessions / memory / credentials auth.json)
 ```
+
+Data flow: Kilo session → provider (gateway client) → upstream model gateway (OpenAI-compatible API).
+On main-model failure it fails over through `failover.chain.models`; at delivery nodes quality-gate
+triggers dual-review automatically based on risk.
 
 ## Model configuration (all in kilo.json.tmpl)
 
