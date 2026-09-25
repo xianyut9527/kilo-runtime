@@ -269,6 +269,28 @@ const tripCircuit = async (ask) => {
   assert("SSE 正常路径不受拦截影响", r10 === "hello");
 }
 
+// 11. 预检死锁回归（2026-09-25 线上专项）：moa/dual_review 的断路器预检
+//     改用 cbShouldFailFast()（冷却已过即放行）——预检只看 circuitState()==="open"
+//     会永远拦住冷却后的第一次 ask()，而 open→half-open 迁移只发生在 ask() 内，
+//     断路器将永久 open（线上实证：trip 后网关早已恢复，工具仍连续数小时秒回
+//     「断路器开启，稍后重试」，hx-client 遥测零条——请求根本没发出）。
+{
+  const { ask, circuitState, cbShouldFailFast } = await freshLoad(12);
+  await tripCircuit(ask);
+  assert("预检回归前置：trip 后 open 且应 fail fast", circuitState() === "open" && cbShouldFailFast() === true);
+  // 冷却窗口内预检拦截（同旧行为）
+  fakeTime += 10_000;
+  assert("冷却内预检仍 fail fast", cbShouldFailFast() === true);
+  // 冷却到期：预检必须放行（这是修复点——旧实现此时刻 circuitState() 仍是 "open"）
+  fakeTime += 21_000;
+  assert("冷却到期预检放行（不再永久拦）", cbShouldFailFast() === false);
+  // 预检放行后真正 ask：cbAllowRequest 迁移 half-open 放 probe，网关已恢复 → 关断
+  fetchMode = "ok";
+  fetchCalls = 0;
+  const r = await ask({ baseURL: "http://x/v1", key: "k", model: "probe", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 });
+  assert("预检放行后 probe 成功关断", r === "hello" && circuitState() === "closed" && fetchCalls === 1);
+}
+
 Date.now = realNow;
 console.log(results.join("\n"));
 rmSync(TMP, { recursive: true, force: true });

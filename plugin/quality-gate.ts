@@ -307,6 +307,87 @@ function hasSkipMarker(s) {
   return (s.commands ?? []).some((c) => VERIFY_SKIP_RE.test(cmdText(c)));
 }
 
+// ── diff→test 关联断言（2026-09-25 多模型审查采纳项 + 两轮层 3 审查修复）──
+// 层 2 的「跑赢」只证明「命令 exit 0」，不证明「测到了」：改了 foo() 但全仓测试
+// 无一引用 foo → 关键路径未覆盖，绿灯也是侥幸。本断言在交付节点做本地 grep 级
+// 核对（零模型调用）：编辑过的代码模块名在测试文件中出现即视为有关联测试。
+// 查无引用 → 回注警告（fail-open 只警告不拦截——存在性断言天然有误报面，硬拦会误杀）。
+// 三态：无测试形态（独立目录或 colocate 任一存在）→ 静默跳过（无测试仓库不产生义务）；
+// 有关联 → 通过；无关联 → 警告。git 真错误（非 exit 1）→ 降级跳过不误报。
+// 核对墙钟有界：总预算 10s，超时未完成的部分静默放弃（并行发起 + 总墙钟截断，
+// 绝不串行 8×8s 阻塞交付节点——第 2 轮审查必须项）。
+// 纯函数核心经 _export 暴露离线回归。
+const TEST_DIR_CANDIDATES = ["tests", "test", "__tests__", "spec"];
+const COLOCATE_TEST_RE = /\.(?:test|spec)\.\w+$/; // colocate 形态：src/foo.test.ts 紧邻源码
+const TEST_REF_LIMIT = 8;       // 核对上限（超出部分 dropped 可见，不产生虚假安全感）
+const TEST_REF_TOTAL_MS = 10_000; // 总墙钟预算：并行执行 + 超时截断
+
+function moduleBasenamesOf(codeEdits, limit = TEST_REF_LIMIT) {
+  const names = new Set();
+  let dropped = 0;
+  for (const f of codeEdits ?? []) {
+    const base = path.basename(String(f ?? ""))
+      .replace(/\.(?:d|test|spec)\.\w+$/, "") // 声明/测试中段剥离：foo.d.ts → foo、login.test.ts → login
+      .replace(/\.\w+$/, "");               // 尾部后缀剥离：quality-gate.ts → quality-gate
+    if (!base || names.has(base)) continue;
+    if (names.size >= limit) { dropped++; continue; }
+    names.add(base);
+  }
+  return { names: [...names], dropped };
+}
+
+// 测试形态探测：独立测试目录或仓库中存在任何 colocate 测试文件。
+// colocate 形态（第 2 轮审查必须项）：src/foo.test.ts 紧邻源码的仓库无独立测试目录，
+// 旧口径会静默 skip → 系统性漏报。git ls-files 快速扫描 tracked 文件名即可判断。
+// 仓库里一个 colocate 测试都没有 = 「无测试形态」，跳过不产生义务（与独立目录口径对称）。
+async function detectTestShape(root) {
+  for (const d of TEST_DIR_CANDIDATES) {
+    try {
+      if (fs.existsSync(path.join(root, d))) return { kind: "dir", dirs: [d] };
+    } catch { return null; }
+  }
+  // colocate 探测：git ls-files 足够（测试文件必然 tracked 才会被 grep 命中，口径一致）
+  const { err, out } = await runCmd("git", ["ls-files", "*.test.*", "*.spec.*"], 5_000, root);
+  if (!err && /(?:\.test|\.spec)\./.test(String(out ?? ""))) {
+    // colocate 搜索面 = 测试文件 glob 本身：源文件内容里的自引用不算测试覆盖
+    // （第 2 轮审查建议项「排除被编辑文件自身命中」的根治版——只搜测试文件，
+    // 源码任何内容天然出局；也把搜索面收窄回大仓可接受范围）
+    return { kind: "colocate", dirs: null, globs: ["*.test.*", "*.spec.*"] };
+  }
+  return null;
+}
+
+// hasTestRefFor(root, names)：返回 {skip: true} 或 {skip: false, missing}。
+// 匹配语义（第 2 轮审查必须项）：词边界正则替代 -F 子串匹配——util/index/a 这类
+// 短名不会被 utility/indexing 前缀假阳性命中；basename 经 re.escape 免注入。
+// dir 形态只搜独立测试目录（非测试目录的字符串提及天然出局）；
+// colocate 形态用 glob pathspec 只搜测试文件（源文件自身内容不算自证）。
+// git grep 退出码：0=有匹配，1=无匹配（合法终态 → missing），其他=真错误 → skip。
+// 并行发起 + 总墙钟截断（Promise + setTimeout race）：单模块结果不阻塞其他路，
+// 最坏墙钟 TEST_REF_TOTAL_MS 而非 8×8s 串行——不阻塞交付节点。
+async function hasTestRefFor(root, names) {
+  if (!names || names.length === 0) return { skip: true };
+  const shape = await detectTestShape(root);
+  if (!shape) return { skip: true };
+  const pathspec = shape.kind === "dir" ? ["--", shape.dirs] : ["--", ...shape.globs];
+  const deadline = Date.now() + TEST_REF_TOTAL_MS;
+  const results = await Promise.all(names.map(async (n) => {
+    const esc = String(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const p = new Promise((resolve) => {
+      runCmd("git", ["grep", "-l", "--full-name", "-I", "-E", "-e", `\\b${esc}\\b`, ...pathspec], 8_000, root)
+        .then(({ err, out }) => {
+          if (err) resolve(err.code === 1 ? "miss" : "err");
+          else resolve(String(out ?? "").split(/\r?\n/).some((l) => l.trim()) ? "hit" : "miss");
+        });
+    });
+    const timer = new Promise((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now()), "timeout"));
+    return Promise.race([p, timer]);
+  }));
+  if (results.some((r) => r === "err")) return { skip: true }; // git 真错误 → 降级
+  const missing = names.filter((_, i) => results[i] !== "hit");
+  return { skip: false, missing };
+}
+
 // ── ⑤ 残余必须修复项沉淀（2026-09-24 审计闭环）────────────────
 // 轮次上限放行 / review-accepted 带残余项交付时，fixSection 已随 todowrite 回注，
 // 但回注是会话内瞬态信号——关窗即忘。此处把残余项落进项目记忆 project.md 的
@@ -874,6 +955,25 @@ function extractTool(input) {
 // 绝不得恢复 export；测试经文件末尾 _export 命名空间访问。
 async function reviewSubject(root, s, editedList) {
   const parts = [`本次会话编辑了以下文件：\n${editedList}`];
+  // 意图锚点（2026-09-25 多模型审查采纳项）：验收清单并入审查素材——审查者从
+  // 「只见 diff」升级为「diff + 任务目标/验收标准」，按「改动是否达成验收」审，
+  // 降误报（把既有策略当缺陷）与漏报（改动偏离验收却无人对照）。s.lastTodos 由
+  // todowrite 钩子维护（content+status 快照），非 todowrite 会话为空数组自然跳过。
+  // 压缩有界：逐条 160 封顶（Array.from 代理对安全截断——层 3 审查项）+ 总条数
+  // 20 上限（防长清单挤占 diff 预算，素材整体另有 24000 截断兜底）；status 随行
+  // 标注（未完成项呈现为「待办」而非「应达成」，不误导审查者——层 3 正向审查项）。
+  const todoLines = (Array.isArray(s?.lastTodos) ? s.lastTodos : [])
+    .map((t) => {
+      const c = String(t?.content ?? "").trim();
+      if (!c) return "";
+      const clipped = Array.from(c).length > 160 ? Array.from(c).slice(0, 160).join("") + "…" : c;
+      return t?.status === "completed" ? `- ${clipped}` : `- [待办 ${String(t?.status ?? "pending")}] ${clipped}`;
+    })
+    .filter(Boolean)
+    .slice(0, 20); // 先滤空再限 20：空项不占配额（第 2 轮审查建议项）
+  if (todoLines.length > 0) {
+    parts.push(`本次任务的验收清单（交付时应逐条达成，审查时对照）：\n${todoLines.join("\n")}`);
+  }
   // pathspec 数量设上限：edited 可达 MAX_EDITED(500)，全列进命令行会超 Windows 32767 字符上限
   // 导致 git 进程启动失败（ENAMETOOLONG）。审查素材本就截断到 24000 字符，前 100 个代码文件的
   // diff 已足够覆盖视野，其余靠文件名清单可见。超出 100 个的情况 = 超大改动，单轮审查也看不完。
@@ -1082,6 +1182,29 @@ const QualityGateImpl = async ({ directory } = {}) => {
               );
             }
           }
+          // diff→test 关联断言（只警告不拦截，fail-open）：跑赢 ≠ 测到了——
+          // 编辑过的代码模块在测试目录无任何引用 → 关键路径疑似未覆盖，绿灯也是侥幸。
+          // 仅在已跑赢（或显式跳过）时核对：没跑测试的场景层 2 已拦，此处不重复噪音。
+          if (allDone && codeEdits.length > 0 && (hasVerified(s) || hasSkipMarker(s))) {
+            try {
+              const { names, dropped } = moduleBasenamesOf(codeEdits);
+              const res = await hasTestRefFor(projectRoot, names);
+              if (!res.skip && res.missing.length > 0) {
+                notes.push(
+                  `⚠️ diff→test 关联断言：以下编辑过的代码模块在测试文件中无任何引用：` +
+                    `${res.missing.join(", ")}——测试绿灯可能未覆盖这些改动路径。` +
+                    `确认已有测试覆盖（改名/间接调用请在交付说明说明），或补一条对应测试再交付。` +
+                    (dropped > 0 ? `（核对上限 ${TEST_REF_LIMIT}，另有 ${dropped} 个模块未核对）` : "")
+                );
+              } else if (!res.skip && dropped > 0) {
+                notes.push(
+                  `ℹ️ diff→test 关联断言：核对上限 ${TEST_REF_LIMIT}，另有 ${dropped} 个编辑模块未核对（前 ${TEST_REF_LIMIT} 个均有关联测试）。`
+                );
+              }
+            } catch (e) {
+              console.error(TAG, "test-ref check failed:", e?.message ?? e); // fail-open：断言异常不拦交付
+            }
+          }
           if (allDone && hasAcceptMarker(s) && s.reviewPending) {
             // ⑤：review-accepted 带残余项交付 → 同样沉淀（显式接受 ≠ 残余项消失）
             const persisted = await persistResidualSafe(s.reviewPending.fixSection);
@@ -1230,7 +1353,7 @@ export const _export = {
   exitCodeOf, exitMasked, parseReviewVerdict, reviewSubject, isComplexDelivery,
   hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, diagCoversLastEdit,
   providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary,
-  staleDeployOf,
+  staleDeployOf, moduleBasenamesOf, hasTestRefFor,
   VERIFY_CMD_RE, HIGH_RISK_RE,
 };
 

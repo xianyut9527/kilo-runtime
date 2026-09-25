@@ -9,7 +9,7 @@
 // 可观测性由结果字符串自带（总耗时/每路字数与耗时/参与模型）。
 // 同日 execute 契约钉死：必须返回 Promise<string>——async 函数原生满足。
 
-import { loadCfg, ask, circuitState, timeoutsOf, clipText } from "../lib/hx-client";
+import { loadCfg, ask, cbShouldFailFast, timeoutsOf, clipText } from "../lib/hx-client";
 
 const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合）
 const AGG_VIEW_LIMIT = 12_000; // 聚合 prompt 单路参考截断上限（字符）
@@ -63,7 +63,10 @@ const MoaImpl = async () => {
 
           // 断路器预检（2026-09-22 网关过载专项）：网关 open 态时 2-3 路并行 = 对过载网关的
           // 集体施压 + 每路 8-15s 空烧。fail fast 并给用户明确信号（等恢复 vs 换时段重试）。
-          if (circuitState() === "open") {
+          // ⚠️ 2026-09-25 死锁专项：必须用 cbShouldFailFast() 而非 circuitState()==="open"——
+          // 冷却到期后 ask() 内的 cbAllowRequest() 才会把 open 迁移到 half-open 放 probe，
+          // 预检若只看字符串 "open" 会永远拦住这次 ask()，断路器永久 open（线上实证）。
+          if (cbShouldFailFast()) {
             return "moa: 上游网关断路器开启（近期连续 503 过载）——并行请求会加剧过载，请约 30s 后重试，或稍后再跑本任务。";
           }
 

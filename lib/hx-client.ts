@@ -74,6 +74,18 @@ let cbProbeInFlight = false; // half-open 单 probe 锁：防并发 fanout 集�
 
 export function circuitState() { return cbState; }
 
+// 预检门（2026-09-25 断路器永久 open 死锁专项）：
+// open → half-open 的状态迁移只发生在 ask() 内部的 cbAllowRequest()。而 moa.ts:66 /
+// dual-review.ts:123 的预检在 circuitState()==="open" 时直接 return、不发任何请求——
+// 若冷却到期后仍暴露 "open"，预检将永远拦住下一次 ask()，状态机永远失去迁移机会，
+// 断路器永久 open（线上实证：2026-09-25 18:28 真实过载 trip 后，网关早已恢复，
+// moa/dual_review 仍连续数小时秒回「断路器开启，稍后重试」，hx-client 遥测零条——
+// 请求根本没发出）。预检必须与 ask() 同口径：冷却已过即视为 half-open 可探测，
+// 预检放行 → ask() 内 cbAllowRequest() 正式迁移状态并放单 probe。
+export function cbShouldFailFast() {
+  return cbState === "open" && Date.now() - cbOpenedAt < CB_COOLDOWN_MS;
+}
+
 // ── 工具 execute 契约（2026-09-22 三修实证 + 同日终裁：无进度通道）──
 // kilo.exe（Bun/JSC）插件工具管线对 execute 返回值有两道硬消费，由两次真实崩溃钉死：
 //   ① 提升层（Effect tryPromise 族适配器）对返回值直接调 .then —— 裸 generator/非 thenable

@@ -16,7 +16,7 @@
 // 2026-09-22 终裁：插件工具无 UI 进度通道（ctx.metadata/preliminary/stderr 三次证伪，
 // 详见 lib/hx-client.ts 契约注释）——进度机制已整体拆除，可观测性由结果字符串自带。
 
-import { loadCfg, ask, circuitState, timeoutsOf, clipText } from "../lib/hx-client";
+import { loadCfg, ask, cbShouldFailFast, timeoutsOf, clipText } from "../lib/hx-client";
 import { randomUUID } from "node:crypto";
 
 // 超时统一走配置：kilo.json provider.hx.options.timeout / chunkTimeout（timeoutsOf 单点解析，
@@ -120,7 +120,11 @@ async function runDualReview(subject, overrides = {}) {
   }
 
   // 断路器预检（2026-09-22 网关过载专项，与 moa 同语义）：网关 open 态时两路并行 = 集体施压 + 空烧。
-  if (circuitState() === "open") {
+  // ⚠️ 2026-09-25 死锁专项：必须用 cbShouldFailFast() 而非 circuitState()==="open"——
+  // 冷却到期后只有 ask() 内的 cbAllowRequest() 会把 open 迁移到 half-open 放 probe；
+  // 预检只看字符串 "open" 会永远拦住这次 ask()，断路器永久 open（线上实证：trip 后
+  // 网关已恢复，moa/dual_review 仍连续数小时秒回「断路器开启」）。
+  if (cbShouldFailFast()) {
     return "dual_review: 上游网关断路器开启（近期连续 503 过载）——请约 30s 后重试；本次审查跳过不阻塞交付，稍后可手动补审。";
   }
 

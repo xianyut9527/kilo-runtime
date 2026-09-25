@@ -29,7 +29,7 @@ const mod = await import(pathToFileURL(bundle).href);
 fs.rmSync(bundle, { force: true });
 
 // 工具函数经 _export 命名空间暴露（非顶层导出——Kilo vE2 会把每个导出函数当工厂调用）
-const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf } = mod._export ?? mod;
+const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf, moduleBasenamesOf, hasTestRefFor } = mod._export ?? mod;
 let pass = 0, fail = 0;
 const failed = [];
 const t = (name, cond) => {
@@ -142,6 +142,35 @@ t("hasAcceptMarker：无关命令不误报", hasAcceptMarker(mk([{ cmd: "npm tes
   const subject = await reviewSubject(tmp, s, f);
   t("审查素材包含编辑文件清单", subject.includes("编辑了以下文件"));
   t("无 git 时未跟踪新文件全文仍入素材", subject.includes("const a = 1;"));
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// ── reviewSubject：验收清单意图锚点（2026-09-25 多模型审查采纳项） ──
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qg-rsj-todo-"));
+  const f = path.join(tmp, "a.ts");
+  fs.writeFileSync(f, "const a = 1;\n");
+  const s = {
+    commands: ["npm test"], edited: new Set([f]),
+    lastTodos: [
+      { content: "验收清单：①npm test exit 0 ②failover 链序为 flash→glm-5.2→kimi→deepseek", status: "completed" },
+      { content: "部署后 install.ps1 -Check 渲染一致", status: "in_progress" },
+    ],
+  };
+  const subject = await reviewSubject(tmp, s, f);
+  t("验收清单并入审查素材（含清单标题与条目）", subject.includes("验收清单") && subject.includes("failover 链序"));
+  t("验收清单逐条保留（多 todo 均出现）", subject.includes("部署后 install.ps1 -Check 渲染一致"));
+  const plain = await reviewSubject(tmp, { commands: [], edited: new Set([f]) }, f);
+  t("无验收清单会话（lastTodos 空）→ 无清单段（不误增噪音）", !plain.includes("验收清单"));
+  const longSubject = await reviewSubject(tmp, { commands: [], edited: new Set([f]), lastTodos: [{ content: "x".repeat(500), status: "completed" }] }, f);
+  t("超长清单条目截断 160 封顶（素材预算保护）", longSubject.includes("x".repeat(160) + "…") && !longSubject.includes("x".repeat(200)));
+  const statusSubject = await reviewSubject(tmp, { commands: [], edited: new Set([f]), lastTodos: [
+    { content: "已完成项", status: "completed" },
+    { content: "进行中项", status: "in_progress" },
+  ] }, f);
+  t("未完成项带待办标记（不误导审查者当成应达成）", statusSubject.includes("[待办 in_progress]") && statusSubject.includes("- 已完成项"));
+  const emojiSubject = await reviewSubject(tmp, { commands: [], edited: new Set([f]), lastTodos: [{ content: "🎉".repeat(200), status: "completed" }] }, f);
+  t("代理对安全截断（截断点不劈 emoji）", !emojiSubject.includes("🎉".repeat(200)) && !/[�]/.test(emojiSubject));
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
@@ -328,6 +357,93 @@ t("staleDeployOf：磁盘指纹与加载期一致 → 不过期", staleDeployOf(
 t("staleDeployOf：磁盘指纹变化（部署新版）→ 过期", staleDeployOf("abc123", "def456") === true);
 t("staleDeployOf：任一侧指纹不可得 → 恒 false（fail-open，检测关闭）",
   staleDeployOf(null, "abc123") === false && staleDeployOf("abc123", null) === false && staleDeployOf(null, null) === false);
+
+// ── diff→test 关联断言（2026-09-25 多模型审查采纳项 + 层 3 审查修复回归）──
+{
+  // moduleBasenamesOf：basename 提取（测试中段/尾部后缀剥离、去重、限 8 个、dropped 可见）
+  t("moduleBasenamesOf：路径取 basename 去后缀",
+    (() => {
+      const r = moduleBasenamesOf(["src/auth/login.ts", "plugin\\quality-gate.ts"]);
+      return r.names.includes("login") && r.names.includes("quality-gate") && r.dropped === 0;
+    })());
+  t("moduleBasenamesOf：测试中段剥离 login.test.ts → login（自测试文件反查不 miss）",
+    moduleBasenamesOf(["src/login.test.ts"]).names[0] === "login");
+  t("moduleBasenamesOf：多段后缀 foo.spec.ts → foo", moduleBasenamesOf(["x/foo.spec.ts"]).names[0] === "foo");
+  t("moduleBasenamesOf：声明文件 foo.d.ts → foo（不残留 foo.d 误报）", moduleBasenamesOf(["x/foo.d.ts"]).names[0] === "foo");
+  t("moduleBasenamesOf：去重 + 超 limit 计入 dropped（层 3 必须修复项：截断可见）", (() => {
+    const r = moduleBasenamesOf(["a.ts", "a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts", "h.ts", "i.ts", "j.ts", "k.ts"]);
+    return r.names.length === 8 && r.dropped === 3; // 11 个唯一模块，前 8 入核对，3 个计入 dropped
+  })());
+  t("moduleBasenamesOf：空输入 → 空数组零 dropped", (() => {
+    const r = moduleBasenamesOf([]);
+    return r.names.length === 0 && r.dropped === 0;
+  })());
+
+  // hasTestRefFor 三态（git repo 环境；git grep -e + pathspec 限定测试目录）
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qg-tref-"));
+  const git = (args) => execFileSync("git", args, { cwd: tmp, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" }, stdio: ["ignore", "pipe", "pipe"] }).toString();
+  git(["init", "-q"]);
+  fs.writeFileSync(path.join(tmp, "login.ts"), "export const login = 1;\n");
+  fs.mkdirSync(path.join(tmp, "tests"), { recursive: true });
+  fs.writeFileSync(path.join(tmp, "tests", "login.test.ts"), 'import { login } from "../login";\n');
+  git(["add", "."]);
+  git(["commit", "-q", "-m", "base"]);
+  // 态1：有 tests 目录 + login 有引用 → missing 为空
+  {
+    const r = await hasTestRefFor(tmp, ["login"]);
+    t("hasTestRefFor：有测试目录且被引用 → missing 空（不警告）", r.skip === false && r.missing.length === 0);
+  }
+  // 态2：新增无引用模块 → missing 命中
+  {
+    fs.writeFileSync(path.join(tmp, "wallet.ts"), "export const wallet = 1;\n");
+    git(["add", "wallet.ts"]);
+    git(["commit", "-q", "-m", "add wallet"]);
+    const r = await hasTestRefFor(tmp, ["login", "wallet"]);
+    t("hasTestRefFor：编辑模块在测试目录无引用 → missing 命中（警告）", r.skip === false && r.missing.length === 1 && r.missing[0] === "wallet");
+  }
+  // 假阳性收窄回归（第 2 轮审查必须项）：词边界匹配——util 不被 utility 前缀命中
+  {
+    fs.writeFileSync(path.join(tmp, "util.ts"), "export const util = 1;\n");
+    git(["add", "util.ts"]);
+    git(["commit", "-q", "-m", "add util"]);
+    fs.mkdirSync(path.join(tmp, "tests"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "tests", "utility.test.ts"), "import { utility } from 'x'; // utility helper\n");
+    git(["add", "tests/utility.test.ts"]);
+    git(["commit", "-q", "-m", "utility word"]);
+    const r = await hasTestRefFor(tmp, ["util"]);
+    t("hasTestRefFor：词边界防前缀假阳性（util ≠ utility）", r.skip === false && r.missing.length === 1 && r.missing[0] === "util");
+  }
+  // colocate 形态（第 2 轮审查必须项）：无独立测试目录但 src/foo.test.ts 紧邻源码 → 不静默跳过
+  {
+    const tmp3 = fs.mkdtempSync(path.join(os.tmpdir(), "qg-tref-col-"));
+    const g3 = (args) => execFileSync("git", args, { cwd: tmp3, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" }, stdio: ["ignore", "pipe", "pipe"] }).toString();
+    g3(["init", "-q"]);
+    fs.mkdirSync(path.join(tmp3, "src"), { recursive: true });
+    fs.writeFileSync(path.join(tmp3, "src", "login.ts"), "export const login = 1;\n");
+    fs.writeFileSync(path.join(tmp3, "src", "wallet.ts"), "export const wallet = 1;\n");
+    fs.writeFileSync(path.join(tmp3, "src", "login.test.ts"), 'import { login } from "./login";\n');
+    g3(["add", "."]);
+    g3(["commit", "-q", "-m", "colocate"]);
+    const r = await hasTestRefFor(tmp3, ["login", "wallet"]);
+    t("hasTestRefFor：colocate 仓库不静默跳过（有 src/*.test.ts 即触发核对）", r.skip === false);
+    t("hasTestRefFor：colocate 无引用模块仍命中 missing", r.missing.length === 1 && r.missing[0] === "wallet");
+    fs.rmSync(tmp3, { recursive: true, force: true });
+  }
+  // 态3：无测试目录 → skip 静默
+  {
+    const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), "qg-tref-nt-"));
+    const g2 = (args) => execFileSync("git", args, { cwd: tmp2, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" }, stdio: ["ignore", "pipe", "pipe"] }).toString();
+    g2(["init", "-q"]);
+    fs.writeFileSync(path.join(tmp2, "x.ts"), "export const x = 1;\n");
+    g2(["add", "."]);
+    g2(["commit", "-q", "-m", "b"]);
+    const r = await hasTestRefFor(tmp2, ["x"]);
+    t("hasTestRefFor：无测试目录 → skip（无测试仓库不产生义务）", r.skip === true);
+    t("hasTestRefFor：空名单 → skip（无可核对项）", (await hasTestRefFor(tmp2, [])).skip === true);
+    fs.rmSync(tmp2, { recursive: true, force: true });
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
 
 // ── ⑧ persistResidualFixup 触达路径的纯函数前提（fixSection 形态不变，回归保护）──
 t("parseReviewVerdict：fixSection 截断 600（沉淀素材同口径）", (() => {
