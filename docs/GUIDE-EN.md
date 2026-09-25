@@ -39,6 +39,36 @@ Data flow: Kilo session → provider (gateway client) → upstream model gateway
 On main-model failure it fails over through `failover.chain.models`; at delivery nodes quality-gate
 triggers dual-review automatically based on risk.
 
+## Task execution flow (what happens automatically after you submit a task)
+
+```
+You submit a task
+   |
+   v
+① Main model takes over: break down task -> todowrite checklist -> execute step by step
+   (read files / edit code / run commands; subagents fan out as needed)
+   |  Plugins work automatically along the way:
+   |   · permission-guard  blocks dangerous commands in real time (rm -rf, touching key files, etc.)
+   |   · compaction-anchor keeps task anchors when long sessions compress, context never lost
+   |   · quality-gate L1  each todo marked completed -> verified against real execution traces;
+   |                       "claimed done but never done" gets flagged on the spot
+   |   · quality-gate L2  code edited but no test run -> "all completed" is rejected
+   |                       (only accepts exit 0 after the last edit)
+   v
+② Delivery node (when all todos are marked completed)
+   |  · High-risk files (auth / payments / migrations) or 3+ files changed
+   |    -> quality-gate auto-triggers dual-review: omission check × red team
+   |      in parallel + third-party model verdict (2-4 minutes)
+   |  · Verdict "fail" -> delivery blocked, model must fix and re-review (max 2 rounds)
+   |  · Pass -> delivered; residuals auto-saved into project memory
+   v
+③ You see the result: completed changes + review verdict + summary of all
+   degradation/skip events
+```
+
+You only ever do two things: **describe the task** and **approve permission prompts**.
+Quality control is fully automated by the plugins.
+
 ## Model configuration (all in kilo.json.tmpl)
 
 | What to change | Where |
