@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kilo_config 全量下发器（SSOT：仓库 -> ~/.config/kilo）
+# Kilo Runtime 全量下发器（SSOT：仓库 -> ~/.config/kilo；原仓库名 kilo_config）
 #
 # 用法：
 #   ./install.sh              下发（改动前对目标做一次性备份）

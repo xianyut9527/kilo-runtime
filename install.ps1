@@ -1,5 +1,5 @@
 ﻿<#
-  kilo_config 全量下发器（PowerShell 原生版，与 install.sh 行为一致）
+  Kilo Runtime 全量下发器（PowerShell 原生版，与 install.sh 行为一致；原仓库名 kilo_config）
 
   用法：
     .\install.ps1              下发（改动前对目标做一次性备份）
