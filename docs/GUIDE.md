@@ -6,9 +6,10 @@
 ## 架构
 
 ```
-本仓库（唯一真源）─install→ ~/.config/kilo/（运行时副本，别直接改）
+本仓库 ─install→ ~/.config/kilo/（运行时副本，别直接改；改了会被覆盖回仓库版）
+```
 
-kilo.json.tmpl    → kilo.json   配置真源：模型路由 / 网关 / 权限 / 开关
+kilo.json.tmpl    → kilo.json   全部配置：模型路由 / 网关 / 权限 / 开关
 provider/hx-failover           模型网关客户端：流式、超时、故障自动降级、推理门控
 plugin/                        quality-gate 质量门禁 · dual-review 双向审查 ·
                                moa 多模型分析 · permission-guard 危险命令拦截
