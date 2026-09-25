@@ -42,3 +42,7 @@ INSTRUCTIONS.md                每会话注入的工程原则
 - 直接改 `~/.config/kilo/kilo.json` 会被 install 覆盖，白改
 - 模板注释只写「行首 `//`」；kilo.json 加自定义键整份失效
 - `debug config` 通过 ≠ 能跑任务，改完必须真跑一次 `kilo run`
+
+---
+
+维护者进阶见 [docs/HISTORY.md](docs/HISTORY.md) · English quick start: [docs/GUIDE-EN.md](docs/GUIDE-EN.md)

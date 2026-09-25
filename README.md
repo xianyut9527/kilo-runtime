@@ -47,3 +47,4 @@ macOS / Linux：`./install.sh --dry-run` → `./install.sh` → `./install.sh --
 ---
 
 维护者进阶（架构演变 / 资产清单 / 性能与维护 / 隐私边界 / 完整约定）：见 [docs/HISTORY.md](docs/HISTORY.md)。
+English quick start: [docs/GUIDE-EN.md](docs/GUIDE-EN.md)。
