@@ -113,7 +113,7 @@ macOS / Linux（bash）：
 - **MCP 默认全关**（playwright/context7/gitnexus）：用时 `/mcps` 现开；未索引项目 gitnexus 无用，别为"改代码查 impact"常开。INSTRUCTIONS.md 已配套改为条件表述。
 - **remote_control 默认关闭**（2026-09-20）：常驻云端中继连接是会话事件转发通道，属「快→慢」同期嫌疑项；不用手机端盯任务就关，需要时 `/remote` 临时开。
 - **安全网不省**：snapshot / formatter 保持 true（曾关，撤回只剩"撤对话不撤文件"、代码风格漂移——质量换速度不值）。
-- **超时**：`options.timeout` 300s 仅作 MoA/dual_review 分析调用总上限（主模型循环**不消费**该键——DB 实证 27 例 >120s step-finish 正常完成，2026-09-21）；主链路靠 chunkTimeout 60s 空闲看门狗（30s 误伤超长思考）。
+- **超时**：`options.timeout` 300s 仅作 MoA/dual_review 分析调用总上限（主模型循环**不消费**该键——DB 实证 27 例 >120s step-finish 正常完成，2026-09-21）；主链路靠 chunkTimeout 空闲看门狗（60s→90s→180s，2026-09-23 误杀专项：thinking 模型静默思考期不发 SSE，180s 覆盖 p95+ 合法思考）。
 - **DB 膨胀**：event 表是流式 delta 逐行事件溯源，每两周跑一次 `./db-maintain.sh`（2026-09-14→15 一天即回涨 3GB）。
 - **「Failed to execute statement / UnknownError」根因**：Kilo 的 sqlite 连接固定 `PRAGMA busy_timeout = 5000`（二进制内实测），写语句 5s 拿不到锁即失败；Drizzle 把底层 `SqliteError` 包装成这句固定文案，真实 cause 被吞、UI 只显示 UnknownError。触发场景主要是**维护期间并发写**（旧版 db-maintain 在 Kilo 活着时跑单条大 DELETE + VACUUM）。当前脚本对策：删除分批（`--batch` / `--batch-msg`）+ 有写者时拒绝 VACUUM（`--force` 可越权）或 `--no-vacuum`。
   代价口径：`kilo db` 每次调用约 2s 冷启动开销，故批次行数要按「锁时长 × 调用次数」权衡（3GB 事件量按默认 5 万行/批约 15 批、30s 左右）。

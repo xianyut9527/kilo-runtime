@@ -20,15 +20,18 @@
 This repo (source of truth) ─install→ ~/.config/kilo/ (runtime copy — never edit directly)
 │                                         │
 ├─ kilo.json.tmpl ──render──▶ kilo.json   │← All config: model routing / gateway / permissions / switches
-├─ provider/hx-failover                   │← Model gateway client: streaming, timeouts, auto failover,
-│   src/ → build → dist/                  │   reasoning gate (rescues thinking models)
+├─ provider/hx-failover                   │← Model gateway client: streaming, 3-tier timeouts, auto failover,
+│   src/ → build → dist/                  │   queued-ack interception, thinking dual safety net (protocol + reasoning gate)
 ├─ plugin/ (auto-loaded; reload window after changes)
 │   ├─ quality-gate                       │← 3-layer delivery gate: prevents fake completion claims
 │   ├─ dual-review                        │← dual cross review: omission check × red team + verdict
 │   ├─ moa                                │← multi-model cross analysis (high-risk decisions)
-│   ├─ permission-guard                   │← blocks dangerous commands and secret paths
+│   ├─ permission-guard                   │← blocks dangerous commands, secret paths, lock-file write bypasses
 │   ├─ compaction-anchor                  │← keeps task anchors after long-session compaction
 │   └─ memory-bootstrap                   │← auto-enables native memory for git projects
+├─ agent/verify.md                        │← cross-source review subagent (read-only, high-risk changes)
+├─ lib/hx-client.ts                       │← shared request layer for moa/dual-review: SSE streaming,
+│                                         │   3-tier timeouts, overload circuit breaker, failure telemetry
 ├─ INSTRUCTIONS.md                        │← engineering principles injected every session
 └─ command/evolve.md etc.                 │← global commands (/evolve retrospective)
                                           │
@@ -36,8 +39,10 @@ This repo (source of truth) ─install→ ~/.config/kilo/ (runtime copy — neve
 ```
 
 Data flow: Kilo session → provider (gateway client) → upstream model gateway (OpenAI-compatible API).
-On main-model failure it fails over through `failover.chain.models`; at delivery nodes quality-gate
-triggers dual-review automatically based on risk.
+On main-model failure it fails over through `failover.chain.models` (each hop injects a visible
+"⚠️ [failover]" notice); moa/dual-review analysis calls
+go through the separate lib/hx-client request layer (circuit breaker fail-fasts when the gateway is
+overloaded); at delivery nodes quality-gate triggers dual-review automatically based on risk.
 
 ## Task execution flow (what happens automatically after you submit a task)
 
@@ -53,14 +58,21 @@ You submit a task
    |   · quality-gate L1  each todo marked completed -> verified against real execution traces;
    |                       "claimed done but never done" gets flagged on the spot
    |   · quality-gate L2  code edited but no test run -> "all completed" is rejected
-   |                       (only accepts exit 0 after the last edit)
+   |                       (only accepts exit 0 after the last edit; stale provider dist also
+   |                        blocked; skipping requires explicit verify-skipped registration)
+   |   · quality-gate diagnostics: TS/Python edits get background tsc/ruff (5s debounce),
+   |                       backlog flushed back at the delivery node
    v
 ② Delivery node (when all todos are marked completed)
-   |  · High-risk files (auth / payments / migrations) or 3+ files changed
-   |    -> quality-gate auto-triggers dual-review: omission check × red team
-   |      in parallel + third-party model verdict (2-4 minutes)
-   |  · Verdict "fail" -> delivery blocked, model must fix and re-review (max 2 rounds)
-   |  · Pass -> delivered; residuals auto-saved into project memory
+   |  · High-risk files (auth / payments / migrations) hit, or code changes plus 3+ files
+   |    edited in total (docs count) -> quality-gate auto-triggers dual-review: omission
+   |    check × red team in parallel + third-party model verdict (2-4 minutes;
+   |    doc-only sessions skip)
+   |  · Verdict "fail" -> delivery blocked, model must fix and re-review (max 2 rounds;
+   |    accepting residual risk requires explicit "review-accepted" echo registration)
+   |  · Pass -> delivered; on cap-release / explicit acceptance / upstream failure,
+   |    residual must-fix items persist into project memory Open Questions
+   |    (auto-injected next session)
    v
 ③ You see the result: completed changes + review verdict + summary of all
    degradation/skip events
