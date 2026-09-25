@@ -1,5 +1,7 @@
 # Quick Start
 
+中文版（Chinese version): **[GUIDE.md](GUIDE.md)** · Maintainer deep-dive: [HISTORY.md](HISTORY.md)
+
 > **Change config**: edit `kilo.json.tmpl` → `.\install.ps1` → reload the VS Code window.
 > **Change API key**: edit `hx.key` in `~/.local/share/kilo/auth.json` (no install needed).
 
@@ -43,8 +45,3 @@ After editing provider/hx-failover/src: `npm run build` → run `test-failover.m
 - Editing `~/.config/kilo/kilo.json` directly gets overwritten by install — always edit the repo copy
 - Template comments: whole-line `//` at line start only; any custom key in kilo.json invalidates the whole config
 - `debug config` passing ≠ tasks actually run — always smoke-test with a real `kilo run` after changes
-
----
-
-Maintainer deep-dive (architecture history / asset inventory / performance / privacy / full conventions): see [docs/HISTORY.md](docs/HISTORY.md).
-中文版见 [docs/GUIDE.md](docs/GUIDE.md)。

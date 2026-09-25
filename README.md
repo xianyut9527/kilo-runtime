@@ -1,5 +1,7 @@
 # kilo_config — KiloCode 全局配置仓库
 
+English quick start: **[docs/GUIDE-EN.md](docs/GUIDE-EN.md)**
+
 > **改配置**：编辑 `kilo.json.tmpl` → `.\install.ps1` → 重载 VS Code 窗口。
 > **换 API Key**：两种方式任选——① 改 `~/.local/share/kilo/auth.json` 的 `hx.key`（不用 install，即时生效）；② VS Code 里 Kilo 面板的模型选择器直接编辑自定义模型/更新 Key（会话内生效）。
 
@@ -47,4 +49,3 @@ macOS / Linux：`./install.sh --dry-run` → `./install.sh` → `./install.sh --
 ---
 
 维护者进阶（架构演变 / 资产清单 / 性能与维护 / 隐私边界 / 完整约定）：见 [docs/HISTORY.md](docs/HISTORY.md)。
-English quick start: [docs/GUIDE-EN.md](docs/GUIDE-EN.md)。
