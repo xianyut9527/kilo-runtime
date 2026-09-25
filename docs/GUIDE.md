@@ -1,6 +1,10 @@
 # 快速上手
 
-English quick start: **[GUIDE-EN.md](GUIDE-EN.md)**
+<div align="center">
+
+**简体中文** | [English](GUIDE-EN.md)
+
+</div>
 
 **改配置**：编辑 `kilo.json.tmpl` → `.\install.ps1` → 重载 VS Code 窗口。
 **换 API Key**：改 `~/.local/share/kilo/auth.json` 的 `hx.key`（不用 install，即时生效）。
