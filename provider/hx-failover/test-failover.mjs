@@ -514,3 +514,105 @@ try {
   retry7bLines = log7b.trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.action === "retry" && e.at === "nonoverload-probe");
 } catch { /* 无日志文件视为未写入 */ }
 console.log("PASS normal-backoff-kept     :", calls7b.length === 3 && err7b?.statusCode === 500 && retry7bLines.length === 2 && retry7bLines.every((e) => e.overload !== true));
+
+// ── 回归 8：干净断连「无 finish_reason」形态（2026-09-26 专项）────────────────
+// 生产形态（failover-events.jsonl 2026-09-25 16:30-18:32 实证）：429 限额风暴期
+// 隧道/上游优雅关闭 SSE（FIN 非 RST）→ body 流正常 EOF，SDK flush 判定
+// finishReason 未赋值 → 以 error part 入队 InvalidResponseDataError
+// "Response stream ended without a finish reason."——不经 reader.read() 拒绝路径、
+// 无 statusCode → 旧重包装拦不到、Kilo 重试门不认 → 直达用户。
+// 修复：最外层重包装拦截该 error part → 重包装 isRetryable:true（Kilo 会话级重试接管）。
+const NO_FINISH_MSG = "Response stream ended without a finish reason.";
+// 8a：error part 形态 —— SSE 产出 1 个正文 chunk 后直接 EOF（无 finish_reason、无 [DONE]）
+const fakeFetch8a = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  const sse = `data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", created: 1, model, choices: [{ index: 0, delta: { role: "assistant", content: "partial" }, finish_reason: null }] })}\n\n`;
+  return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p8a = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch8a,
+  failover: { chain: { models: [] } },
+});
+let err8a = null, text8a = "";
+const keepAlive8 = setInterval(() => {}, 100);
+try {
+  const { stream } = await p8a.languageModel("glm-5.3-flash").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+  for await (const part of stream) {
+    if (part.type === "text-delta") text8a += part.delta ?? part.textDelta ?? "";
+  }
+} catch (e) { err8a = e; }
+clearInterval(keepAlive8);
+console.log("");
+console.log("8a partial text:", JSON.stringify(text8a), "| error:", err8a?.name, "|", String(err8a?.message ?? "").slice(0, 90));
+console.log("PASS nofinish-errorpart-retryable :", Boolean(err8a) && err8a[APICALL_MARKER] === true && err8a.isRetryable === true);
+console.log("PASS nofinish-cause-preserved     :", String(err8a?.cause?.message ?? "").includes(NO_FINISH_MSG));
+console.log("PASS nofinish-after-partial       :", text8a === "partial");
+
+// 8b：裸抛形态 —— 同一文案错误直接从流上抛（不经 error part 的变体路径）
+const fakeFetch8b = async () => {
+  const err = new Error(NO_FINISH_MSG);
+  err.name = "AI_InvalidResponseDataError";
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", created: 1, model: "m", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`));
+      setTimeout(() => controller.error(err), 20);
+    },
+  });
+  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p8b = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch8b,
+  failover: { chain: { models: [] } },
+});
+let err8b = null;
+const keepAlive8b = setInterval(() => {}, 100);
+try {
+  const { stream } = await p8b.languageModel("glm-5.3-flash").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+  for await (const _ of stream) { /* 收到首 chunk 后流报错 */ }
+} catch (e) { err8b = e; }
+clearInterval(keepAlive8b);
+console.log("");
+console.log("8b error:", err8b?.name, "|", String(err8b?.message ?? "").slice(0, 90));
+console.log("PASS nofinish-thrown-retryable    :", Boolean(err8b) && err8b[APICALL_MARKER] === true && err8b.isRetryable === true);
+
+// 8c：遥测留痕（stream_break_rewrap + noFinishReason 标记，事后可从 jsonl 区分形态）
+// 8a（error part）必须带 noFinishReason:true + viaErrorPart:true；
+// 8b 的裸抛错误经 SDK wrapResponseBodyStream 先包成「Failed to process successful
+// response」2xx APICallError（cause 才是原错误）——isStreamBreakError 主路径接管，
+// noFinishReason:false 属预期（文案在 cause 层，不重复标记）。
+let rewrap8 = [];
+try {
+  const log8 = await readFile(join(process.env.XDG_DATA_HOME, "kilo", "failover-events.jsonl"), "utf8");
+  const parsed8 = log8.trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.action === "stream_break_rewrap");
+  rewrap8 = parsed8;
+} catch { /* 无日志文件视为未写入 */ }
+console.log("PASS nofinish-logged              :", rewrap8.some((e) => e.viaErrorPart === true && e.noFinishReason === true));
+
+// 8d：误伤面检查——带 finish_reason 的正常流绝不被拦截（对照：同文案但不带该签名的错误不重包装）
+const fakeFetch8d = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p8d = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch8d,
+  failover: { chain: { models: [] } },
+});
+let out8d = "", err8d = null;
+try {
+  const { stream } = await p8d.languageModel("glm-5.3-flash").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+  for await (const part of stream) {
+    if (part.type === "text-delta") out8d += part.delta ?? part.textDelta ?? "";
+  }
+} catch (e) { err8d = e; }
+console.log("PASS nofinish-normal-untouched    :", err8d === null && out8d.includes("[ok glm-5.3-flash]"));

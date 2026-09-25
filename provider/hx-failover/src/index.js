@@ -493,6 +493,22 @@ function isStreamBreakError(err) {
   return /terminated|socket hang up|ECONNRESET|ECONNABORTED|ERR_STREAM_PREMATURE_CLOSE|premature close|underlying socket/i.test(msg);
 }
 
+// 干净断连形态（2026-09-26「Response stream ended without a finish reason」专项）：
+// 隧道/上游把 SSE 连接半途掐断但 TCP 侧走优雅关闭（FIN 而非 RST）时，body 流
+// 正常 EOF，SDK 兼容层 flush 判定 finishReason 未赋值 → 以「error part」入队
+// InvalidResponseDataError("Response stream ended without a finish reason.")，
+// 不经 reader.read() 拒绝路径（withStreamBreakRewrap 的 catch 拦不到），
+// 也无 statusCode（Kilo 重试门不认）→ 错误直达用户。
+// 识别两路：① error part 携带的 InvalidResponseDataError 且带该文案；
+// ② 该形态从流上抛时的兜底（错误名 AI_InvalidResponseDataError，跨 bundle marker 不可靠，
+//   以 message 文案为准——SDK 固定文案，无用户数据注入，无误伤面）。
+function isNoFinishReasonError(err) {
+  if (isCancellation(err)) return false;
+  const name = String(err?.name ?? "");
+  if (name !== "AI_InvalidResponseDataError" && name !== "InvalidResponseDataError") return false;
+  return String(err?.message ?? "").includes("Response stream ended without a finish reason");
+}
+
 function rewrapStreamBreak(err) {
   if (APICallError.isInstance(err) && err.isRetryable === true) return err;
   return new APICallError({
@@ -616,9 +632,10 @@ export function createHxFailover(options) {
     }
 
     // R8：全链失败必须抛原始最后一个错误（保留可诊断性），不得静默吞错。
-    // 例外：若最后一个错误是流中断类，重包装为 isRetryable=true —— 内部重试/降级
-    // 已尽力，Kilo 会话级重试是最后兜底；cause 保留原始错误，可诊断性不丢。
-    if (isStreamBreakError(lastError)) {
+    // 例外：若最后一个错误是流中断类（含「无 finish_reason」干净断连形态），
+    // 重包装为 isRetryable=true —— 内部重试/降级已尽力，Kilo 会话级重试是
+    // 最后兜底；cause 保留原始错误，可诊断性不丢。
+    if (isStreamBreakError(lastError) || isNoFinishReasonError(lastError)) {
       await logFailover({ from: modelId, action: "stream_break_rewrap", error: String(lastError?.message ?? lastError).slice(0, 200) });
       throw rewrapStreamBreak(lastError);
     }
@@ -643,11 +660,12 @@ export function createHxFailover(options) {
         try {
           next = await reader.read();
         } catch (error) {
-          if (isStreamBreakError(error)) {
+          if (isStreamBreakError(error) || isNoFinishReasonError(error)) {
             const wrapped = rewrapStreamBreak(error);
             logFailover({
               from: modelId,
               action: "stream_break_rewrap",
+              noFinishReason: isNoFinishReasonError(error),
               emittedAny,
               chunks,
               elapsedMs: Date.now() - streamT0,
@@ -662,6 +680,29 @@ export function createHxFailover(options) {
         }
         if (next.done) {
           controller.close();
+          return;
+        }
+        // 干净断连的 error part 形态（2026-09-26 专项）：SDK flush 层把
+        // 「流结束仍无 finish_reason」以 {type:"error", error:<InvalidResponseDataError>}
+        // 入队而非从流上抛——catch 拦不到。转发给消费方前拦截：
+        // 转为可重试 APICallError 经 controller.error 上抛（流终止语义不变，
+        // 但 Kilo 重试门此时能认），与 RST 断流路径殊途同归。
+        const part = next.value;
+        const errPart = part && typeof part === "object" && part.type === "error" ? part.error : null;
+        if (errPart && isNoFinishReasonError(errPart)) {
+          const wrapped = rewrapStreamBreak(errPart);
+          logFailover({
+            from: modelId,
+            action: "stream_break_rewrap",
+            noFinishReason: true,
+            viaErrorPart: true,
+            emittedAny,
+            chunks,
+            elapsedMs: Date.now() - streamT0,
+            status: wrapped.statusCode,
+            error: String(errPart?.message ?? errPart).slice(0, 200),
+          });
+          controller.error(wrapped);
           return;
         }
         emittedAny = true;
