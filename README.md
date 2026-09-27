@@ -40,7 +40,9 @@
 
 数据流：Kilo 会话 → provider（网关客户端）→ 上游模型网关（OpenAI 兼容 API）；
 主模型故障时按 `failover.chain.models` 依次自动降级（切换时流首注入 ⚠️ [failover]
-可见提示）；moa/dual-review 的分析
+可见提示，同一「主模型→备用」在冷却窗口内只提示一次；主模型自身也进冷却——
+持续故障期后续调用直接从可用备用起跑，全链冷却时快速失败、到期自动恢复）；
+moa/dual-review 的分析
 调用走 lib/hx-client 独立请求层（网关连续过载时断路器 fail-fast）；交付节点
 由 quality-gate 按风险触发 dual-review 自动审查。
 

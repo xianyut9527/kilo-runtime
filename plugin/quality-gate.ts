@@ -97,7 +97,8 @@ const TAG = "[quality-gate]";
 // ── 进程级（环境属性，跨会话共享）────────────────────────────
 let projectRoot;
 try { projectRoot = process.cwd(); } catch { projectRoot = "."; }
-const probe = { tsc: null, ruff: null }; // null=未探测，true/false=可用性
+const probe = { tsc: null, ruff: null, eslint: null }; // null=未探测，true/false=可用性
+const eslintConfigCache = new Map(); // dir(canonical) -> boolean，进程级缓存（与 probe 同构）
 let tscInFlight = null; // 并发编辑单飞：共享同一次 tsc 全量输出
 const DIAG_DEBOUNCE_MS = 5_000; // 编辑后防抖：5s 无新动作才真正跑诊断（编辑路径零阻塞）
 const FLUSH_BUDGET_MS = 30_000; // 交付冲刷总预算：超时带陈旧标注返回，防交付节点分钟级阻塞
@@ -114,7 +115,7 @@ function bucketOf(input) {
   const id = String(input?.sessionID ?? "__global__");
   let s = sessions.get(id);
   if (!s) {
-    s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, exitContractWarned: false, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null };
+    s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, dualReviewedAtCodeEditV: 0, planReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, exitContractWarned: false, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null, reviewFailedAtCodeEditV: 0, reviewFailedAtRound: 0, reviewFailedCount: 0, driftChecked: false, highRiskDelegated: false, delegated: [], degradations: [], lastStaleCheck: 0 };
     sessions.set(id, s);
     if (sessions.size > MAX_SESSIONS) {
       // LRU 驱逐前清理挂起的诊断定时器：否则回调会在已脱离 Map 的会话对象上空跑 tsc
@@ -509,6 +510,26 @@ async function persistResidualSafe(fixSection) {
   }
 }
 
+// 沉淀入口薄包装（F 修复）：固定写进 Open Questions 段的一行式留痕（unreviewedMarkerLine）。
+// 与 persistResidualSafe 同隔离语义——沉淀失败绝不影响交付主流程（false=未沉淀）。
+async function persistLineSafe(line) {
+  try {
+    const memRoot = memoryRootFor(projectRoot);
+    if (!memRoot) return false;
+    const file = path.join(memRoot, "project.md");
+    const md = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+    const next = insertUnderHeading(md, "## Open Questions", line);
+    if (next === md) return true; // 幂等：已沉淀过
+    const tmp = `${file}.qg-tmp-${process.pid}-${Date.now() % 100000}`;
+    fs.writeFileSync(tmp, next, "utf8");
+    fs.renameSync(tmp, file);
+    return true;
+  } catch (e) {
+    console.error(TAG, "unreviewed 留痕沉淀失败（fail-open，不影响交付）:", e?.message ?? e);
+    return false;
+  }
+}
+
 // ── ⑦ 降级/放行审计账本（2026-09-24 审计闭环）──────────────────
 // 会话内所有 fail-open / 显式放行事件记账（s.degradations），交付节点一次性回注。
 // 动机：各通道放行时的回注散落在不同 todowrite 结果里，模型容易只见单条；
@@ -562,10 +583,106 @@ function probeStaleDeploy(s) {
 
 // ── 层 3 闭环（审查未通过 → 阻断交付，修复后自动再审，直到通过或升级人工）──
 const MAX_REVIEW_ROUNDS = 2; // 自动审查轮次上限：超限放行并回注残余项（升级人工），防死循环烧钱
+const MAX_REVIEW_FAILURES = 2; // F 修复：inconclusive/执行异常连续失败重审上限——fail-open 放行有重试但不过度
 const REVIEW_ACCEPT_RE = /review-accepted\s*:/i;
 
 function hasAcceptMarker(s) {
   return (s.commands ?? []).some((c) => REVIEW_ACCEPT_RE.test(cmdText(c)));
+}
+
+// F 修复（2026-09-26 层 3 fail-open 永久免审闭环缺口）：
+// inconclusive/执行异常路径直接置 dualReviewed=true → 同会话后续交付节点永远不再重审——
+// 「失败一次 = 永久免审」违背「失败后修复重试」的闭环语义。正确口径：
+//   失败时记下当时的 codeEditV（reviewFailedAtCodeEditV）与轮次，保留 dualReviewed=true
+//   （本次交付照常放行，fail-open 不变）；其后若有**新的代码编辑**，交付节点允许重审一次；
+//   连续 MAX_REVIEW_FAILURES 次失败（每次都在新编辑后重试仍失败）→ 永久放行并沉淀标记。
+// 纯函数（经 _export 暴露离线回归）：true = 交付节点应重审。
+function reviewRetryAllowed(s) {
+  try {
+    const s0 = s ?? {};
+    // 起点从未失败过 → 不适用（由常规 !dualReviewed 触发口径覆盖）
+    if (!s0.reviewFailedAtCodeEditV) return false;
+    // 连续失败次数已达上限 → 永久放行（unreviewedMarkerLine 由调用方沉淀）
+    if ((s0.reviewFailedCount ?? 0) >= MAX_REVIEW_FAILURES) return false;
+    // 失败后无新代码编辑 → 不重审（同一素材重烧期望收益为负，防抖）
+    if ((s0.codeEditV ?? 0) <= (s0.reviewFailedAtCodeEditV ?? 0)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// F 修复：连续失败永久放行时的持久层留痕（写法与 residualFixupLine 同构，走同一沉淀通道）。
+// 幂等性由 insertUnderHeading 的 seg.includes(line) 提供——同会话重复触发只追加一次。
+function unreviewedMarkerLine() {
+  const date = new Date().toISOString().slice(0, 10);
+  return `- review_unreviewed_${date} :: 本会话复杂交付审查连续失败未复审（层 3 fail-open 放行）:: 待下次会话或人工补审；建议对当日 diff 跑一次 dual_review 确认`;
+}
+
+// F 修复：永久放行降级明细的失败概况前缀——显式判空（不用 `?? 0`：无记录与「第 0 轮」语义
+// 不同，强转会篡改审计文本）；轮次显示为 1-based（reviewRounds 内部 0-based，复审审查项）。
+// 类型强制（Number(...)）：容忍外部/序列化输入的字符串数字（如 "2"），非法值走判空分支。
+function reviewFailPrefix(s) {
+  const nRaw = Number(s?.reviewFailedCount);
+  const rRaw = Number(s?.reviewFailedAtRound);
+  const n = Number.isFinite(nRaw) && nRaw > 0 ? nRaw : 0;
+  const round = Number.isFinite(rRaw) && rRaw >= 0 ? rRaw + 1 : null;
+  return round === null ? `连续 ${n} 次失败；` : `连续 ${n} 次失败（最近一次在第 ${round} 轮）；`;
+}
+
+// ── B 修复：验收清单压缩锚点（2026-09-26）────────────────────────
+// 痛点：验收清单只活在 s.lastTodos（内存）+ 首条 todo 文本里，上下文压缩后丢失——
+// 模型继续干活却忘了「干到什么程度算完」，交付质量随压缩劣化。
+// 方案：quality-gate 也注册 experimental.session.compacting 钩子，把未完成 todo
+// 追加进 out.context（与 compaction-anchor 插件共存：对方已注入时**追加**而非覆盖，
+// 双方都按自己的标记幂等，钩子顺序不可知也不互踩——2026-09-26 层 3 审查必须修复项 B）。
+// 纯函数（经 _export 暴露离线回归）：todos → 锚点行数组；全完成/空 → []（零噪音）。
+const TODO_ANCHOR_TAG = "验收清单（quality-gate 注入）";
+// 幂等判定用唯一 ID（审查建议项：纯中文标记可被模型输出碰撞 → 误判已注入而跳过）
+const TODO_ANCHOR_ID = "__KILO_QG_TODO_ANCHOR__";
+function todoAnchorLines(todos) {
+  try {
+    const list = Array.isArray(todos) ? todos : [];
+    if (list.length === 0) return [];
+    const done = list.filter((t) => String(t?.status ?? "") === "completed").length;
+    const undone = list
+      .map((t) => String(t?.content ?? "").replace(/\s+/g, " ").trim())
+      .filter((c, i) => c && String(list[i]?.status ?? "") !== "completed");
+    if (undone.length === 0) return [];
+    // 按码点截断 120（surrogate pair 劈裂 → 记忆/锚点乱码，Array.from 与 residualFixupLine 同口径）
+    const clip = (s) => {
+      const a = Array.from(s);
+      return a.length > 120 ? a.slice(0, 120).join("") + "…" : s;
+    };
+    const lines = [
+      `- ${TODO_ANCHOR_TAG} ${TODO_ANCHOR_ID}：任务进度 ${done}/${list.length}（压缩恢复后先对照自查再继续）：`,
+      ...undone.slice(0, 15).map((c) => `  - [ ] ${clip(c)}`),
+    ];
+    if (undone.length > 15) lines.push(`  - （另有 ${undone.length - 15} 条未完成项未列出，见最近 todowrite）`);
+    return lines;
+  } catch {
+    return [];
+  }
+}
+
+// ── C 修复：漂移自检（2026-09-26）────────────────────────────────
+// 痛点：验收清单立完，执行到后半段模型注意力已从清单滑走（方向漂移/镀金/漏项），
+// 直到交付审查才发现 → 返工面∝全部工作量。中段低成本自检把漂移拦在半程。
+// 纯函数（经 _export 暴露离线回归）：返回 true = 该提醒一次（桶内 driftChecked 保证只提醒一次）。
+// 内聚 guard：done < total（全完成时不提醒——不依赖调用点的 !allDone，函数自洽可复用）。
+function driftCheckDue(s) {
+  try {
+    const s0 = s ?? {};
+    if (s0.driftChecked) return false;
+    const todos = Array.isArray(s0.lastTodos) ? s0.lastTodos : [];
+    if (todos.length < 2) return false; // 单条清单无「漂移」可言，不空提醒
+    const done = todos.filter((t) => String(t?.status ?? "") === "completed").length;
+    if (done >= todos.length) return false; // 全完成：交付节点接管，不重复提醒
+    // 门槛：完成过半才提醒——太早=清单刚立还没执行方向无从漂移，纯噪音
+    return done > 0 && done / todos.length >= 0.5;
+  } catch {
+    return false;
+  }
 }
 
 // 从裁决文本解析结论。fail = 裁决「不通过」或「必须修复项」段非空；
@@ -703,11 +820,43 @@ function runCmd(cmd, args, timeoutMs, cwd) {
   });
 }
 
+// 诊断工具「真失败」判定（纯函数，经 _export 离线回归）：tsc/eslint/ruff 的 exit 1 =
+// 检出问题（正常诊断产出，绝非工具异常）；exit 2 = 配置/内部错误；非数字 code
+// （超时被杀/ENOENT/信号）= 真失败。只有真失败才记降级账本——否则每个有真实
+// lint/类型错误的文件都记一条「工具运行失败」，污染审计账本（狼来了效应，
+// 2026-09-26 层 3 审查对 eslint 的必须修复项，此处统一三工具口径）。
+// ⚠️ 策略锚定：本插件约定「exit 1 一律视为诊断产出」——含 eslint --max-warnings=N 触发
+// 的 exit 1（warn 超阈值在门禁语义里仍是「有诊断待处理」，不属工具异常）。改此约定需
+// 同步改 test-quality-gate.mjs 的策略断言（防漂移）。
+// ⚠️ 信号场景：Node 子进程被信号终止时 err.code === null（signal 非空），typeof !== "number"
+// 走 true 判失败——正确，勿"优化"成 code > 1（null > 1 为 false 会漏判）。
+function diagRunFailureOf(err) {
+  if (!err) return false;
+  if (typeof err.code !== "number") return true;
+  return err.code !== 0 && err.code !== 1;
+}
+
+// 委派痕迹登记（C 修复支撑）：task/agent_manager 的调用参数不落入 commands/reads/edited，
+// 需独立登记。用专用 s.delegated 数组（不复用 reads）——避免用户文件路径 `delegate: ...`
+// 伪造痕迹；tool 名统一小写归一，覆盖 Task/Agent_Manager 等大小写变体。
+// ⚠️ s.delegated 仅供「高风险越级提醒」判定使用，**严禁作为阻断/门禁决策依据**——它是
+// 基于工具名的启发式痕迹，漏报已按 fail-safe 方向取舍（见 isDelegateCall）。
+// ⚠️ 只认显式委派工具名白名单（DELEGATE_TOOLS），**绝不以 `subagent_type` 参数存在即判委派**——
+// 普通/自定义工具恰带同名参数会被误判为委派，从而错误抑制高风险提醒（2026-09-26 层 3 复审
+// 必须修复项）。白名单外的工具（含未来别名）一律不登记：漏登记只多一条咨询性提醒（fail-safe
+// 方向），误登记则静默吞掉提醒（fail-open 反方向），两害相权取漏报。
+// 维护：新增委派类工具须同步此白名单（fail-safe 取舍的前提是全量登记已知委派名）。
+const DELEGATE_TOOLS = new Set(["task", "agent_manager"]);
+function isDelegateCall(tool) {
+  return DELEGATE_TOOLS.has(String(tool ?? "").trim().toLowerCase());
+}
+
 // 工具可用性一次性探测：缺失/离线环境永久跳过，不再每轮编辑烧满超时
 async function probeTool(name) {
   if (probe[name] !== null) return probe[name];
-  const { err } = name === "tsc"
-    ? await runCmd("npx", ["tsc", "--version"], 8_000, projectRoot)
+  // 修复 G：eslint 走 npx eslint --version（与 tsc 同走 npx），其余直跑 <tool> --version
+  const { err } = name === "tsc" || name === "eslint"
+    ? await runCmd("npx", [name, "--version"], 8_000, projectRoot)
     : await runCmd(name, ["--version"], 8_000, projectRoot);
   probe[name] = !err;
   if (!probe[name]) console.error(`${TAG} ${name} 不可用（探测失败），静态检查跳过该工具`);
@@ -721,6 +870,36 @@ function tsconfigMtimeOf(dir) {
     return fs.statSync(p).mtimeMs;
   } catch {
     return null;
+  }
+}
+
+// eslint 配置探测（修复 G）：检测目录是否存在 eslint 配置文件。
+// 进程级缓存（按 canonical dir，与 probe 同构）——**只缓存 true**（审查建议项）：
+// false 不缓存——JS 项目中途新增 eslint 配置是常见流（装依赖带配置进来），
+// 缓存 false 会让本会话后续 JS 编辑永远无诊断；true 后删配置是罕见误操作，
+// 缓存 true 只导致多跑一次 eslint（无配置目录跑 eslint 会自身报错入降级账本，可见）。
+// 全 try-catch fail-open，拿不到即返回 false（不跑诊断）。
+const ESLINT_CONFIG_FILES = [
+  ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml", ".eslintrc",
+  "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs",
+];
+function eslintConfigIn(dir) {
+  try {
+    const d = String(dir ?? "");
+    if (!d) return false;
+    let key = d;
+    try { key = fs.realpathSync.native(d); } catch { /* 保留原路径作 key */ }
+    if (eslintConfigCache.get(key) === true) return true; // 只缓存 true（false 每次重探）
+    let found = false;
+    for (const name of ESLINT_CONFIG_FILES) {
+      try {
+        if (fs.existsSync(path.join(d, name))) { found = true; break; }
+      } catch { /* 单文件探测失败继续下一个 */ }
+    }
+    if (found) eslintConfigCache.set(key, true);
+    return found;
+  } catch {
+    return false;
   }
 }
 
@@ -780,7 +959,9 @@ async function tsDiagnose(file, dir, s) {
   const cached = s.fileChecks.get(file);
   if (cached && cached.kind === "ts" && cached.mtimeMs === mtimeMs) return cached.diags;
   const { err, out } = await runTscOnce(dir);
-  if (err) {
+  // 退出码语义（与 eslint/ruff 同口径，见 diagRunFailureOf）：tsc --noEmit 检出类型错误 =
+  // exit 1（正常诊断产出，绝不是异常）；只有真失败（exit≥2 / 超时被杀 / ENOENT）才记降级。
+  if (diagRunFailureOf(err)) {
     recordDegradation(s, "静态检查异常（tsc 运行失败）", `${file.split(/[\\/]/).pop()}：${String(err?.message ?? err).slice(0, 80)}——诊断可能缺失`);
   }
   const lines = String(out ?? "").split(/\r?\n/).filter((l) => /\((\d+),(\d+)\)|error TS\d+/.test(l));
@@ -798,7 +979,9 @@ async function ruffDiagnose(file, dir, s) {
   const cached = s.fileChecks.get(file);
   if (cached && cached.kind === "py" && cached.mtimeMs === mtimeMs) return cached.diags;
   const { err, out } = await runCmd("ruff", ["check", "--no-cache", "--output-format=concise", file], 10_000, dir);
-  if (err) {
+  // 退出码语义（与 eslint/tsc 同口径，见 diagRunFailureOf）：ruff check 检出问题 = exit 1
+  // （正常诊断产出）；只有真失败才记降级。
+  if (diagRunFailureOf(err)) {
     recordDegradation(s, "静态检查异常（ruff 运行失败）", `${file.split(/[\\/]/).pop()}：${String(err?.message ?? err).slice(0, 80)}——诊断可能缺失`);
   }
   const diags = String(out ?? "").split(/\r?\n/).filter((l) => l.trim());
@@ -806,16 +989,51 @@ async function ruffDiagnose(file, dir, s) {
   return diags;
 }
 
+// 修复 G：JS/JSX/MJS/CJS eslint 诊断（填补层 2 虚假安全网——VERIFY_CMD_RE 把
+// npm run lint / npx eslint 算作层 2「跑赢」依据，但插件此前从未对 JS 跑过任何诊断）。
+// 仅当目录存在 eslint 配置时真跑（JS 无 lint 配置是常态，不跑不记降级）。
+// eslint 退出码语义（2026-09-26 层 3 审查必须修复项）：0=干净；1=有 lint 问题（正常诊断产出，
+// 绝不是异常）；2=配置/崩溃真失败。runCmd 把非零退出统一算 err → 必须按 exit code 分流，
+// 否则每个有真实 lint 问题的文件都记一条降级，污染审计账本（狼来了效应）。
+async function eslintDiagnose(file, dir, s) {
+  if (!eslintConfigIn(dir)) return []; // 无 eslint 配置 → 不跑（JS 无配置是常态，不算降级）
+  if (!(await probeTool("eslint"))) {
+    recordDegradation(s, "静态检查缺位（eslint 不可用）", "工具探测失败，JS 诊断静默跳过——交付前建议人工 eslint 复核");
+    return [];
+  }
+  const mtimeMs = fileMtime(file);
+  const cached = s.fileChecks.get(file);
+  if (cached && cached.kind === "eslint" && cached.mtimeMs === mtimeMs) return cached.diags;
+  const { err, out } = await runCmd(
+    "npx",
+    ["eslint", "--no-error-on-unmatched-pattern", file],
+    15_000, // Windows npx 冷启动 3-8s + 规则集加载，10s 余量不足（审查建议项）
+    dir,
+  );
+  // 退出码分流见 diagRunFailureOf（单一真源）：0/1 都有有效产出（exit 1 = lint 诊断本体），
+  // 只有真失败才记降级。
+  if (diagRunFailureOf(err)) {
+    recordDegradation(s, "静态检查异常（eslint 运行失败）", `${file.split(/[\\/]/).pop()}：${String(err?.message ?? err).slice(0, 80)}——诊断可能缺失`);
+  }
+  const diags = String(out ?? "").split(/\r?\n/).filter((l) => l.trim());
+  s.fileChecks.set(file, { kind: "eslint", mtimeMs, diags });
+  return diags;
+}
+
 async function staticDiagnose(file, dir, s) {
   const ext = (file.match(/\.(\w+)$/) ?? [])[1]?.toLowerCase();
+  // 分流顺序：py → ts 系（ts/tsx/mts/cts，tsc 只在有 tsconfig 时跑）→ eslint 系（js/jsx/mjs/cjs）
   if (ext === "py") return ruffDiagnose(file, dir, s);
   if (["ts", "tsx", "mts", "cts"].includes(ext)) return tsDiagnose(file, dir, s);
-  return null; // 其他后缀 v1 不做（js/eslint 与 go vet 后续按需加）
+  if (["js", "jsx", "mjs", "cjs"].includes(ext)) return eslintDiagnose(file, dir, s);
+  return null; // 其他后缀暂不做
 }
 
 // 可诊断后缀（staticDiagnose 实际处理集）：入队过滤用——文档/其他代码后缀不进
 // pendingDiags 空转，也避免文档编辑触发冲刷的第二轮补跑
-const DIAGNOSABLE_EXT = new Set(["ts", "tsx", "mts", "cts", "py"]);
+// 修复 G：js/jsx/mjs/cjs 入队（eslint 分支只在配置存在时真跑，入队不过滤 js——
+// 入队后 staticDiagnose 内部按配置存在与否分流，无配置直接返回 [] 不空转）
+const DIAGNOSABLE_EXT = new Set(["ts", "tsx", "mts", "cts", "py", "js", "jsx", "mjs", "cjs"]);
 function isDiagnosable(f) {
   const m = String(f ?? "").match(/\.(\w+)$/);
   return !!m && DIAGNOSABLE_EXT.has(m[1].toLowerCase());
@@ -896,10 +1114,16 @@ async function flushDiags(s) {
     if (diagCoversLastEdit(s, v0)) { stale = false; break; } // 诊断覆盖末次编辑，干净
     stale = true; // 等待期间有新编辑/新积压 → 补跑一轮
   }
-  if (s.diagNotes.size === 0) return null;
+  if (s.diagNotes.size === 0 && s.pendingDiags.size === 0) return null;
   const parts = [...s.diagNotes.entries()].map(([f, diags]) =>
     `${f}（共 ${diags.length} 条）：\n  ${diags.slice(0, 20).join("\n  ")}`);
   s.diagNotes.clear();
+  // 审查建议项：预算耗尽时剩余积压文件显式留痕，不静默截断（否则产生「部分诊断」假象）
+  if (s.pendingDiags.size > 0) {
+    const remaining = [...s.pendingDiags].map((f) => f.split(/[\\/]/).pop()).slice(0, 5).join(", ");
+    recordDegradation(s, "交付冲刷预算耗尽，部分文件未诊断", `${s.pendingDiags.size} 个文件未跑静态检查（${remaining}${s.pendingDiags.size > 5 ? " 等" : ""}）——下次编辑防抖会补跑，交付前建议人工复核`);
+    parts.push(`⚠️ 预算耗尽：${s.pendingDiags.size} 个文件未诊断（${remaining}${s.pendingDiags.size > 5 ? " 等" : ""}）`);
+  }
   const staleNote = stale
     ? "（注意：部分诊断未覆盖末次编辑——冲刷期间仍有编辑或超等待预算，修复后建议重新交付验证）"
     : "";
@@ -973,6 +1197,11 @@ async function reviewSubject(root, s, editedList) {
     .slice(0, 20); // 先滤空再限 20：空项不占配额（第 2 轮审查建议项）
   if (todoLines.length > 0) {
     parts.push(`本次任务的验收清单（交付时应逐条达成，审查时对照）：\n${todoLines.join("\n")}`);
+  }
+  // planReviewed 消费点（审查建议项「死状态」）：图纸期（写码前）已跑过 dual_review 的会话
+  // 在素材中声明——交付期审查者可参考图纸裁决基线，重点核对「实现是否兑现已审图纸」。
+  if (s?.planReviewed) {
+    parts.push("（注：本会话写码前已做过图纸审查（planReviewed），交付审查请重点核对实现与已审方案的一致性）");
   }
   // pathspec 数量设上限：edited 可达 MAX_EDITED(500)，全列进命令行会超 Windows 32767 字符上限
   // 导致 git 进程启动失败（ENAMETOOLONG）。审查素材本就截断到 24000 字符，前 100 个代码文件的
@@ -1099,11 +1328,39 @@ const QualityGateImpl = async ({ directory } = {}) => {
           return;
         }
 
+        // ①''' 委派痕迹入证据（C 修复「高风险越级提醒」的探测依据）：
+        // 该提醒判定「本会话是否已有 general/task 委派痕迹」——但 task/agent_manager 调用的
+        // 子代理名只在工具参数里，不落到 commands/reads/edited 任一处。此处显式登记到专用
+        // s.delegated（不复用 reads——防用户路径伪造），且**不 return**（不阻断本工具其它
+        // 通用登记路径，2026-09-26 层 3 审查必须修复项：after 早退会漏记副作用）。
+        if (isDelegateCall(tool)) {
+          const hint = String(args?.subagent_type ?? args?.description ?? args?.name ?? tool).slice(0, 120);
+          s.delegated.push(`${String(tool).toLowerCase()} ${hint}`);
+          if (s.delegated.length > 50) s.delegated.shift(); // 有界：防长会话无限累积
+        }
+
         // ①'' dual_review 调用登记（层 3 自动闭环：完成节点查此标志）
-        // 手动补审同时清 reviewPending：显式复审过的会话不应再被 before 钩子按旧裁决误拦
+        // 手动补审同时清 reviewPending：显式复审过的会话不应再被 before 钩子按旧裁决误拦。
+        // 图纸/交付分流（2026-09-26）：写码前调 dual_review 审的是「验收清单+方案」（图纸），
+        // 不得豁免写码后的交付自动审查（INSTRUCTIONS「图纸审查不计入交付审查豁免」的代码支撑）——
+        // 只有发生过代码编辑（codeEditV>0）的审查才视为交付期审查置 dualReviewed。
+        // 手动补审通过 = 显式复审闭环（审查建议项）：同步清零失败计数，否则两败永久放行后
+        // 手动补审通过，后续 codeEditV 前进仍被 reviewRetryAllowed 的 count 闸抑制——
+        // 「人工已确认通过」却永远失去自动重审，语义矛盾。
+        // C1 修复（2026-09-27 层 3 补审漏洞）：豁免绑定审查时的代码版本 dualReviewedAtCodeEditV——
+        // 手动补审后继续编辑代码（codeEditV 前进）→ 交付节点版本不对齐 → 自动审查照常触发，
+        // 「审查时点之后的新改动」绝不静默跳审（subject 可能窄于全量 diff，旧裁决不覆盖新 diff）。
         if (tool === "dual_review") {
-          s.dualReviewed = true;
-          s.reviewPending = null;
+          if ((s.codeEditV ?? 0) > 0) {
+            s.dualReviewed = true;
+            s.dualReviewedAtCodeEditV = s.codeEditV;
+            s.reviewPending = null;
+            s.reviewFailedAtCodeEditV = 0;
+            s.reviewFailedAtRound = 0;
+            s.reviewFailedCount = 0;
+          } else {
+            s.planReviewed = true;
+          }
           return;
         }
 
@@ -1112,7 +1369,27 @@ const QualityGateImpl = async ({ directory } = {}) => {
           const file = String(args?.filePath ?? args?.path ?? "");
           if (file) {
             rememberEdit(s, file);
+            // 层 3 高风险触发登记（isComplexDelivery 依赖 s.highRisk.size>0）：高风险文件命中
+            // 即触发交付审查，文件数无关——此登记与下方提醒是两件事，绝不可互相替代（曾误删）。
             if (isHighRiskFile(file)) s.highRisk.add(file);
+            // C 修复（高风险越级提醒，一次性）：高风险文件由主 agent 直接编辑，但会话里
+            // 没有任何委派痕迹（task/general）→ 与 INSTRUCTIONS「高风险实现委派 general@max」
+            // 路由冲突，提醒一次由模型自行决断（提醒不拦截，宁漏报不误报——
+            // 委派痕迹探测基于命令文本，无法覆盖所有委派形态）。
+            if (isHighRiskFile(file) && !s.highRiskDelegated) {
+              s.highRiskDelegated = true; // 一次性封顶，重复编辑不重复提醒
+              // 只认显式委派登记（①''' 落池的 s.delegated）——独立数组 + 前缀标记，
+              // 不复用 reads 松散匹配（edited 里的路径 src/task-runner.ts 会假性抑制提醒）。
+              const delegated = (s.delegated ?? []).length > 0;
+              if (!delegated) {
+                appendToResult(
+                  output,
+                  `\n${TAG} ⚠️ 高风险文件提醒：正在直接编辑高风险路径（${file.split(/[\\/]/).pop()}）。` +
+                    `INSTRUCTIONS 约定高风险实现应委派 general（高执行档）执行——若是小幅机械修补可直接继续，` +
+                    `若是高风险实现主体请停下委派；忽略本提醒继续即可（只提醒这一次）。`
+                );
+              }
+            }
             if (isDiagnosable(file)) { // 只有可诊断后缀入队：文档/其他后缀不空转防抖队列
               s.pendingDiags.add(file); // 刚写过 mtime 必变，mtime 缓存必失效 → 一律入队防抖
               scheduleDiags(s);
@@ -1139,6 +1416,15 @@ const QualityGateImpl = async ({ directory } = {}) => {
           }
           const codeEdits = codeEditsOf(s);
           const allDone = todos.length > 0 && todos.every((t) => t?.status === "completed");
+          // C 修复：完成过半的漂移自检（一次性）——对照验收清单自查方向，
+          // 把镀金/漏项/漂移拦在半程而非交付审查（s.driftChecked 保证零重复提醒）
+          if (!allDone && driftCheckDue(s)) {
+            s.driftChecked = true;
+            notes.push(
+              `🧭 进度过半自查：对照验收清单（首条 todo）逐条核对——当前改动是否仍指向原验收标准？` +
+                `有无镀金/漏项/方向漂移？发现偏离立即纠正，不要拖到交付审查。`
+            );
+          }
           // P0-1b：交付节点强制冲刷积压诊断（编辑已零阻塞，成本集中在此付一次）
           if (allDone) {
             // ⑥ 部署≠生效检测（节流，fail-open）：运行中进程可能还在执行旧插件逻辑
@@ -1228,7 +1514,13 @@ const QualityGateImpl = async ({ directory } = {}) => {
           // 复用异构模型的旧裁决；指纹不可得（配置读失败）→ 键掺时变值保证不命中，
           // 宁可重烧一次审查也不冒陈旧裁决风险。
           const complex = isComplexDelivery(s, codeEdits);
-          if (allDone && complex && !s.dualReviewed && !hasAcceptMarker(s)) {
+          // F 修复：dualReviewed=true 的 fail-open 放行不再永久免审——失败后有新代码编辑
+          // 时允许重审一次（reviewRetryAllowed），连续 MAX_REVIEW_FAILURES 次失败永久放行。
+          // C1 修复（2026-09-27）：手动补审的豁免绑定 dualReviewedAtCodeEditV——审查后
+          // 又有新代码编辑（版本不对齐）→ 豁免失效，交付节点照常自动审查；
+          // 版本对齐（无新代码编辑）→ 维持「人工已确认通过」豁免。
+          const dualReviewedFresh = s.dualReviewed && (s.codeEditV ?? 0) === (s.dualReviewedAtCodeEditV ?? 0);
+          if (allDone && complex && !hasAcceptMarker(s) && (!dualReviewedFresh || reviewRetryAllowed(s))) {
             const editedList = [...s.edited].slice(0, 30).join("\n");
             const subject = await reviewSubject(projectRoot, s, editedList);
             // ⑦ 补口：git 失败降级为会话证据池——审查视野缩水必须可见
@@ -1270,8 +1562,21 @@ const QualityGateImpl = async ({ directory } = {}) => {
                   recordDegradation(s, "审查执行异常（本次按未审查交付）", String(e?.message ?? e).slice(0, 120));
                 }
                 // 终审建议项：与 inconclusive 路径同构「一次为限」——执行异常也置 dualReviewed，
-                // 防同会话后续交付节点对同一素材反复重烧审查（隧道抖动重试的期望收益低于重复成本）
+                // 防同会话后续交付节点对同一素材反复重烧审查（隧道抖动重试的期望收益低于重复成本）。
+                // F 修复：置位同时记失败版本，失败后有新代码编辑时交付节点可重审一次；
+                // 连续 MAX_REVIEW_FAILURES 次 → 永久放行 + unreviewed 留痕（与 inconclusive 同口径）。
                 s.dualReviewed = true;
+                s.dualReviewedAtCodeEditV = s.codeEditV; // C1 修复：fail-open 放行也绑定版本（语义一致）
+                s.reviewFailedAtCodeEditV = s.codeEditV;
+                s.reviewFailedAtRound = s.reviewRounds;
+                s.reviewFailedCount = (s.reviewFailedCount ?? 0) + 1;
+                if (s.reviewFailedCount >= MAX_REVIEW_FAILURES) {
+                  const marker = unreviewedMarkerLine();
+                  const marked = await persistLineSafe(marker);
+                  recordDegradation(s, "审查重试连续失败，本次会话永久放行未审交付", `${reviewFailPrefix(s)}unreviewed 留痕${marked ? "已沉淀项目记忆 Open Questions" : "沉淀失败（人工须记录）"}`);
+                  // 审查建议项：持久层沉淀失败（磁盘满/权限）→ output 内联兜底，审计行不丢
+                  if (!marked) appendToResult(output, `\n${TAG} 📌 ${marker}`);
+                }
               }
             }
             if (verdict != null) {
@@ -1286,15 +1591,38 @@ const QualityGateImpl = async ({ directory } = {}) => {
                 }
                 s.reviewPending = null; // 无条件清（空 fixSection 防御性清理，防 before 钩子按旧裁决误拦）
                 s.dualReviewed = true;
+                s.dualReviewedAtCodeEditV = s.codeEditV; // C1 修复：inconclusive 放行同样绑定版本
+                // F 修复：inconclusive 放行同执行异常记账——新编辑后重审一次，连续两败永久放行
+                s.reviewFailedAtCodeEditV = s.codeEditV;
+                s.reviewFailedAtRound = s.reviewRounds;
+                s.reviewFailedCount = (s.reviewFailedCount ?? 0) + 1;
+                if (s.reviewFailedCount >= MAX_REVIEW_FAILURES) {
+                  const marker = unreviewedMarkerLine();
+                  const marked = await persistLineSafe(marker);
+                  recordDegradation(s, "审查重试连续失败，本次会话永久放行未审交付", `${reviewFailPrefix(s)}unreviewed 留痕${marked ? "已沉淀项目记忆 Open Questions" : "沉淀失败（人工须记录）"}`);
+                  if (!marked) appendToResult(output, `\n${TAG} 📌 ${marker}`);
+                }
                 recordDegradation(s, "审查上游失败（按未审查交付）", (v.verdictLine || "裁决不可解析").slice(0, 120));
                 appendToResult(output, `\n${TAG} ⚠️ 审查结果无法解析（上游失败），本次按未审查交付，请人工留意。`);
               } else if (v.fail) {
                 s.reviewRounds += 1;
                 if (s.reviewRounds >= MAX_REVIEW_ROUNDS) {
                   s.dualReviewed = true;
+                  s.dualReviewedAtCodeEditV = s.codeEditV; // C1 修复：上限放行同样绑定版本
                   // ⑤ 残余项沉淀进项目记忆 Open Questions（fail-open，关闭即忘 → 持久可见）
                   const persisted = await persistResidualSafe(v.fixSection);
                   recordDegradation(s, `审查 ${s.reviewRounds} 轮未过按上限放行${persisted ? "（残余项已沉淀项目记忆 Open Questions）" : "（残余项沉淀失败，人工须记录）"}`, v.fixSection);
+                  // F 修复：轮次上限放行也是「有未闭环残余的放行」——记失败版本，新编辑后可再试；
+                  // 连续 MAX_REVIEW_FAILURES 次仍不过 → 永久放行 + unreviewed 留痕持久可见
+                  s.reviewFailedAtCodeEditV = s.codeEditV;
+                  s.reviewFailedAtRound = s.reviewRounds;
+                  s.reviewFailedCount = (s.reviewFailedCount ?? 0) + 1;
+                  if (s.reviewFailedCount >= MAX_REVIEW_FAILURES) {
+                    const marker = unreviewedMarkerLine();
+                    const marked = await persistLineSafe(marker);
+                    recordDegradation(s, "审查重试连续失败，本次会话永久放行未审交付", `${reviewFailPrefix(s)}unreviewed 留痕${marked ? "已沉淀项目记忆 Open Questions" : "沉淀失败（人工须记录）"}`);
+                    if (!marked) appendToResult(output, `\n${TAG} 📌 ${marker}`);
+                  }
                   appendToResult(
                     output,
                     `\n${TAG} ⚠️ 已连续 ${s.reviewRounds} 轮审查未通过，达到自动审查上限，放行交付。\n` +
@@ -1310,7 +1638,12 @@ const QualityGateImpl = async ({ directory } = {}) => {
                 }
               } else {
                 s.dualReviewed = true;
+                s.dualReviewedAtCodeEditV = s.codeEditV; // C1 修复：通过裁决同样绑定版本，新编辑后重审
                 s.reviewPending = null;
+                // F 修复：重审通过 → 失败计数清零（闭环完成，后续复杂交付重新起算）
+                s.reviewFailedAtCodeEditV = 0;
+                s.reviewFailedAtRound = 0;
+                s.reviewFailedCount = 0;
                 appendToResult(output, `\n${TAG} ✅ 审查通过，闭环结束。`);
               }
             }
@@ -1326,6 +1659,27 @@ const QualityGateImpl = async ({ directory } = {}) => {
         }
       } catch (e) {
         console.error(TAG, "audit failed:", e?.message ?? e);
+      }
+    },
+
+    // B 修复：验收清单压缩锚点——与 compaction-anchor 插件共用
+    // experimental.session.compacting 钩子（Kilo 对多插件同钩子为顺序聚合，顺序不可知）。
+    // 双方契约：一律**追加合并**（out.context = [...existing, ...lines]），按各自标记幂等——
+    // 无论谁先跑，两份锚点都存活，绝不互相覆盖（2026-09-26 层 3 审查必须修复项 B）。
+    // 兜底（审查建议项）：锚点同时记降级账本——若 Kilo 未来改为 last-writer-wins 聚合
+    // （output 副本隔离），压缩上下文丢失清单锚点时，交付节点的账本汇总仍可见未完成项。
+    "experimental.session.compacting": async (input, output) => {
+      try {
+        const out = output ?? {};
+        const existing = Array.isArray(out.context) ? out.context : [];
+        const s = bucketOf(input);
+        const lines = todoAnchorLines(s.lastTodos);
+        if (lines.length === 0) return;
+        recordDegradation(s, "压缩时验收清单未完成（锚点已注入，恢复后对照自查）", lines.join(" | ").slice(0, 200));
+        if (existing.some((l) => String(l ?? "").includes(TODO_ANCHOR_ID))) return; // 幂等：钩子被调两次只注入一次（唯一 ID 防碰撞）
+        out.context = [...existing, ...lines];
+      } catch (e) {
+        console.error(TAG, "compacting hook failed:", e?.message ?? e); // fail-open：锚点失败不阻断压缩
       }
     },
   };
@@ -1354,6 +1708,9 @@ export const _export = {
   hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, diagCoversLastEdit,
   providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary,
   staleDeployOf, moduleBasenamesOf, hasTestRefFor,
+  eslintConfigIn, reviewRetryAllowed, todoAnchorLines, unreviewedMarkerLine, driftCheckDue,
+  diagRunFailureOf, isDelegateCall, reviewFailPrefix,
+  bucketOf, // 离线回归测试缝：断言钩子对会话桶的登记副作用（如 s.highRisk/s.delegated），只读使用
   VERIFY_CMD_RE, HIGH_RISK_RE,
 };
 

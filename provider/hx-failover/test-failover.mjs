@@ -616,3 +616,180 @@ try {
   }
 } catch (e) { err8d = e; }
 console.log("PASS nofinish-normal-untouched    :", err8d === null && out8d.includes("[ok glm-5.3-flash]"));
+
+// ── 回归 9：主模型冷却跳过（2026-09-26 体验专项）──────────────────────────
+// 生产形态（failover-events.jsonl 21:51-21:53 实证）：主模型 glm-5.2 持续 503 期间，
+// 每次调用都对已知故障主模型走 3 连重试+退避（~8s）才切到备用，且每条回复流首
+// 重复同一条 ⚠️ [failover] 提示——体验差（用户原话「一直输出模型失败」）。
+// 修复：① 冷却对全链生效——主模型上一轮刚降级过，本轮直接从首个未冷却备用起跑；
+//      ② 切换通知去重——同一「主模型→备用」在 noticeCooldownMs 窗口内只注入一次；
+//      ③ 全链冷却 → fail-fast 确定性 503（isRetryable，Kilo 重试门接管，冷却到期恢复）。
+const gen9 = async (provider, model) => {
+  const { stream } = await provider.languageModel(model).doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+  let out = "";
+  for await (const part of stream) {
+    if (part.type === "text-delta") out += part.delta ?? part.textDelta ?? "";
+  }
+  return out;
+};
+
+// 9a：主模型持续故障 → 第 1 轮全链重试后降级成功；第 2 轮直接跳过主模型（零 fetch）走备用
+let calls9a = [];
+const fakeFetch9a = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls9a.push(model);
+  if (model === "glm-5.3-flash") {
+    return new Response(JSON.stringify({ error: { message: "simulated upstream 500" } }), {
+      status: 500, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p9a = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9a,
+  failover: { chain: { models: ["kimi-k2.6"] }, cooldownMs: 2000, noticeCooldownMs: 2000 },
+});
+const out9a1 = await gen9(p9a, "glm-5.3-flash"); // 第 1 轮：主模型 3 连失败 → 降级 kimi 成功
+const c1 = calls9a.length; // 预期 4（glm×3 + kimi×1）
+const out9a2 = await gen9(p9a, "glm-5.3-flash"); // 第 2 轮（冷却窗口内）：主模型被跳过
+const c2 = calls9a.length; // 预期 5（只多了 kimi×1）
+console.log("");
+console.log("9a round1:", c1, "calls | round2:", c2, "calls");
+console.log("PASS cooldown-skip-main       :", c1 === 4 && c2 === 5 && out9a2.includes("[ok kimi-k2.6]"));
+
+// 9b：通知去重——第 1 轮切换有提示，冷却窗口内第 2 轮切换静默（无重复提示）
+console.log("PASS notice-first-only        :", out9a1.includes("[failover]") && !out9a2.includes("[failover]"));
+
+// 9c：冷却到期后主模型恢复探测（非永久跳过）
+await new Promise((r) => setTimeout(r, 2100));
+calls9a.length = 0;
+const out9a3 = await gen9(p9a, "glm-5.3-flash");
+console.log("9c after cooldown:", calls9a.join(", "));
+console.log("PASS cooldown-expiry-retry    :", calls9a[0] === "glm-5.3-flash" && out9a3.includes("[ok kimi-k2.6]"));
+
+// 9d：全链冷却 → fail-fast 确定性 503（不空转，fetch 零调用）
+const fakeFetch9d = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  return new Response(JSON.stringify({ error: { message: "simulated upstream 500" } }), {
+    status: 500, headers: { "content-type": "application/json" },
+  });
+};
+const p9d2 = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9d,
+  failover: { chain: { models: ["kimi-k2.6"] }, cooldownMs: 30000 },
+});
+let err9dWarm = null;
+try { await gen9(p9d2, "glm-5.3-flash"); } catch (e) { err9dWarm = e; }
+let err9d = null;
+const t9d = Date.now();
+try { await gen9(p9d2, "glm-5.3-flash"); } catch (e) { err9d = e; }
+const elapsed9d = Date.now() - t9d;
+console.log("");
+console.log("9d warm-up error:", err9dWarm?.statusCode, "| fail-fast error:", err9d?.statusCode, "| elapsed:", elapsed9d, "ms");
+console.log("PASS all-cooling-fail-fast    :", err9dWarm?.statusCode === 500 && err9d?.statusCode === 503 && err9d?.isRetryable === true && elapsed9d < 100);
+
+// 9e：备用冷却跳过仍照常工作（既有语义），链上还有未冷却模型可达
+const fakeFetch9e = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  if (model === "kimi-k2.6" || model === "glm-5.3-flash") {
+    return new Response(JSON.stringify({ error: { message: "simulated upstream 500" } }), {
+      status: 500, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p9e = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9e,
+  failover: { chain: { models: ["glm-5.3-flash", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+});
+await gen9(p9e, "kimi-k2.6"); // 第 1 轮：kimi×3 失败冷却 → glm×3 失败冷却 → deepseek 成功（此时 glm 未冷却所以被真试了 3 次）
+const out9e = await gen9(p9e, "kimi-k2.6"); // 第 2 轮：kimi 失败×3 → glm 冷却被跳过 → deepseek 成功
+console.log("");
+console.log("9e output:", JSON.stringify(out9e));
+console.log("PASS standby-cooldown-skip    :", out9e.includes("[ok deepseek-v4.1-flash]") && !out9e.includes("[failover]"));
+
+// 9f：去重命中留遥测痕迹（notice_dedup）——静默切换不丢诊断
+let dedup9f = [];
+try {
+  const log9f = await readFile(join(process.env.XDG_DATA_HOME, "kilo", "failover-events.jsonl"), "utf8");
+  dedup9f = log9f.trim().split("\n").map((l) => JSON.parse(l)).filter((e) => e.action === "notice_dedup" && e.from === "glm-5.3-flash" && e.to === "kimi-k2.6");
+} catch { /* 无日志文件视为未写入 */ }
+console.log("PASS notice-dedup-logged      :", dedup9f.length >= 1);
+
+// 9g：单元素链豁免——主模型冷却时空链仍照常直连重试（唯一模型没有可跳去处，
+// 跳过 = 零执行 = 误抛全冷却 503），与 Kilo 原生单模型行为一致
+let calls9g = [];
+const fakeFetch9g = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls9g.push(model);
+  return new Response(JSON.stringify({ error: { message: "simulated upstream 500" } }), {
+    status: 500, headers: { "content-type": "application/json" },
+  });
+};
+const p9g = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9g,
+  failover: { chain: { models: [] }, cooldownMs: 30000 },
+});
+await gen9(p9g, "solo-model").catch(() => {}); // 第 1 轮：3 连失败 → 冷却
+calls9g.length = 0;
+let err9g = null;
+try { await gen9(p9g, "solo-model"); } catch (e) { err9g = e; }
+console.log("");
+console.log("9g attempts:", calls9g.join(", "), "| error:", err9g?.statusCode);
+console.log("PASS single-model-exempt      :", calls9g.length === 3 && err9g?.statusCode === 500);
+
+// ── 回归 9h：503 渠道/模型不可用（2026-09-27 查漏补缺）───────────────────────
+// 生产实证（2026-09-27）：glm-5.2 渠道下线期上游统一报 503 model_not_found——
+// 旧行为按可重试处理：每 hop 3 连重试空转 ~8s 才换链（且 trip 冷却 60s 连累健康渠道）。
+// 新行为：isRetryable=false + isChannelUnavailable → 不重试立即换下一 hop（channel_fallback）；
+// 全链渠道不可用 → 抛最后一个原始错误（不伪造全冷却 503）。
+let calls9h = [];
+const fakeFetch9h = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls9h.push(model);
+  if (model === "glm-5.2") {
+    return new Response(JSON.stringify({ error: { code: "model_not_found", message: "No available channel for model glm-5.2 under group svip (distributor)" } }), {
+      status: 503, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p9h = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9h,
+  failover: { chain: { models: ["glm-5.3-flash", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+});
+const t9h = Date.now();
+const out9h = await gen9(p9h, "glm-5.2"); // 主模型渠道不可用 → 零重试直接换链（链 = 请求模型 + chain.models）
+const elapsed9h = Date.now() - t9h;
+console.log("");
+console.log("9h attempts:", calls9h.join(", "), "| elapsed:", elapsed9h, "ms");
+console.log("PASS channel-unavail-no-retry:", JSON.stringify(calls9h) === JSON.stringify(["glm-5.2", "glm-5.3-flash"]) && out9h.includes("[ok glm-5.3-flash]") && elapsed9h < 500);
+
+// 9i：全链渠道不可用 → 快速失败抛最后原始错误（不空转、不触发全冷却 503 分支）
+let calls9i = [];
+const fakeFetch9i = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls9h.push(model); calls9i.push(model);
+  return new Response(JSON.stringify({ error: { code: "model_not_found", message: `No available channel for model ${model} under group svip (distributor)` } }), {
+    status: 503, headers: { "content-type": "application/json" },
+  });
+};
+const p9i = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9i,
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+});
+const t9i = Date.now();
+let err9i = null;
+try { await gen9(p9i, "glm-5.3-flash"); } catch (e) { err9i = e; }
+const elapsed9i = Date.now() - t9i;
+console.log("9i attempts:", calls9i.join(", "), "| elapsed:", elapsed9i, "ms | err:", err9i?.statusCode);
+console.log("PASS all-channel-unavail-fast :", calls9i.length === 3 && err9i?.statusCode === 503 && /No available channel/.test(String(err9i?.message ?? err9i)) && elapsed9i < 500);

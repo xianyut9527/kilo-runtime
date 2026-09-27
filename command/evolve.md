@@ -18,7 +18,7 @@ agent: code
    - 用户纠正过的做法 → action=`correct`（会写 corrections.md，优先级最高）；
    - 非显然事实（构建命令、隐藏依赖、路径约定、环境怪癖）→ action=`remember`，key 用短横线小写英文；
    - 发现已入库内容过期/错误 → action=`forget` 后重存，不要留双份。
-4. **反哺 SSOT**（仅当本项目是 Kilo Runtime 配置仓库，目录名 kilo_config；若已 `git remote -v` 确认仓库已改名 kilo-runtime，按仓库名判断）：跨项目通用的教训才升级为配置——
+4. **反哺 SSOT**（仅当本项目是 Kilo Runtime 配置仓库——判断链：`git remote -v` 含 kilo-runtime/kilo_config → 是；无 remote 时按目录名兜底 kilo-runtime/kilo_config；两者都不匹配 → 不是，跳过本步）：跨项目通用的教训才升级为配置——
    INSTRUCTIONS.md（行为策略）/ kilo.json.tmpl（权限、路由）/ plugin（自动化）。
    先展示拟改动 diff，经用户确认后改仓库并跑 `./install.ps1` 部署验证。单项经验不够通用就留在项目记忆层。
 5. **修剪全局经验层**：整理 `~/.config/kilo/GLOBAL-NOTES.md`——去重合并、删除过时/低价值条目、

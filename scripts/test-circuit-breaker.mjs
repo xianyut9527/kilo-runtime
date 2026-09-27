@@ -2,7 +2,7 @@
 // v6 新增：跨代迟到成功/失败不污染 half-open、open 态迟到过载不刷新冷却。
 // 运行：node --experimental-strip-types scripts/test-circuit-breaker.mjs
 // （直接动态 import lib/hx-client.ts，靠 ?r= 查询串击穿 ESM 缓存取得全新断路器状态；
-//   网络层打桩，不联网、不起 Kilo，18 场景全绿为过）
+//   网络层打桩，不联网、不起 Kilo，36 断言全绿为过）
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -39,6 +39,7 @@ function makeFetch() {
   return async () => {
     fetchCalls++;
     if (fetchMode === "overload") return { ok: false, status: 503, text: async () => "system cpu overloaded" };
+    if (fetchMode === "nochan") return { ok: false, status: 503, text: async () => JSON.stringify({ error: { code: "model_not_found", message: "No available channel for model glm-5.2 under group svip (distributor)" } }) };
     if (fetchMode === "neterr") throw new Error("ECONNRESET");
     if (fetchMode === "throw") throw new Error("SYNC_THROW_BEFORE_PARSE");
     const enc = new TextEncoder();
@@ -138,6 +139,20 @@ const tripCircuit = async (ask) => {
   globalThis.fetch = async () => { throw new Error("ECONNRESET"); };
   try { await mod2.ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: "x", timeoutMs: 1000, idleMs: 500, attempts: 1 }); } catch {}
   assert("closed 态网络错不触发", mod2.circuitState() === "closed");
+}
+
+// 6b. 410 Gone 确定性失败不重试（2026-09-27 补：退役端点重试纯属浪费）
+//     410 语义 = 资源永久移除，与 404 同类；NON_RETRYABLE_STATUS 纳入后应只发 1 次请求。
+{
+  const { ask, circuitState } = await freshLoad("6b");
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return { ok: false, status: 410, text: async () => "model retired" }; };
+  let err = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "retired", prompt: "x", timeoutMs: 5000, idleMs: 2000 }); }
+  catch (e) { err = e; }
+  assert("410 直接抛（statusCode 透传）", err && err.statusCode === 410);
+  assert("410 不重试（仅 1 次 fetch，无 400/1200ms 空转）", calls === 1);
+  assert("410 不触发断路器", circuitState() === "closed");
 }
 
 // 7. half-open 单 probe 锁：并发 fanout 第二路被拦（冻结 probe 使其在途）
@@ -289,6 +304,42 @@ const tripCircuit = async (ask) => {
   fetchCalls = 0;
   const r = await ask({ baseURL: "http://x/v1", key: "k", model: "probe", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 });
   assert("预检放行后 probe 成功关断", r === "hello" && circuitState() === "closed" && fetchCalls === 1);
+}
+
+// 12. 时钟回拨回归（2026-09-26 补审必须项）：Date.now() 回拨后 Date-cbOpenedAt 为严格负、
+//     Math.max(0,…) 归一是错方（0 仍 < 冷却值恒拦截）——须按「差值 <0 视为已过冷却」
+//     放行，否则死锁在时钟回拨边界复现；差值 ==0（同毫秒刚 trip）仍保守拦截。
+{
+  const { ask, circuitState, cbShouldFailFast } = await freshLoad(13);
+  await tripCircuit(ask);
+  assert("回拨前置：trip 后预检拦截", cbShouldFailFast() === true);
+  // 时钟回拨 5s：cbOpenedAt 晚于当前墙钟 → 差值为负
+  fakeTime -= 5_000;
+  assert("时钟回拨下预检放行（负差值归一）", cbShouldFailFast() === false);
+  // ask() 的 cbAllowRequest 同口径：回拨后也必须能进 half-open 放 probe（而非 fail fast 死锁）
+  fetchMode = "ok";
+  fetchCalls = 0;
+  const r = await ask({ baseURL: "http://x/v1", key: "k", model: "skew-probe", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }).catch((e) => `ERR:${e.message}`);
+  assert("时钟回拨下 probe 成功关断（迁移不死锁）", r === "hello" && circuitState() === "closed" && fetchCalls === 1);
+}
+
+// 13. 503 渠道/模型不可用回归（2026-09-27 查漏补缺）：model_not_found 类是确定性故障——
+//     渠道按模型隔离且不会因退避恢复：不重试（3 连空转 ~8s 实证）、不 trip 断路器
+//     （网关本身健康，真过载期不应被确定性故障误伤）、快速失败交上层降级链换模型。
+{
+  const { ask, circuitState } = await freshLoad(14);
+  fetchMode = "nochan";
+  fetchCalls = 0;
+  const t0 = Date.now();
+  let err13 = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "glm-5.2", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 3 }); } catch (e) { err13 = e; }
+  assert("渠道不可用单次失败即抛（不 3 连空转）", err13?.statusCode === 503 && fetchCalls === 1);
+  assert("渠道不可用不 trip 断路器（保持 closed）", circuitState() === "closed");
+  assert("渠道不可用错误不进退避（快速失败）", (Date.now() - t0) < 1000);
+  // 确定性故障后断路器仍健康：过载场景照常计数（不影响真过载保护）
+  fetchMode = "overload";
+  await tripCircuit(ask);
+  assert("渠道故障后过载保护不受影响（trip 正常）", circuitState() === "open");
 }
 
 Date.now = realNow;

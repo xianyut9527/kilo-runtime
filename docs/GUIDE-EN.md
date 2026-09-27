@@ -40,7 +40,10 @@ This repo (source of truth) ─install→ ~/.config/kilo/ (runtime copy — neve
 
 Data flow: Kilo session → provider (gateway client) → upstream model gateway (OpenAI-compatible API).
 On main-model failure it fails over through `failover.chain.models` (each hop injects a visible
-"⚠️ [failover]" notice); moa/dual-review analysis calls
+"⚠️ [failover]" notice; the same main→standby notice is emitted once per cooldown window. The
+main model itself also cools down: during sustained outages later calls start directly from an
+available standby, and a fully-cooled chain fails fast until the window expires);
+moa/dual-review analysis calls
 go through the separate lib/hx-client request layer (circuit breaker fail-fasts when the gateway is
 overloaded); at delivery nodes quality-gate triggers dual-review automatically based on risk.
 

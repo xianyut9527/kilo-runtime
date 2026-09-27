@@ -102,8 +102,21 @@ function Invoke-RepoScript {
 
     # 不用 Tee-Object：PowerShell 5.1 下 -LiteralPath 与 -Append 属不同参数集，会报
     # 「Parameter set cannot be resolved」。改为先收集再落盘。
-    $output = & $bash $scriptNative @ScriptArgs 2>&1
-    $rc = $LASTEXITCODE
+    #
+    # ⚠ 2026-09-27 维护中断专项（真实事故）：PS 5.1 在本脚本全局 $ErrorActionPreference='Stop'
+    # 下，原生进程往 stderr 写一行就会构造 ErrorRecord 并**抛终止异常**——db-maintain.sh 的
+    # 单批耗时告警（>6000ms，仅诊断用）走 stderr，被当成致命错误，整个 RunOnce 在第一批
+    # 删除提交后立刻 abort（实测 RemoteException，error.log 有据），DB 瘦身从未跑完。
+    # 修法：native 调用期间临时把偏好降为 Continue，只用 $LASTEXITCODE 判成败——
+    # 退出码才是真相，stderr 只是诊断文本；调用后立即还原，不影响后续 cmdlet。
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & $bash $scriptNative @ScriptArgs 2>&1
+        $rc = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
     $output | ForEach-Object { Write-Host $_ }
     $output | Out-File -LiteralPath $log -Append -Encoding utf8
     "exit=$rc" | Out-File -LiteralPath $log -Append -Encoding utf8
@@ -193,7 +206,26 @@ if ($Status) {
             Write-Host "[TASK] $t  未注册"
         }
     }
-    Write-Host ("[AUTO] 登录自启：{0}  {1}" -f $(if (Test-Path $StartupLnk) { '已安装' } else { '未安装' }), $StartupLnk)
+    # ⚠ 2026-09-27 事故：仓库目录改名（kilo_config → kilo-runtime）后，登录自启快捷方式仍
+    # 指向旧路径，快捷方式**文件存在但目标脚本已不存在**——-Status 只看文件在不在，照报
+    # 「已安装」，实际自 9/19 起每次登录都静默失败，维护停了 11 天。故此处必须回读快捷方式
+    # 的 -File 目标并验证其真实存在，失效则显式报警（可观测性缺口，不是口味问题）。
+    $startupState = '未安装'
+    if (Test-Path $StartupLnk) {
+        $startupState = '已安装'
+        try {
+            $sh = New-Object -ComObject WScript.Shell
+            $m = [regex]::Match($sh.CreateShortcut($StartupLnk).Arguments, '-File\s+"([^"]+)"')
+            if (-not $m.Success) {
+                $startupState = '已安装·失效（无法解析目标脚本）'
+            } elseif (-not (Test-Path -LiteralPath $m.Groups[1].Value)) {
+                $startupState = "已安装·失效（目标不存在：$($m.Groups[1].Value)）—— 重跑 -InstallStartup 修复"
+            }
+        } catch {
+            $startupState = "已安装·校验异常（$($_.Exception.Message)）"
+        }
+    }
+    Write-Host ("[AUTO] 登录自启：{0}  {1}" -f $startupState, $StartupLnk)
     $st = Read-MaintState
     Write-Host ("[AUTO] 上次清理：{0}（{1}）  上次 DB 瘦身：{2}（{3}）" -f `
         $(if ($st.lastCleanup) { $st.lastCleanup } else { '从未' }), $(if (Test-Due $st.lastCleanup $CleanupEveryDays) { '已到期' } else { '未到期' }), `

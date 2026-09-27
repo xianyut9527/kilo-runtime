@@ -240,39 +240,6 @@ else
   echo "[INSTALL] WARN: 未找到 python，跳过 JSON 校验" >&2
 fi
 
-# ---------- 备份（仅真实写盘且首次写入前） ----------
-if [ "$DRY_RUN" = "0" ] && [ "$CHECK" = "0" ] && [ -d "$TARGET_DIR" ]; then
-  # 备份路径必须转成 MSYS 形式（/c/...）：tar 是原生程序，收到 "C:/..." 会把它当远程主机而静默失败。
-  BK_PARENT="$(dirname "$TARGET_DIR")"
-  if command -v cygpath >/dev/null 2>&1; then
-    BK_PARENT="$(cygpath -u "$BK_PARENT" 2>/dev/null || echo "$BK_PARENT")"
-  fi
-  BK="$BK_PARENT/$(basename "$TARGET_DIR").backup-$(date +%Y%m%d-%H%M%S).tar"
-  # 顺序与 install.ps1 保持一致：**先裁剪、后创建**。先创建的话，新备份会参与排序，
-  # 而它与已有备份的 mtime 可能同秒并列，靠排序排除不可靠（会把自己删掉）。
-  # 排除 node_modules：本机依赖动辄几十 MB，备份里没有价值
-  KEEP_BACKUPS="${KILO_KEEP_BACKUPS:-2}"
-  case "$KEEP_BACKUPS" in
-    ''|*[!0-9]*) echo "[BACKUP] WARN: KILO_KEEP_BACKUPS 非法（$KEEP_BACKUPS，需 ≥1 整数），按默认 2 处理" >&2; KEEP_BACKUPS=2 ;;
-  esac
-  if [ "$KEEP_BACKUPS" -lt 1 ]; then
-    echo "[BACKUP] WARN: KILO_KEEP_BACKUPS 非法（$KEEP_BACKUPS，需 ≥1 整数），按默认 2 处理" >&2
-    KEEP_BACKUPS=2
-  fi
-  find "$BK_PARENT" -maxdepth 1 -name "$(basename "$TARGET_DIR").backup-*" -type f -printf '%T@\t%p\n' 2>/dev/null \
-    | sort -rn | cut -f2- | tail -n +"$KEEP_BACKUPS" \
-    | while IFS= read -r old; do
-        [ -n "$old" ] || continue
-        rm -f -- "$old" && echo "[BACKUP] prune $old（保留最近 $KEEP_BACKUPS 个）"
-      done || true
-
-  if ( cd "$BK_PARENT" && tar cf "$BK" --exclude='node_modules' "$(basename "$TARGET_DIR")" 2>/dev/null ); then
-    echo "[BACKUP] $BK"
-  else
-    echo "[BACKUP] WARN: 备份失败（继续下发）" >&2
-  fi
-fi
-
 # ---------- 插件加载冒烟闸门（与 install.ps1 对等，2026-09-22 启动崩溃的教训） ----------
 # 事故：把编辑中的中间态 plugin/*.ts 下发 → Kilo 7.7.6 插件加载失败 →
 # config hook 级联崩溃 → provider 列表全挂 → 无法选择模型。
@@ -366,6 +333,8 @@ smoke_provider_js() { # $1 = 源文件
 # 预检：任何写入之前完成全量冒烟，否则第 N 个失败时前 N-1 个已落盘 → 半套部署。
 # 只对将发生变化的文件检查（same 的文件已是部署态，无需重复验）。
 # 三种模式都跑：-Check 是预飞检查，仓库里若有「加载即崩」的插件必须在此暴露。
+# 顺带数 DIFF_COUNT：备份已改为「确有差异才打包」（见下），该计数在预检循环里免费获得。
+DIFF_COUNT=0
 while IFS=$'\t' read -r src dst; do
   [ -z "$src" ] && continue
   dstf="$TARGET_DIR/$dst"
@@ -386,6 +355,7 @@ while IFS=$'\t' read -r src dst; do
   [ -f "$dstf" ] && hd="$(hash_of "$dstf")"
   rm -f "$tmpchk"
   [ -n "$hs" ] && [ "$hs" = "$hd" ] && continue
+  DIFF_COUNT=$((DIFF_COUNT+1))
 
   case "$src" in
     */plugin/*.ts|*/lib/*.ts)
@@ -412,6 +382,42 @@ while IFS=$'\t' read -r src dst; do
       fi ;;
   esac
 done < "$PAIRS"
+
+# ---------- 备份（预检通过后、下发之前；仅在确有写入时） ----------
+# 2026-09-27 移位（与 install.ps1 对齐）：此前备份在差异判定之前无条件执行，
+# 空跑 install（same-only）也会烧一个 tar。现移到冒烟预检之后、写入循环之前，
+# 并只在确有差异（DIFF_COUNT>0）时执行——预检失败会中止（未删任何东西、未打包）。
+# 备份路径必须转成 MSYS 形式（/c/...）：tar 是原生程序，收到 "C:/..." 会把它当远程主机而静默失败。
+if [ "$DRY_RUN" = "0" ] && [ "$CHECK" = "0" ] && [ "$DIFF_COUNT" -gt 0 ] && [ -d "$TARGET_DIR" ]; then
+  BK_PARENT="$(dirname "$TARGET_DIR")"
+  if command -v cygpath >/dev/null 2>&1; then
+    BK_PARENT="$(cygpath -u "$BK_PARENT" 2>/dev/null || echo "$BK_PARENT")"
+  fi
+  BK="$BK_PARENT/$(basename "$TARGET_DIR").backup-$(date +%Y%m%d-%H%M%S).tar"
+  # 顺序与 install.ps1 保持一致：**先裁剪、后创建**。先创建的话，新备份会参与排序，
+  # 而它与已有备份的 mtime 可能同秒并列，靠排序排除不可靠（会把自己删掉）。
+  # 排除 node_modules：本机依赖动辄几十 MB，备份里没有价值
+  KEEP_BACKUPS="${KILO_KEEP_BACKUPS:-2}"
+  case "$KEEP_BACKUPS" in
+    ''|*[!0-9]*) echo "[BACKUP] WARN: KILO_KEEP_BACKUPS 非法（$KEEP_BACKUPS，需 ≥1 整数），按默认 2 处理" >&2; KEEP_BACKUPS=2 ;;
+  esac
+  if [ "$KEEP_BACKUPS" -lt 1 ]; then
+    echo "[BACKUP] WARN: KILO_KEEP_BACKUPS 非法（$KEEP_BACKUPS，需 ≥1 整数），按默认 2 处理" >&2
+    KEEP_BACKUPS=2
+  fi
+  find "$BK_PARENT" -maxdepth 1 -name "$(basename "$TARGET_DIR").backup-*" -type f -printf '%T@\t%p\n' 2>/dev/null \
+    | sort -rn | cut -f2- | tail -n +"$KEEP_BACKUPS" \
+    | while IFS= read -r old; do
+        [ -n "$old" ] || continue
+        rm -f -- "$old" && echo "[BACKUP] prune $old（保留最近 $KEEP_BACKUPS 个）"
+      done || true
+
+  if ( cd "$BK_PARENT" && tar cf "$BK" --exclude='node_modules' "$(basename "$TARGET_DIR")" 2>/dev/null ); then
+    echo "[BACKUP] $BK"
+  else
+    echo "[BACKUP] WARN: 备份失败（继续下发）" >&2
+  fi
+fi
 
 # ---------- 下发 ----------
 CHANGED=0; SAME=0; WROTE=0

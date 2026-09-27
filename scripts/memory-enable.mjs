@@ -64,7 +64,7 @@ function safeName(name) {
 function canonicalRoot(dir) {
   try {
     let cur = fs.realpathSync.native(dir);
-    for (let i = 0; i < 30; i++) {
+    for (;;) {
       const gitPath = path.join(cur, ".git");
       if (fs.existsSync(gitPath)) {
         if (fs.statSync(gitPath).isFile()) {
@@ -78,7 +78,7 @@ function canonicalRoot(dir) {
         return cur;
       }
       const parent = path.dirname(cur);
-      if (parent === cur) return null;
+      if (parent === cur) return null; // 文件系统根兜底，天然终止无层数上限
       cur = parent;
     }
   } catch {}
@@ -151,7 +151,9 @@ function status() {
       try {
         canonical = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8")).canonical;
       } catch {}
-      return { folder: d, enabled, records: countRecords(root), canonical };
+      // 孤儿根：canonical 目录不在盘上（项目改名/移动后遗留），其记录不可检索
+      const onDisk = canonical ? fs.existsSync(canonical) : false;
+      return { folder: d, enabled, onDisk, records: countRecords(root), canonical: onDisk ? canonical : `${canonical}  <- ORPHANED` };
     });
   console.table(rows);
 }

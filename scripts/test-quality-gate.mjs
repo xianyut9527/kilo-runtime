@@ -29,7 +29,7 @@ const mod = await import(pathToFileURL(bundle).href);
 fs.rmSync(bundle, { force: true });
 
 // 工具函数经 _export 命名空间暴露（非顶层导出——Kilo vE2 会把每个导出函数当工厂调用）
-const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf, moduleBasenamesOf, hasTestRefFor } = mod._export ?? mod;
+const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf, moduleBasenamesOf, hasTestRefFor, eslintConfigIn, reviewRetryAllowed, todoAnchorLines, unreviewedMarkerLine, driftCheckDue, diagRunFailureOf, isDelegateCall, reviewFailPrefix } = mod._export ?? mod;
 let pass = 0, fail = 0;
 const failed = [];
 const t = (name, cond) => {
@@ -456,6 +456,267 @@ t("insertUnderHeading：段前无空行（文件头紧贴）→ 追加不劈段"
   return next.includes("- r :: x") && next.includes("# P");
 })());
 
+// ── 修复 G：eslintConfigIn（目录配置探测，进程级只缓存 true）──
+{
+  t("eslintConfigIn：空/null 目录 → false（不跑诊断）", eslintConfigIn("") === false && eslintConfigIn(null) === false);
+  for (const cfg of ["eslint.config.mjs", ".eslintrc.json", "eslint.config.js", ".eslintrc"]) {
+    // 进程级缓存 → 每个配置形态必须用独立目录（同目录首探测结果永久复用）
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qg-esl-"));
+    t(`eslintConfigIn：有 ${cfg} → true`, (() => { fs.writeFileSync(path.join(tmp, cfg), "x\n"); return eslintConfigIn(tmp) === true; })());
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qg-esl-"));
+    t("eslintConfigIn：无配置目录 → false", eslintConfigIn(tmp) === false);
+    // 审查建议项修复：false 不缓存——中途新增 eslint 配置本会话即生效（装依赖带配置进来是常见流）
+    fs.writeFileSync(path.join(tmp, "eslint.config.mjs"), "x\n");
+    t("eslintConfigIn：false 后中途加配置 → true（false 不缓存，热生效）", eslintConfigIn(tmp) === true);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qg-esl-"));
+    fs.writeFileSync(path.join(tmp, "eslint.config.mjs"), "x\n");
+    t("eslintConfigIn：true 后删配置仍 true（true 缓存命中）", eslintConfigIn(tmp) === true);
+    fs.rmSync(path.join(tmp, "eslint.config.mjs"), { force: true });
+    t("eslintConfigIn：同目录第二次调用走缓存", eslintConfigIn(tmp) === true);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// ── 修复 F：reviewRetryAllowed（fail-open 后重审判定，纯函数）──
+const rrs = (over) => ({ dualReviewed: true, codeEditV: 5, reviewFailedAtCodeEditV: 4, reviewFailedCount: 1, ...over });
+t("reviewRetryAllowed：从未失败（起点 0）→ false（常规口径覆盖）", reviewRetryAllowed({ dualReviewed: false, codeEditV: 3, reviewFailedAtCodeEditV: 0, reviewFailedCount: 0 }) === false);
+t("reviewRetryAllowed：失败后有新代码编辑 → true（交付节点重审一次）", reviewRetryAllowed(rrs({})) === true);
+t("reviewRetryAllowed：失败后无新编辑（同一素材）→ false（不重烧）", reviewRetryAllowed(rrs({ codeEditV: 4, reviewFailedAtCodeEditV: 4 })) === false);
+t("reviewRetryAllowed：连续两败（count≥2）→ false（永久放行 + unreviewed 留痕）", reviewRetryAllowed(rrs({ reviewFailedCount: 2 })) === false);
+t("reviewRetryAllowed：count 超上限更不重审", reviewRetryAllowed(rrs({ reviewFailedCount: 5 })) === false);
+t("reviewRetryAllowed：桶字段缺失 → false（fail-open 不误触发）", reviewRetryAllowed(null) === false && reviewRetryAllowed({}) === false);
+
+// ── 修复 F：unreviewedMarkerLine（永久放行持久留痕格式）──
+t("unreviewedMarkerLine：review_unreviewed_<date> 前缀 + 补审指引", (() => {
+  const line = unreviewedMarkerLine();
+  return /^- review_unreviewed_\d{4}-\d{2}-\d{2} :: .+层 3 fail-open 放行.+补审/.test(line);
+})());
+t("unreviewedMarkerLine：同毫秒内两次调用相同（幂等沉淀前提）", unreviewedMarkerLine() === unreviewedMarkerLine());
+
+// ── 修复 B：todoAnchorLines（验收清单压缩锚点，纯函数）──
+{
+  const todos = [
+    { content: "验收清单：①test 全绿 ②插件契约", status: "completed" },
+    { content: "实现 F 修复", status: "in_progress" },
+    { content: "实现 B 修复", status: "pending" },
+    { content: "跑全量回归", status: "in_progress" },
+  ];
+  const lines = todoAnchorLines(todos);
+  t("todoAnchorLines：含注入标记与进度（1/4）", lines[0].includes("验收清单（quality-gate 注入）") && lines[0].includes("1/4"));
+  t("todoAnchorLines：未完成项以 [ ] 列出", lines.some((l) => l.includes("- [ ] 实现 F 修复")) && lines.some((l) => l.includes("- [ ] 实现 B 修复")));
+  t("todoAnchorLines：已完成项不进清单", !lines.join("\n").includes("①test 全绿"));
+  t("todoAnchorLines：全完成 → []（零噪音）", todoAnchorLines([{ content: "x", status: "completed" }]).length === 0);
+  t("todoAnchorLines：空/非数组 → []", todoAnchorLines([]).length === 0 && todoAnchorLines(null).length === 0 && todoAnchorLines(undefined).length === 0);
+  t("todoAnchorLines：单条目超 120 按码点截断", (() => {
+    const out = todoAnchorLines([{ content: "x".repeat(300), status: "in_progress" }]);
+    return out.some((l) => l.includes("x".repeat(120) + "…") && !l.includes("x".repeat(121)));
+  })());
+  t("todoAnchorLines：代理对安全截断（不劈 emoji）", (() => {
+    const out = todoAnchorLines([{ content: "🎉".repeat(100), status: "in_progress" }]);
+    return !out.join("\n").includes("\uFFFD");
+  })());
+  t("todoAnchorLines：超 15 条未完成 → 溢出行可见", (() => {
+    const many = Array.from({ length: 20 }, (_, i) => ({ content: `task-${i}`, status: "pending" }));
+    const out = todoAnchorLines(many);
+    return out.some((l) => l.includes("另有 5 条未完成项"));
+  })());
+}
+
+// ── 修复 C：driftCheckDue（过半漂移自检判定，纯函数）──
+const dcs = (over) => ({ driftChecked: false, lastTodos: [
+  { content: "验收清单", status: "completed" }, { content: "a", status: "completed" },
+  { content: "b", status: "in_progress" }, { content: "c", status: "pending" },
+], ...over });
+t("driftCheckDue：完成过半（2/4）→ true", driftCheckDue(dcs({})) === true);
+t("driftCheckDue：未过半（1/4）→ false（太早，纯噪音）", driftCheckDue(dcs({ lastTodos: [
+  { content: "验收清单", status: "completed" }, { content: "a", status: "in_progress" },
+  { content: "b", status: "pending" }, { content: "c", status: "pending" },
+] })) === false);
+t("driftCheckDue：已提醒过（driftChecked）→ false（一次性）", driftCheckDue(dcs({ driftChecked: true })) === false);
+t("driftCheckDue：单条清单 → false（无从漂移）", driftCheckDue(dcs({ lastTodos: [{ content: "x", status: "completed" }] })) === false);
+t("driftCheckDue：空 todos / null 桶 → false", driftCheckDue({ driftChecked: false, lastTodos: [] }) === false && driftCheckDue(null) === false);
+t("driftCheckDue：无 completed → false", driftCheckDue(dcs({ lastTodos: [
+  { content: "a", status: "in_progress" }, { content: "b", status: "pending" },
+] })) === false);
+t("driftCheckDue：全完成（done==total）→ false（内聚 guard，不依赖调用点）", driftCheckDue(dcs({ lastTodos: [
+  { content: "a", status: "completed" }, { content: "b", status: "completed" },
+], driftChecked: false })) === false);
+
+// ── 查漏补缺（2026-09-26 复审）：诊断退出码语义（tsc/ruff 与 eslint 同口径）──
+// 审查必须修复项只点了 eslint，tsc/ruff 同类假降级（检出诊断 = exit 1 被误记为「运行失败」）
+// 一并修掉：exit 1 = 正常诊断产出；exit≥2 / 非数字 code（超时被杀/ENOENT）= 真失败。
+t("diagRunFailureOf：null（无 err）→ false", diagRunFailureOf(null) === false && diagRunFailureOf(undefined) === false);
+t("diagRunFailureOf：exit 0 → false", diagRunFailureOf({ code: 0 }) === false);
+t("diagRunFailureOf：exit 1（tsc 类型错误 / ruff·eslint 违规 = 正常产出）→ false", diagRunFailureOf({ code: 1 }) === false);
+t("diagRunFailureOf：exit 2（配置/内部错误）→ true", diagRunFailureOf({ code: 2 }) === true);
+t("diagRunFailureOf：非数字 code（超时被杀/ENOENT/信号）→ true",
+  diagRunFailureOf({ code: null }) === true && diagRunFailureOf({ code: "ENOENT" }) === true && diagRunFailureOf({ killed: true }) === true);
+t("diagRunFailureOf：信号终止（code=null 且 signal 非空）→ true（勿优化成 code>1，null>1 为 false 会漏判）",
+  diagRunFailureOf({ code: null, signal: "SIGTERM" }) === true);
+// 策略锚定断言（审查必须修复项）：exit 1 一律视为诊断产出——含 eslint --max-warnings 超阈值
+// 触发的 exit 1。此断言防「语义漂移」（有人日后改成 warn 计数则本测试变红）。
+t("策略锚定：exit 1 恒为诊断产出（含 --max-warnings 超阈值）→ 不记降级", diagRunFailureOf({ code: 1 }) === false);
+t("策略锚定：只有 exit≥2 与非退出码形态才判工具失败（反例：exit 3 亦失败）", diagRunFailureOf({ code: 3 }) === true);
+
+// ── 查漏补缺：委派调用识别（白名单 + 大小写归一；复审必须修复项：不得以参数存在判委派）──
+t("isDelegateCall：task → true", isDelegateCall("task") === true);
+t("isDelegateCall：大小写变体 Task/AGENT_MANAGER → true", isDelegateCall("Task") === true && isDelegateCall("AGENT_MANAGER") === true);
+t("isDelegateCall：agent_manager → true", isDelegateCall("agent_manager") === true);
+t("isDelegateCall：未知工具名即使带 subagent_type → false（参数存在不得判委派，误判会吞提醒）",
+  isDelegateCall("spawn_subagent") === false && isDelegateCall("edit") === false);
+t("isDelegateCall：空/空白/非字符串 tool → false", isDelegateCall("") === false && isDelegateCall(undefined) === false && isDelegateCall(null) === false);
+t("isDelegateCall：首尾空白 trim 归一（' task ' → true）", isDelegateCall(" task ") === true && isDelegateCall("\tAGENT_MANAGER\n") === true);
+t("isDelegateCall：非字符串对象/数字 → false（不抛异常）", isDelegateCall({}) === false && isDelegateCall(5) === false);
+
+// ── 查漏补缺：reviewFailPrefix 显式判空（复审建议项：不得把『无记录』强转为『第 0 轮』）──
+t("reviewFailPrefix：round=undefined → 不输出轮次括号（显式判空）",
+  reviewFailPrefix({ reviewFailedCount: 4 }) === "连续 4 次失败；");
+t("reviewFailPrefix：round=0 → 1-based 显示第 1 轮", reviewFailPrefix({ reviewFailedCount: 2, reviewFailedAtRound: 0 }) === "连续 2 次失败（最近一次在第 1 轮）；");
+t("reviewFailPrefix：round=1 → 第 2 轮；count 非法 → 0 防御", reviewFailPrefix({ reviewFailedCount: 2, reviewFailedAtRound: 1 }) === "连续 2 次失败（最近一次在第 2 轮）；" && reviewFailPrefix({}) === "连续 0 次失败；");
+t("reviewFailPrefix：字符串数字容忍（'2'/'1' → 正常输出，复审建议项）", reviewFailPrefix({ reviewFailedCount: "2", reviewFailedAtRound: "1" }) === "连续 2 次失败（最近一次在第 2 轮）；");
+t("reviewFailPrefix：负数/NaN 非法值走判空分支", reviewFailPrefix({ reviewFailedCount: -1, reviewFailedAtRound: -1 }) === "连续 0 次失败；" && reviewFailPrefix({ reviewFailedCount: NaN, reviewFailedAtRound: NaN }) === "连续 0 次失败；");
+
+// ── 修复 B：双插件 compacting 钩子合并语义（compaction-anchor + quality-gate 共存）──
+// 层 3 审查必须修复项 B：两插件同注册 experimental.session.compacting，钩子顺序不可知——
+// 无论谁先跑，两份锚点都必须存活（追加合并、按各自标记幂等、绝不互相覆盖）。
+{
+  const caBundle = path.join(os.tmpdir(), `ca-test-${process.pid}.mjs`);
+  execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "compaction-anchor.ts"),
+    "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${caBundle}`], { stdio: "inherit" });
+  const ca = await import(pathToFileURL(caBundle).href);
+  fs.rmSync(caBundle, { force: true });
+  const caFactory = Object.values(ca).find((v) => typeof v === "function");
+  const qgFactory = mod.QualityGate ?? mod.default;
+
+  // 双插件钩子实例化（最小桩 ctx：client.messages 抛错 → compaction-anchor 走退化路径仍注入锚点）
+  const stubCtx = { directory: ROOT, client: { session: { messages: async () => { throw new Error("stub"); } } }, $: null };
+  const caHooks = await caFactory(stubCtx);
+  const qgHooks = await qgFactory({ directory: ROOT });
+  const runHook = async (hooks, out, sessionID) => {
+    await hooks["experimental.session.compacting"]({ sessionID }, out);
+  };
+
+  // 场景 1：quality-gate 先注入（有未完成 todo）→ compaction-anchor 后跑 → 追加共存
+  {
+    const out = { context: [] };
+    // 先喂 quality-gate 桶（经 todowrite after 钩子记录 lastTodos——直接调 compacting 前置状态）
+    // compacting 钩子读 bucketOf(sessionID)，此处经 qgHooks["tool.execute.after"] 注入 todo 痕迹
+    await qgHooks["tool.execute.after"](
+      { tool: "todowrite", sessionID: "t-merge", args: { todos: [{ content: "验收清单：①npm test 全绿", status: "completed" }, { content: "实现 B 修复", status: "in_progress" }] } },
+      {},
+    );
+    await runHook(qgHooks, out, "t-merge"); // quality-gate 先
+    await runHook(caHooks, out, "t-merge"); // compaction-anchor 后（client 抛错 → 退化注入锚点行）
+    const joined = out.context.join("\n");
+    t("合并：quality-gate 先注入清单锚点存活", joined.includes("验收清单（quality-gate 注入）"));
+    t("合并：compaction-anchor 后跑锚点共存（追加不覆盖）", joined.includes("压缩锚点（必须保留）"));
+    t("合并：两份锚点都在（顺序无关共存）", out.context.some((l) => String(l).includes("验收清单（quality-gate 注入）")) && out.context.some((l) => String(l).includes("压缩锚点（必须保留）")));
+  }
+  // 场景 2：compaction-anchor 先注入 → quality-gate 后跑 → 追加共存
+  {
+    const out = { context: [] };
+    await qgHooks["tool.execute.after"](
+      { tool: "todowrite", sessionID: "t-merge2", args: { todos: [{ content: "验收清单：①npm test 全绿", status: "completed" }, { content: "实现 B 修复", status: "in_progress" }] } },
+      {},
+    );
+    await runHook(caHooks, out, "t-merge2"); // compaction-anchor 先
+    await runHook(qgHooks, out, "t-merge2"); // quality-gate 后
+    const joined = out.context.join("\n");
+    t("合并：compaction-anchor 先注入锚点存活", joined.includes("压缩锚点（必须保留）"));
+    t("合并：quality-gate 后跑清单共存（追加不覆盖）", joined.includes("验收清单（quality-gate 注入）"));
+  }
+  // 场景 3：重复调用幂等（各插件第二次跑不重复注入）
+  {
+    const out = { context: [] };
+    await qgHooks["tool.execute.after"](
+      { tool: "todowrite", sessionID: "t-merge3", args: { todos: [{ content: "验收清单：①x", status: "completed" }, { content: "实现 B 修复", status: "in_progress" }] } },
+      {},
+    );
+    await runHook(caHooks, out, "t-merge3");
+    await runHook(qgHooks, out, "t-merge3");
+    await runHook(caHooks, out, "t-merge3"); // 第二次
+    await runHook(qgHooks, out, "t-merge3"); // 第二次
+    const tagCount = out.context.filter((l) => String(l).includes("验收清单（quality-gate 注入）")).length;
+    const anchorCount = out.context.filter((l) => String(l).includes("压缩锚点（必须保留）")).length;
+    t("合并：quality-gate 钩子重复调用只注入一次（标记幂等）", tagCount === 1);
+    t("合并：compaction-anchor 重复调用只注入一次（标记幂等）", anchorCount === 1);
+  }
+  // 场景 4：全完成 todo → quality-gate 零注入（compaction-anchor 独占正常）
+  {
+    const out = { context: [] };
+    await qgHooks["tool.execute.after"](
+      { tool: "todowrite", sessionID: "t-merge4", args: { todos: [{ content: "验收清单：全绿", status: "completed" }] } },
+      {},
+    );
+    await runHook(qgHooks, out, "t-merge4");
+    await runHook(caHooks, out, "t-merge4");
+    t("合并：全完成清单零注入（不产生噪音锚点）", !out.context.some((l) => String(l).includes("验收清单（quality-gate 注入）")));
+  }
+}
+
+// ── 查漏补缺（2026-09-26 复审）：钩子副作用回归 ──
+// ① 高风险登记（曾误删 s.highRisk.add → isComplexDelivery 高风险分支死掉）；
+// ② C 修复提醒的委派痕迹：task/agent_manager 调用必须入池，否则「已委派」不可见，
+//    提醒对已委派会话误报（提醒失灵即噪音）。
+{
+  const qgFactory2 = mod.QualityGate ?? mod.default;
+  const hooks = await qgFactory2({ directory: ROOT });
+
+  await hooks["tool.execute.after"](
+    { tool: "edit", sessionID: "t-hr", args: { filePath: "src/auth/login.ts" } }, { output: "" });
+  const sHr = mod._export.bucketOf({ sessionID: "t-hr" });
+  t("高风险编辑 → s.highRisk 登记（isComplexDelivery 高风险命中即触发不失效）",
+    (sHr?.highRisk?.size ?? 0) > 0 && isComplexDelivery(sHr, ["src/auth/login.ts"]) === true);
+
+  const out1 = { output: "" };
+  await hooks["tool.execute.after"](
+    { tool: "edit", sessionID: "t-remind", args: { filePath: "src/payment/pay.ts" } }, out1);
+  t("高风险直接编辑（无委派痕迹）→ 越级提醒出现", String(out1.output).includes("高风险文件提醒"));
+  const out2 = { output: "" };
+  await hooks["tool.execute.after"](
+    { tool: "edit", sessionID: "t-remind", args: { filePath: "src/payment/refund.ts" } }, out2);
+  t("越级提醒一次封顶：同会话第二次高风险编辑不重复提醒", !String(out2.output).includes("高风险文件提醒"));
+
+  const out3 = { output: "" };
+  await hooks["tool.execute.after"](
+    { tool: "task", sessionID: "t-deleg", args: { subagent_type: "general", description: "实现支付高风险改动" } }, { output: "" });
+  await hooks["tool.execute.after"](
+    { tool: "edit", sessionID: "t-deleg", args: { filePath: "src/payment/pay.ts" } }, out3);
+  t("已委派（task general 痕迹入池）→ 高风险编辑不误提醒",
+    !String(out3.output).includes("高风险文件提醒") &&
+    (mod._export.bucketOf({ sessionID: "t-deleg" })?.delegated ?? []).some((r) => String(r).startsWith("task ")));
+
+  // 大小写变体（审查必须修复项）：Task 工具名归一后同样登记
+  const out3b = { output: "" };
+  await hooks["tool.execute.after"](
+    { tool: "Task", sessionID: "t-deleg2", args: { subagent_type: "general" } }, { output: "" });
+  t("大小写变体：Task 登记进 s.delegated（归一化小写）",
+    (mod._export.bucketOf({ sessionID: "t-deleg2" })?.delegated ?? []).some((r) => String(r).startsWith("task ")));
+
+  // 委派登记不早退（审查必须修复项）：task 调用后同会话 edit 仍正常入 edited
+  const out3c = { output: "" };
+  await hooks["tool.execute.after"](
+    { tool: "task", sessionID: "t-deleg3", args: { subagent_type: "general" } }, { output: "" });
+  await hooks["tool.execute.after"](
+    { tool: "edit", sessionID: "t-deleg3", args: { filePath: "src/util/helper.ts" } }, out3c);
+  const sD3 = mod._export.bucketOf({ sessionID: "t-deleg3" });
+  t("委派登记不阻断通用路径：后续 edit 正常入 edited（无 early-return）",
+    (sD3?.edited?.size ?? 0) > 0 && (sD3?.delegated ?? []).length > 0);
+
+  // 委派工具本身不产生 edited/highRisk 副作用（审查建议项）：task 调用只登记 delegated
+  const sD4 = mod._export.bucketOf({ sessionID: "t-deleg4" });
+  await hooks["tool.execute.after"](
+    { tool: "task", sessionID: "t-deleg4", args: { subagent_type: "general", description: "auth 高风险实现" } }, { output: "" });
+  t("委派工具自身不误记 edited/highRisk（只入 delegated）",
+    (sD4?.delegated ?? []).length === 1 && (sD4?.edited?.size ?? 0) === 0 && (sD4?.highRisk?.size ?? 0) === 0);
+}
+
 // ── vE2 插件契约（quality-gate.ts 自身）：唯一函数导出 = 工厂 ──
 t("vE2 契约：quality-gate 恰好 1 个函数导出（QualityGate/default 同引用）+ _export 无 server", (() => {
   const fnByRef = new Map();
@@ -474,6 +735,51 @@ t("vE2 契约：_export 含 staleDeployOf / degradationSummary / residualFixupLi
   typeof mod._export?.degradationSummary === "function" &&
   typeof mod._export?.residualFixupLine === "function" &&
   typeof mod._export?.insertUnderHeading === "function");
+t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/todoAnchorLines/unreviewedMarkerLine/driftCheckDue/eslintConfigIn）",
+  typeof mod._export?.reviewRetryAllowed === "function" &&
+  typeof mod._export?.todoAnchorLines === "function" &&
+  typeof mod._export?.unreviewedMarkerLine === "function" &&
+  typeof mod._export?.driftCheckDue === "function" &&
+  typeof mod._export?.eslintConfigIn === "function");
+
+// ── C1 修复回归（2026-09-27 查漏补缺）：手动 dual_review 豁免绑定 dualReviewedAtCodeEditV ──
+// 漏洞：手动补审置 dualReviewed=true 后继续编辑代码，交付节点 !s.dualReviewed 已为 false →
+// 新改动永久跳审（旧裁决 subject 窄于全量 diff，不覆盖新编辑）。修复后豁免要求版本对齐。
+{
+  const qgFactory3 = mod.QualityGate ?? mod.default;
+  const hooks3 = await qgFactory3({ directory: ROOT });
+  const sessC1 = "t-c1";
+  // 前置：一次代码编辑（codeEditV: 0 → 1）
+  await hooks3["tool.execute.after"](
+    { tool: "edit", sessionID: sessC1, args: { filePath: "src/auth/login.ts" } }, { output: "" });
+  const sC1a = mod._export.bucketOf({ sessionID: sessC1 });
+  t("C1 前置：代码编辑推进 codeEditV（=1）",
+    (sC1a?.codeEditV ?? 0) === 1);
+  // 手动补审（codeEditV>0 → 置 dualReviewed + 绑定版本）
+  await hooks3["tool.execute.after"](
+    { tool: "dual_review", sessionID: sessC1, args: { subject: "交付审查" } }, { output: "" });
+  const sC1b = mod._export.bucketOf({ sessionID: sessC1 });
+  t("C1：手动补审置 dualReviewed 并绑定 dualReviewedAtCodeEditV（=1）",
+    sC1a?.dualReviewed === true && (sC1b?.dualReviewedAtCodeEditV ?? 0) === 1);
+  // 补审后再编辑代码（codeEditV: 1 → 2）→ 版本不对齐 → 豁免失效
+  await hooks3["tool.execute.after"](
+    { tool: "edit", sessionID: sessC1, args: { filePath: "src/auth/session.ts" } }, { output: "" });
+  const sC1d = mod._export.bucketOf({ sessionID: sessC1 });
+  const staleC1 = (sC1d?.codeEditV ?? 0) !== (sC1d?.dualReviewedAtCodeEditV ?? 0);
+  t("C1：补审后新代码编辑 → 版本不对齐（豁免失效，交付节点须重审）",
+    (sC1d?.codeEditV ?? 0) === 2 && staleC1 === true);
+  // 补审后仅编辑文档（codeEditV 不推进）→ 版本仍对齐 → 豁免维持
+  const sessC1b = "t-c1-doc";
+  await hooks3["tool.execute.after"](
+    { tool: "edit", sessionID: sessC1b, args: { filePath: "src/auth/login.ts" } }, { output: "" });
+  await hooks3["tool.execute.after"](
+    { tool: "dual_review", sessionID: sessC1b, args: { subject: "交付审查" } }, { output: "" });
+  await hooks3["tool.execute.after"](
+    { tool: "edit", sessionID: sessC1b, args: { filePath: "README.md" } }, { output: "" });
+  const sC1c = mod._export.bucketOf({ sessionID: sessC1b });
+  t("C1：补审后纯文档编辑不触发重审（codeEditV 不前进，豁免维持）",
+    (sC1c?.codeEditV ?? 0) === 1 && (sC1c?.dualReviewedAtCodeEditV ?? 0) === 1);
+}
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} quality-gate 回归：${pass} 通过 / ${fail} 失败`);
 if (fail > 0) console.log(`失败用例：\n  - ${failed.join("\n  - ")}`);

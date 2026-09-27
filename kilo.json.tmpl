@@ -12,7 +12,7 @@
   // ── 模型总开关 ──────────────────────────────────────────────────
   // 主力执行模型（default_agent=code 绑定它）。glm-5.3-flash：实测最快档，支持图像输入
   "model": "hx/glm-5.3-flash",
-  // 轻任务模型：起会话标题/摘要等后台活，用最便宜的 minimax
+  // 轻任务模型：起会话标题/摘要等后台活，用 deepseek 轻量 flash 档（978fac2 由 minimax-m3 切换）
   "small_model": "hx/deepseek-v4.1-flash",
   // 子代理（task 工具派活）默认模型，深度任务时会按 INSTRUCTIONS 升级到 general
   "subagent_model": "hx/glm-5.3-flash",
@@ -412,11 +412,15 @@
         // 服务端改不了 → 客户端兜底。可调对象：{holdMs, retries, minTokens, maxTokens}。
         "reasoningGate": true,
         // 故障降级链：主模型失败→依次切换，每跳重试 2 次，
-        // 失败模型冷却 60s，切换时流首注入 ⚠️ [failover] 可见提示。
+        // 失败模型冷却 60s（冷却对全链生效：主模型上一轮刚降级过，本轮直接从首个
+        // 未冷却备用起跑，省去对已知故障模型的 3 连重试+退避；主模型与备用全冷却
+        // 时仍从主模型起跑——空转不如再试一次），切换时流首注入 ⚠️ [failover] 可见提示
+        // （同一「主模型→备用」的提示在冷却窗口内只注入一次，持续故障期不刷屏）。
         // 过载感知退避（2026-09-24 Tool execution aborted 专项）：503/cpu overloaded/
         // Retry-After 类错误退避 2s/6s（给 CPU 99%+ 的网关喘息窗口，对齐 lib/hx-client
         // OVERLOAD_BACKOFF_MS），普通可重试错误仍 500/1500ms；retry 遥测带 overload:true。
-        // failover.overloadBackoffMs 可注入覆盖（测试用，缺省 [2000,6000]）。
+        // failover.overloadBackoffMs 可注入覆盖（测试用，缺省 [2000,6000]）；
+        // failover.noticeCooldownMs 可单独调通知去重窗口（缺省 = cooldownMs）。
         // ※ 模型切换的唯一真源就是本配置文件——provider/moa/dual-review 代码均无内置默认链/兜底模型，
         //   换模型只改这里（agent 路由 / failover / moa / dual_review 都在本文件内）
         // 链序（2026-09-25 多模型审查优化）：同族优先——首跳 glm-5.2 而非 kimi。

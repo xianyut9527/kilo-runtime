@@ -55,7 +55,9 @@ const BACKOFF_MS = [400, 1200];
 // 503 过载专用退避：对 99% CPU 的网关 400ms 重试=火上浇油；2s/6s 给上游喘息窗口
 const OVERLOAD_BACKOFF_MS = [2000, 6000];
 // 确定性 HTTP 失败：重试无意义（key 错、模型名错、请求体非法），直接抛
-const NON_RETRYABLE_STATUS = new Set([400, 401, 403, 404, 422]);
+// 410 Gone（2026-09-27 补）：资源已永久移除——重试同一 URL 必然再 410；此前不在集合里，
+// 对已下线端点会白跑 2 次重试（400ms+1200ms）。语义上与 404 同类，归入确定性失败。
+const NON_RETRYABLE_STATUS = new Set([400, 401, 403, 404, 410, 422]);
 
 // ── 断路器（2026-09-22 网关过载专项）──────────────────────────
 // 根因：单上游网关 CPU 过载时所有模型 503，provider 降级链与 moa 并行路全挂——
@@ -75,15 +77,22 @@ let cbProbeInFlight = false; // half-open 单 probe 锁：防并发 fanout 集�
 export function circuitState() { return cbState; }
 
 // 预检门（2026-09-25 断路器永久 open 死锁专项）：
-// open → half-open 的状态迁移只发生在 ask() 内部的 cbAllowRequest()。而 moa.ts:66 /
-// dual-review.ts:123 的预检在 circuitState()==="open" 时直接 return、不发任何请求——
+// open → half-open 的状态迁移只发生在 ask() 内部的 cbAllowRequest()。而 moa.ts /
+// dual-review.ts 的预检在 circuitState()==="open" 时直接 return、不发任何请求——
 // 若冷却到期后仍暴露 "open"，预检将永远拦住下一次 ask()，状态机永远失去迁移机会，
 // 断路器永久 open（线上实证：2026-09-25 18:28 真实过载 trip 后，网关早已恢复，
 // moa/dual_review 仍连续数小时秒回「断路器开启，稍后重试」，hx-client 遥测零条——
 // 请求根本没发出）。预检必须与 ask() 同口径：冷却已过即视为 half-open 可探测，
 // 预检放行 → ask() 内 cbAllowRequest() 正式迁移状态并放单 probe。
+// 时钟回拨防护（2026-09-26 补审必须项，二次修正）：审查建议的 Math.max(0,…) 归一
+// 是错的——负差值归一成 0 后仍 < 冷却值，依旧拦截（0 < 30000 恒真）。正确语义：
+// 差值为严格负说明墙钟回拨、cbOpenedAt 已不可信，唯一安全的解释是「冷却已过」——放行，
+// 让 ask() 的 cbAllowRequest 用同口径决断（最坏代价一次多余 probe，由网关真实验证；
+// 绝不允许在边界条件下退回永久拦截死锁）。差值 ==0（同毫秒刚 trip）属正常流逝
+// 边界，保守拦截。
 export function cbShouldFailFast() {
-  return cbState === "open" && Date.now() - cbOpenedAt < CB_COOLDOWN_MS;
+  const sinceOpen = Date.now() - cbOpenedAt;
+  return cbState === "open" && sinceOpen >= 0 && sinceOpen < CB_COOLDOWN_MS;
 }
 
 // ── 工具 execute 契约（2026-09-22 三修实证 + 同日终裁：无进度通道）──
@@ -109,6 +118,12 @@ function cbReleaseProbeIfStuck() {
 }
 
 function isOverloadErr(err) {
+  // 503 + 渠道/模型不可用报文（model_not_found/no available channel）：确定性故障——
+  // 渠道没配/下线，退避重试与断路器冷却都救不了（渠道不会因 30s 等待恢复）。
+  // 按非过载处理：不 trip 断路器（网关本身健康）、不进 2s/6s 退避，快速失败换路。
+  if (err?.statusCode === 503 && /model_not_found|no available channel|model.?not.?available/i.test(String(err?.message ?? "") + String(err?.responseHeaders?.get?.("x-error") ?? ""))) {
+    return false;
+  }
   if (err?.statusCode === 503) return true;
   return /system cpu overloaded|overloaded/i.test(String(err?.message ?? ""));
 }
@@ -159,7 +174,11 @@ function cbOnProbeFail(isProbe) {
 function cbAllowRequest() {
   if (cbState === "closed") return "closed";
   if (cbState === "open") {
-    if (Date.now() - cbOpenedAt >= CB_COOLDOWN_MS) {
+    // 时钟回拨防护（2026-09-26 补审必须项，二次修正）：差值 <0 视为已过冷却（与
+    // cbShouldFailFast 同口径）——Math.max(0,…) 归一是错方（0 仍 < 冷却值恒拦截）。
+    // 差值 ==0（同毫秒刚 trip）保守拦截，走 else 分支。
+    const sinceOpen = Date.now() - cbOpenedAt;
+    if (sinceOpen < 0 || sinceOpen >= CB_COOLDOWN_MS) {
       cbState = "half-open"; // 转 half-open，下面走单 probe 锁
     } else {
       return false;
@@ -467,7 +486,8 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
       // 断路器检查：open → fail fast；half-open → 放单 probe（cbProbeInFlight 锁防并发穿透）
       const gate = cbAllowRequest();
       if (!gate) {
-        const cooldownLeft = Math.ceil((cbOpenedAt + CB_COOLDOWN_MS - Date.now()) / 1000);
+        // 时钟回拨下差值为负时不再显示负数秒数（与回拨放行口径一致）
+        const cooldownLeft = Math.ceil(Math.max(CB_COOLDOWN_MS - Math.max(0, Date.now() - cbOpenedAt), 0) / 1000);
         const e = new Error(`${model}: 断路器 open（上游网关过载），${cooldownLeft}s 后探测恢复。跳过请求。`);
         e.circuitOpen = true;
         await logAskFailure(e, model, Date.now() - t0);
@@ -484,6 +504,15 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
         // 确定性失败（HTTP 4xx 已知状态码）不重试；中断（AbortError 由我们主动 abort 触发）按超时算可重试
         if (NON_RETRYABLE_STATUS.has(status)) {
           cbOnProbeFail(holdProbe); // half-open probe 遭 4xx：网关仍不可信，回退 open
+          await logAskFailure(e, model, Date.now() - t0);
+          throw e;
+        }
+        // 2026-09-27 查漏补缺：503 渠道/模型不可用（model_not_found 类）也是确定性失败——
+        // 渠道不会因退避恢复，3 连重试纯空转 ~8s 且每次都 trip 断路器（网关本身健康），
+        // 反而把后续 moa/dual_review 请求挡在断路器外（实证：2026-09-27 探测-拦截循环）。
+        // 不重试、不 trip、不退避，快速失败交给上层降级链换模型。
+        if (status === 503 && !isOverloadErr(e)) {
+          cbOnProbeFail(holdProbe);
           await logAskFailure(e, model, Date.now() - t0);
           throw e;
         }

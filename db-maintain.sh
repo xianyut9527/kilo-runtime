@@ -122,6 +122,24 @@ echo "  session:    $(cnt session) rows"
 echo "  credential: $(cnt credential) rows (protected)"
 echo "  kilo 写者:  $(writers) 个进程"
 
+# 可回收空间：--no-vacuum 只 DELETE 不缩文件，删除后的空闲页留在库里（freelist）。
+# 不显示这一行，用户会以为「瘦身没生效」（文件还是 4.76GB）而漏掉该手工 VACUUM 的时机。
+# page_count*free 只读计算，无锁；VACUUM 才是需要独占锁的那一步（人工，见文首安全边界）。
+# 注意 `|| true`：q() 失败 rc 非零，本脚本 set -euo pipefail —— 纯赋值语句的退出码就是
+# 命令替换（管道）的退出码，q 挂会让整个 --status 半途死掉、run 模式在清理前 abort
+# （体检是增强信息，不能反过来变成新的单点故障）。失败时 $(...) 产出**空串**而非 0：
+# 空串进 `[ -gt 0 ]` 会打 integer expression expected 噪声，故 awk 前先兜底空输入，
+# 保证 PAGE_COUNT 恒为数字（失败=0 → 整块静默跳过）。
+read_pragma() { q "$1" | tail -n1 | tr -d '\r' | awk 'NF{print $1+0} END{if(NR==0)print 0}'; }
+PAGE_COUNT=$(read_pragma 'PRAGMA page_count') || true
+FREE_COUNT=$(read_pragma 'PRAGMA freelist_count') || true
+PAGE_SIZE=$(read_pragma 'PRAGMA page_size') || true
+if [ "$PAGE_COUNT" -gt 0 ] && [ "$PAGE_SIZE" -gt 0 ]; then
+  FREE_GB=$(awk -v f="$FREE_COUNT" -v s="$PAGE_SIZE" 'BEGIN{printf "%.2f", f*s/1073741824}')
+  USED_GB=$(awk -v c="$PAGE_COUNT" -v f="$FREE_COUNT" -v s="$PAGE_SIZE" 'BEGIN{printf "%.2f", (c-f)*s/1073741824}')
+  echo "  可回收:     ${FREE_GB} GB 空闲页（VACUUM 后文件约 ${USED_GB} GB；需独占锁，关掉全部 Kilo 后人工跑）"
+fi
+
 if [ "$MODE" = "status" ]; then
   echo "  integrity:  $(q 'PRAGMA integrity_check' | tail -n1 | tr -d '\r')"
   exit 0

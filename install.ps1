@@ -138,41 +138,10 @@ if ($rendered -match '__KILO_(HOME|CONFIG)__') {
     exit 1
 }
 
-# 备份保留上限：只留最近 N 个（KILO_KEEP_BACKUPS 可覆盖）
-# 历史教训：每次下发各留一份、无人回收，单个备份含 plugin 依赖时可达数十 MB。
-# 顺序很关键：**先裁剪、后创建**。若先创建再裁剪，刚建的那份会参与排序，
-# 而同秒产生的备份 LastWriteTime 并列 + $env:TEMP 返回 8.3 短路径（ADMINI~1）
-# 与 Get-ChildItem 的长路径不相等，字符串排除失效 → 新备份会被自己删掉（实测踩过）。
-# 裁剪只发生在真实写盘模式：--DryRun / -Check 一律不得删除任何文件。
-if (-not $DryRun -and -not $Check -and (Test-Path $TargetDir)) {
-    # KILO_KEEP_BACKUPS 解析：非整数/小于 1 一律回退默认 2 并告警，绝不能因环境变量写错而炸掉下发
-    #（[int]'abc' 直接抛 RuntimeException，实测会中断整个安装流程）
-    $keepBackups = 2
-    if ($env:KILO_KEEP_BACKUPS) {
-        $parsed = 0
-        if ([int]::TryParse($env:KILO_KEEP_BACKUPS, [ref]$parsed) -and $parsed -ge 1) { $keepBackups = $parsed }
-        else { Write-Warning "[INSTALL] WARN: KILO_KEEP_BACKUPS='$($env:KILO_KEEP_BACKUPS)' 非法（需 ≥1 整数），按默认 2 处理" }
-    }
-    $bkBase = Split-Path -Leaf $TargetDir
-    Get-ChildItem -LiteralPath (Split-Path -Parent $TargetDir) -File -Filter "$bkBase.backup-*" |
-        Sort-Object LastWriteTime -Descending | Select-Object -Skip ([Math]::Max($keepBackups - 1, 0)) |
-        ForEach-Object {
-            Remove-Item -LiteralPath $_.FullName -Force
-            Write-Host "[BACKUP] prune $($_.FullName)（保留最近 $keepBackups 个）"
-        }
-
-    # 备份：目标目录整体打包（失败不阻断下发，只是失去这次回滚点）
-    # 坑：目标为空目录时 Compress-Archive **既不报错也不产出文件**（实测），
-    # 只能显式检查产物，否则会打印一个并不存在、看起来成功的备份路径。
-    $bk = "$TargetDir.backup-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
-    try {
-        Compress-Archive -Path (Join-Path $TargetDir '*') -DestinationPath $bk -Force
-        if (Test-Path -LiteralPath $bk) { Write-Host "[BACKUP] $bk" }
-        else { Write-Warning "[INSTALL] WARN: 备份未产出（目标目录为空或无可打包内容），跳过：[BACKUP] $bk" }
-    }
-    catch { Write-Warning "[INSTALL] WARN: 备份失败（继续下发）：$($_.Exception.Message)" }
-}
-
+# 备份策略（2026-09-27 移位）：只在「确有内容要写」时才 prune+打包——此前备份块位于
+# 差异收集之前，--Check 通过后的例行同步 / 空跑 install 也会每次烧一个 ~12MB 的 zip
+# （实测「差异/写入: 0」仍产 [BACKUP]）。现移到冒烟预检之后、写入循环之前：
+# 预检失败会中止（未删任何东西、未打包），只有真正要动盘了才消耗一次备份位。
 $changed = 0; $same = 0; $wrote = 0
 
 # 先收集待写清单：预检必须在任何写入之前完成，否则第 N 个文件检查失败时
@@ -318,6 +287,41 @@ foreach ($w in $toWrite) {
     }
 }
 
+# ---------- 备份（预检通过、写入循环之前；仅在确有写入时） ----------
+# 历史教训：每次下发各留一份、无人回收，单个备份含 plugin 依赖时可达数十 MB。
+# 顺序很关键：**先裁剪、后创建**。若先创建再裁剪，刚建的那份会参与排序，
+# 而同秒产生的备份 LastWriteTime 并列 + $env:TEMP 返回 8.3 短路径（ADMINI~1）
+# 与 Get-ChildItem 的长路径不相等，字符串排除失效 → 新备份会被自己删掉（实测踩过）。
+# 裁剪只发生在真实写盘模式：--DryRun / -Check 一律不得删除任何文件。
+if (-not $DryRun -and -not $Check -and $changed -gt 0 -and (Test-Path $TargetDir)) {
+    # KILO_KEEP_BACKUPS 解析：非整数/小于 1 一律回退默认 2 并告警，绝不能因环境变量写错而炸掉下发
+    #（[int]'abc' 直接抛 RuntimeException，实测会中断整个安装流程）
+    $keepBackups = 2
+    if ($env:KILO_KEEP_BACKUPS) {
+        $parsed = 0
+        if ([int]::TryParse($env:KILO_KEEP_BACKUPS, [ref]$parsed) -and $parsed -ge 1) { $keepBackups = $parsed }
+        else { Write-Warning "[INSTALL] WARN: KILO_KEEP_BACKUPS='$($env:KILO_KEEP_BACKUPS)' 非法（需 ≥1 整数），按默认 2 处理" }
+    }
+    $bkBase = Split-Path -Leaf $TargetDir
+    Get-ChildItem -LiteralPath (Split-Path -Parent $TargetDir) -File -Filter "$bkBase.backup-*" |
+        Sort-Object LastWriteTime -Descending | Select-Object -Skip ([Math]::Max($keepBackups - 1, 0)) |
+        ForEach-Object {
+            Remove-Item -LiteralPath $_.FullName -Force
+            Write-Host "[BACKUP] prune $($_.FullName)（保留最近 $keepBackups 个）"
+        }
+
+    # 备份：目标目录整体打包（失败不阻断下发，只是失去这次回滚点）
+    # 坑：目标为空目录时 Compress-Archive **既不报错也不产出文件**（实测），
+    # 只能显式检查产物，否则会打印一个并不存在、看起来成功的备份路径。
+    $bk = "$TargetDir.backup-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
+    try {
+        Compress-Archive -Path (Join-Path $TargetDir '*') -DestinationPath $bk -Force
+        if (Test-Path -LiteralPath $bk) { Write-Host "[BACKUP] $bk" }
+        else { Write-Warning "[INSTALL] WARN: 备份未产出（目标目录为空或无可打包内容），跳过：[BACKUP] $bk" }
+    }
+    catch { Write-Warning "[INSTALL] WARN: 备份失败（继续下发）：$($_.Exception.Message)" }
+}
+
 foreach ($w in $toWrite) {
     if ($DryRun -or $Check) { continue }
 
@@ -373,6 +377,53 @@ Write-Host "  agents   : $(($cfg.agent.PSObject.Properties.Name) -join ', ')"
 if (-not $DryRun -and -not $Check -and $script:pluginWritten) {
     Write-Host ''
     Write-Host "[INSTALL] 提示：本次更新了 plugin/ 文件。Kilo 不热加载插件——运行中的 Kilo/VS Code 窗口仍执行旧逻辑，重载窗口后新版才生效（quality-gate ⑥ 检测亦会在交付节点告警）。"
+}
+
+# ---------- 登录自启快捷方式自愈（2026-09-27 事故回归防护）----------
+# 事故：仓库目录改名（kilo_config → kilo-runtime）后，Startup 里的 kilo-maintenance.lnk 仍指向
+# 旧路径的 kilo-maintenance.ps1——快捷方式文件存在、目标脚本已不存在，于是每次登录都静默失败，
+# 自动维护停了 11 天而无人察觉。此处在下发后检测该失效态并以当前真实路径重建（仅当快捷方式已
+# 存在才修复，不替用户新增自启——安装自启仍是 -InstallStartup 的显式选择）。
+if (-not $DryRun -and -not $Check) {
+    $startupDir = [Environment]::GetFolderPath('Startup')
+    $startupLnk = Join-Path $startupDir 'kilo-maintenance.lnk'
+    if (Test-Path -LiteralPath $startupLnk) {
+        $maintScript = Join-Path $ScriptDir 'scripts\kilo-maintenance.ps1'
+        $lnkTarget = $null
+        try {
+            $sh = New-Object -ComObject WScript.Shell
+            $m = [regex]::Match($sh.CreateShortcut($startupLnk).Arguments, '-File\s+"([^"]+)"')
+            if ($m.Success) { $lnkTarget = $m.Groups[1].Value }
+        } catch { }
+        if ($lnkTarget -and (Test-Path -LiteralPath $lnkTarget)) {
+            # 目标有效但可能不是本仓库（多副本场景）：仅当它指向本仓 scripts 时才对齐
+            $maintFull = [System.IO.Path]::GetFullPath($maintScript)
+            if ([System.IO.Path]::GetFullPath($lnkTarget) -ne $maintFull) {
+                Write-Host "[INSTALL] 提示：登录自启指向其它维护脚本（$lnkTarget）——如非本仓请忽略。"
+            }
+        }
+        elseif (Test-Path -LiteralPath $maintScript) {
+            $why = if ($lnkTarget) { "目标不存在：$lnkTarget" } else { '无法解析 -File 目标（快捷方式损坏）' }
+            Write-Host ''
+            Write-Host "[INSTALL] 检测到登录自启失效（$why），按当前路径重建…"
+            # PS 5.1 stderr 陷阱与本脚本全局 EAP='Stop'：子进程往 stderr 写一行就构造
+            # ErrorRecord 抛终止异常——会把整个 install 在「文件已下发之后」炸死（半完成态
+            # 比不跑更糟）。与 kilo-maintenance.ps1 Invoke-RepoScript 同款修法：临时降
+            # Continue、只看 $LASTEXITCODE、finally 还原。
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            $healRc = 1
+            try {
+                $healOut = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $maintScript -InstallStartup 2>&1
+                $healRc = $LASTEXITCODE
+            }
+            finally { $ErrorActionPreference = $prevEap }
+            $healOut | ForEach-Object { Write-Host "  $_" }
+            # 自愈失败不中止 install：下发已完成，快捷方式重建失败只损失「下次登录自动维护」，
+            # 提示人工 -InstallStartup 即可；此时 exit 1 反而让调用方误判为部署失败。
+            if ($healRc -ne 0) { Write-Warning "[INSTALL] WARN: 自启重建失败（exit=$healRc）——请人工跑 scripts\kilo-maintenance.ps1 -InstallStartup" }
+        }
+    }
 }
 
 if ($Check -and ($changed -gt 0 -or $strayList.Count -gt 0)) {

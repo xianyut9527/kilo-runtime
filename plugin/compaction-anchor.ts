@@ -6,6 +6,10 @@
 const MAX_FILES = 12;
 const MAX_DIRTY = 15;
 const MAX_MARKS = 10;
+// 锚点幂等标记（审查建议项：纯中文可被模型输出碰撞）：前缀唯一化，
+// 正常对话/摘要不会出现该 token，幂等判定不误跳过
+const ANCHOR_TAG = "压缩锚点（必须保留）";
+const ANCHOR_ID = "__KILO_COMPACT_ANCHOR__";
 
 function safeTrim(s, n) {
   if (typeof s !== "string") return "";
@@ -51,10 +55,13 @@ const CompactionAnchorImpl = async ({ client, directory, $ }) => {
     "experimental.session.compacting": async (_input, output) => {
       const out = output ?? {};
       const existing = Array.isArray(out.context) ? out.context : [];
-      if (existing.length > 0) return;
+      // 幂等合并（2026-09-26 层 3 审查必须修复项 B）：quality-gate 也注册了本钩子注入
+      // 验收清单锚点，多插件钩子顺序不可知——任何一方都不得独占 context：
+      // 已注入过自己锚点 → 静默返回；否则**追加**到既有行之后（绝不覆盖他插件内容）。
+      if (existing.some((l) => String(l ?? "").includes(ANCHOR_ID))) return;
 
       const lines = [
-        "## 压缩锚点（必须保留）",
+        `## ${ANCHOR_TAG} ${ANCHOR_ID}`,
         "以下内容由 compaction-anchor 插件注入，用于在上下文压缩后保持任务连续性。",
       ];
 
@@ -121,7 +128,8 @@ const CompactionAnchorImpl = async ({ client, directory, $ }) => {
         `- 工作区变更（git status --short）：\n${dirty.length ? dirty.map((d) => `  ${d}`).join("\n") : "  （干净或不可用）"}`
       );
 
-      out.context = lines;
+      // 追加合并（同上）：他插件（如 quality-gate 验收清单锚点）已写入的行原样保留
+      out.context = [...existing, ...lines];
     },
   };
 };

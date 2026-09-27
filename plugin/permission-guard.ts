@@ -27,6 +27,12 @@ const SECRET_PATH = [
   /(^|[\\/])\.env(\.[\w.-]+)?$/i, // .env / .env.local / .env.production
 ];
 
+// 模板型 .env 变体不算机密：.env.example/.sample/.template/.tmpl/.dist 按惯例只含占位符，
+// 是仓库里正常且需要编辑的文件。2026-09-27 实测：原规则把 `.env.example` 一并拦下，
+// 连 grep/read 都被动态守护拒绝（本会话亲历）——过度拦截同样破坏可用性。
+// 只精确豁免这五个后缀（不做宽泛后缀放行），避免把 .env.production.local 这类真实机密放进来。
+const ENV_TEMPLATE = /(^|[\\/])\.env\.(example|sample|template|tmpl|dist)$/i;
+
 // 受保护文件：静态 permission.edit 的 deny 只拦 edit 工具，模型改走 bash 就绕过了
 // （实测：--auto 下 `permission.edit: {"*":"deny"}` 仍被 sed -i / node 脚本改写成功）。
 // 因此在 hook 层按「路径 × 写操作」双重判定，两条通道一起堵。
@@ -79,16 +85,40 @@ function pathsFrom(args) {
   return out;
 }
 
-// 从 shell 命令行里抽取可能的文件路径（引号包裹、含盘符/斜杠/点的 token）
+// 从 shell 命令行里抽取可能的文件路径（引号包裹、含盘符/斜杠/点的 token）。
+// 2026-09-27 二轮审查补：外层是双引号的 token 内部可能再嵌单引号路径——
+// `node -e "require('fs').readFileSync('proj/.env')"` 实测漏过：整个 JS 表达式
+// 被当成一个 token，以 `.env')` 结尾，SECRET_PATH 的 $ 锚点对不上。修法：
+// 双引号 token 之外，再扫一遍其中的单引号片段与含分隔符的子串作候选（去重）。
 function pathsInCommand(cmd) {
   if (!cmd) return [];
   const out = [];
+  const seen = new Set();
+  const push = (t) => {
+    if (!t) return;
+    // 裸密钥文件名（无目录分隔符的 .env / auth.json / id_rsa…）也算候选：
+    // `readFileSync('.env')` 类形态无分隔符，靠「路径样子」过滤会整个漏掉
+    // （2026-09-27 二轮审查实测）。SECRET_PATH 本身带 ^ 锚点，裸名也能命中。
+    const bareSecret = /^(?:\.env(?:\.[\w.-]+)?|auth\.json|id_(?:rsa|ed25519|ecdsa)(?:\.pub)?|\.netrc)$/i.test(t);
+    if (bareSecret || /[\\/]/.test(t) || /^[\w.-]+\.[A-Za-z0-9]{1,6}$/.test(t)) {
+      if (!seen.has(t)) { seen.add(t); out.push(t); }
+    }
+  };
   const re = /"([^"]+)"|'([^']+)'|([^\s"'|;&<>()]+)/g;
   let m;
   while ((m = re.exec(cmd)) !== null) {
     const t = m[1] ?? m[2] ?? m[3];
     if (!t) continue;
-    if (/[\\/]/.test(t) || /^[\w.-]+\.[A-Za-z0-9]{1,6}$/.test(t)) out.push(t);
+    push(t);
+    // 双引号 token 内部再挖一层：单引号片段（'…'）与路径样子子串（非贪婪扫到空白/引号）
+    if (m[1]) {
+      const inner = /'([^']+)'|([^\s'"]+)/g;
+      let im;
+      while ((im = inner.exec(m[1])) !== null) {
+        const it = im[1] ?? im[2];
+        if (it && it !== m[1]) push(it);
+      }
+    }
   }
   return out;
 }
@@ -128,6 +158,7 @@ const PermissionGuardImpl = async () => {
       if (tool === "read" || tool === "edit" || tool === "write" || tool === "list" || tool === "bash" || tool === "shell") {
         const cands = tool === "bash" || tool === "shell" ? pathsInCommand(bashString(args)) : pathsFrom(args);
         for (const p of cands) {
+          if (ENV_TEMPLATE.test(p)) continue; // 模板型 .env 变体放行（只含占位符，非机密）
           for (const re of SECRET_PATH) {
             if (re.test(p)) {
               throw new Error(

@@ -28177,7 +28177,6 @@ async function logFailover(record2) {
   });
   return logQueue;
 }
-var cooldown = /* @__PURE__ */ new Map();
 function patchReasoningContent(bodyText) {
   let parsed;
   try {
@@ -28400,17 +28399,21 @@ function withReasoningGate(baseFetch, cfg) {
     return gated;
   };
 }
-function isCooling(id, cooldownMs) {
-  const until = cooldown.get(id);
-  if (until === void 0) return false;
-  if (Date.now() >= until) {
-    cooldown.delete(id);
-    return false;
-  }
-  return true;
+function isCoolingFactory(cooldown) {
+  return function isCooling(id, cooldownMs) {
+    const until = cooldown.get(id);
+    if (until === void 0) return false;
+    if (Date.now() >= until) {
+      cooldown.delete(id);
+      return false;
+    }
+    return true;
+  };
 }
-function markFailed(id, cooldownMs) {
-  cooldown.set(id, Date.now() + cooldownMs);
+function markFailedFactory(cooldown) {
+  return function markFailed(id, cooldownMs) {
+    cooldown.set(id, Date.now() + cooldownMs);
+  };
 }
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -28447,6 +28450,9 @@ function isRetryable(err) {
   if (isCancellation(err)) return false;
   const status = err?.statusCode ?? err?.status ?? err?.response?.status;
   if (typeof status === "number") {
+    if (status === 503 && /model_not_found|no available channel|model.?not.?available/i.test(String(err?.message ?? err?.data?.error?.message ?? ""))) {
+      return false;
+    }
     if (status >= 200 && status < 300) return true;
     return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
   }
@@ -28454,11 +28460,17 @@ function isRetryable(err) {
 }
 function isOverloadErr(err) {
   const status = err?.statusCode ?? err?.status;
+  if (isChannelUnavailable(err)) return false;
   if (status === 503) return true;
   const h = err?.responseHeaders;
   const ra = typeof h?.get === "function" ? h.get("retry-after") : h?.["retry-after"];
   if (ra !== void 0 && ra !== null) return true;
   return /cpu overloaded|system overloaded/i.test(String(err?.message ?? ""));
+}
+function isChannelUnavailable(err) {
+  const status = err?.statusCode ?? err?.status;
+  if (status !== 503) return false;
+  return /model_not_found|no available channel|model.?not.?available/i.test(String(err?.message ?? err?.data?.error?.message ?? ""));
 }
 function isStreamBreakError(err) {
   if (isCancellation(err)) return false;
@@ -28518,13 +28530,23 @@ function createHxFailover(options) {
   };
   for (const k of EXTENSION_KEYS) delete sdkOptions[k];
   const cooldownMs = Number(failoverOpts?.cooldownMs) > 0 ? Number(failoverOpts.cooldownMs) : DEFAULT_COOLDOWN_MS;
+  const cooldown = /* @__PURE__ */ new Map();
+  const isCooling = isCoolingFactory(cooldown);
+  const markFailed = markFailedFactory(cooldown);
+  const noticeCooldownMs = Number(failoverOpts?.noticeCooldownMs) > 0 ? Number(failoverOpts.noticeCooldownMs) : cooldownMs;
+  const noticeDedup = /* @__PURE__ */ new Map();
   const overloadBackoffMs = Array.isArray(failoverOpts?.overloadBackoffMs) && failoverOpts.overloadBackoffMs.every((n) => Number.isFinite(n) && n >= 0) ? failoverOpts.overloadBackoffMs : OVERLOAD_BACKOFF_MS;
   const chunkTimeoutMs = Number(options?.chunkTimeout) > 0 ? Number(options.chunkTimeout) : 0;
   const provider = createOpenAICompatible(sdkOptions);
   async function withFailover(modelId, run) {
     const chain = chainOf(options, modelId);
     let lastError;
-    for (let hop = 0; hop < chain.length; hop++) {
+    let startHop = 0;
+    if (chain.length > 1 && isCooling(modelId, cooldownMs)) {
+      await logFailover({ from: modelId, action: "skip_cooldown", hop: 0 });
+      startHop = 1;
+    }
+    for (let hop = startHop; hop < chain.length; hop++) {
       const id = chain[hop];
       if (hop > 0 && isCooling(id, cooldownMs)) {
         await logFailover({ from: modelId, to: id, action: "skip_cooldown", hop });
@@ -28541,6 +28563,18 @@ function createHxFailover(options) {
             throw err;
           }
           if (!isRetryable(err)) {
+            if (isChannelUnavailable(err)) {
+              markFailed(id, cooldownMs);
+              await logFailover({
+                from: modelId,
+                at: id,
+                action: hop + 1 < chain.length ? "channel_fallback" : "channel_exhausted",
+                to: chain[hop + 1],
+                status: err?.statusCode ?? err?.status,
+                error: String(err?.message ?? err).slice(0, 200)
+              });
+              break;
+            }
             await logFailover({
               from: modelId,
               at: id,
@@ -28569,6 +28603,18 @@ function createHxFailover(options) {
           break;
         }
       }
+    }
+    if (lastError === void 0 && startHop > 0) {
+      let maxUntil = cooldown.get(modelId) ?? 0;
+      for (const m of chain.slice(1)) maxUntil = Math.max(maxUntil, cooldown.get(m) ?? 0);
+      const remainS = Math.max(1, Math.ceil((maxUntil - Date.now()) / 1e3));
+      await logFailover({ from: modelId, action: "exhausted_cooldown", remainMs: maxUntil - Date.now() });
+      throw new APICallError({
+        message: `hx-failover: \u4E3B\u6A21\u578B\u4E0E\u5168\u90E8\u5907\u7528\u5747\u5728\u51B7\u5374\u4E2D\uFF08\u4E0A\u4E00\u8F6E\u5DF2\u5B9E\u6D4B\u5931\u8D25\uFF09\uFF0C\u7EA6 ${remainS}s \u540E\u81EA\u52A8\u6062\u590D \u2014\u2014 \u8DF3\u8FC7\u91CD\u8BD5\u907F\u514D\u7A7A\u8F6C`,
+        url: void 0,
+        statusCode: 503,
+        isRetryable: true
+      });
     }
     if (isStreamBreakError(lastError) || isNoFinishReasonError(lastError)) {
       await logFailover({ from: modelId, action: "stream_break_rewrap", error: String(lastError?.message ?? lastError).slice(0, 200) });
@@ -28686,6 +28732,16 @@ function createHxFailover(options) {
         return withFailover(modelId, async (m, id, hop) => {
           const result = await m.doStream(callOptions);
           let stream = result.stream;
+          if (hop > 0) {
+            const key = `${modelId}->${id}`;
+            const until = noticeDedup.get(key) ?? 0;
+            if (Date.now() < until) {
+              await logFailover({ from: modelId, to: id, action: "notice_dedup" });
+              hop = 0;
+            } else {
+              noticeDedup.set(key, Date.now() + noticeCooldownMs);
+            }
+          }
           if (hop > 0) {
             const noticeId = "hx-failover-notice";
             const prepend = new TransformStream({

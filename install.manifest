@@ -1,4 +1,4 @@
-# kilo_config 下发清单（SSOT 单一真源）
+# kilo-runtime 下发清单（SSOT 单一真源；原仓库名 kilo_config）
 #
 # 格式：每行一条  <路径模式>[ -> <目标相对路径>]
 #   - 路径模式以 / 结尾表示整目录递归下发，逐文件比对
@@ -17,6 +17,7 @@ command/
 plugin/
 lib/
 scripts/memory-enable.mjs
+scripts/memory-sync.mjs
 provider/hx-failover/src/
 provider/hx-failover/dist/
 provider/hx-failover/package.json

@@ -15,8 +15,9 @@
 // 不可退回 ^1（"v2"）。
 //
 // legacy 五项语义：① 错误即触发（不限状态码，唯一例外见 isCancellation：调用方取消直通）
-//                  ② 失败 profile 临时停用+冷却
-//                  ③ 切换注入可见通知 ④ 禁止嵌套 ⑤ 全链失败抛原始最后一个错误
+//                  ② 失败 profile 临时停用+冷却（2026-09-26 起：冷却对全链生效，含主模型）
+//                  ③ 切换注入可见通知（同 from→to 在 noticeCooldownMs 窗口内去重）
+//                  ④ 禁止嵌套 ⑤ 全链失败抛原始最后一个错误
 //
 // thinking 协议兜底（2026-09-21 reasoning_content 400 专项）：
 // DeepSeek V4 / Kimi K2.6 / GLM-5.x / MiniMax 在 thinking 模式下要求历史 assistant 消息
@@ -97,8 +98,6 @@ async function logFailover(record) {
     .catch((e) => { console.error(`hx-failover: telemetry queue guard: ${e?.message ?? e}`); });
   return logQueue;
 }
-
-const cooldown = new Map(); // modelId -> 失效截止时间戳
 
 // ── thinking 模式 reasoning_content 回传兜底（2026-09-21 400 专项）─────────────
 // 只补缺失、绝不覆盖已有值（真实思考文本由 SDK 转换层写入时保持原样）；
@@ -371,18 +370,22 @@ function withReasoningGate(baseFetch, cfg) {
   };
 }
 
-function isCooling(id, cooldownMs) {
-  const until = cooldown.get(id);
-  if (until === undefined) return false;
-  if (Date.now() >= until) {
-    cooldown.delete(id);
-    return false;
-  }
-  return true;
+function isCoolingFactory(cooldown) {
+  return function isCooling(id, cooldownMs) {
+    const until = cooldown.get(id);
+    if (until === undefined) return false;
+    if (Date.now() >= until) {
+      cooldown.delete(id);
+      return false;
+    }
+    return true;
+  };
 }
 
-function markFailed(id, cooldownMs) {
-  cooldown.set(id, Date.now() + cooldownMs);
+function markFailedFactory(cooldown) {
+  return function markFailed(id, cooldownMs) {
+    cooldown.set(id, Date.now() + cooldownMs);
+  };
 }
 
 function sleep(ms) {
@@ -435,6 +438,12 @@ function isRetryable(err) {
   if (isCancellation(err)) return false;
   const status = err?.statusCode ?? err?.status ?? err?.response?.status;
   if (typeof status === "number") {
+    // 2026-09-27 查漏补缺：503 + 渠道/模型不可用报文 = 确定性故障（渠道没配/下线），
+    // 3 连重试纯空转 ~8s（2026-09-27 生产实测：glm-5.2 渠道下线期每次调用都慢 8s 才换 hop）。
+    // 不重试直接换链上下一模型（报文由上游 new-api 网关统一格式）。
+    if (status === 503 && /model_not_found|no available channel|model.?not.?available/i.test(String(err?.message ?? err?.data?.error?.message ?? ""))) {
+      return false;
+    }
     // 2xx 状态的 API 错误只可能是「成功响应 body 处理失败」（真实 API 错误必带 4xx/5xx），
     // 此错误从 doStream() 调用内抛出时尚无内容交付给调用方 → 可安全走内部重试/降级
     if (status >= 200 && status < 300) return true;
@@ -450,11 +459,24 @@ function isRetryable(err) {
 // 让死配置的失败暴露慢 ~6s，而把真过载期的快重试误放过的代价是全链连环冲击。
 function isOverloadErr(err) {
   const status = err?.statusCode ?? err?.status;
+  // 渠道/模型不可用（model_not_found 类）：确定性故障——不 trip 冷却标记
+  // （网关本身健康，别的模型照常可用），不进慢退避；上游 isRetryable 已改 false 走 fatal 快换 hop。
+  if (isChannelUnavailable(err)) return false;
   if (status === 503) return true;
   const h = err?.responseHeaders;
   const ra = typeof h?.get === "function" ? h.get("retry-after") : h?.["retry-after"];
   if (ra !== undefined && ra !== null) return true;
   return /cpu overloaded|system overloaded/i.test(String(err?.message ?? ""));
+}
+
+// 渠道/模型不可用判定（2026-09-27 查漏补缺）：new-api 网关对未配渠道/渠道下线的统一
+// 报文（生产实证 2026-09-27：glm-5.2 渠道下线期持续 "No available channel for model
+// glm-5.2 under group svip"）。渠道按模型隔离：只该跳过本 hop 换下一模型，
+// 绝不 trip 全链冷却（渠道不会因 60s 等待恢复，也不会连累健康渠道）。
+function isChannelUnavailable(err) {
+  const status = err?.statusCode ?? err?.status;
+  if (status !== 503) return false;
+  return /model_not_found|no available channel|model.?not.?available/i.test(String(err?.message ?? err?.data?.error?.message ?? ""));
 }
 
 // ── 流中断错误重包装（2026-09-15 断流专项）────────────────────────────
@@ -561,6 +583,17 @@ export function createHxFailover(options) {
   for (const k of EXTENSION_KEYS) delete sdkOptions[k];
 
   const cooldownMs = Number(failoverOpts?.cooldownMs) > 0 ? Number(failoverOpts.cooldownMs) : DEFAULT_COOLDOWN_MS;
+  // 冷却状态（modelId -> 失效截止时间戳）：工厂级实例（生产 Kilo 单进程单工厂无差异，
+  // 测试多实例天然隔离互不污染——模块级 Map 曾让同进程多实例共享冷却状态）
+  const cooldown = new Map();
+  const isCooling = isCoolingFactory(cooldown);
+  const markFailed = markFailedFactory(cooldown);
+  // 切换通知去重窗口（failover.noticeCooldownMs，正数；缺省 = cooldownMs）：同一
+  // 「主模型→备用」的切换提示在该窗口内只注入一次——主模型持续故障期每次调用都
+  // 会切换到同一备用，不去重则每条回复流首重复同一条提示（2026-09-26 用户实证刷屏）。
+  const noticeCooldownMs = Number(failoverOpts?.noticeCooldownMs) > 0 ? Number(failoverOpts.noticeCooldownMs) : cooldownMs;
+  // 工厂级（非模块级）：Kilo 单进程单工厂实例；测试多实例天然隔离互不污染
+  const noticeDedup = new Map(); // "from->to" -> 提示过期时间戳
   // 过载退避可注入（failover.overloadBackoffMs，正数组）：生产用默认 2s/6s，测试注入小值
   // 验证路径命中而不真等 8s；非法值（非数组/含非有限正数）静默回落默认，不炸调用链。
   const overloadBackoffMs = Array.isArray(failoverOpts?.overloadBackoffMs)
@@ -576,7 +609,17 @@ export function createHxFailover(options) {
     const chain = chainOf(options, modelId);
     let lastError;
 
-    for (let hop = 0; hop < chain.length; hop++) {
+    // 冷却判定对全链生效（含主模型）：主模型上一轮刚降级过 → 本轮直接跳到首个
+    // 未冷却的备用，省去对已知故障模型的 3 连重试+退避（~8s 延迟与重复告警）。
+    // 主模型冷却但备用也全在冷却 → 循环零执行，走下方 fail-fast 503（不空转不
+    // 冲击刚失败过的上游，冷却到期自然恢复探测）；备用冷却与主模型语义一致。
+    let startHop = 0;
+    if (chain.length > 1 && isCooling(modelId, cooldownMs)) {
+      await logFailover({ from: modelId, action: "skip_cooldown", hop: 0 });
+      startHop = 1;
+    }
+
+    for (let hop = startHop; hop < chain.length; hop++) {
       const id = chain[hop];
       if (hop > 0 && isCooling(id, cooldownMs)) {
         await logFailover({ from: modelId, to: id, action: "skip_cooldown", hop });
@@ -596,6 +639,21 @@ export function createHxFailover(options) {
             throw err;
           }
           if (!isRetryable(err)) {
+            // 2026-09-27 查漏补缺：503 渠道/模型不可用（model_not_found 类）虽然确定性失败，
+            // 但渠道按模型隔离——只是本 hop 渠道没了，链上其他模型可能照常可用。
+            // 不重试（空转），也不 fatal 直通（会放弃整条链）：立即换下一 hop（同 fallback 语义）。
+            if (isChannelUnavailable(err)) {
+              markFailed(id, cooldownMs);
+              await logFailover({
+                from: modelId,
+                at: id,
+                action: hop + 1 < chain.length ? "channel_fallback" : "channel_exhausted",
+                to: chain[hop + 1],
+                status: err?.statusCode ?? err?.status,
+                error: String(err?.message ?? err).slice(0, 200),
+              });
+              break; // 换链上下一模型（不重试、不 fatal 直通）
+            }
             // 不可重试错误（400 类协议/参数错误）原样直通，但必须入遥测：
             // 此前这类错误完全绕过降级链与日志（reasoning_content 400 排查时无迹可循）
             await logFailover({
@@ -635,6 +693,22 @@ export function createHxFailover(options) {
     // 例外：若最后一个错误是流中断类（含「无 finish_reason」干净断连形态），
     // 重包装为 isRetryable=true —— 内部重试/降级已尽力，Kilo 会话级重试是
     // 最后兜底；cause 保留原始错误，可诊断性不丢。
+    // 特例：冷却跳过主模型后循环零执行（备用全冷却）→ 快速失败确定性 503：
+    // 跳过不是失败，报原始错误会误导成上游故障；isRetryable 交给 Kilo 重试门，
+    // 冷却到期后 Kilo 重试即恢复探测。
+    if (lastError === undefined && startHop > 0) {
+      // 剩余冷却取全链最晚到期时间（含主模型），报真实等待而非上限值
+      let maxUntil = cooldown.get(modelId) ?? 0;
+      for (const m of chain.slice(1)) maxUntil = Math.max(maxUntil, cooldown.get(m) ?? 0);
+      const remainS = Math.max(1, Math.ceil((maxUntil - Date.now()) / 1000));
+      await logFailover({ from: modelId, action: "exhausted_cooldown", remainMs: maxUntil - Date.now() });
+      throw new APICallError({
+        message: `hx-failover: 主模型与全部备用均在冷却中（上一轮已实测失败），约 ${remainS}s 后自动恢复 —— 跳过重试避免空转`,
+        url: undefined,
+        statusCode: 503,
+        isRetryable: true,
+      });
+    }
     if (isStreamBreakError(lastError) || isNoFinishReasonError(lastError)) {
       await logFailover({ from: modelId, action: "stream_break_rewrap", error: String(lastError?.message ?? lastError).slice(0, 200) });
       throw rewrapStreamBreak(lastError);
@@ -755,6 +829,19 @@ export function createHxFailover(options) {
         return withFailover(modelId, async (m, id, hop) => {
           const result = await m.doStream(callOptions);
           let stream = result.stream;
+          // 通知去重：同一「主模型→备用」在窗口内只注入一次提示。
+          // 判定必须在注入前：流首已入队无法撤回。
+          if (hop > 0) {
+            const key = `${modelId}->${id}`;
+            const until = noticeDedup.get(key) ?? 0;
+            if (Date.now() < until) {
+              // 窗口内重复切换：静默切换，不重复提示；留遥测痕迹供事后统计真实切换频次
+              await logFailover({ from: modelId, to: id, action: "notice_dedup" });
+              hop = 0;
+            } else {
+              noticeDedup.set(key, Date.now() + noticeCooldownMs);
+            }
+          }
           if (hop > 0) {
             // 切换通知（legacy 语义③）：在流首插入一行可见提示。
             // 必须保持 ReadableStream 语义（Kilo 会对 stream 调 pipeThrough），
