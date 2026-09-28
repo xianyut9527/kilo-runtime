@@ -1,3 +1,4 @@
+// kilo-build: src-sha256=480c2763a45ae9429512e92147c41543e24452964fc6d9e6579f8e847f2e20e0
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)

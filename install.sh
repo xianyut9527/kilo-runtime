@@ -213,14 +213,37 @@ done < "$MANIFEST"
 
 TOTAL="$(wc -l < "$PAIRS" | tr -d ' ')"
 
-# ---------- provider dist 新鲜度：src 比 dist 新说明忘跑 build，部署的会是旧行为 ----------
+# ---------- provider dist 新鲜度（内容指纹版，2026-09-28；与 install.ps1 对等） ----------
+# 旧版用 mtime 对比「src 比 dist 新」，但 git checkout/还原会同步两侧 mtime，毫秒级精度
+# 即误报。改为内容锚定：build.mjs 在 dist 首行嵌入 `// kilo-build: src-sha256=<hash(src)>`，
+# 此处提取比对——不依赖文件系统时间、可跨端/跨时区/跨 checkout 复现。
+# 边界口径（dual-review 必修项②，与 install.ps1 一字不差对等）：仅扫首行；严格锚定整行
+# （前缀+64hex+行尾即结束）；BOM/CR/首行人工改动/旧版无指纹产物 一律归入「无指纹」类
+# 警告（提示重建），与「指纹失配」（src 已改未重建）两类分开报告。
+# 指纹状态（r3 必修项②安全降级分支）：DIST_FP_OK=1 即指纹 MATCH——冒烟引擎不可用时，
+# 指纹 MATCH 是 dist 内容已验证的唯一替代证据；失配/无指纹且无引擎 → 硬失败。
+DIST_FP_OK=0
 SRC_JS="$SCRIPT_DIR/provider/hx-failover/src/index.js"
 DIST_JS="$SCRIPT_DIR/provider/hx-failover/dist/index.js"
-if [ -f "$SRC_JS" ] && [ -f "$DIST_JS" ] && [ "$SRC_JS" -nt "$DIST_JS" ]; then
-  echo "[INSTALL] WARN: provider src/index.js 比 dist/index.js 新 —— 先在 provider/hx-failover 跑 npm run build 再下发" >&2
-  if [ "$CHECK" = "1" ]; then
-    echo "[check] 漂移：provider dist 过期（src 已改未重建）" >&2
-    exit 1
+if [ -f "$SRC_JS" ] && [ -f "$DIST_JS" ]; then
+  SRC_HASH="$(hash_of "$SRC_JS")"
+  # sed 一道：仅首行（1{...}）剥 BOM/CR + 严格整行匹配 ^// kilo-build: src-sha256=<64hex>$
+  # （[[:space:]]*$ 允许尾随空格，其余任何尾随字符都不算有效指纹）
+  DIST_FP="$(sed -n '1{s/^\xEF\xBB\xBF//;s/\r$//;s|^//[[:space:]]*kilo-build:[[:space:]]*src-sha256=\([0-9a-f]\{64\}\)[[:space:]]*$|\1|p}' "$DIST_JS")"
+  if [ -z "$DIST_FP" ]; then
+    echo "[INSTALL] WARN: provider dist/index.js 首行无有效构建指纹（旧版产物/首行被改动）—— 在 provider/hx-failover 跑 npm run build 重建后再下发" >&2
+    if [ "$CHECK" = "1" ]; then
+      echo "[check] 漂移：provider dist 缺构建指纹" >&2
+      exit 1
+    fi
+  elif [ "$DIST_FP" != "$SRC_HASH" ]; then
+    echo "[INSTALL] WARN: provider src/index.js 已改但 dist 指纹不匹配 —— 先在 provider/hx-failover 跑 npm run build 再下发" >&2
+    if [ "$CHECK" = "1" ]; then
+      echo "[check] 漂移：provider dist 过期（src 已改未重建）" >&2
+      exit 1
+    fi
+  else
+    DIST_FP_OK=1
   fi
 fi
 
@@ -262,14 +285,95 @@ to_file_url() { # $1 = 文件路径
 }
 
 # 返回 0 = 通过；非 0 = 该文件加载即崩 / vE2 工厂模拟失败。
-smoke_ts() { # $1 = 源文件
-  local f="$1"
-  if ! command -v bun >/dev/null 2>&1; then
-    echo "[INSTALL] WARN: bun 不可用，跳过插件冒烟检查（$f 未经验证即下发）" >&2
-    return 0
+# TS 冒烟引擎（2026-09-28，与 install.ps1 对等）：bun → node>=22+loader hook → 放行告警。
+# bun 缺失不再跳过检查——node>=22 原生可跑 TS（strip-types 稳定化），但裸相对导入
+# '../lib/hx-client' 解析不到 .ts（node 严格、bun/Kilo 宽松），需要 register loader hook
+# 补全扩展名拉平语义。两引擎断言语义相同（import 不抛 + vE2 工厂模拟）。
+# node 候选：PATH 上的 node（本机实证可能 v14）→ hermes node22 兜底
+# （$LOCALAPPDATA/hermes/node/node.exe，install.ps1 同款回退；MSYS PATH 需要 /c/ 形式，
+# Windows 形式的 C:\... 追加进 PATH 会被 which 忽略——本机实证）。
+TS_NODE=""
+if command -v node >/dev/null 2>&1; then TS_NODE="node"; fi
+TS_NODE_MAJOR=0
+if [ -n "$TS_NODE" ]; then
+  TS_NODE_MAJOR="$("$TS_NODE" -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
+  case "$TS_NODE_MAJOR" in ''|*[!0-9]*) TS_NODE_MAJOR=0 ;; esac
+fi
+if [ "$TS_NODE_MAJOR" -lt 22 ] && command -v cygpath >/dev/null 2>&1; then
+  # cygpath 转换失败/空值防御（与 NODE_SMOKE 同口径，r2 必修项③）：输出必须非空且以 / 开头
+  HERMES_NODE_DIR="$(cygpath -u "$LOCALAPPDATA/hermes/node" 2>/dev/null || true)"
+  case "$HERMES_NODE_DIR" in
+    /*) ;;
+    *) HERMES_NODE_DIR="" ;;
+  esac
+  if [ -n "$HERMES_NODE_DIR" ] && [ -x "$HERMES_NODE_DIR/node" ]; then
+    HERMES_MAJOR="$("$HERMES_NODE_DIR/node" -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
+    case "$HERMES_MAJOR" in ''|*[!0-9]*) HERMES_MAJOR=0 ;; esac
+    if [ "$HERMES_MAJOR" -ge 22 ] 2>/dev/null; then
+      TS_NODE="$HERMES_NODE_DIR/node"
+      TS_NODE_MAJOR="$HERMES_MAJOR"
+    fi
   fi
-  local url; url="$(to_file_url "$f")"
-  bun -e "import('$url').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })" >/dev/null 2>&1
+fi
+TS_ENGINE=""      # bun | node22
+TS_HOOK_MJS=""
+TS_RUN_MJS=""
+if command -v bun >/dev/null 2>&1; then
+  TS_ENGINE="bun"
+elif [ -n "$TS_NODE" ] && [ "$TS_NODE_MAJOR" -ge 22 ] 2>/dev/null; then
+  TS_ENGINE="node22"
+  TS_HOOK_MJS="$(mktemp /tmp/kilo-ts-smoke-hook-XXXXXX.mjs)"
+  cat > "$TS_HOOK_MJS" <<'TSHOOK'
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+// resolve：裸相对导入（如 ../lib/hx-client）依次补 .ts/.js 重试
+export async function resolve(specifier, context, next) {
+  if (specifier.startsWith(".") && !/\.[a-zA-Z0-9]+$/.test(specifier)) {
+    for (const cand of [specifier + ".ts", specifier + ".js"]) {
+      try { return await next(cand, context); } catch {}
+    }
+  }
+  return next(specifier, context);
+}
+// load：.ts 源码直接交给 node 原生 strip-types 转译（format: module）
+export async function load(url, context, next) {
+  if (url.endsWith(".ts")) {
+    const source = await readFile(fileURLToPath(url), "utf8");
+    return { format: "module", shortCircuit: true, source };
+  }
+  return next(url, context);
+}
+TSHOOK
+  TS_RUN_MJS="$(mktemp /tmp/kilo-ts-smoke-run-XXXXXX.mjs)"
+  cat > "$TS_RUN_MJS" <<'TSRUN'
+const { register } = await import("node:module");
+if (process.argv[2]) register(process.argv[2], import.meta.url);
+try {
+  await import(process.argv[3]);
+  process.exit(0);
+} catch (e) {
+  console.error(String((e && e.message) || e));
+  process.exit(1);
+}
+TSRUN
+fi
+ts_engine_warned=0
+ts_smoke_unavailable() { # $1 = 文件（仅告警一次，防 7 插件 × N 行刷屏）
+  if [ "$ts_engine_warned" = "0" ]; then
+    echo "[INSTALL] WARN: 无 bun 且无 node>=22 可用，跳过 TS 冒烟检查（$1 等 $DIFF_COUNT 项未经验证即下发）" >&2
+    ts_engine_warned=1
+  fi
+}
+smoke_ts() { # $1 = 源文件；返回 0=通过，2=无引擎（放行+告警），1=加载即崩
+  local f="$1" url
+  if [ -z "$TS_ENGINE" ]; then ts_smoke_unavailable "$f"; return 2; fi
+  url="$(to_file_url "$f")"
+  if [ "$TS_ENGINE" = "bun" ]; then
+    bun -e "import('$url').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })" >/dev/null 2>&1
+    return $?
+  fi
+  "$TS_NODE" "$TS_RUN_MJS" "$(to_file_url "$TS_HOOK_MJS")" "$url" >/dev/null 2>&1
+  return $?
 }
 
 # vE2 工厂模拟（仅 plugin/*.ts）：模拟 kilo.exe vE2/iE2/kE2——把每个导出函数（引用去重）
@@ -278,16 +382,14 @@ smoke_ts() { # $1 = 源文件
 # "plugin config hook failed"），必须拦下。
 # 写临时 .mjs 再跑：bun --eval 的 argv 传参/顶层 await 语义不可靠（2026-09-22 实测），
 # 文件形式与 install.ps1 同款、已验证。Map 迭代解构是 [fn, name]（键=函数引用，值=名字）。
-smoke_ts_ve2() { # $1 = 源文件
-  local f="$1"
-  if ! command -v bun >/dev/null 2>&1; then
-    echo "[INSTALL] WARN: bun 不可用，跳过 vE2 工厂模拟（$f）" >&2
-    return 0
-  fi
-  local url tmpmjs rc
+# node22 引擎：vE2 脚本先 register hook 再 import 目标（目标 .ts 的裸相对导入也要过 hook）。
+smoke_ts_ve2() { # $1 = 源文件；返回值语义与 smoke_ts 相同
+  local f="$1" url tmpmjs rc
+  if [ -z "$TS_ENGINE" ]; then ts_smoke_unavailable "$f"; return 2; fi
   url="$(to_file_url "$f")"
-  tmpmjs="$(mktemp /tmp/kilo-ve2-smoke-XXXXXX.mjs)"
-  cat > "$tmpmjs" <<'VE2JS'
+  if [ "$TS_ENGINE" = "bun" ]; then
+    tmpmjs="$(mktemp /tmp/kilo-ve2-smoke-XXXXXX.mjs)"
+    cat > "$tmpmjs" <<'VE2JS'
 const target = process.argv[2];
 const mod = await import(target);
 const fnByRef = new Map();
@@ -313,21 +415,82 @@ for (const [fn, name] of fnByRef) {
   }
 }
 VE2JS
-  bun "$tmpmjs" "$url" >/dev/null 2>&1
+    bun "$tmpmjs" "$url" >/dev/null 2>&1
+    rc=$?
+    rm -f "$tmpmjs"
+    return $rc
+  fi
+  tmpmjs="$(mktemp /tmp/kilo-ve2-smoke-XXXXXX.mjs)"
+  cat > "$tmpmjs" <<'VE2JS'
+const { register } = await import("node:module");
+register(process.argv[3], import.meta.url);
+const target = process.argv[2];
+const mod = await import(target);
+const fnByRef = new Map();
+for (const [k, v] of Object.entries(mod)) {
+  if (typeof v !== "function") {
+    if (v && typeof v === "object" && typeof v.server === "function") {
+      console.error("object export \"" + k + "\" contains a server function - kE2 would call it as a factory -> startup crash");
+      process.exit(1);
+    }
+    continue;
+  }
+  if (!fnByRef.has(v)) fnByRef.set(v, k);
+}
+if (fnByRef.size !== 1) {
+  console.error("expected exactly 1 distinct function export (the factory), got " + fnByRef.size + ": " + [...fnByRef.values()].join(", ") + " - vE2 registers/calls each as a plugin -> startup crash");
+  process.exit(1);
+}
+for (const [fn, name] of fnByRef) {
+  const r = await fn({ directory: "/kilo-smoke-nonexistent", client: {}, $: undefined }, undefined);
+  if (r === null || r === undefined || typeof r !== "object") {
+    console.error("factory \"" + name + "\" called with (ctx,options) returned " + String(r) + " (non-object) - pollutes hook registry -> startup crash");
+    process.exit(1);
+  }
+}
+VE2JS
+  "$TS_NODE" "$tmpmjs" "$url" "$(to_file_url "$TS_HOOK_MJS")" >/dev/null 2>&1
   rc=$?
   rm -f "$tmpmjs"
   return $rc
 }
 
 # provider dist 冒烟：dist/index.js 是 server 启动时加载的模块，语法错/半写同样让 provider 注册失败。
-smoke_provider_js() { # $1 = 源文件
+# 引擎与 install.ps1 对等：PATH node 可能是 v14（缺 TransformStream/Headers 全局，冒烟必炸
+# "TransformStream is not defined"——本机实证；dist 本身在 node18+/bun/kilo 运行时全部正常）。
+# 探测次序：PATH node 能力自检（Web Streams 全局）→ hermes node22 兜底 → 告警放行（软门禁）。
+NODE_SMOKE=""
+if command -v node >/dev/null 2>&1; then
+  if node -e "process.exit(typeof TransformStream === 'function' && typeof Headers === 'function' ? 0 : 1)" >/dev/null 2>&1; then
+    NODE_SMOKE="node"
+  fi
+fi
+if [ -z "$NODE_SMOKE" ] && command -v cygpath >/dev/null 2>&1; then
+  # cygpath 转换失败/空值防御（dual-review r2 必修项③）：输出必须非空且以 / 开头
+  # （合法 MSYS 路径），否则跳过 hermes 兜底走软门禁告警，不执行异常命令
+  HERMES_NODE_BIN="$(cygpath -u "$LOCALAPPDATA/hermes/node/node.exe" 2>/dev/null || true)"
+  case "$HERMES_NODE_BIN" in
+    /*) ;;
+    *) HERMES_NODE_BIN="" ;;
+  esac
+  if [ -n "$HERMES_NODE_BIN" ] && [ -x "$HERMES_NODE_BIN" ] \
+     && "$HERMES_NODE_BIN" -e "process.exit(typeof TransformStream === 'function' && typeof Headers === 'function' ? 0 : 1)" >/dev/null 2>&1; then
+    NODE_SMOKE="$HERMES_NODE_BIN"
+  fi
+fi
+smoke_provider_js() { # $1 = 源文件；返回 0=通过/降级放行，1=硬失败
   local f="$1"
-  if ! command -v node >/dev/null 2>&1; then
-    echo "[INSTALL] WARN: node 不可用，跳过 provider dist 冒烟检查（$f）" >&2
-    return 0
+  if [ -z "$NODE_SMOKE" ]; then
+    # r3 必修项②（安全降级分支，与 install.ps1 对等）：引擎不可用时不再无条件软放行——
+    # 指纹 MATCH（构建期已冒烟+内容锚定）则降级放行；无指纹/失配则硬失败拒绝盲下发。
+    if [ "$DIST_FP_OK" = "1" ]; then
+      return 0
+    fi
+    echo "[INSTALL] FAIL: provider dist 无 node>=18 冒烟引擎且指纹未锚定（无指纹/失配），拒绝盲下发：$f —— 在 provider/hx-failover 跑 npm run build 重建后再下发" >&2
+    return 1
   fi
   local url; url="$(to_file_url "$f")"
-  node --input-type=module -e "import('$url').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })" >/dev/null 2>&1
+  "$NODE_SMOKE" --input-type=module -e "import('$url').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })" >/dev/null 2>&1
 }
 
 # 预检：任何写入之前完成全量冒烟，否则第 N 个失败时前 N-1 个已落盘 → 半套部署。
@@ -360,9 +523,13 @@ while IFS=$'\t' read -r src dst; do
   case "$src" in
     */plugin/*.ts|*/lib/*.ts)
       # 注意 set -e：smoke_ts 失败会退出 subshell 之外的当前 shell，故用 if 显式接住
+      # 返回 2 = 无引擎（已告警一次），按放行处理；0 = 通过；1 = 加载即崩
       if ! smoke_ts "$src"; then
-        echo "[INSTALL] FAIL: 插件冒烟加载失败，已中止下发（未写入任何文件）：$src" >&2
-        exit 1
+        rc=$?
+        if [ "$rc" != "2" ]; then
+          echo "[INSTALL] FAIL: 插件冒烟加载失败，已中止下发（未写入任何文件）：$src" >&2
+          exit 1
+        fi
       fi ;;
   esac
   case "$src" in
@@ -370,8 +537,11 @@ while IFS=$'\t' read -r src dst; do
       # vE2 工厂模拟（真根因防线）：每个导出函数都会被 Kilo 当工厂调用，
       # 抛错/返回非对象 = 启动崩溃级缺陷，必须在此拦下
       if ! smoke_ts_ve2 "$src"; then
-        echo "[INSTALL] FAIL: vE2 工厂模拟失败（存在裸导出工具函数或工厂返回非对象），已中止下发：$src" >&2
-        exit 1
+        rc=$?
+        if [ "$rc" != "2" ]; then
+          echo "[INSTALL] FAIL: vE2 工厂模拟失败（存在裸导出工具函数或工厂返回非对象），已中止下发：$src" >&2
+          exit 1
+        fi
       fi ;;
   esac
   case "$src" in
@@ -470,7 +640,12 @@ if [ "$CHECK" = "1" ]; then
   if [ "$CHANGED" -gt 0 ] || [ "$STRAYS" -gt 0 ]; then
     echo ""
     echo "[check] 漂移：内容差异 $CHANGED 处 + 多余文件 $STRAYS 个 —— 执行 ./install.sh 同步（多余文件需人工确认后删除）。"
+    [ -n "$TS_HOOK_MJS" ] && rm -f "$TS_HOOK_MJS"
+    [ -n "$TS_RUN_MJS" ] && rm -f "$TS_RUN_MJS"
     exit 1
   fi
 fi
+# TS 冒烟引擎临时文件清理（mktemp 在 /tmp，残留无害但显式回收；exit 1 路径不经过这里属已知）
+[ -n "$TS_HOOK_MJS" ] && rm -f "$TS_HOOK_MJS"
+[ -n "$TS_RUN_MJS" ] && rm -f "$TS_RUN_MJS"
 exit 0

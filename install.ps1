@@ -93,12 +93,34 @@ foreach ($raw in Get-Content $Manifest) {
     }
 }
 
-# ---------- provider dist 新鲜度：src 比 dist 新说明忘跑 build，部署的会是旧行为 ----------
+# ---------- provider dist 新鲜度（内容指纹版，2026-09-28；与 install.sh 对等） ----------
+# 旧版用 mtime 对比「src 比 dist 新」，但 git checkout/还原会同步两侧 mtime（本机实证
+# 同秒落地），毫秒级精度即误报。改为内容锚定：build.mjs 在 dist 首行嵌入
+# `// kilo-build: src-sha256=<hash(src/index.js)>`，此处提取比对——不依赖文件时间。
+# 边界口径（dual-review 必修项②）：仅扫首行；严格锚定整行（前缀+64位hex+行尾即结束），
+# BOM/CR/首行人工改动/旧版无指纹产物 一律归入「无指纹」类警告（提示重建或人工确认），
+# 与「指纹失配」（src 已改未重建）两类分开报告，不混淆。
+# 指纹状态（r3 必修项②安全降级分支）：$distFpOk = 指纹存在且 MATCH——冒烟引擎不可用时，
+# 指纹 MATCH 是 dist 内容已验证的唯一替代证据（构建时冒烟+指纹锚定）；失配/无指纹且
+# 无引擎 → 硬失败（不允许无验证下发内容未锚定的 dist）。
+$distFpOk = $false
 $srcJs  = Join-Path $ScriptDir 'provider/hx-failover/src/index.js'
 $distJs = Join-Path $ScriptDir 'provider/hx-failover/dist/index.js'
-if ((Test-Path $srcJs) -and (Test-Path $distJs) -and ((Get-Item $srcJs).LastWriteTime -gt (Get-Item $distJs).LastWriteTime)) {
-    Write-Warning "[INSTALL] WARN: provider src/index.js 比 dist/index.js 新 —— 先在 provider/hx-failover 跑 npm run build 再下发"
-    if ($Check) { Write-Error "[check] 漂移：provider dist 过期（src 已改未重建）"; exit 1 }
+if ((Test-Path $srcJs) -and (Test-Path $distJs)) {
+    $srcHash = (Get-FileHash -Algorithm SHA256 -Path $srcJs).Hash.ToLower()
+    # 剥 BOM + 截断 CR（Get-Content 已按行分割，此处再防首行尾随 CR 残留）
+    $firstLine = (Get-Content -LiteralPath $distJs -TotalCount 1) -replace '^\uFEFF', '' -replace "`r$", ''
+    # 严格整行匹配：^// kilo-build: src-sha256=<64hex>（末尾不得有其他字符）
+    $m = [regex]::Match($firstLine, '^//\s*kilo-build:\s*src-sha256=([0-9a-f]{64})\s*$')
+    if (-not $m.Success) {
+        Write-Warning "[INSTALL] WARN: provider dist/index.js 首行无有效构建指纹（旧版产物/首行被改动）—— 在 provider/hx-failover 跑 npm run build 重建后再下发"
+        if ($Check) { Write-Error "[check] 漂移：provider dist 缺构建指纹"; exit 1 }
+    }
+    elseif ($m.Groups[1].Value -ne $srcHash) {
+        Write-Warning "[INSTALL] WARN: provider src/index.js 已改但 dist 指纹不匹配 —— 先在 provider/hx-failover 跑 npm run build 再下发"
+        if ($Check) { Write-Error "[check] 漂移：provider dist 过期（src 已改未重建）"; exit 1 }
+    }
+    else { $distFpOk = $true }
 }
 
 # 渲染内容（含占位符替换 + 模板注释剥离）
@@ -174,6 +196,10 @@ foreach ($p in $pairs) {
 # 式加载失败）——因此 lib/ 只作共享依赖目录，plugin/ 只放真正的插件入口。
 $bunCmd = Get-Command bun -ErrorAction SilentlyContinue
 $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+# 冒烟引擎选择（2026-09-28）：TS 冒烟不再「bun 独占、缺失即跳过」——bun 缺失会让全部
+# plugin/*.ts 未验证即下发（本机 7 条警告实证）。node>=22 原生可跑 TS（--experimental-strip-types
+# 稳定化），但 import '../lib/hx-client' 无扩展名时解析不到 .ts，需要 register loader hook
+# 补全扩展名（与 Kilo/bun 的解析语义对齐）。引擎优先级：bun → node>=22+hook → 放行告警。
 # dist 冒烟需要 node>=18（Web Streams 全局：TransformStream/Headers/TextDecoderStream）。
 # 默认 PATH 上的 node 可能是老版本（本机实证 v14 冒烟必炸 "TransformStream is not defined"，
 # 而 dist 本身在 node18+/bun/kilo 运行时全部正常）——探测失败则回退 hermes node22。
@@ -194,8 +220,63 @@ foreach ($cand in @($nodePath, (Join-Path $env:LOCALAPPDATA "hermes\node\node.ex
 if ($nodeCmd -and -not $nodeSmokeCmd) {
     Write-Warning "[INSTALL] 无 node>=18 可用（PATH node 与 hermes 均缺 Web Streams 全局），dist 冒烟跳过"
 }
-# vE2 模拟脚本（写入临时 .mjs 再用 bun 跑——inline -e 传参时 PowerShell 会吃掉 JS 里的
-# 双引号，导致语法错；文件形式彻底规避引号转义问题）。
+# TS 冒烟引擎：bun 可用则用 bun（原生 TS + 宽松解析，历史路径）；
+# 否则用 node>=22 + register loader hook（无扩展名相对导入解析到 .ts/.js）。
+# 两引擎同一断言语义（import 不抛 + vE2 工厂模拟），脚本本体共用（见 $ve2SmokeMjs）。
+# node<22 无 TS 支持会语法崩，故 TS 引擎复用 dist 冒烟的探测结果之外还需 >=22。
+$tsSmokeCmd = $null; $tsSmokeKind = $null; $tsSmokeHookUrl = $null
+if ($bunCmd) { $tsSmokeCmd = 'bun'; $tsSmokeKind = 'bun' }
+elseif ($nodeSmokeCmd) {
+    $vMajor = 0
+    $verOut = (& $nodeSmokeCmd -p "process.versions.node.split('.')[0]" 2>$null) -as [string]
+    if ($LASTEXITCODE -eq 0 -and $verOut -match '^\d+$') { $vMajor = [int]$verOut }
+    if ($vMajor -ge 22) {
+        # loader hook：无扩展名相对导入补 .ts 再解析（node 严格解析器找不到 '../lib/hx-client'，
+        # Kilo/bun 能——hook 拉平语义）。hook 写入临时 .mjs，register() 形式挂载。
+        $hookPath = Join-Path ([System.IO.Path]::GetTempPath()) "kilo-ts-smoke-hook-$PID.mjs"
+        Set-Content -LiteralPath $hookPath -Encoding UTF8 -Value @'
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+// resolve：裸相对导入（如 ../lib/hx-client）依次补 .ts/.js 重试
+export async function resolve(specifier, context, next) {
+  if (specifier.startsWith(".") && !/\.[a-zA-Z0-9]+$/.test(specifier)) {
+    for (const cand of [specifier + ".ts", specifier + ".js"]) {
+      try { return await next(cand, context); } catch {}
+    }
+  }
+  return next(specifier, context);
+}
+// load：.ts 源码直接交给 node 原生 strip-types 转译（format: module）
+export async function load(url, context, next) {
+  if (url.endsWith(".ts")) {
+    const source = await readFile(fileURLToPath(url), "utf8");
+    return { format: "module", shortCircuit: true, source };
+  }
+  return next(url, context);
+}
+'@
+        $tsSmokeCmd = $nodeSmokeCmd; $tsSmokeKind = 'node22'
+        $tsSmokeHookUrl = 'file:///' + ($hookPath -replace '\\', '/')
+    }
+}
+# TS 冒烟统一运行器（node22 用）：register hook 后 import 目标；bun 直接 -e import。
+# runner 与 vE2 模拟脚本都走临时 .mjs 文件形式——inline -e 传参时 PowerShell 会吃掉 JS 里
+# 的双引号导致语法错（2026-09-22 实证），文件形式彻底规避引号转义问题。
+$tsSmokeRunMjs = Join-Path ([System.IO.Path]::GetTempPath()) "kilo-ts-smoke-run-$PID.mjs"
+if ($tsSmokeKind -eq 'node22') {
+    Set-Content -LiteralPath $tsSmokeRunMjs -Encoding UTF8 -Value @'
+const { register } = await import("node:module");
+if (process.argv[2]) register(process.argv[2], import.meta.url);
+try {
+  await import(process.argv[3]);
+  process.exit(0);
+} catch (e) {
+  console.error(String((e && e.message) || e));
+  process.exit(1);
+}
+'@
+}
+# vE2 模拟脚本（bun / node22 共用）。
 $ve2SmokeMjs = @'
 // 模拟 kilo.exe vE2/iE2：模块里每个导出函数（引用去重）都被当插件工厂用 (ctx, options) 调用。
 // 契约：全模块恰好 1 个不同函数导出引用（工厂），调用不抛且返回对象；
@@ -226,51 +307,73 @@ for (const [fn, name] of fnByRef) {
   }
 }
 '@
+# 通用 TS 冒烟执行器：成功返回 $true；vE2 模式传 -Ve2。
+function Invoke-TsSmoke([string]$FileUrl, [switch]$Ve2) {
+    if ($tsSmokeKind -eq 'bun') {
+        if ($Ve2) {
+            $tmpMjs = Join-Path ([System.IO.Path]::GetTempPath()) "kilo-ve2-smoke-$PID.mjs"
+            try {
+                Set-Content -LiteralPath $tmpMjs -Value $ve2SmokeMjs -Encoding UTF8
+                $null = & bun $tmpMjs $FileUrl 2>&1
+                return ($LASTEXITCODE -eq 0)
+            } finally { Remove-Item -LiteralPath $tmpMjs -Force -ErrorAction SilentlyContinue }
+        }
+        $smokeJs = "import('$FileUrl').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })"
+        $null = & bun -e $smokeJs 2>&1
+        return ($LASTEXITCODE -eq 0)
+    }
+    elseif ($tsSmokeKind -eq 'node22') {
+        if ($Ve2) {
+            $tmpMjs = Join-Path ([System.IO.Path]::GetTempPath()) "kilo-ve2-smoke-$PID.mjs"
+            try {
+                # vE2 脚本自身 import target 也要过 hook（目标可能是 .ts 入口）
+                $ve2WithHook = "const { register } = await import(`"node:module`");`nregister(process.argv[3], import.meta.url);`n" + ($ve2SmokeMjs -replace 'const target = process\.argv\[2\];', 'const target = process.argv[2];')
+                Set-Content -LiteralPath $tmpMjs -Value $ve2WithHook -Encoding UTF8
+                $null = & $tsSmokeCmd $tmpMjs $FileUrl $tsSmokeHookUrl 2>&1
+                return ($LASTEXITCODE -eq 0)
+            } finally { Remove-Item -LiteralPath $tmpMjs -Force -ErrorAction SilentlyContinue }
+        }
+        $null = & $tsSmokeCmd $tsSmokeRunMjs $tsSmokeHookUrl $FileUrl 2>&1
+        return ($LASTEXITCODE -eq 0)
+    }
+    return $null  # 无引擎
+}
 foreach ($w in $toWrite) {
     if ($w.Src -match '[\\/]plugin[\\/].*\.ts$') {
-        if ($bunCmd) {
+        if ($tsSmokeKind) {
             $fileUrl = 'file:///' + ($w.Src -replace '\\', '/')
             # ① import 冒烟
-            $smokeJs = "import('$fileUrl').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })"
-            $null = & bun -e $smokeJs 2>&1
-            if ($LASTEXITCODE -ne 0) {
+            if (-not (Invoke-TsSmoke $fileUrl)) {
                 Write-Error "[INSTALL] FAIL: 插件冒烟加载失败（import 抛错），已中止下发（未写入任何文件；该文件会导致 kilo server 启动崩溃）：$($w.Src)"
                 exit 1
             }
             # ② vE2 工厂模拟（真根因防线：裸导出工具函数会在此现形）
-            $tmpMjs = Join-Path ([System.IO.Path]::GetTempPath()) "kilo-ve2-smoke-$PID.mjs"
-            try {
-                Set-Content -LiteralPath $tmpMjs -Value $ve2SmokeMjs -Encoding UTF8
-                $null = & bun $tmpMjs $fileUrl 2>&1
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Error "[INSTALL] FAIL: vE2 工厂模拟失败（裸导出工具函数或工厂返回非对象），已中止下发（未写入任何文件）：$($w.Src)"
-                    exit 1
-                }
-            } finally {
-                Remove-Item -LiteralPath $tmpMjs -Force -ErrorAction SilentlyContinue
+            if (-not (Invoke-TsSmoke $fileUrl -Ve2)) {
+                Write-Error "[INSTALL] FAIL: vE2 工厂模拟失败（裸导出工具函数或工厂返回非对象），已中止下发（未写入任何文件）：$($w.Src)"
+                exit 1
             }
         }
         else {
-            Write-Warning "[INSTALL] WARN: bun 不可用，跳过插件冒烟检查（$($w.Src) 未经验证即下发）"
+            Write-Warning "[INSTALL] WARN: 无 bun 且无 node>=22 可用，跳过插件冒烟检查（$($w.Src) 未经验证即下发）"
         }
     }
     elseif ($w.Src -match '[\\/]lib[\\/].*\.ts$') {
-        if ($bunCmd) {
+        if ($tsSmokeKind) {
             $fileUrl = 'file:///' + ($w.Src -replace '\\', '/')
-            $smokeJs = "import('$fileUrl').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })"
-            $null = & bun -e $smokeJs 2>&1
-            if ($LASTEXITCODE -ne 0) {
+            if (-not (Invoke-TsSmoke $fileUrl)) {
                 Write-Error "[INSTALL] FAIL: 共享库冒烟加载失败，已中止下发（未写入任何文件）：$($w.Src)"
                 exit 1
             }
         }
         else {
-            Write-Warning "[INSTALL] WARN: bun 不可用，跳过共享库冒烟检查（$($w.Src)）"
+            Write-Warning "[INSTALL] WARN: 无 bun 且无 node>=22 可用，跳过共享库冒烟检查（$($w.Src)）"
         }
     }
 
     # provider dist 冒烟：hx-failover dist/index.js 是 server 启动时加载的模块，
     # 语法错/半写文件同样会让整个 provider 注册失败。node 真加载一遍。
+    # r3 必修项②（安全降级分支）：引擎不可用时不再无条件软放行——指纹 MATCH（内容
+    # 构建期已锚定+冒烟过）则放行，否则硬失败：不允许无验证下发内容未锚定的 dist。
     if ($w.Src -match '[\\/]provider[\\/]hx-failover[\\/]dist[\\/].*\.m?js$') {
         if ($nodeSmokeCmd) {
             $fileUrl = 'file:///' + ($w.Src -replace '\\', '/')
@@ -281,8 +384,12 @@ foreach ($w in $toWrite) {
                 exit 1
             }
         }
+        elseif ($distFpOk) {
+            # 安全降级：无 node>=18 引擎，但指纹 MATCH（构建时已冒烟+内容锚定），可下发
+        }
         else {
-            Write-Warning "[INSTALL] WARN: 无 node>=18 可用，跳过 provider dist 冒烟检查（$($w.Src)）"
+            Write-Error "[INSTALL] FAIL: provider dist 无 node>=18 冒烟引擎且指纹未锚定（无指纹/失配），拒绝盲下发：$($w.Src) —— 在 provider/hx-failover 跑 npm run build 重建后再下发"
+            exit 1
         }
     }
 }
@@ -430,5 +537,11 @@ if ($Check -and ($changed -gt 0 -or $strayList.Count -gt 0)) {
     Write-Host ''
     Write-Host "[check] 漂移：内容差异 $changed 处 + 多余文件 $($strayList.Count) 个 —— 执行 .\install.ps1 同步（多余文件需人工确认后删除）。"
     exit 1
+}
+
+# TS 冒烟引擎的临时文件清理（hook / runner；exit 路径残留无害——下次运行覆盖同 PID 名）
+if ($tsSmokeKind -eq 'node22' -and $tsSmokeHookUrl) {
+    Remove-Item -LiteralPath ($tsSmokeHookUrl -replace '^file:///', '' -replace '/', '\') -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $tsSmokeRunMjs -Force -ErrorAction SilentlyContinue
 }
 exit 0

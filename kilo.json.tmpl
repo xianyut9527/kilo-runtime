@@ -84,6 +84,13 @@
   "agent": {
     "code": {
       "model": "hx/glm-5.3-flash",
+      // 一次输出质量杠杆（2026-09-28）：主执行槽钉 high。此前未设 variant（走上游默认
+      // 推理档），深思考不足 → 首过质量不稳 → 返工循环。口径与 plan/verify 的
+      // 「深思考位钉 high」一致（85k+ 长输入 183 条零失败的正分母数据）；
+      // kimi@max 长输入猝死负数据不适用本槽（glm 族 + reasoningGate 死亡自动扩预算
+      // 重试兜底）。性能代价＝首字间隔变长（思考期），质量优先口径下接受；
+      // 若实测体感过慢，回退＝删掉本行（回上游默认）。
+      "variant": "high",
     },
     "plan": {
       "model": "hx/kimi-k2.6",
@@ -381,7 +388,7 @@
       "npm": "file:///__KILO_CONFIG__/provider/hx-failover",
       "options": {
         // 上游 OpenAI 兼容端点
-        "baseURL": "http://127.0.0.1:9527/v1",
+        "baseURL": "https://llamas.nat100.top/v1",
         // MoA/dual_review 分析调用总时长上限（kilo.json options.timeout 唯一消费方 = 这两个工具）。
         // ⚠️ 主模型循环不消费本键（provider/hx-failover 不读它，2026-09-21 DB 实证：
         // 27 例 >120s 的 step-finish 正常完成，120s 从未生效于主链路；主链路只有 chunkTimeout 空闲看门狗）。

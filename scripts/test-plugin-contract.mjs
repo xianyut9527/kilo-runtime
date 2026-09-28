@@ -21,10 +21,40 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-// node 不能直接 import .ts（无 loader 时 7 条断言会假失败），必须用 bun 运行。
-if (typeof Bun === "undefined") {
-  console.error("需要 bun 运行（node 无法直接 import .ts，会产生假失败）：bun scripts/test-plugin-contract.mjs");
+// 引擎自适应（2026-09-28）：bun 直接跑 TS；node>=22 用 register loader hook 拉平语义
+// （裸相对导入 '../lib/hx-client' 补 .ts 解析 + .ts 源码走原生 strip-types）。
+// node<22 无 TS 支持，会 7 条断言假失败——仍提示装 bun。
+const nodeMajor = Number(process.versions.node.split(".")[0]);
+if (typeof Bun === "undefined" && nodeMajor < 22) {
+  console.error("需要 bun 运行（node<22 无法直接 import .ts，会产生假失败）：bun scripts/test-plugin-contract.mjs");
   process.exit(2);
+}
+if (typeof Bun === "undefined") {
+  const { register } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+  const { writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const hookPath = join(tmpdir(), `kilo-contract-hook-${process.pid}.mjs`);
+  await writeFile(hookPath, `import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+export async function resolve(specifier, context, next) {
+  if (specifier.startsWith(".") && !/\\.[a-zA-Z0-9]+$/.test(specifier)) {
+    for (const cand of [specifier + ".ts", specifier + ".js"]) {
+      try { return await next(cand, context); } catch {}
+    }
+  }
+  return next(specifier, context);
+}
+export async function load(url, context, next) {
+  if (url.endsWith(".ts")) {
+    const source = await readFile(fileURLToPath(url), "utf8");
+    return { format: "module", shortCircuit: true, source };
+  }
+  return next(url, context);
+}
+`, "utf8");
+  register(pathToFileURL(hookPath), import.meta.url);
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
