@@ -1,8 +1,10 @@
-// 断路器离线验证 v6：断路器全生命周期 + 三轮审查必须项场景。
+// 断路器离线验证 v7：断路器全生命周期 + 三轮审查必须项场景。
 // v6 新增：跨代迟到成功/失败不污染 half-open、open 态迟到过载不刷新冷却。
+// v7 新增（2026-09-28 查漏补缺）：404 NO_ROUTE_CANDIDATE 与 503 "no active channel
+// candidate" 变体均为确定性渠道故障——单次即抛、不重试、不进退避、不 trip（42 断言全绿为过）。
 // 运行：node --experimental-strip-types scripts/test-circuit-breaker.mjs
 // （直接动态 import lib/hx-client.ts，靠 ?r= 查询串击穿 ESM 缓存取得全新断路器状态；
-//   网络层打桩，不联网、不起 Kilo，36 断言全绿为过）
+//   网络层打桩，不联网、不起 Kilo）
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -40,6 +42,8 @@ function makeFetch() {
     fetchCalls++;
     if (fetchMode === "overload") return { ok: false, status: 503, text: async () => "system cpu overloaded" };
     if (fetchMode === "nochan") return { ok: false, status: 503, text: async () => JSON.stringify({ error: { code: "model_not_found", message: "No available channel for model glm-5.2 under group svip (distributor)" } }) };
+    if (fetchMode === "nochan503b") return { ok: false, status: 503, text: async () => JSON.stringify({ code: "NO_ROUTE_CANDIDATE", msg: "no active channel candidate for model (protocol=openai)", data: null }) };
+    if (fetchMode === "nochan404") return { ok: false, status: 404, text: async () => JSON.stringify({ code: "NO_ROUTE_CANDIDATE", msg: "no active channel candidate for model (protocol=openai)", data: null }) };
     if (fetchMode === "neterr") throw new Error("ECONNRESET");
     if (fetchMode === "throw") throw new Error("SYNC_THROW_BEFORE_PARSE");
     const enc = new TextEncoder();
@@ -340,6 +344,38 @@ const tripCircuit = async (ask) => {
   fetchMode = "overload";
   await tripCircuit(ask);
   assert("渠道故障后过载保护不受影响（trip 正常）", circuitState() === "open");
+}
+
+// 14. 404 NO_ROUTE_CANDIDATE 渠道不可用回归（2026-09-28 查漏补缺，provider 侧同批）：
+//     生产实证形态（glm-5.3-flash 渠道下线期网关回 404 + NO_ROUTE_CANDIDATE）。
+//     hx-client 经 NON_RETRYABLE_STATUS(404) 确定性失败——单次即抛、不重试、不 trip。
+//     墙钟断言用 realNow（场景内 Date.now 假时钟冻结，会掩盖真实退避睡眠）。
+{
+  const { ask, circuitState } = await freshLoad(15);
+  fetchMode = "nochan404";
+  fetchCalls = 0;
+  const t0 = realNow();
+  let err14 = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "glm-5.3-flash", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 3 }); } catch (e) { err14 = e; }
+  assert("404 渠道不可用单次失败即抛（不重试）", err14?.statusCode === 404 && fetchCalls === 1);
+  assert("404 渠道不可用不 trip 断路器（保持 closed）", circuitState() === "closed");
+  assert("404 渠道不可用快速失败（真实墙钟 <1s）", (realNow() - t0) < 1000);
+}
+
+// 15. 503 + "no active channel candidate" 变体（2026-09-28 口径对齐回归）：
+//     同一 NO_ROUTE_CANDIDATE 报文若以 503 返回——修复前 isOverloadErr 正则缺该文案 →
+//     误判过载：2s/6s 退避 + 3 连空转（~8s）+ 断路器计数；修复后与 model_not_found 同
+//     语义：单次即抛、不进退避、不 trip。
+{
+  const { ask, circuitState } = await freshLoad(16);
+  fetchMode = "nochan503b";
+  fetchCalls = 0;
+  const t0 = realNow();
+  let err15 = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "glm-5.3-flash", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 3 }); } catch (e) { err15 = e; }
+  assert("503 渠道变体单次失败即抛（不 3 连空转）", err15?.statusCode === 503 && fetchCalls === 1);
+  assert("503 渠道变体不 trip 断路器（保持 closed）", circuitState() === "closed");
+  assert("503 渠道变体不进退避（真实墙钟 <1s）", (realNow() - t0) < 1000);
 }
 
 Date.now = realNow;

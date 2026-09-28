@@ -434,6 +434,29 @@ function isCancellation(err) {
   return code === "ABORT_ERR";
 }
 
+// 渠道/模型不可用报文匹配（2026-09-28 dual-review 必修项：原 isRetryable 与
+// isChannelUnavailable 各自硬编码同一组正则，口径漂移风险高——抽离共享常量统一引用）。
+// 503 家族：new-api 网关对未配渠道/下线的统一报文（"No available channel for model X
+// under group svip" / model_not_found / model not available）。
+// 404 家族：NO_ROUTE_CANDIDATE / "no active channel candidate for model (protocol=openai)"
+// （生产实证 2026-09-28 07:29，glm-5.3-flash 渠道下线期）。
+const CHANNEL_UNAVAILABLE_503_RE = /model_not_found|no available channel|model.?not.?available|no active channel candidate/i;
+const CHANNEL_UNAVAILABLE_404_RE = /NO_ROUTE_CANDIDATE|no active channel candidate/i;
+// 报文来源拼接（dual-review 必修项：code 可能只在 body.code（不进 message）——
+// message、data.error.message、data.error.code、顶层 data.code、responseBody 五路并集匹配，
+// 任一携带渠道不可用签名即命中，避免单一字段缺失漏判。responseBody 兜底覆盖
+// SDK 未将 body 解析进 data 的形态（顶层 code/msg 而非嵌套 error——2026-09-28 9l 实证）。
+function channelUnavailableText(err) {
+  const parts = [
+    err?.message,
+    err?.data?.error?.message,
+    err?.data?.error?.code,
+    err?.data?.code,
+    err?.responseBody,
+  ];
+  return parts.filter((p) => p != null).map(String).join(" | ");
+}
+
 function isRetryable(err) {
   if (isCancellation(err)) return false;
   const status = err?.statusCode ?? err?.status ?? err?.response?.status;
@@ -441,7 +464,14 @@ function isRetryable(err) {
     // 2026-09-27 查漏补缺：503 + 渠道/模型不可用报文 = 确定性故障（渠道没配/下线），
     // 3 连重试纯空转 ~8s（2026-09-27 生产实测：glm-5.2 渠道下线期每次调用都慢 8s 才换 hop）。
     // 不重试直接换链上下一模型（报文由上游 new-api 网关统一格式）。
-    if (status === 503 && /model_not_found|no available channel|model.?not.?available/i.test(String(err?.message ?? err?.data?.error?.message ?? ""))) {
+    if (status === 503 && CHANNEL_UNAVAILABLE_503_RE.test(channelUnavailableText(err))) {
+      return false;
+    }
+    // 2026-09-28 查漏补缺：404 + NO_ROUTE_CANDIDATE（生产实证 2026-09-28 07:29：glm-5.3-flash
+    // 渠道下线期网关回 404 {"code":"NO_ROUTE_CANDIDATE","msg":"no active channel candidate for
+    // model (protocol=openai)"}）——与 503 兄弟报文同一根因（渠道未配/下线），渠道按模型隔离，
+    // 同样不重试直接换下一模型，而非 fatal 直通（直通会放弃整条链，用户直接看到裸报错）。
+    if (status === 404 && CHANNEL_UNAVAILABLE_404_RE.test(channelUnavailableText(err))) {
       return false;
     }
     // 2xx 状态的 API 错误只可能是「成功响应 body 处理失败」（真实 API 错误必带 4xx/5xx），
@@ -473,10 +503,15 @@ function isOverloadErr(err) {
 // 报文（生产实证 2026-09-27：glm-5.2 渠道下线期持续 "No available channel for model
 // glm-5.2 under group svip"）。渠道按模型隔离：只该跳过本 hop 换下一模型，
 // 绝不 trip 全链冷却（渠道不会因 60s 等待恢复，也不会连累健康渠道）。
+// 2026-09-28 补 404 变体：NO_ROUTE_CANDIDATE / "no active channel candidate for model
+// (protocol=openai)"（生产实证 2026-09-28 07:29，glm-5.3-flash 渠道下线期）。
+// 正则经共享常量与 isRetryable 统一口径（dual-review 必修项）。
 function isChannelUnavailable(err) {
   const status = err?.statusCode ?? err?.status;
-  if (status !== 503) return false;
-  return /model_not_found|no available channel|model.?not.?available/i.test(String(err?.message ?? err?.data?.error?.message ?? ""));
+  if (status !== 503 && status !== 404) return false;
+  const text = channelUnavailableText(err);
+  if (status === 404) return CHANNEL_UNAVAILABLE_404_RE.test(text);
+  return CHANNEL_UNAVAILABLE_503_RE.test(text);
 }
 
 // ── 流中断错误重包装（2026-09-15 断流专项）────────────────────────────

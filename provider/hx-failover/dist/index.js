@@ -1,4 +1,4 @@
-// kilo-build: src-sha256=480c2763a45ae9429512e92147c41543e24452964fc6d9e6579f8e847f2e20e0
+// kilo-build: src-sha256=8d63dad7889b35cd921e07269314a451855447f4d5b9f026e2a354cb34d966a9
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)
@@ -24121,7 +24121,7 @@ function combineHeaders(...headers) {
   return headers.reduce(
     (combinedHeaders, currentHeaders) => ({
       ...combinedHeaders,
-      ...currentHeaders != null ? currentHeaders : {}
+      ...currentHeaders
     }),
     {}
   );
@@ -24136,11 +24136,12 @@ function convertBase64ToUint8Array(base64String) {
   return Uint8Array.from(latin1string, (byte) => byte.codePointAt(0));
 }
 function convertUint8ArrayToBase64(array2) {
-  let latin1string = "";
-  for (let i = 0; i < array2.length; i++) {
-    latin1string += String.fromCodePoint(array2[i]);
+  const chunks = [];
+  const chunkSize = 4096;
+  for (let i = 0; i < array2.length; i += chunkSize) {
+    chunks.push(String.fromCodePoint(...array2.subarray(i, i + chunkSize)));
   }
-  return btoa2(latin1string);
+  return btoa2(chunks.join(""));
 }
 function convertToBase64(value) {
   return value instanceof Uint8Array ? convertUint8ArrayToBase64(value) : value;
@@ -24249,7 +24250,6 @@ function validateDownloadUrl(url2) {
         message: `URL with IP address ${hostname3} is not allowed`
       });
     }
-    return;
   }
 }
 function validateDownloadAddress({
@@ -24723,7 +24723,7 @@ function withUserAgentSuffix(headers, ...userAgentSuffixParts) {
   );
   return Object.fromEntries(normalizedHeaders.entries());
 }
-var VERSION = true ? "4.0.51" : "0.0.0-test";
+var VERSION = true ? "4.0.55" : "0.0.0-test";
 var suspectProtoRx = /"(?:_|\\u005[Ff])(?:_|\\u005[Ff])(?:p|\\u0070)(?:r|\\u0072)(?:o|\\u006[Ff])(?:t|\\u0074)(?:o|\\u006[Ff])(?:_|\\u005[Ff])(?:_|\\u005[Ff])"\s*:/;
 var suspectConstructorRx = /"(?:c|\\u0063)(?:o|\\u006[Ff])(?:n|\\u006[Ee])(?:s|\\u0073)(?:t|\\u0074)(?:r|\\u0072)(?:u|\\u0075)(?:c|\\u0063)(?:t|\\u0074)(?:o|\\u006[Ff])(?:r|\\u0072)"\s*:/;
 function _parse3(text) {
@@ -25009,7 +25009,7 @@ var zodPatterns = {
   /**
    * `a-z` was added to replicate /i flag
    */
-  email: /^(?!\.)(?!.*\.\.)([a-zA-Z0-9_'+\-\.]*)[a-zA-Z0-9_+-]@([a-zA-Z0-9][a-zA-Z0-9\-]*\.)+[a-zA-Z]{2,}$/,
+  email: /^(?!\.)(?!.*\.\.)([a-zA-Z0-9_'+\-.]*)[a-zA-Z0-9_+-]@([a-zA-Z0-9][a-zA-Z0-9-]*\.)+[a-zA-Z]{2,}$/,
   /**
    * Constructed a valid Unicode RegExp
    *
@@ -28084,7 +28084,7 @@ async function fileToBlob(file2) {
   const data = file2.data instanceof Uint8Array ? file2.data : convertBase64ToUint8Array(file2.data);
   return new Blob([data], { type: file2.mediaType });
 }
-var VERSION2 = true ? "2.0.75" : "0.0.0-test";
+var VERSION2 = true ? "2.0.79" : "0.0.0-test";
 function createOpenAICompatible(options) {
   const baseURL = withoutTrailingSlash(options.baseURL);
   const providerName = options.name;
@@ -28447,11 +28447,26 @@ function isCancellation(err) {
   const code = err?.code ?? err?.cause?.code;
   return code === "ABORT_ERR";
 }
+var CHANNEL_UNAVAILABLE_503_RE = /model_not_found|no available channel|model.?not.?available|no active channel candidate/i;
+var CHANNEL_UNAVAILABLE_404_RE = /NO_ROUTE_CANDIDATE|no active channel candidate/i;
+function channelUnavailableText(err) {
+  const parts = [
+    err?.message,
+    err?.data?.error?.message,
+    err?.data?.error?.code,
+    err?.data?.code,
+    err?.responseBody
+  ];
+  return parts.filter((p) => p != null).map(String).join(" | ");
+}
 function isRetryable(err) {
   if (isCancellation(err)) return false;
   const status = err?.statusCode ?? err?.status ?? err?.response?.status;
   if (typeof status === "number") {
-    if (status === 503 && /model_not_found|no available channel|model.?not.?available/i.test(String(err?.message ?? err?.data?.error?.message ?? ""))) {
+    if (status === 503 && CHANNEL_UNAVAILABLE_503_RE.test(channelUnavailableText(err))) {
+      return false;
+    }
+    if (status === 404 && CHANNEL_UNAVAILABLE_404_RE.test(channelUnavailableText(err))) {
       return false;
     }
     if (status >= 200 && status < 300) return true;
@@ -28470,8 +28485,10 @@ function isOverloadErr(err) {
 }
 function isChannelUnavailable(err) {
   const status = err?.statusCode ?? err?.status;
-  if (status !== 503) return false;
-  return /model_not_found|no available channel|model.?not.?available/i.test(String(err?.message ?? err?.data?.error?.message ?? ""));
+  if (status !== 503 && status !== 404) return false;
+  const text = channelUnavailableText(err);
+  if (status === 404) return CHANNEL_UNAVAILABLE_404_RE.test(text);
+  return CHANNEL_UNAVAILABLE_503_RE.test(text);
 }
 function isStreamBreakError(err) {
   if (isCancellation(err)) return false;

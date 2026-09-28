@@ -1,6 +1,16 @@
 // 用注入的假 fetch 驱动真实降级代码路径（不打真实网络）。
 // 目标：证明 doStream 在 hop0 失败时确实切到链上后继模型，并注入可见通知。
 // 用 import.meta.url 定位 dist：仓库可克隆到任意路径，不得写死绝对路径。
+// 引擎守卫：dist 内嵌 SDK 需要 TransformStream（node>=18）；本机 PATH 默认 node 若为
+// v14（无 TransformStream）会在 import dist 时炸 ReferenceError——提前给出可行动提示
+// 而不是裸堆栈（2026-09-28 实证：PATH node v14.17，套件必须用 nvm v22 跑）。
+if (typeof TransformStream === "undefined") {
+  console.error(
+    `hx-failover test: node ${process.version} 缺少 TransformStream（dist 内嵌 SDK 需要 node>=18）。` +
+      ` 请用 node>=18 运行本套件（本机可用 %APPDATA%\\nvm\\v22.14.0\\node.exe）。`,
+  );
+  process.exit(70); // EX_SOFTWARE：引擎不满足，非测试失败
+}
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp, readFile } from "node:fs/promises";
@@ -793,3 +803,99 @@ try { await gen9(p9i, "glm-5.3-flash"); } catch (e) { err9i = e; }
 const elapsed9i = Date.now() - t9i;
 console.log("9i attempts:", calls9i.join(", "), "| elapsed:", elapsed9i, "ms | err:", err9i?.statusCode);
 console.log("PASS all-channel-unavail-fast :", calls9i.length === 3 && err9i?.statusCode === 503 && /No available channel/.test(String(err9i?.message ?? err9i)) && elapsed9i < 500);
+
+// ── 回归 9j：404 NO_ROUTE_CANDIDATE 渠道不可用（2026-09-28 查漏补缺）──────────
+// 生产实证（2026-09-28 07:29）：glm-5.3-flash 渠道下线期网关回
+// 404 {"code":"NO_ROUTE_CANDIDATE","msg":"no active channel candidate for model (protocol=openai)"}
+// ——旧行为：isChannelUnavailable 只认 503 → 404 走 fatal 直通，用户看到裸报错且
+// 放弃整条链（本会话 07:29 实证 action=fatal 直接抛出）。
+// 新行为：与 503 兄弟报文同语义——不重试立即换下一 hop（channel_fallback），全链不可用快速失败。
+let calls9j = [];
+const fakeFetch9j = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls9j.push(model);
+  if (model === "glm-5.3-flash") {
+    return new Response(JSON.stringify({ error: { code: "NO_ROUTE_CANDIDATE", message: "no active channel candidate for model (protocol=openai)" } }), {
+      status: 404, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p9j = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9j,
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+});
+const t9j = Date.now();
+const out9j = await gen9(p9j, "glm-5.3-flash"); // 主模型 404 渠道不可用 → 零重试直接换链
+const elapsed9j = Date.now() - t9j;
+console.log("");
+console.log("9j attempts:", calls9j.join(", "), "| elapsed:", elapsed9j, "ms");
+console.log("PASS route404-fallback-no-retry:", JSON.stringify(calls9j) === JSON.stringify(["glm-5.3-flash", "kimi-k2.6"]) && out9j.includes("[ok kimi-k2.6]") && elapsed9j < 500);
+
+// 9k：404 但非渠道类报文（普通 Not Found）仍 fatal 直通——渠道不可用判定不得扩大化
+let calls9k = [];
+const fakeFetch9k = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls9k.push(model);
+  return new Response(JSON.stringify({ error: { message: "Not Found" } }), {
+    status: 404, headers: { "content-type": "application/json" },
+  });
+};
+const p9k = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9k,
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+});
+let err9k = null;
+const t9k = Date.now();
+try { await gen9(p9k, "glm-5.3"); } catch (e) { err9k = e; }
+const elapsed9k = Date.now() - t9k;
+console.log("9k attempts:", calls9k.join(", "), "| elapsed:", elapsed9k, "ms | err:", err9k?.statusCode);
+console.log("PASS plain404-still-fatal      :", calls9k.length === 1 && err9k?.statusCode === 404 && elapsed9k < 500);
+
+// 9l：404 渠道不可用但 code 只在 body.code（message 为空）——共享提取必须从 data.code 命中
+// （dual-review 必修项：code 不进 message 的形态不能漏判 → 仍应零重试换链）
+let calls9l = [];
+const fakeFetch9l = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls9l.push(model);
+  if (model === "glm-5.3-flash") {
+    return new Response(JSON.stringify({ code: "NO_ROUTE_CANDIDATE", msg: "no active channel candidate for model (protocol=openai)", data: null }), {
+      status: 404, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p9l = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9l,
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+});
+const out9l = await gen9(p9l, "glm-5.3-flash");
+console.log("9l attempts:", calls9l.join(", "));
+console.log("PASS bodycode404-fallback     :", JSON.stringify(calls9l) === JSON.stringify(["glm-5.3-flash", "kimi-k2.6"]) && out9l.includes("[ok kimi-k2.6]"));
+
+// 9m：404 渠道不可用会标记当前模型冷却（避免反复请求已知下线渠道），但只影响本模型、
+// 不污染链上其他模型——第 2 轮应直接跳过冷却的主模型走备用（cooldown-skip 行为正确）。
+let calls9m = [];
+const fakeFetch9m = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls9m.push(model);
+  if (model === "glm-5.3-flash") {
+    return new Response(JSON.stringify({ code: "NO_ROUTE_CANDIDATE", message: "no active channel candidate for model (protocol=openai)" }), {
+      status: 404, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p9m = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9m,
+  failover: { chain: { models: ["kimi-k2.6"] }, cooldownMs: 30000, noticeCooldownMs: 30000 },
+});
+await gen9(p9m, "glm-5.3-flash"); // 第 1 轮：404 → 标记冷却 → 换 kimi 成功
+const callsAfterRound1 = calls9m.length;
+const out9m = await gen9(p9m, "glm-5.3-flash"); // 第 2 轮：主模型冷却中 → skip_cooldown 直跳备用
+console.log("9m round1 calls:", callsAfterRound1, "| round2:", calls9m.slice(callsAfterRound1).join(", "));
+console.log("PASS route404-cools-self-only  :", callsAfterRound1 === 2 && out9m.includes("[ok kimi-k2.6]") && calls9m.slice(callsAfterRound1)[0] === "kimi-k2.6");
