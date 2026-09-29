@@ -96,6 +96,233 @@ t("git push --force 拦截", await blocked("bash", { command: "git push --force 
 t("普通文件读取放行", !(await blocked("read", { filePath: "src/main.ts" })));
 t("普通命令放行", !(await blocked("bash", { command: "git status" })));
 
+// ── Windows 破坏性命令（2026-09-29 查漏补缺：命令位锚定 + 误伤回归） ──
+// 拦截侧：磁盘格式化/分区、动态执行任意字符串（含链式调用与 sudo 前缀）
+for (const cmd of [
+  "format C: /q",
+  "format.com D: /fs:ntfs",
+  "format",                       // 裸 format（交互式喂盘符是真实格式化路径，r1 反向必修项）
+  "echo c:|format",               // 管道喂盘符
+  "format>nul",                   // 重定向直连（r2 必修：无空白同构漏拦）
+  "format|more",                  // 管道直连（r2 必修）
+  "format/q",                     // 无空格参数（r2 必修）
+  "format.com/q",
+  "format \\\\.\\PhysicalDrive0 /q", // 设备路径形态（无盘符冒号）
+  "C:\\Windows\\System32\\format.com D:", // 绝对路径命令名（r2 必修）
+  ".\\format C:",
+  "./format C:",
+  "(format C:)",                  // subshell 形态（CMD_START 分隔符补 (）
+  "foo && format C:",
+  "; format D:",
+  "sudo format C:",
+  "sudo -u root format",          // wrapper 带参（r2 必修）
+  "env -i A=1 format",
+  "nice -n 5 format",
+  "env format C:",
+  "Format-Volume -DriveLetter D", // 命令位 Format-Volume
+  "diskpart",
+  "diskpart /s x.txt",
+  "C:\\Windows\\System32\\diskpart.exe /s x",
+  "foo; diskpart",
+  "Invoke-Expression $x",
+  "iex(New-Object x)",
+  "iex $x",
+  "& iex $x",
+  "; iex $x",
+  "foo | iex $x",
+  "sudo iex $x",
+  "iex.exe $x",
+  "sudo mkfs.ext4 /dev/sda1",     // mkfs 命令位（含 wrapper 与后缀）
+  "/sbin/mkfs.ext4 /dev/sda1",    // 绝对路径 mkfs
+  "C:format.com D:",              // 盘符相对路径（r3 必修）
+  "C:format D:",
+  "env -i format C:",             // wrapper 无值单 flag（r3 反向高1，必修）
+  "sudo -n format C:",
+  "sudo -E mkfs.ext4 /dev/sda1",
+  "sudo --user=root format",
+  "sudo env format C:",           // 链式 wrapper（r3 反向高2，必修）
+  "command exec format C:",
+  "timeout 5 mkfs.ext4 /dev/sda1",
+  "doas format C:",
+  "format;rm -rf /tmp/x",         // 分号直连（r3 正向）
+  "format.bat C: /q",             // 可执行扩展名 .bat/.cmd（r3 中1；仅可执行后缀，非任意）
+  "format.cmd /q",
+  "./iex.exe $x",                 // iex 路径前缀（r3 低项）
+  // ── r4：嵌套 shell 载体（裸/引号 payload）与控制流关键字 ──
+  "cmd /c format C:",             // cmd.exe 载体 + /x 风格 flag
+  'cmd /c "format C:"',           // 引号 payload（winCmd 引号前缀）
+  "sh -c format C:",
+  'sh -c "format C:"',
+  'bash -c "Format-Volume -DriveLetter D"',
+  "bash -lc format",              // 组合 flag（-lc）裸 payload
+  "pwsh -Command iex $x",
+  'pwsh -Command "iex $x"',
+  "runas /u:admin format C:",     // runas 载体 + /u:参数
+  "time format C:",               // time 计时前缀
+  "if x; then format C:; fi",     // then 控制流关键字
+  "for f in *; do diskpart /s x; done",
+  "{ format C:; }",               // 花括号块
+  // ── r4：shutdown 家族（裸词误伤修复后的拦截面回归） ──
+  "shutdown",
+  "shutdown /s /t 0",
+  "sudo shutdown -h now",
+  "Stop-Computer -Force",
+  "Restart-Computer",
+  "C:\\Windows\\System32\\shutdown.exe /s",
+  "env -i shutdown",              // wrapper 参数值不吞危险词（DANGER_WORDS 补 shutdown）
+  "sudo -n Stop-Computer",
+]) {
+  t(`DENY_BASH 拦截：${cmd}`, await blocked("bash", { command: cmd }));
+}
+// 放行侧（本次修复的反向锁）：危险词作参数/检索词/普通动词时不误伤
+for (const cmd of [
+  "npm run format",
+  "npm run format c:",
+  "git log --format=%H:%s",
+  "git log --format=%s --author=x",
+  'git commit --format="%s"',
+  "npx eslint --format=json .",
+  "grep -n diskpart README.md",
+  "Get-Help diskpart",
+  'rg "iex " .',
+  "cat format.txt",
+  "cat src/format.ts",            // 路径前缀形态的非命令位（防 r2 路径分支过度拦截）
+  "node foo/format.js",
+  "node iex.mjs",
+  "echo iex",
+  "Get-Help Format-Table",
+  "Get-Help Format-Volume", // 帮助查询不是格式化（同类误伤修复的反向锁）
+  "grep mkfs README.md",    // mkfs 作检索词（与 format 规则口径统一的反向锁）
+  "man mkfs",
+  "Get-ChildItem | Format-Table",
+  "env -i node format.js",        // wrapper 吞解释器后脚本名落命令位（r3 实测误伤，防回归）
+  "sudo -u deploy node format.js",
+  "timeout 30 node ./format.mjs",
+  // ── r4：shutdown 作普通名词/脚本名（裸词规则同类误伤的反向锁） ──
+  "npm run shutdown",             // npm 生命周期脚本
+  "grep -n shutdown README.md",
+  "Get-Help shutdown",
+  "Get-Help Stop-Computer",
+  "cat shutdown.log",
+  "man shutdown",
+  // ── r4：shell 载体跑非危险 payload ──
+  "sh -c \"echo hi\"",
+  "bash -c \"ls -la\"",
+  "pwsh -Command Get-Date",
+  "cmd /c dir",
+  "pwsh -File format.ps1",        // ps1 脚本名非可执行后缀
+  "bash format.sh",
+  "sh format.txt",
+  "time npm test",
+]) {
+  t(`DENY_BASH 放行：${cmd}`, !(await blocked("bash", { command: cmd })));
+}
+
+// ── r5：git 全局旗标链（`git -C repo push --force` 等穿插形态）与 +refspec 强推 ──
+for (const cmd of [
+  "git -C repo push --force origin main",
+  "git --git-dir=x/.git push --force",
+  "git --git-dir=x push -f",
+  "git -c a=b push -f",
+  "git -C repo -c a=b push --force",
+  "git push origin +master",
+  "git push --force-with-lease origin main",
+  "git -C repo reset --hard",
+  "git -C \"E:\\repo x\" reset --hard",
+  "git -C repo clean -fd",
+  "git -C repo checkout -- .",
+  "git -C repo restore .",
+  "git --no-pager push --force",
+]) {
+  t(`DENY_BASH 拦截：${cmd}`, await blocked("bash", { command: cmd }));
+}
+// r5 放行侧反向锁：旗标链不得把检索词/日志命令一并拦下
+for (const cmd of [
+  "git push origin main",
+  "git --no-pager push",
+  "git --no-pager log --oneline",
+  "git log --grep \"reset --hard\" docs",
+  "git grep \"push --force\" docs",
+  "git grep \"reset --hard\" docs",
+  "git -C repo status",
+  "git -C repo log --format=%H",
+  "git -C repo clean -n",
+  "git -C repo restore src/x.ts",
+  "git commit --format=\"%s\"",
+  "npm publish --dry-run",
+  "npm publish --dry-run --json",
+]) {
+  t(`DENY_BASH 放行：${cmd}`, !(await blocked("bash", { command: cmd })));
+}
+
+// ── r5：rm 拆分旗标 / rd /s /q（Windows 版 rm -rf） ──
+for (const cmd of [
+  "rm -r -f /tmp/x",
+  "rm -f -r /tmp/x",
+  "rm --recursive --force /tmp/x",
+  "rm --force --recursive /tmp/x",
+  "rm -r --force /tmp/x",
+  "rm -R -F /tmp/x",
+  "rm -rv -f /tmp/x",
+  "rd /s /q C:\\build",
+  "rd /q /s C:\\x",
+  "rmdir /s /q C:\\build",
+  "cmd /c rd /s /q C:\\x",
+]) {
+  t(`DENY_BASH 拦截：${cmd}`, await blocked("bash", { command: cmd }));
+}
+for (const cmd of [
+  "rm -i file.txt",
+  "rm -r -v dir",
+  "rm -v -r dir",
+  "rm -f file.sql",
+  "rm -r dist",
+  "rd tempdir",
+  "Get-Help rd",
+]) {
+  t(`DENY_BASH 放行：${cmd}`, !(await blocked("bash", { command: cmd })));
+}
+
+// ── r5：Start-Process 载体 / 磁盘 cmdlet / 卷影副本 ──
+for (const cmd of [
+  "Start-Process format C:",
+  "Start-Process -FilePath diskpart",
+  "pwsh -Command Start-Process format C:",
+  "pwsh -Command Clear-Disk -Number 0",
+  "Clear-Disk -Number 0",
+  "Initialize-Disk -Number 1",
+  "sudo Clear-Disk -Number 0",
+  "vssadmin delete shadows /all /quiet",
+  "sudo vssadmin delete shadows",
+  "wbadmin delete catalog",
+  "mke2fs /dev/sda1",
+  "sudo mke2fs /dev/sda1",
+  "env -i mke2fs /dev/sda1",
+]) {
+  t(`DENY_BASH 拦截：${cmd}`, await blocked("bash", { command: cmd }));
+}
+for (const cmd of [
+  "Start-Process notepad",
+  "Start-Process npm test",
+  "Get-Help Clear-Disk",
+  "Get-Help Initialize-Disk",
+  "grep vssadmin README.md",
+  "Get-Help vssadmin",
+  "vssadmin list shadows",
+  "wbadmin get versions",
+  "cat mke2fs.txt",
+  "node mke2fs.js",
+]) {
+  t(`DENY_BASH 放行：${cmd}`, !(await blocked("bash", { command: cmd })));
+}
+
+// ── r5：凭证文件面扩（.git-credentials / id_dsa） ──
+t("read .git-credentials 拦截", await blocked("read", { filePath: "proj/.git-credentials" }));
+t("bash cat .git-credentials 拦截", await blocked("bash", { command: "cat ~/.git-credentials" }));
+t("bash cp .git-credentials 拦截", await blocked("bash", { command: "cp .git-credentials /tmp/x" }));
+t("read id_dsa 拦截", await blocked("read", { filePath: "proj/id_dsa" }));
+t("read .git-credentials.example 放行", !(await blocked("read", { filePath: "proj/.git-credentials.example" })));
+
 console.log(`\n${fail === 0 ? "✅" : "❌"} permission-guard 回归：${pass} 通过 / ${fail} 失败`);
 if (fail > 0) console.log(`失败用例：\n  - ${failed.join("\n  - ")}`);
 process.exit(fail === 0 ? 0 : 1);

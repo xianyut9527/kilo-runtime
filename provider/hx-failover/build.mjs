@@ -57,6 +57,10 @@ const buildResult = await build({
   external: [],
   // r3 必修项①：metafile 记录 bundle 实际吞下的全部输入文件（含 node_modules 依赖）
   metafile: true,
+  // cwd 无关锚定（2026-09-29 修复）：metafile 键默认相对 process.cwd()——从仓库根
+  // 调用构建时键形如 provider/hx-failover/src/index.js，下方 src/ 前缀过滤被击穿
+  // （断言误报 0 输入）。锚定包目录后键恒为 src/index.js，任意 cwd 可调用。
+  absWorkingDir: here,
   logLevel: "info",
 });
 

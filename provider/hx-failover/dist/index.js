@@ -1,4 +1,4 @@
-// kilo-build: src-sha256=8d63dad7889b35cd921e07269314a451855447f4d5b9f026e2a354cb34d966a9
+// kilo-build: src-sha256=4865892bb11a4f6b5cf27e4b3f635a7a18fb2dc9a54e99e1052c2f0ff4f3139f
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)
@@ -28254,6 +28254,8 @@ function withReasoningEcho(baseFetch) {
   };
 }
 var GATE_ACTIONABLE = /"(?:content|tool_calls)"\s*:\s*(?:"[^"]+"|\[)/;
+var GATE_TEXT = /"content"\s*:\s*"[^"]+"/;
+var GATE_TOOL = /"tool_calls"\s*:\s*\[\s*\{/;
 var GATE_LENGTH_FINISH = /"finish_reason"\s*:\s*"(?:length|stop)"/;
 var GATE_EFFORT_DOWN = { max: "high", high: "medium", medium: "low", low: "low" };
 function gatePatchRetryBody(bodyText, minTokens, maxTokens) {
@@ -28307,33 +28309,54 @@ function gateBufferedStream(chunks) {
     }
   });
 }
-async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes) {
+async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, toolHoldMs) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   const chunks = [];
   let text = "";
   let bufferedBytes = 0;
   const deadline = Date.now() + holdMs;
+  let toolHolding = false;
+  let toolDeadline = 0;
   const passthrough = () => new Response(gateReplayStream(reader, chunks), {
     status: res.status,
     statusText: res.statusText,
     headers: res.headers
   });
+  const rejectToolHold = (reason) => {
+    try {
+      reader.cancel().catch(() => {
+      });
+    } catch {
+    }
+    const err = new Error(`hx-failover: reasoning-gate toolHold ${reason}\uFF0C\u534A\u622A\u5DE5\u5177\u53C2\u6570\u672A\u4EA4\u4ED8\uFF0C\u5F03\u6D41\u6309\u53EF\u91CD\u8BD5\u9519\u8BEF\u4E0A\u629B`);
+    err.statusCode = 200;
+    err.gateToolHoldReject = reason;
+    throw err;
+  };
   for (; ; ) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
     bufferedBytes += value.byteLength ?? value.length ?? 0;
     text += dec.decode(value, { stream: true });
-    if (GATE_ACTIONABLE.test(text)) {
-      return new Response(gateReplayStream(reader, chunks), {
-        status: res.status,
-        statusText: res.statusText,
-        headers: res.headers
-      });
+    if (!toolHolding && GATE_TEXT.test(text)) {
+      return passthrough();
     }
-    if (Date.now() > deadline) return passthrough();
-    if (bufferedBytes > bufferLimitBytes) return passthrough();
+    if (!toolHolding && GATE_TOOL.test(text)) {
+      toolHolding = true;
+      toolDeadline = Date.now() + toolHoldMs;
+    }
+    if (toolHolding) {
+      if (Date.now() > toolDeadline) return rejectToolHold("inter_chunk_timeout");
+      toolDeadline = Date.now() + toolHoldMs;
+    } else if (Date.now() > deadline) {
+      return passthrough();
+    }
+    if (bufferedBytes > bufferLimitBytes) {
+      if (toolHolding) return rejectToolHold("buffer_limit");
+      return passthrough();
+    }
   }
   if (retryLeft > 0 && GATE_LENGTH_FINISH.test(text) && !GATE_ACTIONABLE.test(text)) {
     let next = null;
@@ -28348,7 +28371,28 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes) {
         });
       } catch {
       }
-      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes);
+      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs);
+    }
+    try {
+      next?.body?.cancel?.()?.catch?.(() => {
+      });
+    } catch {
+    }
+  }
+  if (retryLeft > 0 && GATE_TOOL.test(text) && /"finish_reason"\s*:\s*"length"/.test(text)) {
+    let next = null;
+    try {
+      next = await mkRetry("truncated_tool_args");
+    } catch {
+      next = null;
+    }
+    if (next && next.ok && next.body) {
+      try {
+        reader.cancel().catch(() => {
+        });
+      } catch {
+      }
+      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs);
     }
     try {
       next?.body?.cancel?.()?.catch?.(() => {
@@ -28368,6 +28412,7 @@ function withReasoningGate(baseFetch, cfg) {
   const minTokens = Number(cfg?.minTokens) > 0 ? Number(cfg.minTokens) : 32768;
   const maxTokens = Math.max(minTokens, Number(cfg?.maxTokens) > 0 ? Number(cfg.maxTokens) : 65536);
   const holdMs = Number(cfg?.holdMs) > 0 ? Number(cfg.holdMs) : 18e4;
+  const toolHoldMs = Number(cfg?.toolHoldMs) > 0 ? Number(cfg.toolHoldMs) : 12e4;
   const bufferLimitBytes = Number(cfg?.bufferLimitBytes) > 0 ? Number(cfg.bufferLimitBytes) : 16 * 1024 * 1024;
   return async function reasoningGateFetch(input2, init) {
     const method = init?.method ?? "POST";
@@ -28383,17 +28428,32 @@ function withReasoningGate(baseFetch, cfg) {
       return call(input2, init);
     }
     let attempt = 0;
-    const mkRetry = async () => {
+    const mkRetry = async (reason) => {
       const patched = gatePatchRetryBody(bodyText, minTokens, maxTokens);
       if (patched === null) throw new Error("hx-failover: reasoning-gate retry body patch failed");
       attempt++;
-      await logFailover({ action: "reasoning_gate_retry", from: model, attempt });
-      console.error(`hx-failover: reasoning-gate ${model} \u63A8\u7406\u5403\u5149\u8F93\u51FA\u9884\u7B97/\u6B63\u6587\u4E3A\u7A7A\uFF08finish=length|stop \u65E0\u53EF\u884C\u52A8\u8F93\u51FA\uFF09\uFF0C\u7B2C ${attempt} \u6B21\u91CD\u8BD5\uFF08\u6269\u9884\u7B97+\u964D\u63A8\u7406\u6863\uFF09`);
+      await logFailover({ action: "reasoning_gate_retry", from: model, attempt, ...reason ? { reason } : {} });
+      if (reason) {
+        console.error(`hx-failover: reasoning-gate ${model} \u5DE5\u5177\u8C03\u7528\u53C2\u6570\u88AB\u8F93\u51FA\u9884\u7B97\u622A\u65AD\uFF08tool_calls + finish=length\uFF0Creason=${reason}\uFF09\uFF0C\u7B2C ${attempt} \u6B21\u91CD\u8BD5\uFF08\u6269\u9884\u7B97+\u964D\u63A8\u7406\u6863\uFF09`);
+      } else {
+        console.error(`hx-failover: reasoning-gate ${model} \u63A8\u7406\u5403\u5149\u8F93\u51FA\u9884\u7B97/\u6B63\u6587\u4E3A\u7A7A\uFF08finish=length|stop \u65E0\u53EF\u884C\u52A8\u8F93\u51FA\uFF09\uFF0C\u7B2C ${attempt} \u6B21\u91CD\u8BD5\uFF08\u6269\u9884\u7B97+\u964D\u63A8\u7406\u6863\uFF09`);
+      }
       return call(input2, { ...init, body: patched });
     };
     const res = await call(input2, init);
     if (!res.ok || !res.body) return res;
-    const gated = await gateConsume(res, mkRetry, retries, holdMs, bufferLimitBytes);
+    let gated;
+    try {
+      gated = await gateConsume(res, mkRetry, retries, holdMs, bufferLimitBytes, toolHoldMs);
+    } catch (e) {
+      if (e?.gateToolHoldReject) {
+        try {
+          await logFailover({ action: "reasoning_gate_toolhold_reject", from: model, reason: e.gateToolHoldReject });
+        } catch {
+        }
+      }
+      throw e;
+    }
     if (attempt > 0) {
       await logFailover({ action: "reasoning_gate_applied", from: model, attempt });
     }
@@ -28461,6 +28521,7 @@ function channelUnavailableText(err) {
 }
 function isRetryable(err) {
   if (isCancellation(err)) return false;
+  if (err?.gateToolHoldReject) return true;
   const status = err?.statusCode ?? err?.status ?? err?.response?.status;
   if (typeof status === "number") {
     if (status === 503 && CHANNEL_UNAVAILABLE_503_RE.test(channelUnavailableText(err))) {

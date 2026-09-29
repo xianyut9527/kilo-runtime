@@ -186,17 +186,23 @@
   },
 
   // ── 文件监视忽略（watcher 不盯这些，省 CPU）────────────────────
+  // glob 语义：根锚定的 node_modules/** 只匹配仓库根，monorepo 子包的同名目录漏盯
+  // → 目录型模式一律 **/ 前缀（**/ 匹配零或多层目录，根与嵌套都命中）
   "watcher": {
     "ignore": [
-      "node_modules/**",
-      "dist/**",
-      ".git/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/.git/**",
       "**/*.log",
       "**/__pycache__/**",
       "**/coverage/**",
-      ".venv/**",
-      "build/**",
-      "target/**",
+      "**/.venv/**",
+      "**/build/**",
+      "**/target/**",
+      // 构建/测试缓存（2026-09-29 P2 补丁裁决）
+      "**/.cache/**",
+      "**/.turbo/**",
+      "**/.pytest_cache/**",
     ],
   },
 
@@ -277,6 +283,18 @@
       // 递归强删：绝对禁止（插件层还会按内容二次拦截）
       "rm -rf *": "deny",
       "Remove-Item -Recurse -Force *": "deny",
+      // Windows 破坏性命令静态拦截（2026-09-29 P2 补丁裁决）：磁盘格式化/分区 + 动态执行。
+      // format 带空格锚定（format C:），Format-Table/Format-List 等只读 cmdlet 连字符形态不命中；
+      // diskpart* 覆盖裸交互模式与 /s 脚本形态；Invoke-Expression/iex 执行任意字符串、
+      // 绕过一切前缀式静态规则，必须 deny（编码/拼接等动态变形由 permission-guard 二次拦截）
+      "format *": "deny",
+      "format.com *": "deny",
+      "Format-Volume*": "deny",
+      "diskpart*": "deny",
+      "Invoke-Expression *": "deny",
+      "Invoke-Expression(*": "deny",
+      "iex *": "deny",
+      "iex(*": "deny",
     },
     // 只读类工具全放行
     "read": "allow",
@@ -388,12 +406,15 @@
       "npm": "file:///__KILO_CONFIG__/provider/hx-failover",
       "options": {
         // 上游 OpenAI 兼容端点
-        "baseURL": "https://xianyu1.natapp4.cc/v1",
+        "baseURL": "https://llamas.nat100.top/v1",
         // MoA/dual_review 分析调用总时长上限（kilo.json options.timeout 唯一消费方 = 这两个工具）。
         // ⚠️ 主模型循环不消费本键（provider/hx-failover 不读它，2026-09-21 DB 实证：
         // 27 例 >120s 的 step-finish 正常完成，120s 从未生效于主链路；主链路只有 chunkTimeout 空闲看门狗）。
         // 120s→300s：与 hx-client 流式设计口径对齐（其缺省兜底即 300s），避免长审查被 2 分钟硬切。
-        "timeout": 300000,
+        // 300s→480s（2026-09-29 P1 落地，多模型审查裁决）：300s 仍硬切慢聚合器——实证
+        // 2026-09-29 01:32 UTC kimi-k2.6 聚合器 ask_fail timeout_total elapsedMs=300044，
+        // 审查结论整段丢失。420-480s 裁决区间取上限：主链路不消费本键，加大无副作用。
+        "timeout": 480000,
         // 流式空闲看门狗：相邻 chunk 间隔超 180s 主动断流（provider 内实现；
         // fetch timeout 只覆盖到响应头，body 阶段挂死靠它兜底）。
         // 60s→90s→180s（2026-09-23 主链路误杀专项续）：thinking 模型静默思考期
@@ -416,7 +437,10 @@
         // fetch 出口扣留响应直到出现正文/工具调用才放行；判定死亡则用「扩预算
         // （×2、下限 32768、上限 65536）+ 降推理档」的请求体自动重发 1 次，
         // 仍死则原样透传（与关闭时字节一致）。9527 网关是无源码 new-api 二进制，
-        // 服务端改不了 → 客户端兜底。可调对象：{holdMs, retries, minTokens, maxTokens}。
+        // 服务端改不了 → 客户端兜底。可调对象：{holdMs, retries, minTokens, maxTokens, toolHoldMs}。
+        // v2（2026-09-29 Tool-execution-aborted 专项）：工具调用原子化——tool_calls 起始后
+        // 扣留到流尾才回放（inter-chunk 超时 toolHoldMs，默认 120s，断流重试零重复）；
+        // tool_calls+finish=length 参数被输出预算截断 → 扩预算重发（遥测 reason=truncated_tool_args）。
         "reasoningGate": true,
         // 故障降级链：主模型失败→依次切换，每跳重试 2 次，
         // 失败模型冷却 60s（冷却对全链生效：主模型上一轮刚降级过，本轮直接从首个

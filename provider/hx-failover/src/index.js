@@ -217,7 +217,35 @@ function withReasoningEcho(baseFetch) {
 //   - "reasoning_content" 不命中 content 锚（content 前是 '_' 不是 '"'）；
 //   - 空 content（""）不算可行动；正文 JSON 字符串内转义形态 \"content\" 不命中。
 // 代价说明：死亡→重试使该请求最坏墙钟 ×2（思考期重跑），Kilo 侧整体超时/中止语义不变。
+//
+// v2（2026-09-29 工具调用原子化 + 截断死亡重试，图纸经 dual_review 审查后落地）：
+//   - 工具调用原子化：流中出现 tool_calls 起始（[{）后不再提前放行，扣留到流尾才
+//     回放（toolHold）。价值在断流形态：v1 里 tool_calls 一出现就放行，参数中途断开
+//     时半截 tool-call part 已推给调用方，重试必重复（2026-09-29 DB 取证：流中途死亡
+//     是唯一真实 abort 源且不可容错）；v2 把失败点提前到 fetch 层——半截参数从未
+//     离开缓冲，fetch 整体 reject 交给 withFailover/Kilo 静默重试，零重复。代价是
+//     工具流失去流式 UX，但工具参数本就不可渲染，无可感知损失。
+//   - toolHold 超时用 inter-chunk deadline（每个新 chunk 重置 toolHoldMs）：只要
+//     chunk 在流就不降级，长工具参数生成不受罚；超 toolHoldMs 无新 chunk 才弃流
+//     抛可重试错误交 withFailover 整体重发（缓冲含半截参数未交付，直通=残缺件，
+//     2026-09-29 dual-review 必修项①）。静默挂死的兜底仍是 undici bodyTimeout + abort
+//     signal，本层绝不引入读超时 race（不变式，见 gateConsume 注释）。
+//   - 缺口 B（finish=length 截断工具参数）：tool_calls 签名在 + finish=length =
+//     参数被输出预算截断（半截 JSON 参数无法执行，重试是唯一生路）→ 扩预算+降档
+//     重发，遥测 reason=truncated_tool_args；stop+tool_calls 是正常收尾，不重试。
+//   - 审查必修三项落实：①截断重试有界——retryLeft 递减，天然无重试风暴；②超时/
+//     超限直通语义保持——回放缓冲+接管剩余，字节零丢失、不劣化底线；③空数组正则
+//     防御——GATE_TOOL 要求 [ 后跟 {，"tool_calls":[] 不误入 toolHold 锁死。
 const GATE_ACTIONABLE = /"(?:content|tool_calls)"\s*:\s*(?:"[^"]+"|\[)/;
+// v2 拆分判定（死亡判定仍用上面的组合式 GATE_ACTIONABLE，语义原样保留）：
+//   - 前导引号防误命中：锚点是带引号的键名 "content"/"tool_calls"——
+//     reasoning_content 的 content 前是 '_' 不是 '"'，不命中（同上口径）；
+//   - GATE_TEXT：非空 content（"" 不算），语义与组合式 content 分支一致——
+//     文本优先放行，保持流式 UX；
+//   - GATE_TOOL：tool_calls 数组且 [ 后跟 {（审查必修项③：`"tool_calls": []`
+//     空数组没有可截断的工具参数，误入 toolHold 只会白白扣留整条流到超时/流尾）。
+const GATE_TEXT = /"content"\s*:\s*"[^"]+"/;
+const GATE_TOOL = /"tool_calls"\s*:\s*\[\s*\{/;
 // 死亡 finish 形态：length=推理吃光预算（经典）；stop=正常收尾但正文全空（空摘要事故形态）。
 // stop 必须与 !GATE_ACTIONABLE 联合判定（在 gateConsume 调用点保证）：出现正文时早已
 // 提前放行，流尾仍无正文的 stop 才是死亡；不匹配 finish（缺字段/其他值）不重试，
@@ -277,25 +305,54 @@ function gateBufferedStream(chunks) {
 
 // 扣留观察一个 2xx 响应 body 并裁决（递归有界：每 hop retryLeft-1、独立 holdDeadline）。
 // 返回 Response：
-//   - 出现可行动输出 → 回放缓冲 + 剩余直通；
-//   - hold 超时（在 chunk 到达时评估）/ 缓冲超字节上限 → 放弃门控转直通
-//     （回放缓冲 + 接管剩余，字节零丢失）。完全静默的流由外层兜底：Kilo 的
+//   - 出现非空 content（未进入 toolHold）→ 回放缓冲 + 剩余直通（流式 UX 原样）；
+//   - 出现 tool_calls 起始（[{）→ 进入 toolHold 原子化缓冲：扣留到流尾才回放——
+//     工具参数中途断流时失败点在 fetch 层（半截参数从未交付调用方），
+//     withFailover/Kilo 重试零重复，这是原子化的核心价值；
+//   - hold 超时（在 chunk 到达时评估）/ 缓冲超字节上限：非 toolHold 期 → 放弃门控
+//     转直通（回放缓冲 + 接管剩余，字节零丢失；缓冲内仅 reasoning 无半截参数）；
+//     toolHold 期 → 弃流抛可重试错误（缓冲含半截工具参数，直通=交付残缺件，
+//     2026-09-29 dual-review 必修项①）。完全静默的流由外层兜底：Kilo 的
 //     chunkTimeout 看门狗/abort signal 会让 reader.read() 以 AbortError 拒绝并
 //     原样上抛——不在本层用读超时竞争：race 输掉的一方仍占着 read 队列，
 //     会把后续 chunk 吞给已被放弃的读取（实测数据丢失）。
 //   - 流结束：死亡且可重试 → mkRetry() 下一跳同样门控；其余 → 原始字节原样回放。
-async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes) {
+async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, toolHoldMs) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   const chunks = [];
   let text = "";
   let bufferedBytes = 0;
   const deadline = Date.now() + holdMs;
+  let toolHolding = false; // toolHold 原子化缓冲中（tool_calls 起始已出现，扣留到流尾）
+  let toolDeadline = 0;    // inter-chunk deadline：从上一 chunk 起算的 toolHoldMs 窗口
 
-  // 放弃门控：回放已缓冲 + 接管剩余（真正的直通，不丢后续字节）
+  // 放弃门控：回放已缓冲 + 接管剩余（真正的直通，不丢后续字节）。
+  // 仅用于「缓冲内无半截工具参数」的路径（文本放行 / 非 toolHold 期超时与超限）。
   const passthrough = () => new Response(gateReplayStream(reader, chunks), {
     status: res.status, statusText: res.statusText, headers: res.headers,
   });
+
+  // 弃流重试（2026-09-29 dual-review 必修项①）：toolHold 期的超时/超限，缓冲里是
+  // 半截工具参数——回放直通会把残缺 tool-call part 交付调用方，正是本专项要消灭的
+  // abort 形态。改为取消上游读取后抛可重试错误：缓冲从未交付，withFailover 整体重发
+  // 零重复（与 T1 中途断流同机制）。
+  // 零交付不变式（r2 复审必修项①核实结论——结构保证，无需运行时标志）：
+  //   gateConsume 的唯一交付物是 return 的 Response，每个 return/throw 都是终端路径——
+  //   passthrough() return 后本帧销毁，不存在「直通后继续读 chunk 再入 hold」的路径；
+  //   rejectToolHold 仅在 toolHold 期可达，该期全部 chunk 尚在 chunks 缓冲、
+  //   未创建过任何 Response。故 reject 时已交付字节恒为 0。
+  // err.gateToolHoldReject：显式可重试标志（r2 必修项②——isRetryable 优先消费，
+  //   不依赖 2xx 分支语义，防其日后调整时静默破坏弃流重试）；statusCode=200 同时
+  //   保留（该失败本质是 2xx 响应 body 处理期弃流，供按状态分类的下游遥测取用）。
+  // AbortError 不经此路径（read() 取消类拒绝在上方原样上抛，取消不容错不变式不受影响）。
+  const rejectToolHold = (reason) => {
+    try { reader.cancel().catch(() => {}); } catch { /* 已结束则忽略 */ }
+    const err = new Error(`hx-failover: reasoning-gate toolHold ${reason}，半截工具参数未交付，弃流按可重试错误上抛`);
+    err.statusCode = 200;
+    err.gateToolHoldReject = reason; // isRetryable 显式消费；withReasoningGate 调用点据此记遥测
+    throw err;
+  };
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -303,22 +360,56 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes) {
     chunks.push(value);
     bufferedBytes += value.byteLength ?? value.length ?? 0;
     text += dec.decode(value, { stream: true });
-    if (GATE_ACTIONABLE.test(text)) {
-      return new Response(gateReplayStream(reader, chunks), {
-        status: res.status, statusText: res.statusText, headers: res.headers,
-      });
+    // ① 文本优先：非空 content 即放行（等价原行为，保流式 UX）。已进入 toolHold 则
+    //    不再解除——工具调用混排的前置文本同样扣留到流尾，原子性优先于流式。
+    if (!toolHolding && GATE_TEXT.test(text)) {
+      return passthrough();
     }
-    if (Date.now() > deadline) return passthrough(); // 扣留超时：放弃门控转直通
-    // 缓冲字节上限：快速上游可在时限内灌爆内存（并发放大）——超限放弃门控转直通
-    if (bufferedBytes > bufferLimitBytes) return passthrough();
+    // ② 进入 toolHold：tool_calls 起始（[{）即原子化缓冲起点
+    if (!toolHolding && GATE_TOOL.test(text)) {
+      toolHolding = true;
+      toolDeadline = Date.now() + toolHoldMs;
+    }
+    // ③ deadline 族（都在 chunk 到达时评估，绝不引入读超时 race）：
+    //    toolHold 期 = inter-chunk 语义——上一 chunk 距今超 toolHoldMs → 弃流重试
+    //    （必修项①：缓冲含半截参数，直通=交付残缺件）；chunk 在流则重置窗口
+    //    （长工具参数生成不受罚）。非 toolHold 期维持原固定 holdMs deadline
+    //    （从入口起算，缓冲内仅 reasoning 无工具参数，直通字节零丢失，v1 语义原样）。
+    if (toolHolding) {
+      if (Date.now() > toolDeadline) return rejectToolHold("inter_chunk_timeout"); // 慢滴超时：弃流重试
+      toolDeadline = Date.now() + toolHoldMs;
+    } else if (Date.now() > deadline) {
+      return passthrough(); // 扣留超时：放弃门控转直通
+    }
+    // ④ 缓冲字节上限：快速上游可在时限内灌爆内存（并发放大）。非 toolHold 期超限
+    //    直通（仅 reasoning，零丢失）；toolHold 期超限同必修项①弃流重试（直通=半截件）。
+    if (bufferedBytes > bufferLimitBytes) {
+      if (toolHolding) return rejectToolHold("buffer_limit");
+      return passthrough();
+    }
   }
-  // 流结束仍无可行动输出 → 死亡判定
+  // 流结束仍无可行动输出 → 死亡判定（缺口 A：推理吃光预算/正文全空，v1 语义原样保留）
   if (retryLeft > 0 && GATE_LENGTH_FINISH.test(text) && !GATE_ACTIONABLE.test(text)) {
     let next = null;
     try { next = await mkRetry(); } catch { next = null; } // 重试网络错 → 回退原样回放
     if (next && next.ok && next.body) {
       try { reader.cancel().catch(() => {}); } catch { /* 已结束则忽略 */ }
-      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes);
+      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs);
+    }
+    try { next?.body?.cancel?.()?.catch?.(() => {}); } catch { /* 忽略 */ }
+  }
+  // 缺口 B（v2）：tool_calls 签名在 + finish=length = 工具参数被输出预算截断——
+  // 半截 JSON 参数无法执行，重试是唯一生路；stop+tool_calls 是正常收尾，不重试。
+  // 与缺口 A 互斥（A 要求 !GATE_ACTIONABLE，B 要求 GATE_TOOL 命中，不可能同时成立）；
+  // A/B 共享同一 retryLeft 预算（递归时统一 -1，总重试次数不翻倍）；
+  // mkRetry 失败/非 ok → 落到函数尾原样回放（不劣化底线）；retryLeft 递减天然有界，
+  // 无重试风暴（审查必修项①）。
+  if (retryLeft > 0 && GATE_TOOL.test(text) && /"finish_reason"\s*:\s*"length"/.test(text)) {
+    let next = null;
+    try { next = await mkRetry("truncated_tool_args"); } catch { next = null; } // 重试网络错 → 回退原样回放
+    if (next && next.ok && next.body) {
+      try { reader.cancel().catch(() => {}); } catch { /* 已结束则忽略 */ }
+      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs);
     }
     try { next?.body?.cancel?.()?.catch?.(() => {}); } catch { /* 忽略 */ }
   }
@@ -327,13 +418,21 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes) {
   });
 }
 
-// 推理门控 fetch 包装：options.reasoningGate = true | {holdMs, retries, minTokens, maxTokens}
+// 推理门控 fetch 包装：options.reasoningGate = true | {holdMs, retries, minTokens, maxTokens, toolHoldMs}
 function withReasoningGate(baseFetch, cfg) {
   const call = baseFetch ?? globalThis.fetch;
   const retries = Math.max(0, Math.floor(Number(cfg?.retries ?? 1)));
   const minTokens = Number(cfg?.minTokens) > 0 ? Number(cfg.minTokens) : 32_768;
   const maxTokens = Math.max(minTokens, Number(cfg?.maxTokens) > 0 ? Number(cfg.maxTokens) : 65_536);
   const holdMs = Number(cfg?.holdMs) > 0 ? Number(cfg.holdMs) : 180_000;
+  // toolHold 原子化缓冲的 inter-chunk deadline（默认 120s，审查建议从 300s 收敛）：
+  // 只要 chunk 在流就不降级，该值只决定「toolHold 期多长时间无新 chunk 后弃流重试」；
+  // inter-chunk 语义下 120s 对任何真实工具参数生成都已充裕（慢的真实上游表现为
+  // chunk 间隔长，而不是单 chunk 间无进展超 2 分钟）。真正的静默挂死兜底仍是
+  // undici bodyTimeout + abort signal，与本值无关。
+  // 注意：toolHold 期超时是「弃流抛可重试错」（rejectToolHold），不是转直通——
+  // 缓冲内是半截工具参数，直通=交付残缺件（2026-09-29 dual-review 必修项①）。
+  const toolHoldMs = Number(cfg?.toolHoldMs) > 0 ? Number(cfg.toolHoldMs) : 120_000;
   // 扣留缓冲字节上限（默认 16MB，超限放弃门控转直通）：思考段常态 ~百 KB 量级，
   // 上限只防「快速异常上游在时限内灌爆内存」的资源风险，正常流量永远达不到。
   const bufferLimitBytes = Number(cfg?.bufferLimitBytes) > 0 ? Number(cfg.bufferLimitBytes) : 16 * 1024 * 1024;
@@ -349,12 +448,18 @@ function withReasoningGate(baseFetch, cfg) {
     try { model = JSON.parse(bodyText)?.model ?? null; } catch { return call(input, init); }
 
     let attempt = 0;
-    const mkRetry = async () => {
+    // reason（可选，v2）：缺口 B 传 "truncated_tool_args" 区分截断重试与缺口 A 死亡
+    // 重试；无 reason 时遥测与日志行为与 v1 完全一致。
+    const mkRetry = async (reason) => {
       const patched = gatePatchRetryBody(bodyText, minTokens, maxTokens);
       if (patched === null) throw new Error("hx-failover: reasoning-gate retry body patch failed");
       attempt++;
-      await logFailover({ action: "reasoning_gate_retry", from: model, attempt });
-      console.error(`hx-failover: reasoning-gate ${model} 推理吃光输出预算/正文为空（finish=length|stop 无可行动输出），第 ${attempt} 次重试（扩预算+降推理档）`);
+      await logFailover({ action: "reasoning_gate_retry", from: model, attempt, ...(reason ? { reason } : {}) });
+      if (reason) {
+        console.error(`hx-failover: reasoning-gate ${model} 工具调用参数被输出预算截断（tool_calls + finish=length，reason=${reason}），第 ${attempt} 次重试（扩预算+降推理档）`);
+      } else {
+        console.error(`hx-failover: reasoning-gate ${model} 推理吃光输出预算/正文为空（finish=length|stop 无可行动输出），第 ${attempt} 次重试（扩预算+降推理档）`);
+      }
       return call(input, { ...init, body: patched });
     };
 
@@ -362,7 +467,19 @@ function withReasoningGate(baseFetch, cfg) {
     if (!res.ok || !res.body) return res;
     // 扣留期读断/取消会从 gateConsume 原样上抛：取消直通、断流按可重试错误走降级链
     // ——与无门控时 body 读取断裂的错误语义一致，只是发生点从流消费期提前到 fetch 期。
-    const gated = await gateConsume(res, mkRetry, retries, holdMs, bufferLimitBytes);
+    // v2 起工具参数尚在 toolHold 缓冲内（从未交付调用方），断流重试零重复（原子化）；
+    // toolHold 期超时/超限走 rejectToolHold 弃流重试（必修项①），同样零交付。
+    let gated;
+    try {
+      gated = await gateConsume(res, mkRetry, retries, holdMs, bufferLimitBytes, toolHoldMs);
+    } catch (e) {
+      // 弃流重试的遥测（缓冲内半截参数从未交付）：可回溯 gate 弃流事件。
+      // 遥测自身失败不得吞掉/覆盖原始弃流错误（r2 建议项防护）。
+      if (e?.gateToolHoldReject) {
+        try { await logFailover({ action: "reasoning_gate_toolhold_reject", from: model, reason: e.gateToolHoldReject }); } catch { /* 遥测失败不吞原错 */ }
+      }
+      throw e;
+    }
     if (attempt > 0) {
       await logFailover({ action: "reasoning_gate_applied", from: model, attempt });
     }
@@ -459,6 +576,10 @@ function channelUnavailableText(err) {
 
 function isRetryable(err) {
   if (isCancellation(err)) return false;
+  // reasoningGate toolHold 弃流（2026-09-29 r2 必修项②）：2xx body 处理期主动弃流、
+  // 零内容已交付——显式可重试，不依赖下方 2xx 分支语义（防该分支日后调整时
+  // 静默破坏弃流重试路径；statusCode=200 仅作下游遥测分类用）。
+  if (err?.gateToolHoldReject) return true;
   const status = err?.statusCode ?? err?.status ?? err?.response?.status;
   if (typeof status === "number") {
     // 2026-09-27 查漏补缺：503 + 渠道/模型不可用报文 = 确定性故障（渠道没配/下线），
@@ -600,7 +721,7 @@ export function createHxFailover(options) {
   const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "reasoningGate", "timeout", "dual_review"];
   // thinking 模式 reasoning_content 回传兜底（kilo.json options.reasoningEcho；缺省 = 关闭）
   const reasoningEcho = options?.reasoningEcho === true;
-  // 推理门控（kilo.json options.reasoningGate = true | {holdMs,retries,minTokens,maxTokens}；缺省 = 关闭）。
+  // 推理门控（kilo.json options.reasoningGate = true | {holdMs,retries,minTokens,maxTokens,toolHoldMs,bufferLimitBytes}；缺省 = 关闭）。
   // 组装顺序（内→外）：queuedAckGuard 恒开 → echo → gate——gate 的重发体先经 echo 补丁
   // （幂等，已带 reasoning_content 则无变化），排队回执先在源头被拦。
   const gateCfg = options?.reasoningGate === true ? {} : (options?.reasoningGate && typeof options.reasoningGate === "object" ? options.reasoningGate : null);
