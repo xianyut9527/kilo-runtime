@@ -84,20 +84,25 @@
   "agent": {
     "code": {
       "model": "hx/glm-5.3-flash",
-      // 一次输出质量杠杆（2026-09-28）：主执行槽钉 high。此前未设 variant（走上游默认
-      // 推理档），深思考不足 → 首过质量不稳 → 返工循环。口径与 plan/verify 的
-      // 「深思考位钉 high」一致（85k+ 长输入 183 条零失败的正分母数据）；
-      // kimi@max 长输入猝死负数据不适用本槽（glm 族 + reasoningGate 死亡自动扩预算
-      // 重试兜底）。性能代价＝首字间隔变长（思考期），质量优先口径下接受；
-      // 若实测体感过慢，回退＝删掉本行（回上游默认）。
-      "variant": "high",
+      // 一次输出质量杠杆（2026-09-30 升 max）。此前 2026-09-28 钉 high：上游默认档
+      // 深思考不足 → 首过质量不稳 → 返工循环。升级依据（质量顶级口径）：
+      // ① kimi@max 长输入猝死是 k2.6 分母的负数据，对 glm 族无直接证据；
+      // ② reasoningGate v2 死亡自动扩预算（×2、clamp 32768-65536）+降档重试兜底
+      //    length 猝死，max 档尾部风险已被客户端收敛；
+      // ③ 95% 工作走本槽，思考深度对首过质量的传递放大最大。
+      // 代价＝思考期首字间隔变长；A/B 验证规则（git 红线）：单变量切换，同任务对比
+      // code@high vs code@max 输出质量与体感延迟，实测劣于 high 则回退改本行。
+      "variant": "max",
     },
     "plan": {
-      "model": "hx/kimi-k2.6",
-      // 规划保留思考深度 → high（85k+ 长输入 183 条零失败；max 在 ≥150k 输入
-      // 条件猝死率 2.56%、85-150k 0.20%，死亡由 reasoningGate 自动重试兜底）。
-      // 原「medium 零失败」论述已证伪（medium 全库 0 次调用，无分母）。
-      "variant": "high",
+      "model": "hx/kimi-k3",
+      // 规划位钉 max（2026-09-30，质量顶级口径）：K3 官方 reasoning_effort 默认即
+      // max（低频单发规划，延迟代价小，规划质量向实现质量传递放大）。
+      // ⚠️ 分母口径：kilo.db「85k+ 长输入 183 条零失败 / max ≥150k 猝死 2.56%」
+      // 是 kimi-k2.6 的实测分母，对 K3 不直接适用（K3 本机尚无分母，死亡由
+      // reasoningGate 扩预算+降档重试兜底；K3 无 medium 档，重试链降档到 high）。
+      // 原「medium 零失败」论述已证伪（k2.6 时代 medium 全库 0 次调用，无分母）。
+      "variant": "max",
     },
     "general": {
       "model": "hx/glm-5.2",
@@ -576,6 +581,28 @@
             "output": ["text"],
           },
           "limit": {
+            "context": 200000,
+            "output": 32000,
+          },
+        },
+        "kimi-k3": {
+          "reasoning": true,
+          // K3 官方仅支持 low/high/max 三档（默认 max），无 medium——多声明会产生
+          // 无效选择项，且 reasoningGate 死亡重试降档链（high→medium）会向 K3 发出
+          // 非法 reasoning_effort → 重试 400，救活路径落空。故只声明三档，降档链
+          // 对 K3 的落点为 high（合法值中比 max 低一档的最近值）。
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" },
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"],
+          },
+          "limit": {
+            // K3 实际 1M 上下文 / max_completion_tokens 默认 131072（可至 1M）；
+            // 保守口径先按 200k/32k 登记（压缩提前触发无害），冒烟后可放宽
             "context": 200000,
             "output": 32000,
           },
