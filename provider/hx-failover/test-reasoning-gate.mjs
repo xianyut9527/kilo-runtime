@@ -739,6 +739,37 @@ function sseStopDeath() {
   check("toolhold-limit-retry   :", call === 2 && toolCalls.length === 1 && input !== null && input.path === "src/big.ts");
 }
 
+// ── 19.（T10）死亡重试 fetch 期间用户取消 → AbortError 直通，不得吞掉后回放死亡流 ──
+// 2026-09-29 查漏补缺：旧 catch { next = null } 无差别吞掉 mkRetry 的一切错误——
+// 用户取消（AbortError）也被当网络错，转而回放原始死亡流（空正文响应），
+// 违反取消不容错不变式。修复后取消必须原样上抛。
+// 形态：首跳死亡流（finish=length 无正文）→ 门控进死亡重试 → 第二跳 fetch 抛
+// name=AbortError →（修复）gateConsume 直抛 → withFailover isCancellation 直通。
+{
+  let call = 0;
+  const fakeFetch = async () => {
+    call++;
+    if (call === 1) {
+      return new Response(sseDeath(), { status: 200, headers: { "content-type": "text/event-stream" } });
+    }
+    // 第二跳 = 门控死亡重试：模拟用户此刻取消（undici 同形态 AbortError）
+    throw Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
+  };
+  const provider = createHxFailover({
+    name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch,
+    failover: { chain: { models: [] } }, reasoningGate: true,
+  });
+  let err = null;
+  try {
+    const { stream } = await provider.languageModel("kimi-k2.6").doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+      includeRawChunks: false,
+    });
+    await consume(stream); // 旧行为在此拿到空正文流不报错——修复后到不了这里
+  } catch (e) { err = e; }
+  check("gate-retry-abort-throw :", call === 2 && err !== null && err?.name === "AbortError");
+}
+
 const failed = results.filter(([, ok]) => !ok);
 console.log("");
 console.log(failed.length === 0 ? `ALL ${results.length} PASS` : `${failed.length} FAILED: ${failed.map(([n]) => n).join(", ")}`);

@@ -1,4 +1,4 @@
-// kilo-build: src-sha256=4865892bb11a4f6b5cf27e4b3f635a7a18fb2dc9a54e99e1052c2f0ff4f3139f
+// kilo-build: src-sha256=8e3c0b0fdd21763611416ee04c0b7d41f4cfa362aef9f12df336fae8e7efbad6
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)
@@ -28362,7 +28362,8 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
     let next = null;
     try {
       next = await mkRetry();
-    } catch {
+    } catch (e) {
+      if (isCancellation(e)) throw e;
       next = null;
     }
     if (next && next.ok && next.body) {
@@ -28383,7 +28384,8 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
     let next = null;
     try {
       next = await mkRetry("truncated_tool_args");
-    } catch {
+    } catch (e) {
+      if (isCancellation(e)) throw e;
       next = null;
     }
     if (next && next.ok && next.body) {
@@ -28476,8 +28478,32 @@ function markFailedFactory(cooldown) {
     cooldown.set(id, Date.now() + cooldownMs);
   };
 }
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+function backoffAbortError() {
+  const e = new Error("The operation was aborted.");
+  e.name = "AbortError";
+  e.code = "ABORT_ERR";
+  return e;
+}
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(backoffAbortError());
+      return;
+    }
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      cleanup();
+      reject(backoffAbortError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    function cleanup() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    }
+  });
 }
 function configuredModelsOf(options) {
   const raw = options?.failover;
@@ -28617,7 +28643,7 @@ function createHxFailover(options) {
   const overloadBackoffMs = Array.isArray(failoverOpts?.overloadBackoffMs) && failoverOpts.overloadBackoffMs.every((n) => Number.isFinite(n) && n >= 0) ? failoverOpts.overloadBackoffMs : OVERLOAD_BACKOFF_MS;
   const chunkTimeoutMs = Number(options?.chunkTimeout) > 0 ? Number(options.chunkTimeout) : 0;
   const provider = createOpenAICompatible(sdkOptions);
-  async function withFailover(modelId, run) {
+  async function withFailover(modelId, run, callOptions) {
     const chain = chainOf(options, modelId);
     let lastError;
     let startHop = 0;
@@ -28667,7 +28693,14 @@ function createHxFailover(options) {
             const overload = isOverloadErr(err);
             await logFailover({ from: modelId, at: id, action: "retry", attempt: attempt + 1, ...overload ? { overload: true } : {} });
             const backoff = (overload ? overloadBackoffMs : BACKOFF_MS)[attempt] ?? (overload ? 6e3 : 1500);
-            await sleep(backoff);
+            try {
+              await sleep(backoff, callOptions?.abortSignal);
+            } catch (abortErr) {
+              if (isCancellation(abortErr)) {
+                await logFailover({ from: modelId, at: id, action: "cancelled", phase: "backoff", attempt: attempt + 1 });
+              }
+              throw abortErr;
+            }
             continue;
           }
           markFailed(id, cooldownMs);
@@ -28688,10 +28721,12 @@ function createHxFailover(options) {
       for (const m of chain.slice(1)) maxUntil = Math.max(maxUntil, cooldown.get(m) ?? 0);
       const remainS = Math.max(1, Math.ceil((maxUntil - Date.now()) / 1e3));
       await logFailover({ from: modelId, action: "exhausted_cooldown", remainMs: maxUntil - Date.now() });
+      const retryHeaders = { "retry-after": String(remainS) };
       throw new APICallError({
         message: `hx-failover: \u4E3B\u6A21\u578B\u4E0E\u5168\u90E8\u5907\u7528\u5747\u5728\u51B7\u5374\u4E2D\uFF08\u4E0A\u4E00\u8F6E\u5DF2\u5B9E\u6D4B\u5931\u8D25\uFF09\uFF0C\u7EA6 ${remainS}s \u540E\u81EA\u52A8\u6062\u590D \u2014\u2014 \u8DF3\u8FC7\u91CD\u8BD5\u907F\u514D\u7A7A\u8F6C`,
         url: void 0,
         statusCode: 503,
+        responseHeaders: retryHeaders,
         isRetryable: true
       });
     }
@@ -28805,7 +28840,7 @@ function createHxFailover(options) {
       modelId,
       supportedUrls: inner.supportedUrls ?? {},
       async doGenerate(callOptions) {
-        return withFailover(modelId, (m) => m.doGenerate(callOptions));
+        return withFailover(modelId, (m) => m.doGenerate(callOptions), callOptions);
       },
       async doStream(callOptions) {
         return withFailover(modelId, async (m, id, hop) => {
@@ -28844,7 +28879,7 @@ function createHxFailover(options) {
           if (chunkTimeoutMs > 0) stream = withChunkWatchdog(stream, chunkTimeoutMs, id);
           stream = withStreamBreakRewrap(stream, modelId);
           return { ...result, stream };
-        });
+        }, callOptions);
       },
       // 供诊断读取（非官方字段，Kilo 忽略）
       hxFailoverChain: chainOf(options, modelId)

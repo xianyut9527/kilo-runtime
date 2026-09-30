@@ -899,3 +899,64 @@ const callsAfterRound1 = calls9m.length;
 const out9m = await gen9(p9m, "glm-5.3-flash"); // 第 2 轮：主模型冷却中 → skip_cooldown 直跳备用
 console.log("9m round1 calls:", callsAfterRound1, "| round2:", calls9m.slice(callsAfterRound1).join(", "));
 console.log("PASS route404-cools-self-only  :", callsAfterRound1 === 2 && out9m.includes("[ok kimi-k2.6]") && calls9m.slice(callsAfterRound1)[0] === "kimi-k2.6");
+
+// 9n：全链冷却 fail-fast 503 附 retry-after（2026-09-29 dual_review 必修项⑥）——
+// 生产遥测实证：冷却期 Kilo 会话级重试每 4-20s 重撞 fail-fast（exhausted_cooldown
+// 一日 54 条）。修法：503 带 responseHeaders.retry-after=剩余秒数，守约下游按节奏退避。
+// 断言：APICallError.responseHeaders 是 Record 且值 = 剩余冷却秒（1..30，fail-fast 立即返回远早于 30s 冷却到期）。
+const fakeFetch9n = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  return new Response(JSON.stringify({ error: { message: "simulated upstream 500" } }), {
+    status: 500, headers: { "content-type": "application/json" },
+  });
+};
+const p9n = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9n,
+  failover: { chain: { models: ["kimi-k2.6"] }, cooldownMs: 30000 },
+});
+await gen9(p9n, "glm-5.3-flash").catch(() => {}); // 预热：3 连失败 → 全链冷却
+let err9n = null;
+try { await gen9(p9n, "glm-5.3-flash"); } catch (e) { err9n = e; }
+const raVal = err9n?.responseHeaders?.["retry-after"]; // SDK 契约：responseHeaders 是 Record（Object.fromEntries），非 Headers 实例
+console.log("");
+console.log("9n fail-fast:", err9n?.statusCode, "| retry-after:", raVal);
+console.log("PASS cooldown503-retry-after  :", err9n?.statusCode === 503 && Number(raVal) >= 1 && Number(raVal) <= 30 && err9n?.isRetryable === true);
+
+// 9o：退避期可被 abortSignal 立即打断（2026-09-29 dual_review 必修项⑤）——
+// 旧行为：sleep(500/1500ms) 不感知 signal，用户取消后仍睡满全程才返回（迟滞+浪费）。
+// 断言：失败模型每次调用后进入退避，主流程中途 abort；elapsed < 400ms（远小于
+// 完整 500+1500 退避），错误为取消类（AbortError 直通不换模型）。
+let calls9o = [];
+const ctl9o = new AbortController();
+const fakeFetch9o = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls9o.push(model);
+  // 确定性触发（dual_review r2 必修项：固定 200ms setTimeout 依赖事件循环时序，
+  // 首 fetch 未在窗内完成会 flaky）：abort 定时器在 fetch 已 resolve 后才注册——
+  // 「第 1 次调用已失败 + 已进入 500ms 退避」必然成立，50ms << 退避 500ms。
+  if (calls9o.length === 1) setTimeout(() => ctl9o.abort(), 50);
+  return new Response(JSON.stringify({ error: { message: "simulated upstream 500" } }), {
+    status: 500, headers: { "content-type": "application/json" },
+  });
+};
+const p9o = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9o,
+  failover: { chain: { models: [] }, cooldownMs: 30000 },
+});
+const t9o = Date.now();
+let err9o = null;
+try {
+  await p9o.languageModel("solo-model").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+    abortSignal: ctl9o.signal,
+  });
+} catch (e) { err9o = e; }
+const elapsed9o = Date.now() - t9o;
+console.log("9o attempts:", calls9o.join(", "), "| elapsed:", elapsed9o, "ms | err:", err9o?.name ?? err9o?.message);
+// 期望：1 次调用后进入 500ms 退避，50ms（自 fetch resolve 起）时 abort 打断；
+// 取消类错误直通（isCancellation），不再重试/换模型 → attempts 恒 1、
+// elapsed < 400ms 证立即性（无修复时睡满 500+1500 退避 ≥2s）。
+console.log("PASS backoff-abort-immediate   :", calls9o.length === 1 && elapsed9o < 400 && (err9o?.name === "AbortError" || err9o?.code === "ABORT_ERR"));

@@ -391,7 +391,9 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
   // 流结束仍无可行动输出 → 死亡判定（缺口 A：推理吃光预算/正文全空，v1 语义原样保留）
   if (retryLeft > 0 && GATE_LENGTH_FINISH.test(text) && !GATE_ACTIONABLE.test(text)) {
     let next = null;
-    try { next = await mkRetry(); } catch { next = null; } // 重试网络错 → 回退原样回放
+    // 取消不容错（2026-09-29 查漏补缺）：mkRetry 的 fetch 被用户取消时 AbortError
+    // 必须直通——旧 catch 无差别吞掉后会回放原始死亡流，用户已取消却交付空正文响应
+    try { next = await mkRetry(); } catch (e) { if (isCancellation(e)) throw e; next = null; } // 其余网络错 → 回退原样回放
     if (next && next.ok && next.body) {
       try { reader.cancel().catch(() => {}); } catch { /* 已结束则忽略 */ }
       return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs);
@@ -406,7 +408,7 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
   // 无重试风暴（审查必修项①）。
   if (retryLeft > 0 && GATE_TOOL.test(text) && /"finish_reason"\s*:\s*"length"/.test(text)) {
     let next = null;
-    try { next = await mkRetry("truncated_tool_args"); } catch { next = null; } // 重试网络错 → 回退原样回放
+    try { next = await mkRetry("truncated_tool_args"); } catch (e) { if (isCancellation(e)) throw e; next = null; } // 取消直通；网络错 → 回退原样回放
     if (next && next.ok && next.body) {
       try { reader.cancel().catch(() => {}); } catch { /* 已结束则忽略 */ }
       return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs);
@@ -505,8 +507,28 @@ function markFailedFactory(cooldown) {
   };
 }
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+// 可中断 sleep（2026-09-29 dual_review 必修项⑤核实属实，最小修复）：退避期传入
+// 调用方 abortSignal，用户取消后立即唤醒——旧实现睡满全程（500~6000ms）才返回，
+// 且醒来继续撞下一 hop/下一模型，取消响应迟滞+浪费请求。abort 拒绝用 isCancellation
+// 可识别的形态（name="AbortError" 或 code="ABORT_ERR"），上抛路径与取消类错误同一语义：
+// 不冷却、不换模型、不进重包装。timer/listener 双路径清理，不泄漏。
+function backoffAbortError() {
+  const e = new Error("The operation was aborted.");
+  e.name = "AbortError";
+  e.code = "ABORT_ERR";
+  return e;
+}
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(backoffAbortError()); return; }
+    const timer = setTimeout(() => { cleanup(); resolve(); }, ms);
+    const onAbort = () => { cleanup(); reject(backoffAbortError()); };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    function cleanup() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    }
+  });
 }
 
 // 从 failover 配置提取模型名列表（供 chainOf 与「缺配置告警」共用）
@@ -761,7 +783,9 @@ export function createHxFailover(options) {
 
   const provider = createOpenAICompatible(sdkOptions);
 
-  async function withFailover(modelId, run) {
+  // callOptions（可选，LanguageModelV3 doStream/doGenerate 的调用参数）：仅消费
+  // abortSignal——退避 sleep 可被用户取消立即打断（见 sleep 注释）。
+  async function withFailover(modelId, run, callOptions) {
     const chain = chainOf(options, modelId);
     let lastError;
 
@@ -828,7 +852,16 @@ export function createHxFailover(options) {
             const overload = isOverloadErr(err);
             await logFailover({ from: modelId, at: id, action: "retry", attempt: attempt + 1, ...(overload ? { overload: true } : {}) });
             const backoff = (overload ? overloadBackoffMs : BACKOFF_MS)[attempt] ?? (overload ? 6000 : 1500);
-            await sleep(backoff);
+            try {
+              await sleep(backoff, callOptions?.abortSignal);
+            } catch (abortErr) {
+              // 退避期取消（2026-09-29 查漏补缺）：与 run() 路径的 cancelled 遥测
+              // 对齐（phase=backoff 区分取消位置），然后原样上抛——不冷却不换模型
+              if (isCancellation(abortErr)) {
+                await logFailover({ from: modelId, at: id, action: "cancelled", phase: "backoff", attempt: attempt + 1 });
+              }
+              throw abortErr;
+            }
             continue;
           }
           markFailed(id, cooldownMs);
@@ -852,16 +885,25 @@ export function createHxFailover(options) {
     // 特例：冷却跳过主模型后循环零执行（备用全冷却）→ 快速失败确定性 503：
     // 跳过不是失败，报原始错误会误导成上游故障；isRetryable 交给 Kilo 重试门，
     // 冷却到期后 Kilo 重试即恢复探测。
+    // retry-after（2026-09-29 dual_review 必修项⑥核实属实）：不带节奏信号时 Kilo
+    // 会话级重试立即回撞 fail-fast——遥测实证冷却期每 4-20s 重复 exhausted_cooldown
+    // 一条（2026-09-29 10:41/14:16 两簇共 54 条）。附剩余冷却秒数：守约的下游
+    // 自动按节奏退避；不守约的保持原语义（isRetryable 驱动），无行为回归。
     if (lastError === undefined && startHop > 0) {
       // 剩余冷却取全链最晚到期时间（含主模型），报真实等待而非上限值
       let maxUntil = cooldown.get(modelId) ?? 0;
       for (const m of chain.slice(1)) maxUntil = Math.max(maxUntil, cooldown.get(m) ?? 0);
       const remainS = Math.max(1, Math.ceil((maxUntil - Date.now()) / 1000));
       await logFailover({ from: modelId, action: "exhausted_cooldown", remainMs: maxUntil - Date.now() });
+      // responseHeaders 必须是 Record：SDK extractResponseHeaders 返回
+      // Object.fromEntries（dist:24130），传 Headers 实例时守约下游按
+      // headers["retry-after"] 属性访问会静默取到 undefined（r2 红队实证）。
+      const retryHeaders = { "retry-after": String(remainS) };
       throw new APICallError({
         message: `hx-failover: 主模型与全部备用均在冷却中（上一轮已实测失败），约 ${remainS}s 后自动恢复 —— 跳过重试避免空转`,
         url: undefined,
         statusCode: 503,
+        responseHeaders: retryHeaders,
         isRetryable: true,
       });
     }
@@ -979,7 +1021,7 @@ export function createHxFailover(options) {
       modelId,
       supportedUrls: inner.supportedUrls ?? {},
       async doGenerate(callOptions) {
-        return withFailover(modelId, (m) => m.doGenerate(callOptions));
+        return withFailover(modelId, (m) => m.doGenerate(callOptions), callOptions);
       },
       async doStream(callOptions) {
         return withFailover(modelId, async (m, id, hop) => {
@@ -1027,7 +1069,7 @@ export function createHxFailover(options) {
           // 最外层：消费期流中断 → 重包装 isRetryable=true，Kilo 会话级重试接管
           stream = withStreamBreakRewrap(stream, modelId);
           return { ...result, stream };
-        });
+        }, callOptions);
       },
       // 供诊断读取（非官方字段，Kilo 忽略）
       hxFailoverChain: chainOf(options, modelId),
