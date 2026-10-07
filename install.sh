@@ -424,7 +424,7 @@ for (const [fn, name] of fnByRef) {
   }
 }
 VE2JS
-    bun "$tmpmjs" "$url" >/dev/null 2>&1
+    bun "$(to_native "$tmpmjs")" "$url" >/dev/null 2>&1
     rc=$?
     rm -f "$tmpmjs"
     return $rc
@@ -458,7 +458,7 @@ for (const [fn, name] of fnByRef) {
   }
 }
 VE2JS
-  "$TS_NODE" "$tmpmjs" "$url" "$(to_file_url "$TS_HOOK_MJS")" >/dev/null 2>&1
+  "$TS_NODE" "$(to_native "$tmpmjs")" "$url" "$(to_file_url "$TS_HOOK_MJS")" >/dev/null 2>&1
   rc=$?
   rm -f "$tmpmjs"
   return $rc
