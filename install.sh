@@ -603,12 +603,21 @@ if [ "$DRY_RUN" = "0" ] && [ "$CHECK" = "0" ] && [ "$DIFF_COUNT" -gt 0 ] && [ -d
 fi
 
 # ---------- 下发 ----------
+# 部署≠生效旗标（2026-10-08 F1）：render_file 在 $( ) 子壳里调用——变量带不出来，
+# 只能在本循环（主壳，done < 输入重定向非管道）按 dst 设值。write 仅真实写盘时返回，
+# 故旗标为真＝真实落盘（dry-run/check 走 diff 分支）。
 CHANGED=0; SAME=0; WROTE=0
+PLUGIN_WROTE=0; PROVIDER_WROTE=0
 while IFS=$'\t' read -r src dst; do
   [ -z "$src" ] && continue
   case "$(render_file "$src" "$TARGET_DIR/$dst")" in
     diff)  CHANGED=$((CHANGED+1)) ;;
-    write) CHANGED=$((CHANGED+1)); WROTE=$((WROTE+1)) ;;
+    write)
+      CHANGED=$((CHANGED+1)); WROTE=$((WROTE+1))
+      case "$dst" in
+        plugin/*) PLUGIN_WROTE=1 ;;
+        provider/hx-failover/dist/*) PROVIDER_WROTE=1 ;;
+      esac ;;
     same)  SAME=$((SAME+1)) ;;
   esac
 done < "$PAIRS"
@@ -647,6 +656,19 @@ if [ -n "$PY" ]; then
   echo "  model    : $MODEL"
   echo "  small    : $SMALL"
   echo "  agents   : $AGENTS"
+fi
+
+# 部署≠生效提醒（2026-09-24 ⑥ 引入于 install.ps1；2026-10-08 补齐 sh 侧并扩面 provider dist）
+# Kilo 不热加载 plugin/ 与 provider/hx-failover/dist/——server 启动时加载一次，运行中的
+# Kilo/VS Code 窗口重载前仍执行旧逻辑。write 分支仅真实落盘（DryRun/Check 返回 diff）。
+if [ "$WROTE" -gt 0 ]; then
+  RELOAD_WHAT=""
+  if [ "$PLUGIN_WROTE" = "1" ]; then RELOAD_WHAT="plugin/"; fi
+  if [ "$PROVIDER_WROTE" = "1" ]; then RELOAD_WHAT="${RELOAD_WHAT:+$RELOAD_WHAT、}provider/hx-failover/dist/"; fi
+  if [ -n "$RELOAD_WHAT" ]; then
+    echo ""
+    echo "[install] 提示：本次更新了 $RELOAD_WHAT。Kilo 不热加载这些模块——运行中的 Kilo/VS Code 窗口仍执行旧逻辑，重载窗口后新版才生效（quality-gate ⑥ 检测亦会在交付节点告警）。"
+  fi
 fi
 
 if [ "$CHECK" = "1" ]; then

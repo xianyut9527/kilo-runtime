@@ -445,8 +445,13 @@ foreach ($w in $toWrite) {
     $wrote++
     # 部署≠生效提醒（2026-09-24 ⑥）：Kilo 不热加载插件——运行中的旧进程（含旧 Kilo/VS Code
     # 窗口会话）仍执行旧逻辑，须重载窗口才生效；quality-gate ⑥ 检测也会在交付节点告警。
-    if ($w.Dst -match '^plugin[\\/].+\.tsx?$' -or $w.Dst -match '^plugin[\\/]') {
+    # 2026-10-08 补缺口：provider/hx-failover/dist 同样不热加载（server 启动时加载一次），
+    # 此前只提醒 plugin/——只改 provider 时安装完成无任何提示，旧进程继续白跑旧故障转移逻辑。
+    if ($w.Dst -match '^plugin[\\/]') {
         $script:pluginWritten = $true
+    }
+    if ($w.Dst -match '^provider/hx-failover/dist/') {
+        $script:providerWritten = $true
     }
 }
 
@@ -480,10 +485,14 @@ if ($strayList.Count -gt 0) {
 Write-Host "  model    : $($cfg.model)"
 Write-Host "  small    : $($cfg.small_model)"
 Write-Host "  agents   : $(($cfg.agent.PSObject.Properties.Name) -join ', ')"
-# ⑥ 部署≠生效提醒：只在真实写盘且含 plugin 文件时提示（DryRun/Check/纯文档下发不打扰）
-if (-not $DryRun -and -not $Check -and $script:pluginWritten) {
+# ⑥ 部署≠生效提醒：只在真实写盘且含 plugin/provider dist 文件时提示（DryRun/Check/纯文档下发不打扰）
+# 2026-10-08 扩面：provider/hx-failover/dist（server 启动加载一次）与 plugin/ 同属不热加载面
+$script:reloadWhat = @()
+if ($script:pluginWritten) { $script:reloadWhat += 'plugin/' }
+if ($script:providerWritten) { $script:reloadWhat += 'provider/hx-failover/dist/' }
+if (-not $DryRun -and -not $Check -and $script:reloadWhat.Count -gt 0) {
     Write-Host ''
-    Write-Host "[INSTALL] 提示：本次更新了 plugin/ 文件。Kilo 不热加载插件——运行中的 Kilo/VS Code 窗口仍执行旧逻辑，重载窗口后新版才生效（quality-gate ⑥ 检测亦会在交付节点告警）。"
+    Write-Host "[INSTALL] 提示：本次更新了 $($script:reloadWhat -join '、')。Kilo 不热加载这些模块——运行中的 Kilo/VS Code 窗口仍执行旧逻辑，重载窗口后新版才生效（quality-gate ⑥ 检测亦会在交付节点告警）。"
 }
 
 # ---------- 登录自启快捷方式自愈（2026-09-27 事故回归防护）----------

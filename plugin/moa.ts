@@ -14,6 +14,13 @@ import { loadCfg, ask, cbShouldFailFast, timeoutsOf, clipText } from "../lib/hx-
 const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合）
 const AGG_VIEW_LIMIT = 12_000; // 聚合 prompt 单路参考截断上限（字符）
 const MAX_TASK_CHARS = 50_000; // 任务输入上限：防无界文本多次灌入上游（成本/上下文）
+// 墙钟预算（2026-10-08「巨卡」专项）：插件工具无 UI 进度通道（2026-09-22 三次证伪），
+// 最坏情形 = 扇出与聚合两阶段各等满一次 ask 预算（timeoutMs=480s）→ 单次 moa 卡 ~16min
+// 无反馈（遥测实证 timeout_total elapsedMs=480005 / stream_break_rewrap elapsedMs=585647）。
+// 修法：整个工具钉总墙钟 ≈ timeoutMs——扇出阶段共享剩余预算（超时路按普通失败处理，
+// allSettled 语义不变），聚合阶段保底 AGG_MIN_BUDGET_MS；聚合超时走既有 catch 降级
+//（返回原始视角清单），扇出全灭走既有「所有参考模型失败」路径。行为不新增依赖。
+const AGG_MIN_BUDGET_MS = 90_000; // 聚合阶段保底：扇出烧完预算时聚合仍有机会出结论
 
 const MoaImpl = async () => {
   return {
@@ -70,6 +77,25 @@ const MoaImpl = async () => {
             return "moa: 上游网关断路器开启（近期连续 503 过载）——并行请求会加剧过载，请约 30s 后重试，或稍后再跑本任务。";
           }
 
+          // 墙钟预算（2026-10-08「巨卡」专项）：插件工具无 UI 进度通道（2026-09-22 三次证伪），
+          // 最坏情形 = 扇出+聚合两阶段各等满一次 ask 预算 → 单次 moa 卡 ~16min 无反馈
+          //（遥测实证 timeout_total elapsedMs=480005 / stream_break_rewrap elapsedMs=585647）。
+          // 整个工具钉总墙钟 ≈ timeoutMs：扇出共享剩余预算（超时路按普通失败处理，
+          // allSettled 语义不变；底层 ask 有自己的预算兜底，race 输后 ask 继续跑但结果无人消费）
+          // 聚合保底 AGG_MIN_BUDGET_MS，聚合超时走既有 catch 降级（返回原始视角）。
+          const wallStart = Date.now();
+          const wallDeadline = wallStart + totalMs;
+          const withDeadline = (p, ms, tag) => {
+            let timer;
+            return Promise.race([
+              p,
+              new Promise((_, rej) => {
+                timer = setTimeout(() => rej(new Error(`${tag} 墙钟预算 ${Math.round(ms / 1000)}s 到期`)), ms);
+                timer.unref?.(); // 不阻进程退出
+              }),
+            ]).finally(() => clearTimeout(timer));
+          };
+
           // 分路计时账本：结果报告的「产出规模」行用（每路在各自 promise 落定时记时，
           // 不随最慢路膨胀）
           const durations = refs.map(() => 0);
@@ -85,7 +111,10 @@ const MoaImpl = async () => {
             );
             return p;
           });
-          const settled = await Promise.allSettled(promises);
+          // 扇出阶段共享总墙钟：每路与剩余预算赛跑，超时按普通失败处理（allSettled 语义不变）
+          const settled = await Promise.allSettled(
+            promises.map((p) => withDeadline(p, Math.max(1, wallDeadline - Date.now()), "moa 扇出"))
+          );
 
             const views = [];
             const failures = [];
@@ -117,14 +146,16 @@ const MoaImpl = async () => {
 
             let conclusion;
             try {
-              conclusion = await ask({
+              // 聚合阶段拿剩余墙钟（保底 AGG_MIN_BUDGET_MS，封顶 timeoutMs）
+              const aggBudget = Math.max(AGG_MIN_BUDGET_MS, Math.min(totalMs, wallDeadline - Date.now()));
+              conclusion = await withDeadline(ask({
                 baseURL: cfg.baseURL,
                 key: cfg.key,
                 model: aggregator,
                 prompt: aggregatePrompt,
                 timeoutMs: totalMs,
                 idleMs,
-              });
+              }), aggBudget, "moa 聚合");
             } catch (e) {
               // 聚合失败也要返回可用结果（不丢参考视角）
               return [

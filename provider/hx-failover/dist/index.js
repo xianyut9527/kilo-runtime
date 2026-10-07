@@ -1,4 +1,4 @@
-// kilo-build: src-sha256=ab00160834ac6e5cc050c554e7255d5839d72e54a13bf928ab5fd25407d437a2
+// kilo-build: src-sha256=fd6027dbd3f8fc6973eb297fa9632b5b0c17af743bf763b1bf24aef23345ab55
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)
@@ -28599,6 +28599,7 @@ function gateBufferedStream(chunks) {
     }
   });
 }
+var gateTelemetryBudget = /* @__PURE__ */ new Map();
 async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, toolHoldMs, model) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
@@ -28616,9 +28617,8 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
       headers: res.headers
     });
   };
-  const gateTelemetryBudget = /* @__PURE__ */ new Map();
   const gateTelemetry = (reason, extra, fromModel) => {
-    const key = `gate:${reason}`;
+    const key = `${fromModel ?? "unknown"}:${reason}`;
     const now = Date.now();
     if (now - (gateTelemetryBudget.get(key) ?? 0) < 1e4) return;
     gateTelemetryBudget.set(key, now);

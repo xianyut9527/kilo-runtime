@@ -303,6 +303,14 @@ function gateBufferedStream(chunks) {
   });
 }
 
+// gate_release 遥测节流 Map（module 级，2026-10-08「巨卡」专项）：
+// 跨 gateConsume 課用共享，同 model 同 reason 10s 只记一条——原在 gateConsume 内新建，
+// gateConsume 每响应调一次 → 节流退化为 per-call 永不命中 → 实证遥测里几乎每个成功流
+// 都有一条 gate_release:text_released（4.85MB/36.6k 行）。引用规则：gateTelemetry
+// 闭包引用模块顶层 const（与 GATE_* 常量同层，esbuild 顶层提升安全；TDZ 教训见 gateConsume
+// 内注释：只在「闭包引用函数内 const」时踩）。
+const gateTelemetryBudget = new Map();
+
 // 扣留观察一个 2xx 响应 body 并裁决（递归有界：每 hop retryLeft-1、独立 holdDeadline）。
 // 返回 Response：
 //   - 出现非空 content（未进入 toolHold）→ 回放缓冲 + 剩余直通（流式 UX 原样）；
@@ -355,13 +363,16 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
     // 只有 reasoning_gate_applied/retry 记录，没有「放行/弃流/流结束原样回放」的
     // 终局遥测；本次事故（父流 180s 后中止子代理）在遥测里完全无痕就是因为
     // passthrough 没有留痕。节流语义与 watchdog 一致（同 model 同 reason 10s 一条）。
-    const gateTelemetryBudget = new Map();
+    // 2026-10-08「巨卡」专项：节流 Map 原先在这里（gateConsume 内）新建——gateConsume
+    // 每响应调用一次 → per-call 节流永不命中 → gate_release 遥测刷屏（遥测实证）。
+    // 已提升到模块级（gateConsume 之前的顶层定义），此处只留引用。
     // 2026-10-01 专项修正：gateConsume 是纯函数（不接收 model 参数），model 必须从调用方
-    // 传入（gateConsume 的调用方 reasoningGateFetch 已持有 model）。原实现从外层闭包
+    // 传入（gateConsume 的调用方 reasoningGateFetch已持有 model）。原实现从外层闭包
     // 引用 model 在 dist 构建后会因变量提升失败（model 在 gateConsume 作用域之外）——
     // 教训：闭包引用外层 const 在 build.mjs（esbuild 打包）后可能出现 TDZ 问题。
+    // 节流 key 同步补 model 维度（原 key 无 model，与「同 model 同 reason」宣称不符）。
     const gateTelemetry = (reason, extra, fromModel) => {
-      const key = `gate:${reason}`;
+      const key = `${fromModel ?? "unknown"}:${reason}`;
       const now = Date.now();
       if (now - (gateTelemetryBudget.get(key) ?? 0) < 10_000) return;
       gateTelemetryBudget.set(key, now);

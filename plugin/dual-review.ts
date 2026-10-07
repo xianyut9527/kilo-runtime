@@ -24,6 +24,12 @@ import { randomUUID } from "node:crypto";
 
 const AGG_SUBJECT_LIMIT = 8_000;   // 聚合 prompt 中审查对象截断
 const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
+// 墙钟预算（2026-10-08「巨卡」专项，与 moa.ts 同口径）：插件工具无 UI 进度通道——
+// 正反+裁决两阶段各等满一次 ask 预算（480s）时单次审查最坏 ~16min 无反馈。
+// 整个审查钉总墙钟 ≈ timeoutMs：正反两路共享扇出窗口（超时路按失败处理，单路失败/
+// 双路失败语义不变），聚合阶段保底 AGG_MIN_BUDGET_MS；聚合超时走既有 catch 降级
+//（返回两路原始结论、无「## 裁决」段 → quality-gate 按审查失败口径处理）。
+const AGG_MIN_BUDGET_MS = 90_000;
 
 // 审查器版本（quality-gate 层 3 审查缓存键成分）：三路 prompt 协议、限长或裁决解析
 // 口径变更时必须递增——版本一变缓存全失效，旧裁决不再被复用。
@@ -128,6 +134,24 @@ async function runDualReview(subject, overrides = {}) {
     return "dual_review: 上游网关断路器开启（近期连续 503 过载）——请约 30s 后重试；本次审查跳过不阻塞交付，稍后可手动补审。";
   }
 
+  // 墙钟预算（2026-10-08「巨卡」专项，与 moa.ts 同口径）：正反+裁决两阶段各等满一次
+  // ask 预算时单次审查最坏 ~16min 无反馈（遥测实证 elapsedMs=480005/585647 级挂死）。
+  // 整个审查钉总墙钟 ≈ timeoutMs：正反两路共享扇出窗口（超时路按普通失败处理，
+  // allSettled/单路失败语义不变），聚合阶段保底 AGG_MIN_BUDGET_MS；
+  // 聚合超时走既有 catch 降级（返回两路原始结论、无「## 裁决」段）。
+  // 底层 ask 有自己的预算兜底，race 输后 ask 继续跑但结果无人消费。
+  const wallDeadline = Date.now() + timeoutMs;
+  const withDeadline = (p, ms, tag) => {
+    let timer;
+    return Promise.race([
+      p,
+      new Promise((_, rej) => {
+        timer = setTimeout(() => rej(new Error(`${tag} 墙钟预算 ${Math.round(ms / 1000)}s 到期`)), ms);
+        timer.unref?.(); // 不阻进程退出
+      }),
+    ]).finally(() => clearTimeout(timer));
+  };
+
   // 输入上限（审查必须项）：正反两路 prompt 注入截断版 subject，防超大 diff 撑爆两次上游调用；
   // clipText 内联标注截断事实——审查者明确知道自己在看残件，不在残缺输入上假装全量结论
   const subjectIn = clipText(subject, AGG_SUBJECT_LIMIT);
@@ -138,10 +162,10 @@ async function runDualReview(subject, overrides = {}) {
   const nonce = () => randomUUID().slice(0, 8);
   const tag = { s: `subject-${nonce()}`, p: `review-pos-${nonce()}`, n: `review-neg-${nonce()}` };
 
-  // 正反两路并行；单路失败不废全局（与 moa 同语义）
+  // 正反两路并行，共享扇出窗口（墙钟）；超时路按普通失败处理，单路失败不废全局（与 moa 同语义）
   const [posRes, negRes] = await Promise.allSettled([
-    ask({ baseURL: cfg.baseURL, key: cfg.key, model: posModel, prompt: POSITIVE_PROMPT(subjectIn, tag.s), timeoutMs, idleMs }),
-    ask({ baseURL: cfg.baseURL, key: cfg.key, model: negModel, prompt: NEGATIVE_PROMPT(subjectIn, tag.s), timeoutMs, idleMs }),
+    withDeadline(ask({ baseURL: cfg.baseURL, key: cfg.key, model: posModel, prompt: POSITIVE_PROMPT(subjectIn, tag.s), timeoutMs, idleMs }), Math.max(1, wallDeadline - Date.now()), "dual_review 扇出"),
+    withDeadline(ask({ baseURL: cfg.baseURL, key: cfg.key, model: negModel, prompt: NEGATIVE_PROMPT(subjectIn, tag.s), timeoutMs, idleMs }), Math.max(1, wallDeadline - Date.now()), "dual_review 扇出"),
   ]);
 
   const posText = posRes.status === "fulfilled" ? posRes.value : null;
@@ -171,14 +195,16 @@ async function runDualReview(subject, overrides = {}) {
 
   let verdict;
   try {
-    verdict = await ask({
+    // 裁决阶段拿剩余墙钟（保底 AGG_MIN_BUDGET_MS，封顶 timeoutMs）
+    const aggBudget = Math.max(AGG_MIN_BUDGET_MS, Math.min(timeoutMs, wallDeadline - Date.now()));
+    verdict = await withDeadline(ask({
       baseURL: cfg.baseURL,
       key: cfg.key,
       model: aggModel,
       prompt: AGGREGATE_PROMPT(subjectIn, posC, negC, tag),
       timeoutMs,
       idleMs,
-    });
+    }), aggBudget, "dual_review 裁决");
   } catch (e) {
     return [
       `dual_review: 裁决模型（${aggModel}）失败：${e.message}`,
