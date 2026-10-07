@@ -244,6 +244,34 @@ function makeNotes(n) {
   fs.rmSync(root, { recursive: true, force: true });
 }
 
+// ── 2026-10-08 三查：段标题永不删（本条正是自查发现的自身缺陷的回归）──
+{
+  console.log("== 12) 段标题永久保留（初版把整段裁走的缺陷回归）==");
+  const fx = path.join(os.tmpdir(), `sect-keep-${process.pid}.md`);
+  const entry = (tag) => `- ${tag} :: ` + "z".repeat(2500) + "\n";   // 每条约 2.5KB
+  // 四个段（含 quality-gate 写入锚点 ## Open Questions），每段若干条目，总量超阈
+  const raw =
+    "# Project Memory\n\n## Facts\n" + entry("f1") + entry("f2") + entry("f3") + entry("f4") + entry("f5") +
+    "\n## Decisions\n" + entry("d1") + entry("d2") + entry("d3") +
+    "\n## Constraints\n" + entry("c1") + entry("c2") + entry("c3") +
+    "\n## Open Questions\n" + entry("q1") + entry("q2") + entry("q3");
+  fs.writeFileSync(fx, raw, "utf8");
+  t("fixture 超 32KB", fs.statSync(fx).size > 32 * 1024, `size=${fs.statSync(fx).size}`);
+  const r = capOneProjectFile(fx, fs.statSync(fx).size);
+  const after = fs.readFileSync(fx, "utf8");
+  t("cap 触发", r.trimmed === true);
+  t("裁后 ≤ 24KB", fs.statSync(fx).size <= 24 * 1024);
+  t("## Facts 保留", /^##\s+Facts\s*$/m.test(after));
+  t("## Decisions 保留", /^##\s+Decisions\s*$/m.test(after));
+  t("## Constraints 保留", /^##\s+Constraints\s*$/m.test(after));
+  t("## Open Questions 保留（quality-gate 写入锚点）", /^##\s+Open Questions\s*$/m.test(after));
+  t("# Project Memory 保留", /^#\s+Project Memory\s*$/m.test(after));
+  fs.rmSync(fx, { force: true });
+  fs.rmSync(fx + ".parked", { force: true });
+  const cb = fs.readdirSync(os.tmpdir()).find((f) => f.startsWith(path.basename(fx)) && f.includes("capbak"));
+  if (cb) fs.rmSync(path.join(os.tmpdir(), cb), { force: true });
+}
+
 console.log(`\n${fail === 0 ? "✅" : "❌"} memory-bootstrap 回归：${pass} 通过 / ${fail} 失败`);
 if (fail > 0) console.log(`失败用例：\n  - ${failed.join("\n  - ")}`);
 process.exit(fail === 0 ? 0 : 1);

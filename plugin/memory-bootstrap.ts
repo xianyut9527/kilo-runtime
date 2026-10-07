@@ -255,54 +255,51 @@ function capOneProjectFile(file, currentSize) {
   for (const b of fs.readdirSync(dir).filter((f) => f.startsWith(path.basename(file) + ".capbak-")).sort().slice(0, -1)) {
     try { fs.rmSync(path.join(dir, b), { force: true }); } catch { /* 旧备份清理失败不阻断 */ }
   }
-  // ② 裁到 ≤ PROJECT_TARGET_BYTES（按 UTF-8 字节裁行：行格式 '- topic :: content'，行头删除无损）
-  let text = fs.readFileSync(file, "utf8");
-  const nl = text.includes("\r\n") ? "\r\n" : "\n";
-  const lines = text.split(/\r?\n/);
-  // 保留 header：行首到 ## Facts/## Decisions/## Open Questions 段头为止（不动结构）
-  const headerEnd = (() => {
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
-      if (/^##\s+(Facts|Decisions|Constraints|Open Questions|Notes|Commands|Paths|Tooling|Corrections)\s*$/.test(l.trim())) return i;
-    }
-    return 0; // 没找到段头就保留全部
-  })();
-  const header = lines.slice(0, headerEnd);
-  const body = lines.slice(headerEnd);
-  let bytes = Buffer.byteLength(text, "utf8");
+  // ② 裁到 ≤ PROJECT_TARGET_BYTES
+  //    ⚠️ 2026-10-08 修正（本轮自查发现的自身缺陷）：初版按「第一个段头之前的算 header、
+  //    其余整段 pop」实现——结果把 ## Decisions/## Constraints/## Open Questions 三个段
+  //    **连同标题整段裁走**（实测 project.md 只剩 ## Facts；而 ## Open Questions 是
+  //    quality-gate persistResidualFixup 的写入锚点，段没了会破坏后续写入）。
+  //    正确语义：**段标题是结构、永不删**；只从「最旧」开始删条目行（'- ' 开头）。
+  //    条目按追加序 = 时间序，故从文件顶部向下删 = 删最旧、保最新。
+  let text2 = fs.readFileSync(file, "utf8");
+  const nl2 = text2.includes("\r\n") ? "\r\n" : "\n";
+  const lines2 = text2.split(/\r?\n/);
+  const isEntry = (l) => /^\s*-\s/.test(l);                 // 条目行
+  let bytes2 = Buffer.byteLength(text2, "utf8");
   const parked = [];
-  // 从 body 末尾开始裁（保留最新的事实，老的先入 parked）—— 保新是项目记忆更可读
-  while (bytes > PROJECT_TARGET_BYTES && body.length > 0) {
-    const last = body.pop();
-    if (last === undefined) break;
-    const lb = Buffer.byteLength(last, "utf8") + nl.length;
-    bytes -= lb;
-    parked.push(last);
+  // 从文件顶（最旧）向下扫，删条目行；标题行、空行、注释行一律保留
+  for (let i = 0; i < lines2.length && bytes2 > PROJECT_TARGET_BYTES; i++) {
+    if (!isEntry(lines2[i])) continue;
+    const lb = Buffer.byteLength(lines2[i], "utf8") + nl2.length;
+    bytes2 -= lb;
+    parked.push(lines2[i]);
+    lines2[i] = null; // 标记删除
   }
-  // ③ 无 parked 视为不动（结构异常，不破坏）—— 但有 capbak，原始内容已留底
+  const trimmedText = lines2.filter((l) => l !== null).join(nl2);
+  // ③ 无 parked 视为不动（结构异常/无可删条目）—— 但有 capbak，原始内容已留底
   if (parked.length === 0) return { trimmed: false, parkedPath: "", bak };
   // ④ parked 归档（按 `<!-- parked ... -->` 块，与 GLOBAL-NOTES 风格一致）
   //    ⚠️ parked 自身也封顶（2026-10-08 二轮查漏）：append-only 会让它成为下一个无限增长源
   //    （实测已 640KB 累计）。保留最新 PARKED_KEEP_BYTES，旧的丢弃——capbak 才是完整兜底。
   const parkedPath = file + ".parked";
   const note = `<!-- parked ${new Date().toISOString().slice(0, 10)} —— 超 ${PROJECT_FILE_CAP_BYTES}B 封顶裁出（2026-10-08 根治：autoinject 静态膨胀），内容无损仅不再注入 -->`;
-  const parkedBlock = nl + note + nl + parked.join(nl) + nl;
+  const parkedBlock = nl2 + note + nl2 + parked.join(nl2) + nl2;
   try {
     const prev = fs.existsSync(parkedPath) ? fs.readFileSync(parkedPath, "utf8") : "";
     const combined = prev + parkedBlock;
     if (Buffer.byteLength(combined, "utf8") > PARKED_KEEP_BYTES) {
       // 保尾（最新裁出项）——按字节从尾部截，找行边界避免切碎一行
       let cut = combined.length - PARKED_KEEP_BYTES;
-      const nlIdx = combined.indexOf(nl, cut);
-      if (nlIdx > 0) cut = nlIdx + nl.length;
-      fs.writeFileSync(parkedPath, `<!-- 已按 ${PARKED_KEEP_BYTES}B 封顶截断（旧项丢弃，完整原始见同目录 .capbak-<日期>） -->${nl}${combined.slice(cut)}`, "utf8");
+      const nlIdx = combined.indexOf(nl2, cut);
+      if (nlIdx > 0) cut = nlIdx + nl2.length;
+      fs.writeFileSync(parkedPath, `<!-- 已按 ${PARKED_KEEP_BYTES}B 封顶截断（旧项丢弃，完整原始见同目录 .capbak-<日期>） -->${nl2}${combined.slice(cut)}`, "utf8");
     } else {
       fs.writeFileSync(parkedPath, combined, "utf8");
     }
   } catch { /* parked 封顶失败不阻断主流程（capbak 已落） */ }
   // ⑤ 写回裁剪版（只动这一会话的 project memory 根，无并发读者）
-  const trimmedText = [...header, ...body].join(nl);
-  fs.writeFileSync(file, trimmedText.endsWith(nl) ? trimmedText : trimmedText + nl, "utf8");
+  fs.writeFileSync(file, trimmedText.endsWith(nl2) ? trimmedText : trimmedText + nl2, "utf8");
   return { trimmed: true, parkedPath, bak };
 }
 
