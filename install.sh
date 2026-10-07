@@ -284,6 +284,15 @@ to_file_url() { # $1 = 文件路径
   echo "file:///$p"
 }
 
+# 原生程序（node 等）可读的路径：git-bash 的 mktemp 产出 /tmp/... 属 MSYS 路径，
+# 直接交给原生 node 会被解析到当前盘符下（D:\tmp\...）→ 找不到文件。
+# 2026-10-07 实测：TS 冒烟脚本因此恒定加载失败，把每一次含 .ts 的下发都误判成
+# 「插件加载即崩」并中止（install.sh 的 .ts 下发实际处于瘫痪态；install.ps1 用
+# [System.IO.Path]::GetTempPath() 是本机原生路径，不受影响）。
+to_native() { # $1 = MSYS 路径 → 原生路径
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1" 2>/dev/null || printf "%s" "$1"; else printf "%s" "$1"; fi
+}
+
 # 返回 0 = 通过；非 0 = 该文件加载即崩 / vE2 工厂模拟失败。
 # TS 冒烟引擎（2026-09-28，与 install.ps1 对等）：bun → node>=22+loader hook → 放行告警。
 # bun 缺失不再跳过检查——node>=22 原生可跑 TS（strip-types 稳定化），但裸相对导入
@@ -372,7 +381,7 @@ smoke_ts() { # $1 = 源文件；返回 0=通过，2=无引擎（放行+告警）
     bun -e "import('$url').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })" >/dev/null 2>&1
     return $?
   fi
-  "$TS_NODE" "$TS_RUN_MJS" "$(to_file_url "$TS_HOOK_MJS")" "$url" >/dev/null 2>&1
+  "$TS_NODE" "$(to_native "$TS_RUN_MJS")" "$(to_file_url "$TS_HOOK_MJS")" "$url" >/dev/null 2>&1
   return $?
 }
 
@@ -524,8 +533,11 @@ while IFS=$'\t' read -r src dst; do
     */plugin/*.ts|*/lib/*.ts)
       # 注意 set -e：smoke_ts 失败会退出 subshell 之外的当前 shell，故用 if 显式接住
       # 返回 2 = 无引擎（已告警一次），按放行处理；0 = 通过；1 = 加载即崩
-      if ! smoke_ts "$src"; then
-        rc=$?
+      # ⚠️ 不能用 `if ! smoke_ts "$src"; then rc=$?; fi` —— 取到的是 `!` 的*取反后*状态
+      #    （成功时 $?=1、失败时 $?=0），rc 恒错。必须显式捕获再判（2026-10-07 实测：
+      #    该习语让「无 TS 引擎」的 rc=2 被读成 1，把每一次下发都误报成「插件加载即崩」。）
+      rc=0; smoke_ts "$src" || rc=$?
+      if [ "$rc" != "0" ]; then
         if [ "$rc" != "2" ]; then
           echo "[INSTALL] FAIL: 插件冒烟加载失败，已中止下发（未写入任何文件）：$src" >&2
           exit 1
@@ -536,8 +548,9 @@ while IFS=$'\t' read -r src dst; do
     */plugin/*.ts)
       # vE2 工厂模拟（真根因防线）：每个导出函数都会被 Kilo 当工厂调用，
       # 抛错/返回非对象 = 启动崩溃级缺陷，必须在此拦下
-      if ! smoke_ts_ve2 "$src"; then
-        rc=$?
+      # 同上：显式捕获退出码（`if ! f; then rc=$?` 取到的是取反后状态，rc 恒错）
+      rc=0; smoke_ts_ve2 "$src" || rc=$?
+      if [ "$rc" != "0" ]; then
         if [ "$rc" != "2" ]; then
           echo "[INSTALL] FAIL: vE2 工厂模拟失败（存在裸导出工具函数或工厂返回非对象），已中止下发：$src" >&2
           exit 1

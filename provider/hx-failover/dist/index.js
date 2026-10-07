@@ -1,4 +1,4 @@
-// kilo-build: src-sha256=3ea6a5f3e95066090c8832db7e728fc0354fcac40fbb99363a45762a106e1857
+// kilo-build: src-sha256=ab00160834ac6e5cc050c554e7255d5839d72e54a13bf928ab5fd25407d437a2
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)
@@ -28841,7 +28841,7 @@ function isCancellation(err) {
   const code = err?.code ?? err?.cause?.code;
   return code === "ABORT_ERR";
 }
-var CHANNEL_UNAVAILABLE_RE = /model_not_found|no[_-]?route[_-]?candidate|no available channel|model.?not.?available|no active channel candidate|model not exist/i;
+var CHANNEL_UNAVAILABLE_RE = /model_not_found|no[_-]?route[_-]?candidate|no available channel|model.?not.?available|no active channel candidate|model not exist|all channels? circuit[- ]open|ALL_CHANNELS_DEGRADED|all candidates failed/i;
 function channelUnavailableText(err) {
   const parts = [
     err?.message,
@@ -28857,7 +28857,7 @@ function isRetryable(err) {
   if (err?.gateToolHoldReject) return true;
   const status = err?.statusCode ?? err?.status ?? err?.response?.status;
   if (typeof status === "number") {
-    if ((status === 503 || status === 404) && CHANNEL_UNAVAILABLE_RE.test(channelUnavailableText(err))) {
+    if ((status === 503 || status === 404 || status === 502) && CHANNEL_UNAVAILABLE_RE.test(channelUnavailableText(err))) {
       return false;
     }
     if (status >= 200 && status < 300) return true;
@@ -28876,7 +28876,7 @@ function isOverloadErr(err) {
 }
 function isChannelUnavailable(err) {
   const status = err?.statusCode ?? err?.status;
-  if (status !== 503 && status !== 404) return false;
+  if (status !== 503 && status !== 404 && status !== 502) return false;
   return CHANNEL_UNAVAILABLE_RE.test(channelUnavailableText(err));
 }
 function isStreamBreakError(err) {

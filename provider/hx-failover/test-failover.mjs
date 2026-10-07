@@ -1153,6 +1153,37 @@ const elapsed9q = Date.now() - t9q;
 console.log("9q attempts:", calls9q.join(", "), "| elapsed:", elapsed9q, "ms");
 console.log("PASS notexist503-fallback   :", JSON.stringify(calls9q) === JSON.stringify(["glm-5.3-flash", "kimi-k2.6"]) && out9q.includes("[ok kimi-k2.6]") && elapsed9q < 500);
 
+// 9s：网关「全链熔断」两套新措辞（2026-10-07 实测：glm-5.3 渠道下线，网关回
+//   503 {"code":"ALL_CHANNELS_DEGRADED","message":"all channels circuit-open, nearest cooldown in Ns"}
+//   502 {"code":"UPSTREAM_UNAVAILABLE","message":"all candidates失败"}
+// 语义同「无可用渠道」：必须**零重试**快速换链，绝不能当 503 过载走 2s/6s 退避 + trip 断路器
+// （旧行为：每步白付 ~8s 退避，用户体感「小慢」）。
+for (const [tag, mkResp, wantFallback] of [
+  ["9s1-degraded-503", () => new Response(JSON.stringify({ error: { code: "ALL_CHANNELS_DEGRADED", message: "all channels circuit-open, nearest cooldown in 27s" } }), { status: 503, headers: { "content-type": "application/json" } }), true],
+  ["9s2-candidates-502", () => new Response(JSON.stringify({ error: { code: "UPSTREAM_UNAVAILABLE", message: "all candidates failed" } }), { status: 502, headers: { "content-type": "application/json" } }), true],
+]) {
+  let calls = [];
+  const fakeFetch = async (url, init) => {
+    let model = "?";
+    try { model = JSON.parse(init.body).model; } catch {}
+    calls.push(model);
+    if (model === "glm-5.3") return mkResp();
+    return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  const provider = createHxFailover({
+    name: "hx", baseURL: "https://stub.local/v1", apiKey: "k", fetch: fakeFetch,
+    failover: { chain: { models: ["glm-5.3-flash", "kimi-k2.6"] }, cooldownMs: 30000 },
+  });
+  const t0 = Date.now();
+  const out = await gen9(provider, "glm-5.3");
+  const elapsed = Date.now() - t0;
+  // 期望：glm-5.3 一次即换链到 glm-5.3-flash 成功；零重试 => 无 2s/6s 退避
+  console.log(`${tag} attempts:`, calls.join(","), "| elapsed:", elapsed, "ms");
+  console.log(`PASS ${tag} :`,
+    JSON.stringify(calls) === JSON.stringify(["glm-5.3", "glm-5.3-flash"]) &&
+    out.includes("[ok glm-5.3-flash]") && elapsed < 500);
+}
+
 // 9r：全链同签名 404 model_not_found → channel_exhausted 抛**原始 404**（真 404 不得
 // 被伪造的 503 兜底掩盖——保留可诊断性；markFailed 已按模型短 TTL 负缓存）
 let calls9r = [];

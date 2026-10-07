@@ -195,6 +195,20 @@ macOS / Linux（bash）：
 2. **日志文件是「活跃单文件」，mtime 修剪抓不到**：`log/opencode.log` 首行自述峰值曾达 **291MB**（permission-eval INFO 刷屏），实测当前 6MB。
    已加 `capBigLogs()`：单日志 > 32MB 时**截尾部保留 8MB**（读尾 + 临时文件 + rename 原子替换，写入 `storage-maintain-audit.log`），绝不整删——日志是排障唯一线索。
 
+**2026-10-07 四查：用户体感「还是有点小慢」的实测根因（两个，都已修）**：
+
+1. **网关「全链熔断」报文未进签名集 → 每步白付 2s+6s 退避**。实测 `glm-5.3` 渠道已下线（502 `UPSTREAM_UNAVAILABLE` / 503 `ALL_CHANNELS_DEGRADED` `all channels circuit-open, nearest cooldown in Ns`），
+   而这两个措辞都不在 `CHANNEL_UNAVAILABLE_RE` 里，被当作「网关节流过载」：走 `OVERLOAD_BACKOFF_MS` 2s/6s、连撞 3 次、再降级。
+   遥测实证：近 20 分钟 14 次 `retry` / 7 次 `fallback` / 25 次 `skip_cooldown`。已补签名（provider 与 `lib/hx-client.ts` 同源）+ 纳入 502 家族；
+   回归用例 9s1/9s2 断言「零重试、毫秒级换链」（修复前 ~8s）。
+2. **运行时模型钉选覆盖了配置**：`~/.local/state/kilo/model.json` 与 `vscode-model.json` 里 `code` 槽被 VS Code 模型选择器钉成 `glm-5.3`（已下线）、`conductor` 钉成 `deepseek-v4-flash`（已退役 410）。
+   这两个文件**优先于 `agent.code.model`**，所以此前改配置里的 `agent.code` 对主链路无效。已切到 `glm-5.3-flash` / `deepseek-v4.1-flash`（备份 `.bak-*` 留在同目录）。
+
+**顺带修掉 install.sh 的两处自身缺陷**（都属「工具静默失效」类）：
+- `to_file_url` 之外还缺 `to_native`：`mktemp /tmp/...` 产出的 MSYS 路径直接交给原生 node 会被解析到当前盘符下（`D:\tmp\...`）→ TS 冒烟脚本恒加载失败，
+  **把每一次含 .ts 的下发都误判成「插件加载即崩」并中止**（install.sh 的 .ts 下发实际处于瘫痪态；install.ps1 用原生临时路径不受影响）。
+- `if ! smoke_ts "$src"; then rc=$?; fi` 取到的是 `!` 取反后的状态（成功=1、失败=0），rc 恒错 —— 于是「无 TS 引擎」的 rc=2 被读成 1，同样误报。已改为 `rc=0; smoke_ts ... || rc=$?`。
+
 **模板编辑与下发（2026-10-07 补）**：改 `kilo.json.tmpl` 后，可用 `node scripts/render-config.mjs [--dry]` 直接在仓库内渲染+校验+语义 diff+备份下发（与 `install.sh` 同管线，省去整包下发），随后仍应跑一次 `./install.sh --check` 确认零漂移。
 
 

@@ -128,7 +128,12 @@ function isOverloadErr(err) {
   // （404/503 同措辞变体，生产实证 2026-10-01 21:50 glm-5.3-flash）与 NO_ROUTE_CANDIDATE
   // 本体；404 渠道签名形态在 ask() 侧经 NON_RETRYABLE_STATUS 早退（不 trip 不退避），
   // 本正则只守 503 入口——两文件签名集必须同源维护，改一处必改另一处。
-  if (err?.statusCode === 503 && /model_not_found|no[_-]?route[_-]?candidate|no available channel|model.?not.?available|no active channel candidate|model not exist/i.test(String(err?.message ?? "") + String(err?.responseHeaders?.get?.("x-error") ?? ""))) {
+  // 2026-10-07 同源补漏（与 provider 侧 CHANNEL_UNAVAILABLE_RE 必须一致）：网关「全链
+  // 熔断」的两套措辞（503 ALL_CHANNELS_DEGRADED / 502 UPSTREAM_UNAVAILABLE all
+  // candidates failed）此前未进签名集，被当网关节流过载 → 白付 2s/6s 退避并 trip 断路器。
+  // 状态码家族同步纳入 502（同样由网关主动发出，非模型侧错误）。
+  const cuStatus = err?.statusCode ?? err?.status;
+  if ((cuStatus === 503 || cuStatus === 502) && /model_not_found|no[_-]?route[_-]?candidate|no available channel|model.?not.?available|no active channel candidate|model not exist|all channels? circuit[- ]open|ALL_CHANNELS_DEGRADED|all candidates failed/i.test(String(err?.message ?? "") + String(err?.responseHeaders?.get?.("x-error") ?? ""))) {
     return false;
   }
   if (err?.statusCode === 503) return true;

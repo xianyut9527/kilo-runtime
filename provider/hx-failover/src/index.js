@@ -630,7 +630,7 @@ function isCancellation(err) {
 // "Model not exist."），分家族穷举每换一张面孔就漏拦一次→fatal 直通用户，
 // 健康降级链被整链放弃。根治=签名匹配与状态码家族解耦：同一正则覆盖 404/503
 // 两家族（i 标志下大小写等价，含下划线/连字符变体 no_route_candidate）。
-const CHANNEL_UNAVAILABLE_RE = /model_not_found|no[_-]?route[_-]?candidate|no available channel|model.?not.?available|no active channel candidate|model not exist/i;
+const CHANNEL_UNAVAILABLE_RE = /model_not_found|no[_-]?route[_-]?candidate|no available channel|model.?not.?available|no active channel candidate|model not exist|all channels? circuit[- ]open|ALL_CHANNELS_DEGRADED|all candidates failed/i;
 // 报文来源拼接（dual-review 必修项：code 可能只在 body.code（不进 message）——
 // message、data.error.message、data.error.code、顶层 data.code、responseBody 五路并集匹配，
 // 任一携带渠道不可用签名即命中，避免单一字段缺失漏判。responseBody 兜底覆盖
@@ -658,7 +658,7 @@ function isRetryable(err) {
     // 故障（渠道没配/下线），3 连重试纯空转 ~8s（2026-09-27 生产实测）。签名与状态码
     // 家族解耦（见 CHANNEL_UNAVAILABLE_RE 注释）：404+model_not_found 与 503+同签名
     // 同等处理。不重试直接换链上下一模型（报文由上游 new-api 网关统一格式）。
-    if ((status === 503 || status === 404) && CHANNEL_UNAVAILABLE_RE.test(channelUnavailableText(err))) {
+    if ((status === 503 || status === 404 || status === 502) && CHANNEL_UNAVAILABLE_RE.test(channelUnavailableText(err))) {
       return false;
     }
     // 2xx 状态的 API 错误只可能是「成功响应 body 处理失败」（真实 API 错误必带 4xx/5xx），
@@ -696,9 +696,17 @@ function isOverloadErr(err) {
 // 2026-10-01 根治：签名匹配与状态码家族解耦——404/503 共用 CHANNEL_UNAVAILABLE_RE，
 // 杜绝「同一根因换状态码/措辞组合就漏拦」的分家族穷举模式性缺口。
 // 正则经共享常量与 isRetryable 统一口径（dual-review 必修项）。
+//
+// 2026-10-07 三次补漏（实测代价：每步 2s+6s 退避 + 60s 冷却，用户体感「小慢」）：
+// 网关对「全链熔断」另有两套措辞，此前**未进签名集**，被当 502/503 过载处理——
+//   · 503 {"code":"ALL_CHANNELS_DEGRADED","message":"all channels circuit-open, nearest cooldown in Ns"}
+//   · 502 {"code":"UPSTREAM_UNAVAILABLE","message":"all candidates failed"}
+// 二者与「无可用渠道」同语义（渠道侧故障，非网关节流过载），且都会自报冷却窗口。
+// 另：502 此前直接落在状态码家族之外 —— 它同样由网关主动发出，纳入。
+// ⚠️ 本正则与 lib/hx-client.ts 的 isOverloadErr 签名集必须同源维护，改一处必改另一处。
 function isChannelUnavailable(err) {
   const status = err?.statusCode ?? err?.status;
-  if (status !== 503 && status !== 404) return false;
+  if (status !== 503 && status !== 404 && status !== 502) return false;
   return CHANNEL_UNAVAILABLE_RE.test(channelUnavailableText(err));
 }
 
