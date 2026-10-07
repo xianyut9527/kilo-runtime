@@ -317,7 +317,7 @@ function gateBufferedStream(chunks) {
 //     原样上抛——不在本层用读超时竞争：race 输掉的一方仍占着 read 队列，
 //     会把后续 chunk 吞给已被放弃的读取（实测数据丢失）。
 //   - 流结束：死亡且可重试 → mkRetry() 下一跳同样门控；其余 → 原始字节原样回放。
-async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, toolHoldMs) {
+async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, toolHoldMs, model) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   const chunks = [];
@@ -329,25 +329,55 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
 
   // 放弃门控：回放已缓冲 + 接管剩余（真正的直通，不丢后续字节）。
   // 仅用于「缓冲内无半截工具参数」的路径（文本放行 / 非 toolHold 期超时与超限）。
-  const passthrough = () => new Response(gateReplayStream(reader, chunks), {
-    status: res.status, statusText: res.statusText, headers: res.headers,
-  });
+  // 2026-10-01：出口遥测——此前 passthrough（文本放行/超时直通）完全无痕，
+  // 事故取证只能靠时序反推；现在与 reject 一样有迹可查。
+  const passthrough = (reason) => {
+    gateTelemetry(reason ?? "passthrough", { toolHolding }, model);
+    return new Response(gateReplayStream(reader, chunks), {
+      status: res.status, statusText: res.statusText, headers: res.headers,
+    });
+  };
 
   // 弃流重试（2026-09-29 dual-review 必修项①）：toolHold 期的超时/超限，缓冲里是
   // 半截工具参数——回放直通会把残缺 tool-call part 交付调用方，正是本专项要消灭的
   // abort 形态。改为取消上游读取后抛可重试错误：缓冲从未交付，withFailover 整体重发
   // 零重复（与 T1 中途断流同机制）。
-  // 零交付不变式（r2 复审必修项①核实结论——结构保证，无需运行时标志）：
-  //   gateConsume 的唯一交付物是 return 的 Response，每个 return/throw 都是终端路径——
-  //   passthrough() return 后本帧销毁，不存在「直通后继续读 chunk 再入 hold」的路径；
-  //   rejectToolHold 仅在 toolHold 期可达，该期全部 chunk 尚在 chunks 缓冲、
-  //   未创建过任何 Response。故 reject 时已交付字节恒为 0。
-  // err.gateToolHoldReject：显式可重试标志（r2 必修项②——isRetryable 优先消费，
-  //   不依赖 2xx 分支语义，防其日后调整时静默破坏弃流重试）；statusCode=200 同时
-  //   保留（该失败本质是 2xx 响应 body 处理期弃流，供按状态分类的下游遥测取用）。
-  // AbortError 不经此路径（read() 取消类拒绝在上方原样上抛，取消不容错不变式不受影响）。
+    // 零交付不变式（r2 复审必修项①核实结论——结构保证，无需运行时标志）：
+    //   gateConsume 的唯一交付物是 return 的 Response，每个 return/throw 都是终端路径——
+    //   passthrough() return 后本帧销毁，不存在「直通后继续读 chunk 再入 hold」的路径；
+    //   rejectToolHold 仅在 toolHold 期可达，该期全部 chunk 尚在 chunks 缓冲、
+    //   未创建过任何 Response。故 reject 时已交付字节恒为 0。
+    // err.gateToolHoldReject：显式可重试标志（r2 必修项②——isRetryable 优先消费，
+    //   不依赖 2xx 分支语义，防其日后调整时静默破坏弃流重试）；statusCode=200 同时
+    //   保留（该失败本质是 2xx 响应 body 处理期弃流，供按状态分类的下游遥测取用）。
+    // AbortError 不经此路径（read() 取消类拒绝在上方原样上抛，取消不容错不变式不受影响）。
+    // 2026-10-01 专项：三出口的遥测补齐——passthrough/reject/dead-end 此前全部
+    // 只有 reasoning_gate_applied/retry 记录，没有「放行/弃流/流结束原样回放」的
+    // 终局遥测；本次事故（父流 180s 后中止子代理）在遥测里完全无痕就是因为
+    // passthrough 没有留痕。节流语义与 watchdog 一致（同 model 同 reason 10s 一条）。
+    const gateTelemetryBudget = new Map();
+    // 2026-10-01 专项修正：gateConsume 是纯函数（不接收 model 参数），model 必须从调用方
+    // 传入（gateConsume 的调用方 reasoningGateFetch 已持有 model）。原实现从外层闭包
+    // 引用 model 在 dist 构建后会因变量提升失败（model 在 gateConsume 作用域之外）——
+    // 教训：闭包引用外层 const 在 build.mjs（esbuild 打包）后可能出现 TDZ 问题。
+    const gateTelemetry = (reason, extra, fromModel) => {
+      const key = `gate:${reason}`;
+      const now = Date.now();
+      if (now - (gateTelemetryBudget.get(key) ?? 0) < 10_000) return;
+      gateTelemetryBudget.set(key, now);
+      logFailover({ action: "gate_release", from: fromModel ?? "unknown", reason, ...extra }).catch(() => {});
+    };
+    // 2026-10-01 反向审查必修项：cancel 幂等化——上游流可能已正常结束（[DONE] 已消费
+    // 但仍在 toolHold 期），此时 cancel 会抛 InvalidStateError；且必须等待 cancel 落地
+    // 再 throw/return，否则残留的 read 队列会吞掉本 hop 之后的 chunk。
+    const cancelReader = () =>
+      Promise.resolve(reader.cancel()).catch((e) => {
+        if (e?.name !== "InvalidStateError") throw e;
+        // 流已正常关闭是预期路径，吞掉
+      });
   const rejectToolHold = (reason) => {
-    try { reader.cancel().catch(() => {}); } catch { /* 已结束则忽略 */ }
+    gateTelemetry(`toolhold_reject_${reason}`, (toolHolding ? { toolHolding: true } : {}), model);
+    cancelReader().catch(() => {}); // 幂等，无效时静默（异常已在 cancelReader 内处理）
     const err = new Error(`hx-failover: reasoning-gate toolHold ${reason}，半截工具参数未交付，弃流按可重试错误上抛`);
     err.statusCode = 200;
     err.gateToolHoldReject = reason; // isRetryable 显式消费；withReasoningGate 调用点据此记遥测
@@ -363,7 +393,7 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
     // ① 文本优先：非空 content 即放行（等价原行为，保流式 UX）。已进入 toolHold 则
     //    不再解除——工具调用混排的前置文本同样扣留到流尾，原子性优先于流式。
     if (!toolHolding && GATE_TEXT.test(text)) {
-      return passthrough();
+      return passthrough("text_released"); // 文本出现即放行（流式 UX 原样）
     }
     // ② 进入 toolHold：tool_calls 起始（[{）即原子化缓冲起点
     if (!toolHolding && GATE_TOOL.test(text)) {
@@ -379,24 +409,27 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
       if (Date.now() > toolDeadline) return rejectToolHold("inter_chunk_timeout"); // 慢滴超时：弃流重试
       toolDeadline = Date.now() + toolHoldMs;
     } else if (Date.now() > deadline) {
-      return passthrough(); // 扣留超时：放弃门控转直通
+      return passthrough("hold_timeout_release"); // 扣留超时：放弃门控转直通
     }
     // ④ 缓冲字节上限：快速上游可在时限内灌爆内存（并发放大）。非 toolHold 期超限
     //    直通（仅 reasoning，零丢失）；toolHold 期超限同必修项①弃流重试（直通=半截件）。
     if (bufferedBytes > bufferLimitBytes) {
       if (toolHolding) return rejectToolHold("buffer_limit");
-      return passthrough();
+      return passthrough("buffer_limit_release");
     }
   }
   // 流结束仍无可行动输出 → 死亡判定（缺口 A：推理吃光预算/正文全空，v1 语义原样保留）
+  // 2026-10-01：出口遥测补全——流结束原样回放（未触发 A/B 重试）此前完全无痕，
+  // 本批事故的取证断点就是「父流 180s 超时被掐后遥测里看不到任何 gate 终局记录」。
+  // 只记真实死亡流（finish=length|stop 且无可行动输出），避免正常流刷量。
   if (retryLeft > 0 && GATE_LENGTH_FINISH.test(text) && !GATE_ACTIONABLE.test(text)) {
     let next = null;
     // 取消不容错（2026-09-29 查漏补缺）：mkRetry 的 fetch 被用户取消时 AbortError
     // 必须直通——旧 catch 无差别吞掉后会回放原始死亡流，用户已取消却交付空正文响应
     try { next = await mkRetry(); } catch (e) { if (isCancellation(e)) throw e; next = null; } // 其余网络错 → 回退原样回放
     if (next && next.ok && next.body) {
-      try { reader.cancel().catch(() => {}); } catch { /* 已结束则忽略 */ }
-      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs);
+      cancelReader().catch(() => {});
+      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs, model);
     }
     try { next?.body?.cancel?.()?.catch?.(() => {}); } catch { /* 忽略 */ }
   }
@@ -410,10 +443,16 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
     let next = null;
     try { next = await mkRetry("truncated_tool_args"); } catch (e) { if (isCancellation(e)) throw e; next = null; } // 取消直通；网络错 → 回退原样回放
     if (next && next.ok && next.body) {
-      try { reader.cancel().catch(() => {}); } catch { /* 已结束则忽略 */ }
-      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs);
+      cancelReader().catch(() => {}); // 幂等：上游已结束则静默
+      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs, model);
     }
     try { next?.body?.cancel?.()?.catch?.(() => {}); } catch { /* 忽略 */ }
+  }
+  // 终局出口（流尾原样回放）：A/B 均未命中或 retryLeft=0——留死亡/合法终局遥测，
+  // 让「上游已返回但 Kilo 把它晾着」的事故至少有一条可追溯的 gate 记录。
+  if (!GATE_ACTIONABLE.test(text)) {
+    const finish = /"finish_reason"\s*:\s*"(\w+)"/.exec(text);
+    gateTelemetry("stream_end_release", { finishReason: finish?.[1] ?? "unknown", toolHolding, retryLeft }, model);
   }
   return new Response(gateBufferedStream(chunks), {
     status: res.status, statusText: res.statusText, headers: res.headers,
@@ -473,7 +512,7 @@ function withReasoningGate(baseFetch, cfg) {
     // toolHold 期超时/超限走 rejectToolHold 弃流重试（必修项①），同样零交付。
     let gated;
     try {
-      gated = await gateConsume(res, mkRetry, retries, holdMs, bufferLimitBytes, toolHoldMs);
+      gated = await gateConsume(res, mkRetry, retries, holdMs, bufferLimitBytes, toolHoldMs, model);
     } catch (e) {
       // 弃流重试的遥测（缓冲内半截参数从未交付）：可回溯 gate 弃流事件。
       // 遥测自身失败不得吞掉/覆盖原始弃流错误（r2 建议项防护）。
@@ -501,9 +540,18 @@ function isCoolingFactory(cooldown) {
   };
 }
 
-function markFailedFactory(cooldown) {
-  return function markFailed(id, cooldownMs) {
+function markFailedFactory(cooldown, lastFailure) {
+  return function markFailed(id, cooldownMs, err) {
     cooldown.set(id, Date.now() + cooldownMs);
+    // 冷却原因留存（2026-10-04 用户指示）：原样记下触发冷却的上游失败，
+    // 全链冷却快速失败时逐条返回上游原文——不截断、不包装自有文案。
+    if (lastFailure && err !== undefined) {
+      lastFailure.set(id, {
+        at: Date.now(),
+        status: err?.statusCode ?? err?.status,
+        message: String(err?.message ?? err),
+      });
+    }
   };
 }
 
@@ -575,12 +623,14 @@ function isCancellation(err) {
 
 // 渠道/模型不可用报文匹配（2026-09-28 dual-review 必修项：原 isRetryable 与
 // isChannelUnavailable 各自硬编码同一组正则，口径漂移风险高——抽离共享常量统一引用）。
-// 503 家族：new-api 网关对未配渠道/下线的统一报文（"No available channel for model X
-// under group svip" / model_not_found / model not available）。
-// 404 家族：NO_ROUTE_CANDIDATE / "no active channel candidate for model (protocol=openai)"
-// （生产实证 2026-09-28 07:29，glm-5.3-flash 渠道下线期）。
-const CHANNEL_UNAVAILABLE_503_RE = /model_not_found|no available channel|model.?not.?available|no active channel candidate/i;
-const CHANNEL_UNAVAILABLE_404_RE = /NO_ROUTE_CANDIDATE|no active channel candidate/i;
+// 2026-10-01 根治（第四次措辞变体漏拦，21:50:37 生产事故实证）：原实现按状态码分
+// 家族穷举——503 家族认 model_not_found 等，404 家族只认 NO_ROUTE_CANDIDATE；
+// 网关（new-api）同一根因（渠道未配/下线）报文状态码与措辞自由组合（09-27 503
+// "No available channel"、09-28 404 NO_ROUTE_CANDIDATE、10-01 404 model_not_found
+// "Model not exist."），分家族穷举每换一张面孔就漏拦一次→fatal 直通用户，
+// 健康降级链被整链放弃。根治=签名匹配与状态码家族解耦：同一正则覆盖 404/503
+// 两家族（i 标志下大小写等价，含下划线/连字符变体 no_route_candidate）。
+const CHANNEL_UNAVAILABLE_RE = /model_not_found|no[_-]?route[_-]?candidate|no available channel|model.?not.?available|no active channel candidate|model not exist/i;
 // 报文来源拼接（dual-review 必修项：code 可能只在 body.code（不进 message）——
 // message、data.error.message、data.error.code、顶层 data.code、responseBody 五路并集匹配，
 // 任一携带渠道不可用签名即命中，避免单一字段缺失漏判。responseBody 兜底覆盖
@@ -604,17 +654,11 @@ function isRetryable(err) {
   if (err?.gateToolHoldReject) return true;
   const status = err?.statusCode ?? err?.status ?? err?.response?.status;
   if (typeof status === "number") {
-    // 2026-09-27 查漏补缺：503 + 渠道/模型不可用报文 = 确定性故障（渠道没配/下线），
-    // 3 连重试纯空转 ~8s（2026-09-27 生产实测：glm-5.2 渠道下线期每次调用都慢 8s 才换 hop）。
-    // 不重试直接换链上下一模型（报文由上游 new-api 网关统一格式）。
-    if (status === 503 && CHANNEL_UNAVAILABLE_503_RE.test(channelUnavailableText(err))) {
-      return false;
-    }
-    // 2026-09-28 查漏补缺：404 + NO_ROUTE_CANDIDATE（生产实证 2026-09-28 07:29：glm-5.3-flash
-    // 渠道下线期网关回 404 {"code":"NO_ROUTE_CANDIDATE","msg":"no active channel candidate for
-    // model (protocol=openai)"}）——与 503 兄弟报文同一根因（渠道未配/下线），渠道按模型隔离，
-    // 同样不重试直接换下一模型，而非 fatal 直通（直通会放弃整条链，用户直接看到裸报错）。
-    if (status === 404 && CHANNEL_UNAVAILABLE_404_RE.test(channelUnavailableText(err))) {
+    // 2026-09-27 查漏补缺 + 2026-10-01 根治：404/503 + 渠道/模型不可用签名 = 确定性
+    // 故障（渠道没配/下线），3 连重试纯空转 ~8s（2026-09-27 生产实测）。签名与状态码
+    // 家族解耦（见 CHANNEL_UNAVAILABLE_RE 注释）：404+model_not_found 与 503+同签名
+    // 同等处理。不重试直接换链上下一模型（报文由上游 new-api 网关统一格式）。
+    if ((status === 503 || status === 404) && CHANNEL_UNAVAILABLE_RE.test(channelUnavailableText(err))) {
       return false;
     }
     // 2xx 状态的 API 错误只可能是「成功响应 body 处理失败」（真实 API 错误必带 4xx/5xx），
@@ -632,8 +676,9 @@ function isRetryable(err) {
 // 让死配置的失败暴露慢 ~6s，而把真过载期的快重试误放过的代价是全链连环冲击。
 function isOverloadErr(err) {
   const status = err?.statusCode ?? err?.status;
-  // 渠道/模型不可用（model_not_found 类）：确定性故障——不 trip 冷却标记
-  // （网关本身健康，别的模型照常可用），不进慢退避；上游 isRetryable 已改 false 走 fatal 快换 hop。
+  // 渠道/模型不可用（404/503+签名，见 isChannelUnavailable）：确定性故障——不 trip
+  // 冷却标记（网关本身健康，别的模型照常可用），不进慢退避；isRetryable 已判 false
+  // 走快速换 hop（markFailed 只冷却本模型，短 TTL 负缓存语义）。
   if (isChannelUnavailable(err)) return false;
   if (status === 503) return true;
   const h = err?.responseHeaders;
@@ -644,17 +689,17 @@ function isOverloadErr(err) {
 
 // 渠道/模型不可用判定（2026-09-27 查漏补缺）：new-api 网关对未配渠道/渠道下线的统一
 // 报文（生产实证 2026-09-27：glm-5.2 渠道下线期持续 "No available channel for model
-// glm-5.2 under group svip"）。渠道按模型隔离：只该跳过本 hop 换下一模型，
+// glm-5.2 under group svip"；2026-09-28 07:29：404 NO_ROUTE_CANDIDATE；2026-10-01
+// 21:50：404 model_not_found "Model not exist."——glm-5.3-flash 间歇 404，链上其他
+// 模型全健康却整链 fatal 放弃）。渠道按模型隔离：只该跳过本 hop 换下一模型，
 // 绝不 trip 全链冷却（渠道不会因 60s 等待恢复，也不会连累健康渠道）。
-// 2026-09-28 补 404 变体：NO_ROUTE_CANDIDATE / "no active channel candidate for model
-// (protocol=openai)"（生产实证 2026-09-28 07:29，glm-5.3-flash 渠道下线期）。
+// 2026-10-01 根治：签名匹配与状态码家族解耦——404/503 共用 CHANNEL_UNAVAILABLE_RE，
+// 杜绝「同一根因换状态码/措辞组合就漏拦」的分家族穷举模式性缺口。
 // 正则经共享常量与 isRetryable 统一口径（dual-review 必修项）。
 function isChannelUnavailable(err) {
   const status = err?.statusCode ?? err?.status;
   if (status !== 503 && status !== 404) return false;
-  const text = channelUnavailableText(err);
-  if (status === 404) return CHANNEL_UNAVAILABLE_404_RE.test(text);
-  return CHANNEL_UNAVAILABLE_503_RE.test(text);
+  return CHANNEL_UNAVAILABLE_RE.test(channelUnavailableText(err));
 }
 
 // ── 流中断错误重包装（2026-09-15 断流专项）────────────────────────────
@@ -764,8 +809,11 @@ export function createHxFailover(options) {
   // 冷却状态（modelId -> 失效截止时间戳）：工厂级实例（生产 Kilo 单进程单工厂无差异，
   // 测试多实例天然隔离互不污染——模块级 Map 曾让同进程多实例共享冷却状态）
   const cooldown = new Map();
+  // 最近一次失败摘要（modelId -> { at, status, message }）：仅随冷却窗口有效，
+  // 全链冷却 fail-fast 时把上游原文带给用户（过期记录靠冷却截止时间过滤）
+  const lastFailure = new Map();
   const isCooling = isCoolingFactory(cooldown);
-  const markFailed = markFailedFactory(cooldown);
+  const markFailed = markFailedFactory(cooldown, lastFailure);
   // 切换通知去重窗口（failover.noticeCooldownMs，正数；缺省 = cooldownMs）：同一
   // 「主模型→备用」的切换提示在该窗口内只注入一次——主模型持续故障期每次调用都
   // 会切换到同一备用，不去重则每条回复流首重复同一条提示（2026-09-26 用户实证刷屏）。
@@ -823,7 +871,7 @@ export function createHxFailover(options) {
             // 但渠道按模型隔离——只是本 hop 渠道没了，链上其他模型可能照常可用。
             // 不重试（空转），也不 fatal 直通（会放弃整条链）：立即换下一 hop（同 fallback 语义）。
             if (isChannelUnavailable(err)) {
-              markFailed(id, cooldownMs);
+              markFailed(id, cooldownMs, err);
               await logFailover({
                 from: modelId,
                 at: id,
@@ -864,7 +912,7 @@ export function createHxFailover(options) {
             }
             continue;
           }
-          markFailed(id, cooldownMs);
+          markFailed(id, cooldownMs, err);
           await logFailover({
             from: modelId,
             at: id,
@@ -894,13 +942,32 @@ export function createHxFailover(options) {
       let maxUntil = cooldown.get(modelId) ?? 0;
       for (const m of chain.slice(1)) maxUntil = Math.max(maxUntil, cooldown.get(m) ?? 0);
       const remainS = Math.max(1, Math.ceil((maxUntil - Date.now()) / 1000));
-      await logFailover({ from: modelId, action: "exhausted_cooldown", remainMs: maxUntil - Date.now() });
+      // 错误正文 = 上游原文（2026-10-04 用户指示：全部显示上游返回的错误，
+      // 不包装自有文案）：汇集链上仍在冷却窗口内各模型的最近一次失败，按链序
+      // 逐行附模型/状态归属；无留存记录时回退通用文案。503+retry-after 快速
+      // 失败语义不变（对外错误正文不再含自有话术）。
+      const lastFails = [];
+      for (const m of chain) {
+        if ((cooldown.get(m) ?? 0) <= Date.now()) continue;
+        const f = lastFailure.get(m);
+        if (f) lastFails.push({ model: m, status: f.status, message: f.message });
+      }
+      await logFailover({
+        from: modelId,
+        action: "exhausted_cooldown",
+        remainMs: maxUntil - Date.now(),
+        ...(lastFails.length ? { lastFails } : {}),
+      });
       // responseHeaders 必须是 Record：SDK extractResponseHeaders 返回
       // Object.fromEntries（dist:24130），传 Headers 实例时守约下游按
       // headers["retry-after"] 属性访问会静默取到 undefined（r2 红队实证）。
       const retryHeaders = { "retry-after": String(remainS) };
       throw new APICallError({
-        message: `hx-failover: 主模型与全部备用均在冷却中（上一轮已实测失败），约 ${remainS}s 后自动恢复 —— 跳过重试避免空转`,
+        message: lastFails.length
+          ? lastFails
+              .map((f) => `[${f.model}${f.status === undefined || f.status === null ? "" : ` HTTP ${f.status}`}] ${f.message}`)
+              .join("\n")
+          : `hx-failover: 主模型与全部备用均在冷却中（上一轮已实测失败），约 ${remainS}s 后自动恢复 —— 跳过重试避免空转`,
         url: undefined,
         statusCode: 503,
         responseHeaders: retryHeaders,
@@ -992,23 +1059,65 @@ export function createHxFailover(options) {
   // （chunkTimeout 曾是「无消费者的无效配置」，2026-09-15 补实现）。
   // 看门狗把「静默挂死」转成「显式报错」，由上层（Kilo 重试/用户重发）接管；
   // 不触发本包的模型降级 —— 流已交给调用方，重放语义不安全。
+  // 2026-10-01 专项（#12706 幽灵中止）：timer 在 flush/cancel 之外的生命周期不清理，
+  // 会导致流已正常结束后 180s 再炸一次 controller.error（已关闭则静默，但偶发竞争
+  // 会向上抛到已完成的 fiber，引发「父会话 model 流正常返回后整 180s 中止子代理」
+  // 的事故形态）。本实现改为幂等状态机：
+  //   - terminate 记录一次（flush/cancel/timeout 三条终止路径唯一入口）；
+  //   - 任何重复终止调用静默忽略；timer 只在未终止时武装；
+  //   - 遥测 `watchdog_armed`（武装一次）与 `watchdog_disarmed:reason`（解除一次），
+  //     按 disarmed_by 区分用户取消（cancel）/ 正常结束（flush）/ 看门狗触发（timeout_fired）
+  //     / timeout 二次触发（timeout_retry_fired——此形态此前完全无痕），供事后取证。
+  //   - controller.error 只在 timeout 路径调用，且仅当流尚未终止；流已关闭时
+  //     controller.error 会抛 InvalidStateError，被精确捕获（非特定错误继续上抛，
+  //     不吞流生命周期错误）。
   function withChunkWatchdog(stream, ms, modelId) {
     let timer = null;
+    // terminated: null | "flush" | "cancel" | "timeout_fired"——流终止原因（一次性写）
+    let terminated = null;
     const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    // 遥测节流：同一原因 10s 内只写一次（高频 chunk 流会反复触发 cancel/flush）
+    const telemetryBudget = new Map();
+    const telemetry = (action, reason) => {
+      const key = reason ? `${action}:${reason}` : action;
+      const now = Date.now();
+      const last = telemetryBudget.get(key) ?? 0;
+      if (now - last < 10_000) return;
+      telemetryBudget.set(key, now);
+      logFailover({ action, model: modelId, ...(reason ? { reason } : {}) }).catch(() => {});
+    };
+    const terminate = (reason) => {
+      if (terminated) return false; // 幂等：已终止则静默
+      terminated = reason;
+      clear();
+      telemetry("watchdog_disarmed", reason);
+      return true;
+    };
     const arm = (controller) => {
+      if (terminated) return; // 已终止不再武装（flush/cancel 后 transform 不应再炸）
       clear();
       timer = setTimeout(() => {
+        timer = null;
+        if (!terminate("timeout_fired")) {
+          // 双重触发（此前完全无观测）——留痕供取证
+          telemetry("watchdog_disarmed", "timeout_retry_fired");
+          return;
+        }
         try {
           controller.error(new Error(`hx-failover: ${modelId} 流式响应超过 ${ms}ms 无新数据（chunkTimeout 看门狗），主动中断`));
-        } catch { /* controller 已关闭则忽略 */ }
+        } catch (e) {
+          // 流已关闭时 controller.error 抛 InvalidStateError——预期路径，吞掉
+          if (e?.name !== "InvalidStateError") throw e;
+        }
       }, ms);
       timer.unref?.(); // 看门狗不阻止进程退出
+      telemetry("watchdog_armed");
     };
     const watch = new TransformStream({
       start(controller) { arm(controller); },
       transform(chunk, controller) { arm(controller); controller.enqueue(chunk); },
-      flush() { clear(); },
-      cancel() { clear(); },
+      flush() { terminate("flush"); },
+      cancel() { terminate("cancel"); },
     });
     return stream.pipeThrough(watch);
   }

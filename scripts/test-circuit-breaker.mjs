@@ -44,6 +44,7 @@ function makeFetch() {
     if (fetchMode === "nochan") return { ok: false, status: 503, text: async () => JSON.stringify({ error: { code: "model_not_found", message: "No available channel for model glm-5.2 under group svip (distributor)" } }) };
     if (fetchMode === "nochan503b") return { ok: false, status: 503, text: async () => JSON.stringify({ code: "NO_ROUTE_CANDIDATE", msg: "no active channel candidate for model (protocol=openai)", data: null }) };
     if (fetchMode === "nochan404") return { ok: false, status: 404, text: async () => JSON.stringify({ code: "NO_ROUTE_CANDIDATE", msg: "no active channel candidate for model (protocol=openai)", data: null }) };
+    if (fetchMode === "nochan404b") return { ok: false, status: 404, text: async () => JSON.stringify({ error: { message: "Model not exist.", type: "invalid_request_error", param: "", code: "model_not_found" } }) };
     if (fetchMode === "neterr") throw new Error("ECONNRESET");
     if (fetchMode === "throw") throw new Error("SYNC_THROW_BEFORE_PARSE");
     const enc = new TextEncoder();
@@ -376,6 +377,23 @@ const tripCircuit = async (ask) => {
   assert("503 渠道变体单次失败即抛（不 3 连空转）", err15?.statusCode === 503 && fetchCalls === 1);
   assert("503 渠道变体不 trip 断路器（保持 closed）", circuitState() === "closed");
   assert("503 渠道变体不进退避（真实墙钟 <1s）", (realNow() - t0) < 1000);
+}
+
+// 16. 404 + model_not_found "Model not exist."（2026-10-01 21:50 生产事故原样报文）：
+//     hx-client 经 NON_RETRYABLE_STATUS(404) 确定性失败——单次即抛、不重试、不 trip。
+//     断言错误透传完整性（statusCode + body 报文进 message）——provider 侧统一签名
+//     CHANNEL_UNAVAILABLE_RE 依赖该透传命中渠道不可用判定（换链而非 fatal）。
+{
+  const { ask, circuitState } = await freshLoad(17);
+  fetchMode = "nochan404b";
+  fetchCalls = 0;
+  const t0 = realNow();
+  let err16 = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "glm-5.3-flash", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 3 }); } catch (e) { err16 = e; }
+  assert("404 notexist 单次失败即抛（不重试）", err16?.statusCode === 404 && fetchCalls === 1);
+  assert("404 notexist 不 trip 断路器（保持 closed）", circuitState() === "closed");
+  assert("404 notexist 快速失败（真实墙钟 <1s）", (realNow() - t0) < 1000);
+  assert("404 notexist 错误透传完整（status+body 报文，供 provider 侧签名判定）", String(err16?.message ?? "").includes("Model not exist") && String(err16?.message ?? "").includes("model_not_found"));
 }
 
 Date.now = realNow;

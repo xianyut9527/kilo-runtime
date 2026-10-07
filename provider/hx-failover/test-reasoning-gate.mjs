@@ -770,6 +770,47 @@ function sseStopDeath() {
   check("gate-retry-abort-throw :", call === 2 && err !== null && err?.name === "AbortError");
 }
 
+// ── 20.（2026-10-01 查漏补缺）gate_release 终局遥测：每个终端出口必须留痕 ──
+// 事故取证缺口：本次 180s 幽灵中止链路上门控出口无任何遥测（Aborted 无 gate_release），
+// 事后无法从 failover-events.jsonl 判定流是被哪条路径放掉的。断言：
+//   20a 正常文本流 → reason=text_released；
+//   20b 死亡流 retries 耗尽回放 → reason=stream_end_release + finishReason=length。
+{
+  const fakeFetch20 = async () =>
+    new Response(sseOk("[tele-ok]"), { status: 200, headers: { "content-type": "text/event-stream" } });
+  const provider20a = createHxFailover({
+    name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch20,
+    failover: { chain: { models: [] } }, reasoningGate: true,
+  });
+  const { stream: s20a } = await provider20a.languageModel("gate-tele-text").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+  const t20a = await consume(s20a);
+
+  const fakeFetch20b = async () =>
+    new Response(sseDeath(), { status: 200, headers: { "content-type": "text/event-stream" } });
+  const provider20b = createHxFailover({
+    name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch20b,
+    failover: { chain: { models: [] } }, reasoningGate: { retries: 0 },
+  });
+  const { stream: s20b } = await provider20b.languageModel("gate-tele-dead").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+  await consume(s20b);
+
+  // logFailover 是链式异步落盘，等队列排空再读（同文件 5d/7b 的既有节奏）
+  await new Promise((r) => setTimeout(r, 250));
+  const ev20 = (await readFile(join(process.env.XDG_DATA_HOME, "kilo", "failover-events.jsonl"), "utf8"))
+    .trim().split(/\r?\n/).map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .filter((r) => r && r.action === "gate_release");
+  check("gate-tele-text-released  :", t20a.includes("[tele-ok]")
+    && ev20.some((r) => r.from === "gate-tele-text" && r.reason === "text_released"));
+  check("gate-tele-stream-end     :", ev20.some((r) => r.from === "gate-tele-dead"
+    && r.reason === "stream_end_release" && r.finishReason === "length"));
+}
+
 const failed = results.filter(([, ok]) => !ok);
 console.log("");
 console.log(failed.length === 0 ? `ALL ${results.length} PASS` : `${failed.length} FAILED: ${failed.map(([n]) => n).join(", ")}`);

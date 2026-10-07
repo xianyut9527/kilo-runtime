@@ -19,6 +19,35 @@ import { mkdtemp, readFile } from "node:fs/promises";
 // （failoverLogPath 在调用时读 env，import 后设置即生效）
 process.env.XDG_DATA_HOME = await mkdtemp(join(tmpdir(), "hx-failover-test-"));
 
+// 假绿防护（2026-10-01 查漏补缺 + 层3审查必修③）：本套件历史只打印 "PASS x :
+// true/false"，退出码恒 0——quality-gate 层 2 以 exit 0 为验证通过，任何断言 false
+// 都是真·假绿洞。拦截 console.log 收集结果行，末了任一 false 置 exitCode=1。
+const __failedAssertions = [];
+let __capturedCount = 0;
+const __log = console.log.bind(console);
+console.log = (...args) => {
+  const m = /^PASS (.+?)\s*:\s+(true|false)$/.exec(args.map(String).join(" ").trim());
+  if (m) {
+    __capturedCount++;
+    if (m[2] === "false") __failedAssertions.push(m[1].trim());
+  }
+  __log(...args);
+};
+// 覆盖度自检（层3复审必修②）：绝对阈值 40 会在套件合法精简时误杀——基线随用例数
+// 手工同步（当前实测采集数打印在末行，改动断言形态/数量时同步下调本值即可）；
+// 语义是「大面积漏判」警报（形态漂移时采集数会掉到 0），不是精确计数门禁。
+const __CAPTURE_FLOOR = 45; // 基线：2026-10-01 实测采集 58 条 PASS 结果行（含回归 3c 新增 4 条），留 ~22% 精简余量
+process.on("exit", () => {
+  __log(`[test-failover] 假绿防护：采集 ${__capturedCount} 条 PASS 结果行，false=${__failedAssertions.length}`);
+  if (__failedAssertions.length) {
+    __log(`[test-failover] 假绿防护：${__failedAssertions.length} 条断言为 false → exit 1 —— ${__failedAssertions.join(", ")}`);
+    if (!process.exitCode) process.exitCode = 1;
+  } else if (__capturedCount < __CAPTURE_FLOOR) {
+    __log(`[test-failover] 假绿防护：采集 ${__capturedCount} < 基线下限 ${__CAPTURE_FLOOR} → 判定拦截失配，exit 1`);
+    if (!process.exitCode) process.exitCode = 1;
+  }
+});
+
 const { createHxFailover } = await import(new URL("./dist/index.js", import.meta.url).href);
 
 const calls = [];
@@ -172,6 +201,106 @@ const wdElapsed = Date.now() - wdT0;
 console.log("");
 console.log("watchdog elapsed(ms):", wdElapsed);
 console.log("PASS watchdog-fires         :", Boolean(wdError) && /chunkTimeout/.test(String(wdError?.message)) && wdElapsed < 5000);
+
+// ── 回归 3b：看门狗防幽灵 timer（2026-10-01 「Tool execution aborted」专项 P0）──
+// 事故形态：流正常完成后 timer 未解除，一个 chunkTimeout 周期后对已终态的流
+// 补刀（事故链中表现为 watchBill 双触发/会话树被 180s 掐死）。修复后 timer 幂等
+// 解除并落遥测。断言：完整流正常消费后静置 2.5×chunkTimeout——
+//   ① 无错误、内容完整；② 遥测有 watchdog_armed + watchdog_disarmed(flush)；
+//   ③ 绝无 timeout_fired/timeout_retry_fired（幽灵触发的直接指纹）。
+{
+  const fullSse = [
+    `data: ${JSON.stringify({ choices: [{ delta: { role: "assistant", content: "[ghost-guard]" } }] })}\n\n`,
+    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { completion_tokens: 4 } })}\n\n`,
+    "data: [DONE]\n\n",
+  ].join("");
+  const fakeFetch3b = async () =>
+    new Response(fullSse, { status: 200, headers: { "content-type": "text/event-stream" } });
+  const p3b = createHxFailover({
+    name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub",
+    // 显式注入短超时（层3审查④澄清：非默认 180s——本用例总耗时 300ms 窗口，秒级完成）
+    fetch: fakeFetch3b, chunkTimeout: 120,
+    failover: { chain: { models: [] } },
+  });
+  let ghostText = "";
+  let ghostErr = null;
+  const keep3b = setInterval(() => {}, 100); // 保活跨过 chunkTimeout 窗口，验证无幽灵触发
+  try {
+    const { stream } = await p3b.languageModel("ghost-guard-model").doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+      includeRawChunks: false,
+    });
+    for await (const part of stream) {
+      if (part.type === "text-delta") ghostText += part.delta ?? part.textDelta ?? "";
+    }
+  } catch (e) { ghostErr = e; }
+  await new Promise((r) => setTimeout(r, 300)); // 2.5× chunkTimeout：幽灵 timer 若未清除必已触发
+  clearInterval(keep3b);
+  const log3b = (await readFile(join(process.env.XDG_DATA_HOME, "kilo", "failover-events.jsonl"), "utf8"))
+    .trim().split(/\r?\n/).map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .filter((r) => r && (r.model === "ghost-guard-model" || r.to === "ghost-guard-model"));
+  const wd3b = log3b.filter((r) => String(r.action ?? "").startsWith("watchdog_"));
+  console.log("3b watchdog events:", wd3b.map((r) => `${r.action}${r.reason ? ":" + r.reason : ""}`).join(", ") || "(none)");
+  console.log("PASS watchdog-ghost-guard      :", ghostErr === null && ghostText.includes("[ghost-guard]"));
+  console.log("PASS watchdog-armed-logged     :", wd3b.some((r) => r.action === "watchdog_armed"));
+  console.log("PASS watchdog-disarm-flush     :", wd3b.some((r) => r.action === "watchdog_disarmed" && r.reason === "flush"));
+  console.log("PASS watchdog-no-ghost-fire    :", !wd3b.some((r) => r.reason === "timeout_fired" || r.reason === "timeout_retry_fired"));
+}
+
+// ── 回归 3c：看门狗在上游 error 终止路径解除（2026-10-01 二轮查漏审计）──
+// 审计曾假设「上游 body 中途 error 时源流经 pipeThrough 不触发 cancel → timer
+// 残留 → 一个 chunkTimeout 周期后对已终止的流补刀」。Node 22 实证（独立探针 +
+// 本用例）：源流 error 时 TransformStream 的 cancel 回调**会**触发，timer 经
+// terminate("cancel") 解除，遥测记 watchdog_disarmed:cancel，无假 timeout。
+// 本用例把该实证固化为持久断言，防未来实现（如误删 cancel 分支）回归。
+// 断言：① 消费方确收到错误；② 有 watchdog_armed；③ 有 watchdog_disarmed:cancel；
+//       ④ 静置 2.5×chunkTimeout 后绝无 timeout_fired/timeout_retry_fired。
+{
+  const APICALL_MARKER_3C = Symbol.for("vercel.ai.error.AI_APICallError");
+  const enc3c = new TextEncoder();
+  const fakeFetch3c = async (url, init) => {
+    let model = "?";
+    try { model = JSON.parse(init.body).model; } catch {}
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(enc3c.encode(`data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", created: 1, model, choices: [{ index: 0, delta: { role: "assistant", content: "[upstream-error]" }, finish_reason: null }] })}\n\n`));
+        // 异步 error：同步 error 会按规范丢弃已入队 chunk，模拟不出「部分输出后源流报错」
+        setTimeout(() => controller.error(new Error("simulated upstream body error")), 20);
+      },
+    });
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  const p3c = createHxFailover({
+    name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub",
+    // 短超时窗口：源流 error 在 ~20ms 解除 timer；若 cancel 不触发，timer 会在 120ms 幽灵触发被断言捕获
+    fetch: fakeFetch3c, chunkTimeout: 120,
+    failover: { chain: { models: [] } },
+  });
+  let err3c = null, text3c = "";
+  const keep3c = setInterval(() => {}, 100);
+  try {
+    const { stream } = await p3c.languageModel("watchdog-err-model").doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+      includeRawChunks: false,
+    });
+    for await (const part of stream) {
+      if (part.type === "text-delta") text3c += part.delta ?? part.textDelta ?? "";
+    }
+  } catch (e) { err3c = e; }
+  await new Promise((r) => setTimeout(r, 300)); // 2.5× chunkTimeout：幽灵 timer 若残留必已触发
+  clearInterval(keep3c);
+  const log3c = (await readFile(join(process.env.XDG_DATA_HOME, "kilo", "failover-events.jsonl"), "utf8"))
+    .trim().split(/\r?\n/).map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .filter((r) => r && (r.model === "watchdog-err-model" || r.to === "watchdog-err-model"));
+  const wd3c = log3c.filter((r) => String(r.action ?? "").startsWith("watchdog_"));
+  console.log("");
+  console.log("3c error:", err3c?.name, "| partial:", JSON.stringify(text3c), "| retryable:", err3c?.[APICALL_MARKER_3C] === true && err3c?.isRetryable === true);
+  console.log("3c watchdog events:", wd3c.map((r) => `${r.action}${r.reason ? ":" + r.reason : ""}`).join(", ") || "(none)");
+  console.log("PASS watchdog-error-observed   :", err3c !== null);
+  console.log("PASS watchdog-error-armed       :", wd3c.some((r) => r.action === "watchdog_armed"));
+  console.log("PASS watchdog-error-disarm-cancel:", wd3c.some((r) => r.action === "watchdog_disarmed" && r.reason === "cancel"));
+  console.log("PASS watchdog-error-no-ghost-fire:", !wd3c.some((r) => r.reason === "timeout_fired" || r.reason === "timeout_retry_fired"));
+}
 
 // ── 回归 4：流中断重包装（2026-09-15 断流专项）────────────────────────────
 // 生产事故形态：200 OK + SSE 中途断开 → provider-utils 把 body 读取错误包成
@@ -904,10 +1033,14 @@ console.log("PASS route404-cools-self-only  :", callsAfterRound1 === 2 && out9m.
 // 生产遥测实证：冷却期 Kilo 会话级重试每 4-20s 重撞 fail-fast（exhausted_cooldown
 // 一日 54 条）。修法：503 带 responseHeaders.retry-after=剩余秒数，守约下游按节奏退避。
 // 断言：APICallError.responseHeaders 是 Record 且值 = 剩余冷却秒（1..30，fail-fast 立即返回远早于 30s 冷却到期）。
+// 2026-10-04 用户指示：错误正文必须全部是上游返回的错误原文，不得包装自有文案——
+// 两模型返回不同报文，断言正文逐字节等于「按链序逐行附模型/状态的上游原文」，
+// 且不残留任何自有话术（「均在冷却中」等）。
 const fakeFetch9n = async (url, init) => {
   let model = "?";
   try { model = JSON.parse(init.body).model; } catch {}
-  return new Response(JSON.stringify({ error: { message: "simulated upstream 500" } }), {
+  const message = model === "glm-5.3-flash" ? "primary channel exploded" : "backup tunnel down";
+  return new Response(JSON.stringify({ error: { message } }), {
     status: 500, headers: { "content-type": "application/json" },
   });
 };
@@ -920,8 +1053,12 @@ let err9n = null;
 try { await gen9(p9n, "glm-5.3-flash"); } catch (e) { err9n = e; }
 const raVal = err9n?.responseHeaders?.["retry-after"]; // SDK 契约：responseHeaders 是 Record（Object.fromEntries），非 Headers 实例
 console.log("");
-console.log("9n fail-fast:", err9n?.statusCode, "| retry-after:", raVal);
+console.log("9n fail-fast:", err9n?.statusCode, "| retry-after:", raVal, "| message:", JSON.stringify(String(err9n?.message ?? "")));
 console.log("PASS cooldown503-retry-after  :", err9n?.statusCode === 503 && Number(raVal) >= 1 && Number(raVal) <= 30 && err9n?.isRetryable === true);
+console.log("PASS cooldown503-upstream-only:", err9n?.message === [
+  "[glm-5.3-flash HTTP 500] primary channel exploded",
+  "[kimi-k2.6 HTTP 500] backup tunnel down",
+].join("\n"));
 
 // 9o：退避期可被 abortSignal 立即打断（2026-09-29 dual_review 必修项⑤）——
 // 旧行为：sleep(500/1500ms) 不感知 signal，用户取消后仍睡满全程才返回（迟滞+浪费）。
@@ -960,3 +1097,99 @@ console.log("9o attempts:", calls9o.join(", "), "| elapsed:", elapsed9o, "ms | e
 // 取消类错误直通（isCancellation），不再重试/换模型 → attempts 恒 1、
 // elapsed < 400ms 证立即性（无修复时睡满 500+1500 退避 ≥2s）。
 console.log("PASS backoff-abort-immediate   :", calls9o.length === 1 && elapsed9o < 400 && (err9o?.name === "AbortError" || err9o?.code === "ABORT_ERR"));
+
+// ── 回归 9p-9s：渠道不可用签名与状态码家族解耦（2026-10-01 21:50 根治）──────
+// 生产实证（2026-10-01 21:50:37Z 遥测 action=fatal status=404）：9527 网关对
+// glm-5.3-flash 间歇回 404 {"error":{"message":"Model not exist.","code":"model_not_found"}}。
+// 旧行为：404 家族正则只认 NO_ROUTE_CANDIDATE → isChannelUnavailable 判否 → fatal
+// 直通，整条健康降级链被放弃（1 分钟后同模型成功，21:41/21:51 gate_release 实证）。
+// 根治：CHANNEL_UNAVAILABLE_RE 统一签名，404/503 同口径命中 → channel_fallback。
+
+// 9p：404 + model_not_found + "Model not exist."（本次生产事故原样报文）→ 零重试换链
+let calls9p = [];
+const fakeFetch9p = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls9p.push(model);
+  if (model === "glm-5.3-flash") {
+    return new Response(JSON.stringify({ error: { message: "Model not exist.", type: "invalid_request_error", param: "", code: "model_not_found" } }), {
+      status: 404, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p9p = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9p,
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+});
+const t9p = Date.now();
+const out9p = await gen9(p9p, "glm-5.3-flash"); // 事故原样形态：主模型 404 → 必须零重试换链
+const elapsed9p = Date.now() - t9p;
+console.log("");
+console.log("9p attempts:", calls9p.join(", "), "| elapsed:", elapsed9p, "ms");
+console.log("PASS notexist404-fallback   :", JSON.stringify(calls9p) === JSON.stringify(["glm-5.3-flash", "kimi-k2.6"]) && out9p.includes("[ok kimi-k2.6]") && elapsed9p < 500);
+
+// 9q：503 + 同报文变体（model_not_found 只在 body.code，message 是 "Model not exist."）
+// ——统一签名下 503 入口同口径，不因措辞换状态码再漏（防回归：hx-client 侧正则同源）
+let calls9q = [];
+const fakeFetch9q = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls9q.push(model);
+  if (model === "glm-5.3-flash") {
+    return new Response(JSON.stringify({ error: { message: "Model not exist.", code: "model_not_found" } }), {
+      status: 503, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p9q = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9q,
+  failover: { chain: { models: ["kimi-k2.6"] }, cooldownMs: 30000 },
+});
+const t9q = Date.now();
+const out9q = await gen9(p9q, "glm-5.3-flash");
+const elapsed9q = Date.now() - t9q;
+console.log("9q attempts:", calls9q.join(", "), "| elapsed:", elapsed9q, "ms");
+console.log("PASS notexist503-fallback   :", JSON.stringify(calls9q) === JSON.stringify(["glm-5.3-flash", "kimi-k2.6"]) && out9q.includes("[ok kimi-k2.6]") && elapsed9q < 500);
+
+// 9r：全链同签名 404 model_not_found → channel_exhausted 抛**原始 404**（真 404 不得
+// 被伪造的 503 兜底掩盖——保留可诊断性；markFailed 已按模型短 TTL 负缓存）
+let calls9r = [];
+const fakeFetch9r = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls9r.push(model);
+  return new Response(JSON.stringify({ error: { message: "Model not exist.", code: "model_not_found" } }), {
+    status: 404, headers: { "content-type": "application/json" },
+  });
+};
+const p9r = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9r,
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+});
+const t9r = Date.now();
+let err9r = null;
+try { await gen9(p9r, "glm-5.3-flash"); } catch (e) { err9r = e; }
+const elapsed9r = Date.now() - t9r;
+console.log("9r attempts:", calls9r.join(", "), "| elapsed:", elapsed9r, "ms | err status:", err9r?.statusCode);
+console.log("PASS notexist-allchain-original404 :", calls9r.length === 3 && err9r?.statusCode === 404 && /Model not exist/.test(String(err9r?.responseBody ?? err9r?.message ?? "")) && elapsed9r < 500);
+
+// 9s：404 + 描述性 not available 文本但无渠道签名 → 仍 fatal 直通（误伤面不扩大）
+let calls9s = 0;
+const fakeFetch9s = async () => {
+  calls9s++;
+  return new Response(JSON.stringify({ error: { message: "This endpoint is deprecated and no longer in service.", type: "invalid_request_error" } }), {
+    status: 404, headers: { "content-type": "application/json" },
+  });
+};
+const p9s = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9s,
+  failover: { chain: { models: ["kimi-k2.6"] }, cooldownMs: 30000 },
+});
+let err9s = null;
+const t9s = Date.now();
+try { await gen9(p9s, "glm-5.3-flash"); } catch (e) { err9s = e; }
+const elapsed9s = Date.now() - t9s;
+console.log("9s attempts:", calls9s, "| elapsed:", elapsed9s, "ms | err:", err9s?.statusCode);
+console.log("PASS descript404-still-fatal :", calls9s === 1 && err9s?.statusCode === 404 && elapsed9s < 500);

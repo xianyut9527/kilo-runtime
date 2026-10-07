@@ -65,7 +65,10 @@
   //              agent → 体感全面变慢（git 49f8ed9 即"快→慢"分界，同期还开了 remote_control）。
   //              换主力模型必须单变量切换并实测对比，不得随其他改动捎带调整。
   // plan         规划模式：出方案不动手，用 kimi 换个视角思考
-  // general      深度子任务：难啃的实现/分析，用 glm-5.2 大杯
+  // general      深度子任务：难啃的实现/分析，用 kimi-k2.6@high（2026-10-03 审计改钉：
+  //              原 k2.8 无可用渠道——failover-events 404 "no active channel" 实证；
+  //              原注释 glm-5.2 早已 stale。high 档 228 样本零失败分母，max 档有
+  //              ≥150k 输入 2.56% 猝死分母且近 7 天 3 例 glm-5.2@max 子代理被 503 秒杀）
   // explore      探索代理（subagent）：只读侦察，用最便宜模型扫代码
   // compaction   上下文压缩：钉 glm-5.3-flash + variant low（2026-09-22 空响应专项：
   //              max 档推理吃光输出预算 → 摘要为空 → "empty response"；schema 规定
@@ -105,8 +108,10 @@
       "variant": "max",
     },
     "general": {
-      "model": "hx/glm-5.2",
-      "variant": "max",
+      // 2026-10-03 收口审计改钉：k2.8 无渠道（404 no active channel，全天实证），
+      // 深度子代理全部靠 failover 兜底跑在降级档上——执行面钉回有渠道、有安全分母的 k2.6@high
+      "model": "hx/kimi-k2.6",
+      "variant": "high",
     },
     "explore": {
       "model": "hx/deepseek-v4.1-flash",
@@ -121,16 +126,17 @@
       // schema 约束：variant 仅在 agent 用「自己配置的 model」时生效——必须同时钉死 model，
       // 否则 compaction 继续继承会话当前模型+variant，覆盖不生效。
       // 钉 glm-5.3-flash：样本内空响应最少（11 跑 0 空），且压缩不再随会话模型漂移。
-      "model": "hx/glm-5.3-flash",
+      "model": "hx/deepseek-v4.1-flash",
       "variant": "low",
     },
     "orchestrator": {
-      "model": "hx/kimi-k2.6",
+      "model": "hx/deepseek-v4.1-flash",
       // 编排拆解分派子代理，不需要深思考；kimi@max 7 条 length 失败实证 → low
       "variant": "low",
     },
     "verify": {
       "mode": "subagent",
+      // k2.8 无渠道（2026-10-03 404 实证）→ 同源异厂改钉 k2.6（复核位保持与 code 的 glm 族异源）
       "model": "hx/kimi-k2.6",
       // 复核保留思考深度 → high（与 plan 同据；原「kimi@high 有 1 条失败」是把
       // 流中断计入的旧数据，95 条 length 地面真值里 high 档为零）
@@ -411,7 +417,7 @@
       "npm": "file:///__KILO_CONFIG__/provider/hx-failover",
       "options": {
         // 上游 OpenAI 兼容端点
-        "baseURL": "https://llamas.nat100.top/v1",
+        "baseURL": "https://openllamas.com/v1",
         // MoA/dual_review 分析调用总时长上限（kilo.json options.timeout 唯一消费方 = 这两个工具）。
         // ⚠️ 主模型循环不消费本键（provider/hx-failover 不读它，2026-09-21 DB 实证：
         // 27 例 >120s 的 step-finish 正常完成，120s 从未生效于主链路；主链路只有 chunkTimeout 空闲看门狗）。
@@ -468,9 +474,9 @@
           "chain": {
             "models": [
               "glm-5.3-flash",
+              "deepseek-v4.1-flash",
               "glm-5.2",
               "kimi-k2.6",
-              "deepseek-v4.1-flash",
             ],
           },
         },
@@ -585,6 +591,23 @@
             "output": 32000,
           },
         },
+        "kimi-k2.8": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" },
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"],
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32000,
+          },
+        },        
         "kimi-k3": {
           "reasoning": true,
           // K3 官方仅支持 low/high/max 三档（默认 max），无 medium——多声明会产生
@@ -625,6 +648,23 @@
           },
         },
         "qwen3.8-flash": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" },
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"],
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32000,
+          },
+        },
+        "qwen3.8-max": {
           "reasoning": true,
           "variants": {
             "low": { "reasoningEffort": "low" },

@@ -6,10 +6,12 @@
 // 覆盖：parseReviewVerdict 裁决解析 / VERIFY_CMD_RE 验证命令识别 / HIGH_RISK_RE 高风险路径
 // / reviewSubject 无 git 降级 / exitCodeOf 退出码三段契约 / exitMasked 遮蔽形态
 // / hasVerified·verifyFailureOf 结果实证判定 / reviewerFingerprint 审查缓存指纹
-// / providerEditsOf·distStaleOf 层 2 dist 新鲜度（src 改未重建 → 交付拦截）。
+// / providerEditsOf·distStaleOf 层 2 dist 新鲜度（内容指纹口径：mismatch 必拦、
+// match 免疫 mtime 抖动、无指纹回落 mtime；src 改未重建 → 交付拦截）。
 // 正则、门禁逻辑与进度通道的任何回归（含 CJK 腐化）都会让本测试变红。
 // 注意：本文件必须在 scripts/ 下（不进 install.manifest）——放 plugin/ 会随整目录部署进生产配置。
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -25,15 +27,37 @@ if (!fs.existsSync(esbuildBin)) {
 const bundle = path.join(os.tmpdir(), `qg-test-${process.pid}.mjs`);
 execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "quality-gate.ts"),
   "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${bundle}`], { stdio: "inherit" });
-const mod = await import(pathToFileURL(bundle).href);
-fs.rmSync(bundle, { force: true });
+// try…finally 兜底（层 3 必修项①）：import 抛错时临时 bundle 不得残留
+let mod;
+try {
+  mod = await import(pathToFileURL(bundle).href);
+} finally {
+  fs.rmSync(bundle, { force: true });
+}
 
 // 工具函数经 _export 命名空间暴露（非顶层导出——Kilo vE2 会把每个导出函数当工厂调用）
-const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf, moduleBasenamesOf, hasTestRefFor, eslintConfigIn, reviewRetryAllowed, todoAnchorLines, unreviewedMarkerLine, driftCheckDue, diagRunFailureOf, isDelegateCall, reviewFailPrefix } = mod._export ?? mod;
+const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf, moduleBasenamesOf, hasTestRefFor, eslintConfigIn, reviewRetryAllowed, todoAnchorLines, unreviewedMarkerLine, driftCheckDue, diagRunFailureOf, isDelegateCall, reviewFailPrefix, todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText,
+    pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel } = mod._export ?? mod;
 let pass = 0, fail = 0;
 const failed = [];
+// t 双模（层 3 必修项②）：cond 传函数则在其内部捕获异常记为 fail（含错误信息），
+// 单个用例抛错不再中断后续全部断言；传值则维持旧语义（存量调用不强制改造）。
+// 新增断言一律传 () => 表达式 获得韧性保护。
+// 假绿防线（层 3 r2 必修项②）：Promise/async 函数返回值恒 truthy，!! 判定会静默通过——
+// 检出即抛错计 fail，强制调用点 await 后传值（本套件为同步回归，无合法异步用例）。
 const t = (name, cond) => {
-  if (cond) { pass++; }
+  let ok = false;
+  try {
+    const v = typeof cond === "function" ? cond() : cond;
+    if (v instanceof Promise) throw new Error("t() 拒绝 Promise（恒 truthy = 假绿）——await 后传值，或改为同步断言");
+    ok = !!v;
+  } catch (e) {
+    failed.push(`${name}（抛错：${String(e?.message ?? e).slice(0, 120)}）`);
+    console.error(`  FAIL(throw): ${name}\n    ${String(e?.message ?? e).split("\n")[0]}`);
+    fail++;
+    return;
+  }
+  if (ok) { pass++; }
   else { fail++; failed.push(name); console.error(`  FAIL: ${name}`); }
 };
 
@@ -201,18 +225,27 @@ t("hasAcceptMarker：无关命令不误报", hasAcceptMarker(mk([{ cmd: "npm tes
 }
 
 // ── isComplexDelivery：层 3 触发口径 ──
-// 高风险命中与文件数无关；普通改动须含代码且跨 ≥3 文件（2026-09-22 两调：≥3→≥5→回调 ≥3）
+// 高风险命中与文件数无关；普通改动须 ≥3 个代码文件
+// （口径沿革：≥3 全文件 →≥5 全文件 →回调 ≥3 全文件 →2026-10-07 改 codeEdits 计数）
 t("isComplexDelivery：高风险文件命中（1 个编辑也触发）", (() => {
   const s = { highRisk: new Set(["src/auth/x.ts"]), edited: new Set(["src/auth/x.ts"]) };
   return isComplexDelivery(s, ["src/auth/x.ts"]) === true;
 })());
-t("isComplexDelivery：2 文件改动不触发（阈值以下）", (() => {
+t("isComplexDelivery：2 个代码文件不触发（阈值以下）", (() => {
   const edited = new Set(["a.ts", "b.ts"]);
   return isComplexDelivery({ highRisk: new Set(), edited }, ["a.ts", "b.ts"]) === false;
 })());
-t("isComplexDelivery：3 文件改动触发（2026-09-22 回调口径）", (() => {
+t("isComplexDelivery：3 个代码文件触发", (() => {
   const files = ["a.ts", "b.ts", "c.ts"];
   return isComplexDelivery({ highRisk: new Set(), edited: new Set(files) }, files) === true;
+})());
+t("isComplexDelivery：1 代码 + 2 文档不触发（2026-10-07 codeEdits 口径，文档不计数）", (() => {
+  const edited = new Set(["a.ts", "docs/a.md", "docs/b.md"]);
+  return isComplexDelivery({ highRisk: new Set(), edited }, ["a.ts"]) === false;
+})());
+t("isComplexDelivery：2 代码 + 5 文档不触发（代码未满 3，编辑再多文档也不触发）", (() => {
+  const edited = new Set(["a.ts", "b.ts", "d1.md", "d2.md", "d3.md", "d4.md", "d5.md"]);
+  return isComplexDelivery({ highRisk: new Set(), edited }, ["a.ts", "b.ts"]) === false;
 })());
 t("isComplexDelivery：无代码编辑不触发（纯文档 ≥3 文件压边界）", (() => {
   const edited = new Set(["README.md", "docs/a.md", "docs/b.md"]);
@@ -274,23 +307,54 @@ t("diagCovers：文档编辑不数（editVersion 变但 codeEditV 不变）→ �
       fs.mkdirSync(path.join(pkgDir, "dist"), { recursive: true });
       return pkgDir;
     };
+    const sha = (t) => createHash("sha256").update(t).digest("hex");
+    const past = new Date(Date.now() - 60_000);
+    const future = new Date(Date.now() + 60_000);
+    // 指纹 MATCH：src mtime 事后变新（git checkout/还原同步）不得误报过期
+    const fpFresh = mkPkg("fpfresh");
+    fs.writeFileSync(path.join(fpFresh, "src", "index.js"), "src");
+    fs.writeFileSync(path.join(fpFresh, "dist", "index.js"), `// kilo-build: src-sha256=${sha("src")}\ndist`);
+    fs.utimesSync(path.join(fpFresh, "src", "index.js"), future, future);
+    const r1 = distStaleOf(tmp, "fpfresh", ["index.js"]);
+    t("distStaleOf：指纹 MATCH + src mtime 更新（模拟 git 同步）→ 不过期（mtime 抖动免疫）",
+      () => r1.stale === false && r1.fingerprint === "match");
+    // 指纹 MISMATCH：src 已改未重建——即使 src mtime 比 dist 旧（dab55da 漏拦形态）也必须拦
+    const fpStale = mkPkg("fpstale");
+    fs.writeFileSync(path.join(fpStale, "dist", "index.js"), `// kilo-build: src-sha256=${sha("old-src")}\ndist`);
+    fs.writeFileSync(path.join(fpStale, "src", "index.js"), "new-src");
+    fs.utimesSync(path.join(fpStale, "src", "index.js"), past, past);
+    fs.utimesSync(path.join(fpStale, "dist", "index.js"), future, future);
+    const r2 = distStaleOf(tmp, "fpstale", ["index.js"]);
+    t("distStaleOf：指纹 MISMATCH + src mtime 比 dist 旧（dab55da 漏拦形态）→ 过期（指纹口径拦截）",
+      () => r2.stale === true && r2.fingerprint === "mismatch");
+    // 指纹 MATCH 但非 index.js 的 src 编辑比 dist 新 → mtime 兜底拦
+    const fpExtra = mkPkg("fpextra");
+    fs.writeFileSync(path.join(fpExtra, "src", "index.js"), "src");
+    fs.writeFileSync(path.join(fpExtra, "dist", "index.js"), `// kilo-build: src-sha256=${sha("src")}\ndist`);
+    fs.writeFileSync(path.join(fpExtra, "src", "util.js"), "u");
+    fs.utimesSync(path.join(fpExtra, "src", "util.js"), future, future);
+    t("distStaleOf：指纹 MATCH + 非 index src 编辑比 dist 新 → mtime 兜底拦截",
+      () => distStaleOf(tmp, "fpextra", ["index.js", "util.js"]).stale === true);
+    // 无指纹（旧版产物）→ 整体回落 mtime 口径（与旧行为一致）
     const fresh = mkPkg("fresh");
     fs.writeFileSync(path.join(fresh, "src", "index.js"), "src");
     fs.writeFileSync(path.join(fresh, "dist", "index.js"), "dist");
     fs.utimesSync(path.join(fresh, "dist", "index.js"), new Date(), new Date(Date.now() + 60_000));
-    t("distStaleOf：dist 比会话编辑文件新 → 不过期",
-      distStaleOf(tmp, "fresh", ["index.js"]).stale === false);
+    const r4 = distStaleOf(tmp, "fresh", ["index.js"]);
+    t("distStaleOf：无指纹 + dist 比编辑文件新 → 回落 mtime 口径不过期",
+      () => r4.stale === false && r4.fingerprint === "absent");
     const stale = mkPkg("stale");
     fs.writeFileSync(path.join(stale, "dist", "index.js"), "dist");
     fs.writeFileSync(path.join(stale, "src", "late.js"), "newer");
     fs.utimesSync(path.join(stale, "src", "late.js"), new Date(), new Date(Date.now() + 60_000));
-    t("distStaleOf：会话编辑文件比 dist 新 → 过期（>= 口径）",
-      distStaleOf(tmp, "stale", ["late.js"]).stale === true);
+    t("distStaleOf：无指纹 + 会话编辑文件比 dist 新 → 过期（>= 口径）",
+      () => distStaleOf(tmp, "stale", ["late.js"]).stale === true);
     const noDist = mkPkg("nodist");
     fs.writeFileSync(path.join(noDist, "src", "index.js"), "src");
     fs.rmSync(path.join(noDist, "dist"), { recursive: true, force: true });
-    t("distStaleOf：编辑过 src 但 dist 缺失（从未构建）→ 拦截", distStaleOf(tmp, "nodist", ["index.js"]).stale === true);
-    t("distStaleOf：编辑文件已删除 → 跳过不抛", distStaleOf(tmp, "stale", ["gone.js"]).stale === false);
+    const r5 = distStaleOf(tmp, "nodist", ["index.js"]);
+    t("distStaleOf：编辑过 src 但 dist 缺失（从未构建）→ 拦截", () => r5.stale === true && r5.missing === true);
+    t("distStaleOf：编辑文件已删除 → 跳过不抛", () => distStaleOf(tmp, "stale", ["gone.js"]).stale === false);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -779,6 +843,294 @@ t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/todo
   const sC1c = mod._export.bucketOf({ sessionID: sessC1b });
   t("C1：补审后纯文档编辑不触发重审（codeEditV 不前进，豁免维持）",
     (sC1c?.codeEditV ?? 0) === 1 && (sC1c?.dualReviewedAtCodeEditV ?? 0) === 1);
+}
+
+// ── 回合出口门禁（2026-10-03 收口审计专项）：纯函数矩阵 + 假 client 集成 ──
+{
+  t("todosIncomplete：空/全完成/全cancel → null",
+    todosIncomplete([]) === null && todosIncomplete([{ status: "completed" }, { status: "cancelled" }]) === null && todosIncomplete(null) === null);
+  t("todosIncomplete：单 pending → null（纯问答噪音防护）", todosIncomplete([{ status: "pending", content: "答" }]) === null);
+  t("todosIncomplete：单 in_progress → 纳入（干到一半最典型）", (todosIncomplete([{ status: "in_progress", content: "改" }]) ?? []).length === 1);
+  t("todosIncomplete：≥2 混未完成 → 未落定项数组", (todosIncomplete([{ status: "completed", content: "a" }, { status: "pending", content: "b" }]) ?? []).length === 1);
+  t("asksUser：行尾问号命中", asksUser("需要我先 commit 吗？") === true);
+  t("asksUser：请示短语命中", asksUser("请选 A 或 B。") === true);
+  t("asksUser：报告收尾不命中（中段问号不误豁免）", asksUser("是否达标见上。\n全部验证通过，交付完成。") === false);
+  t("asksUser：代码块尾巴剥离后行尾问号仍命中", asksUser("跑 `npm test` 吗？\n```") === true);
+  t("asksUser：等待用户显式停点命中（INSTRUCTIONS 规定标记，可无问号）", asksUser("等待用户：是否保留双币种文档。") === true);
+  t("asksUser：英文请示命中", asksUser("I'll wait for your decision. Let me know.") === true);
+  t("errorSettleDue：busy/retry 放弃复检，idle/未知放行", errorSettleDue("busy") === false && errorSettleDue("retry") === false && errorSettleDue("idle") === true && errorSettleDue("") === true);
+  t("fingerprint：状态变 → 指纹变", exitNudgeFingerprint([{ status: "pending", content: "a" }]) !== exitNudgeFingerprint([{ status: "in_progress", content: "a" }]));
+  const base = { now: 10 ** 12, hasWork: true, isChild: false, aborted: false, errored: false, askingUser: false, undone: [{ status: "pending", content: "a" }], fingerprint: "fp-new" };
+  const mkS = (o) => ({ exitNudges: 0, exitNudgeAt: 0, exitNudgeFp: "", ...o });
+  const sReset = mkS({ exitNudges: 2, exitNudgeFp: "fp-old" });
+  t("verdict：快照变更 → 计数先重置再放行（cap 不再拦死长会话）", exitGateVerdict(sReset, base).act === true && sReset.exitNudges === 0 && sReset.exitNudgeFp === "fp-new");
+  t("verdict：快照变更 → capped 标记同步复位（修复 A：第二份清单可再升级人工）", (() => {
+    const y = mkS({ exitNudges: 2, exitNudgeFp: "fp-old", exitGateCapped: true });
+    return exitGateVerdict(y, base).act === true && y.exitGateCapped === false;
+  })());
+  t("verdict：undone=null → all-settled", exitGateVerdict(mkS({}), { ...base, undone: null }).reason === "all-settled");
+  t("verdict：同快照 cap=2 → nudge-cap", exitGateVerdict(mkS({ exitNudges: 2, exitNudgeFp: base.fingerprint }), base).reason === "nudge-cap");
+  t("verdict：15s 内 → cooldown", exitGateVerdict(mkS({ exitNudgeAt: 10 ** 12 - 1, exitNudgeFp: base.fingerprint }), base).reason === "cooldown");
+  t("verdict：无工作痕迹 → no-work", exitGateVerdict(mkS({ exitNudgeFp: base.fingerprint }), { ...base, hasWork: false }).reason === "no-work");
+  t("verdict：子代理 → child-session", exitGateVerdict(mkS({ exitNudgeFp: base.fingerprint }), { ...base, isChild: true }).reason === "child-session");
+  t("verdict：中止 → user-aborted", exitGateVerdict(mkS({ exitNudgeFp: base.fingerprint }), { ...base, aborted: true }).reason === "user-aborted");
+  t("verdict：请示 → awaiting-user", exitGateVerdict(mkS({ exitNudgeFp: base.fingerprint }), { ...base, askingUser: true }).reason === "awaiting-user");
+  t("verdict：APIError → auto-resume-error", exitGateVerdict(mkS({ exitNudgeFp: base.fingerprint }), { ...base, errored: true }).reason === "auto-resume-error");
+  t("verdict：常规提前收口 → todos-pending", exitGateVerdict(mkS({ exitNudgeFp: base.fingerprint }), base).reason === "todos-pending");
+  t("nudgeText：常规变体含计数/条目/等待用户收口", (() => {
+    const x = exitNudgeText([{ status: "pending", content: "验证" }], 1, "todos-pending", 3);
+    return /#1\/2/.test(x) && x.includes("验证") && x.includes("等待用户") && !x.includes("API 错误");
+  })());
+  t("nudgeText：error 变体走 auto-resume 文案", exitNudgeText([{ status: "pending", content: "x" }], 2, "auto-resume-error", 2).includes("API 错误"));
+  t("verdict v2：自身落定+子聚合项 → child-unsettled", (() => {
+    const y = mkS({ exitNudgeFp: "fp-k" });
+    const r = exitGateVerdict(y, { ...base, undone: null, fingerprint: "fp-k", children: [{ id: "ses_k", items: ["pending:x"] }] });
+    return r.act === true && r.reason === "child-unsettled";
+  })());
+  t("verdict v2：undone 与 children 均空 → all-settled", exitGateVerdict(mkS({}), { ...base, undone: null, children: [] }).reason === "all-settled");
+  t("fingerprint v2：子聚合项内容变 → 指纹变（新子终局重新计额度）",
+    exitNudgeFingerprint([], [{ id: "a", items: ["p:1"] }]) !== exitNudgeFingerprint([], [{ id: "a", items: ["p:2"] }]));
+  t("nudgeText v2：child-unsettled 变体含子会话与续派指引", (() => {
+    const x = exitNudgeText(null, 1, "child-unsettled", 0, [{ id: "ses_kid", items: ["in_progress:接线"], at: 1 }]);
+    return x.includes("ses_kid") && x.includes("报告=完成") && x.includes("同会话续跑") && !x.includes("API 错误");
+  })());
+  t("nudgeText v2：自身+子聚合混合场景两段都在", (() => {
+    const x = exitNudgeText([{ status: "pending", content: "验证" }], 1, "todos-pending", 3, [{ id: "ses_k", items: ["pending:x"], at: 1 }]);
+    return x.includes("验证") && x.includes("ses_k");
+  })());
+  t("nudgeText v2：>5 子会话时含补报提示", exitNudgeText(null, 1, "child-unsettled", 0,
+    Array.from({ length: 7 }, (_, i) => ({ id: "k" + i, items: ["x"], at: 1 }))).includes("另有 2 个子会话未列出"));
+  t("v2 修复：容量满优先淘汰已上报项腾位", (() => {
+    const p = mod._export.bucketOf({ sessionID: "t-v2-cap" });
+    p.childUnsettled.clear();
+    for (let i = 0; i < 10; i++) p.childUnsettled.set("c" + i, { items: ["x"], at: 1, reported: i === 0 });
+    const ok = registerChildUnsettled("c-new", "t-v2-cap", [{ status: "pending", content: "任务" }]);
+    return ok === true && p.childUnsettled.has("c-new") && !p.childUnsettled.has("c0") && p.childUnsettled.size === 10;
+  })());
+  t("v2 修复：容量满且全未上报 → 拒登记并入降级账本", (() => {
+    const p = mod._export.bucketOf({ sessionID: "t-v2-cap2" });
+    p.childUnsettled.clear();
+    for (let i = 0; i < 10; i++) p.childUnsettled.set("d" + i, { items: ["x"], at: 1, reported: false });
+    const ok = registerChildUnsettled("d-new", "t-v2-cap2", [{ status: "pending", content: "任务" }]);
+    return ok === false && !p.childUnsettled.has("d-new") && p.degradations.some((d) => d.includes("聚合上限"));
+  })());
+  t("v2 修复：items 截断可见 + 换行折叠", (() => {
+    const p = mod._export.bucketOf({ sessionID: "t-v2-items" });
+    p.childUnsettled.clear();
+    const many = Array.from({ length: 7 }, (_, i) => ({ status: "pending", content: `任\n务${i}` }));
+    registerChildUnsettled("e1", "t-v2-items", many);
+    const e = p.childUnsettled.get("e1");
+    return e.items.length === 6 && e.items[5].includes("+2 项未列出") && !e.items.some((i) => i.includes("\n"));
+  })());
+  t("v2 修复：childUnsettledText 含补报条数", childUnsettledText(Array.from({ length: 7 }, (_, i) => ({ id: "c" + i, items: ["x"] }))).includes("另有 2 条"));
+  t("v2：childAgeLabel 四档时效 + 未来 at 归零", (() => {
+    const M = 60000, H = 3600000, D = 86400000;
+    return childAgeLabel(0, 30 * 1000) === "刚刚" && childAgeLabel(0, 5 * M) === "5 分钟前"
+      && childAgeLabel(0, 3 * H) === "3 小时前" && childAgeLabel(0, 2 * D) === "2 天前"
+      && childAgeLabel(1000, 100) === "刚刚";
+  })());
+  t("v2：removeChildUnsettled 撤销往返（父桶缺失/未知子安全）", (() => {
+    if (!registerChildUnsettled("r1", "t-v2-rm", [{ status: "in_progress", content: "接线" }])) return false;
+    const p = mod._export.bucketOf({ sessionID: "t-v2-rm" });
+    if (p.childUnsettled.size !== 1 || pendingChildrenOf(p).length !== 1) return false;
+    removeChildUnsettled("t-v2-rm", "r1");
+    removeChildUnsettled("no-such-parent", "x");
+    removeChildUnsettled("t-v2-rm", "ghost");
+    return p.childUnsettled.size === 0 && pendingChildrenOf(p).length === 0;
+  })());
+  t("v2：聚合文本两通道均含终局时效", (() => {
+    const kids = [{ id: "k1", items: ["pending:x"], at: 0 }];
+    return childUnsettledText(kids, 2 * 3600000).includes("2 小时前") && exitNudgeText(null, 1, "child-unsettled", 0, kids, 370000).includes("6 分钟前");
+  })());
+}
+{
+  // 假 client 集成：messages/get/promptAsync 三方法即门禁全部依赖面（{path:{id}} 嵌套参数为插件侧生产形状）
+  const injected = [];
+  const msgs = new Map();
+  const parents = new Map();
+  const fakeClient = {
+    session: {
+      messages: async ({ path }) => ({ data: msgs.get(path.id) ?? [] }),
+      get: async ({ path }) => ({ data: { parentID: parents.get(path.id) ?? null } }),
+      promptAsync: async (H) => { injected.push(H); },
+    },
+  };
+  const qgExit = mod.QualityGate ?? mod.default;
+  const hooksX = await qgExit({ directory: ROOT, client: fakeClient });
+  const idle = (id) => hooksX.event({ event: { type: "session.idle", properties: { sessionID: id } } });
+  const plainAssistant = (text) => [{ info: { role: "user" }, parts: [] }, { info: { role: "assistant" }, parts: [{ type: "text", text }] }];
+
+  const sidA = "t-exit-a";
+  const sA = mod._export.bucketOf({ sessionID: sidA });
+  sA.lastTodos = [
+    { content: "模块甲实现", status: "completed" },
+    { content: "模块乙接线", status: "in_progress" },
+    { content: "交付验证", status: "pending" },
+  ];
+  sA.edited.add("src/b.ts");
+  msgs.set(sidA, plainAssistant("先做到这里"));
+  await idle(sidA);
+  t("出口门禁：idle+未落定+有工作痕迹 → 注入 #1（含未完成项与来源标注）",
+    injected.length === 1 && sA.exitNudges === 1 && /回合出口门禁 #1\/2/.test(injected[0].body.parts[0].text) && injected[0].body.parts[0].text.includes("模块乙接线"));
+  await idle(sidA);
+  t("出口门禁：15s 冷却拒注入", injected.length === 1);
+  sA.exitNudgeAt = Date.now() - 20_000;
+  await idle(sidA);
+  t("出口门禁：冷却后同快照注入 #2", injected.length === 2 && sA.exitNudges === 2);
+  await idle(sidA);
+  t("出口门禁：同快照达上限不再注入并入降级账本", injected.length === 2 && sA.degradations.some((d) => d.includes("上限")));
+  sA.lastTodos[1].status = "completed";
+  sA.lastTodos[2].status = "in_progress";
+  sA.exitNudgeAt = Date.now() - 20_000;
+  await idle(sidA);
+  t("出口门禁：清单变更（指纹变）→ 计数重置重新注入 #1/2", injected.length === 3 && /#1\/2/.test(injected[2].body.parts[0].text) && injected[2].body.parts[0].text.includes("交付验证"));
+  sA.lastTodos = sA.lastTodos.map((x) => ({ ...x, status: "completed" }));
+  sA.exitNudgeAt = Date.now() - 20_000;
+  await idle(sidA);
+  t("出口门禁：全落定不注入", injected.length === 3);
+  await hooksX.event({ event: { type: "session.status", properties: { sessionID: sidA, status: { type: "busy" } } } });
+  t("出口门禁：session.status 记录 lastStatus（error 延迟复检依据）", sA.lastStatus === "busy");
+
+  const mkSkip = (id, messages, parent) => {
+    const s = mod._export.bucketOf({ sessionID: id });
+    s.lastTodos = [{ content: "甲", status: "completed" }, { content: "乙", status: "pending" }];
+    s.edited.add("src/x.ts");
+    msgs.set(id, messages);
+    if (parent) parents.set(id, parent);
+    return s;
+  };
+  const sidB = mkSkip("t-exit-abort", [{ info: { role: "assistant", error: { name: "MessageAbortedError", message: "aborted" } }, parts: [] }]);
+  await idle(sidB ? "t-exit-abort" : "");
+  t("出口门禁：用户中止豁免", injected.length === 3 && sidB.exitNudges === 0);
+  const sidC = mkSkip("t-exit-question", plainAssistant("两条路线：A 保测试，B 快落地。请选 A 或 B。"));
+  await idle("t-exit-question");
+  t("出口门禁：请示收尾豁免（等待用户是合法停点）", injected.length === 3 && sidC.exitNudges === 0);
+  const sidD = mkSkip("t-exit-child", plainAssistant("报告如上"), "ses_parent-x");
+  await idle("t-exit-child");
+  t("出口门禁：子代理豁免（防与父会话文件竞争）", injected.length === 3 && sidD.exitNudges === 0);
+  const sidE = mkSkip("t-exit-nowork", plainAssistant("状态同步"));
+  sidE.edited.clear();
+  await idle("t-exit-nowork");
+  t("出口门禁：无工作痕迹豁免（纯问答不炸）", injected.length === 3 && sidE.exitNudges === 0);
+  mkSkip("t-exit-err", [{ info: { role: "assistant", error: { name: "APIError", message: "503 overloaded" } }, parts: [] }]);
+  await idle("t-exit-err");
+  t("出口门禁：APIError 终止 → auto-resume 注入（断流病自动续）", injected.length === 4 && injected[3].body.parts[0].text.includes("API 错误"));
+
+  const sidG = mkSkip("t-exit-getthrow", plainAssistant("报告"));
+  const origGet = fakeClient.session.get;
+  fakeClient.session.get = async (H) => { if (H?.path?.id === "t-exit-getthrow") throw new Error("boom"); return origGet(H); };
+  await idle("t-exit-getthrow");
+  fakeClient.session.get = origGet;
+  t("出口门禁：session.get 失败 → 保守按子代理豁免（宁漏提醒不误注入）", sidG.exitNudges === 0 && injected.length === 4);
+
+  const sidH = mkSkip("t-exit-sendfail", plainAssistant("半截报告"));
+  const origPrompt = fakeClient.session.promptAsync;
+  fakeClient.session.promptAsync = async () => { throw new Error("network down"); };
+  await idle("t-exit-sendfail");
+  fakeClient.session.promptAsync = origPrompt;
+  t("出口门禁：注入发送失败不抛错且不烧额度（成功才计数）", sidH.exitNudges === 0 && injected.length === 4);
+
+  const sidI = mkSkip("t-exit-errtimer", plainAssistant("中断"));
+  await hooksX.event({ event: { type: "session.error", properties: { sessionID: "t-exit-errtimer" } } });
+  t("出口门禁：session.error 挂延迟复检定时器（busy/retry 时放弃）", !!sidI.exitCheckTimer);
+  clearTimeout(sidI.exitCheckTimer); sidI.exitCheckTimer = null;
+
+  // 查漏修复 A（2026-10-03 二轮）：capped 标记随快照复位——第二份清单烧 cap 仍能升级人工
+  const sidK = mkSkip("t-exit-recap", plainAssistant("第一轮"));
+  for (let i = 0; i < 2; i++) { sidK.exitNudgeAt = Date.now() - 20_000; await idle("t-exit-recap"); }
+  await idle("t-exit-recap");
+  const caps1 = sidK.degradations.filter((d) => d.includes("上限")).length;
+  sidK.lastTodos = [{ content: "丙", status: "in_progress" }]; // 快照变更 → 计数与 capped 一并重置（detail 与前轮区分，防去重）
+  for (let i = 0; i < 2; i++) { sidK.exitNudgeAt = Date.now() - 20_000; await idle("t-exit-recap"); }
+  await idle("t-exit-recap");
+  t("出口门禁（修复 A）：快照变更后二次烧 cap 仍入账升级人工",
+    caps1 === 1 && sidK.degradations.filter((d) => d.includes("上限")).length === 2 &&
+    sidK.exitNudges === 2 && injected.length === 8 && sidK.exitGateCapped === true);
+
+  // 查漏修复 B：同窗并发事件去重——in-flight 期间第二路直接跳过（error 复检与 idle 可同窗）
+  const sidJ = mkSkip("t-exit-race", plainAssistant("并发"));
+  let release;
+  const gateP = new Promise((r) => { release = r; });
+  const origMsgs = fakeClient.session.messages;
+  fakeClient.session.messages = async (H) => { const res = await origMsgs(H); await gateP; return res; };
+  const p1 = idle("t-exit-race");
+  const p2 = idle("t-exit-race");
+  await new Promise((r) => setTimeout(r, 0));
+  release();
+  await Promise.all([p1, p2]);
+  fakeClient.session.messages = origMsgs;
+  t("出口门禁（修复 B）：并发第二路不注入且锁释放",
+    injected.length === 9 && sidJ.exitNudges === 1 && sidJ.exitGateInFlight === false);
+  await idle("t-exit-race");
+  t("出口门禁（修复 B）：锁释放后后续事件判定照常（冷却豁免不回归）", injected.length === 9);
+
+  // v2 子代理终局聚合：登记 → 父 todowrite 回注 → 子补完撤销 → 父出口聚合 → 中止不登记
+  const sidKid1 = mkSkip("t-exit-kid1", plainAssistant("半截"), "ses-agg-parent");
+  await idle("t-exit-kid1");
+  const par = mod._export.bucketOf({ sessionID: "ses-agg-parent" });
+  t("v2：子代理终局登记父桶（子本身不注入）",
+    injected.length === 9 && par.childUnsettled.has("t-exit-kid1"));
+  msgs.set("ses-agg-parent", plainAssistant("派发完成"));
+  par.edited.add("src/p.ts");
+  const outP = { output: "ok" };
+  await hooksX["tool.execute.after"](
+    { tool: "todowrite", sessionID: "ses-agg-parent", args: { todos: [{ content: "父任务", status: "completed" }] } },
+    outP);
+  t("v2：父 todowrite 回注聚合项并标 reported",
+    /报告=完成/.test(outP.output) && [...par.childUnsettled.values()].every((e) => e.reported));
+  par.exitNudgeAt = 0;
+  await idle("ses-agg-parent");
+  t("v2：已 reported 子项出口不重复注入", injected.length === 9);
+  sidKid1.lastTodos = sidKid1.lastTodos.map((x) => ({ ...x, status: "completed" }));
+  await idle("t-exit-kid1");
+  t("v2：子代理补完终局 → 父侧登记撤销", !par.childUnsettled.has("t-exit-kid1") && sidKid1.childReg === "");
+  mkSkip("t-exit-kid2", plainAssistant("半截"), "ses-agg-parent");
+  await idle("t-exit-kid2");
+  await idle("ses-agg-parent");
+  t("v2：父 idle 出口聚合注入（child-unsettled 文本含子会话）",
+    injected.length === 10 && injected[9].path.id === "ses-agg-parent" && /子会话 t-exit-kid2/.test(injected[9].body.parts[0].text));
+  par.exitNudges = 2;
+  par.exitNudgeFp = mod._export.exitNudgeFingerprint(par.lastTodos, mod._export.pendingChildrenOf(par));
+  par.exitNudgeAt = 0;
+  let aggFetchCnt = 0;
+  const wrapMsgs2 = fakeClient.session.messages;
+  const wrapGet2 = fakeClient.session.get;
+  fakeClient.session.messages = async (H) => { aggFetchCnt++; return wrapMsgs2(H); };
+  fakeClient.session.get = async (H) => { aggFetchCnt++; return wrapGet2(H); };
+  await idle("ses-agg-parent");
+  fakeClient.session.messages = wrapMsgs2;
+  fakeClient.session.get = wrapGet2;
+  t("v2 优化：已知父会话本地定案（cap）→ 零 HTTP 取数", aggFetchCnt === 0 && injected.length === 10);
+  par.exitNudges = 0;
+  mkSkip("t-exit-kid3", [{ info: { role: "assistant", error: { name: "MessageAbortedError", message: "aborted" } }, parts: [] }], "ses-agg-parent");
+  await idle("t-exit-kid3");
+  t("v2：中止的子代理不登记（父侧已有 runtime 中止通知）", !par.childUnsettled.has("t-exit-kid3"));
+  const sidKid4 = mkSkip("t-exit-kid4", plainAssistant("半截"), "ses-agg-parent");
+  await idle("t-exit-kid4");
+  msgs.set("t-exit-kid4", [{ info: { role: "assistant", error: { name: "MessageAbortedError", message: "aborted" } }, parts: [] }]);
+  await idle("t-exit-kid4");
+  t("v2 修复：先登记后中止 → 撤销父侧登记", !par.childUnsettled.has("t-exit-kid4") && sidKid4.childReg === "");
+  mkSkip("t-exit-kid5", plainAssistant("半截"), "ses-agg-parent");
+  await idle("t-exit-kid5");
+  const kid5 = mod._export.bucketOf({ sessionID: "t-exit-kid5" });
+  par.exitNudgeAt = 0; // 排除冷却干扰：竞态测试必须走到发送前重查路径
+  const gateMsgs = fakeClient.session.messages;
+  let release2;
+  const gate2 = new Promise((r) => { release2 = r; });
+  fakeClient.session.messages = async (H) => { const res = await gateMsgs(H); if (H?.path?.id === "ses-agg-parent") await gate2; return res; };
+  const pIdle = idle("ses-agg-parent");
+  await new Promise((r) => setTimeout(r, 0));
+  kid5.lastTodos = kid5.lastTodos.map((x) => ({ ...x, status: "completed" }));
+  await idle("t-exit-kid5");
+  release2();
+  await pIdle;
+  fakeClient.session.messages = gateMsgs;
+  t("v2 修复：等待窗内子补完撤销 → 父不注入陈旧清单", injected.length === 10);
+
+  const hooksY = await qgExit({ directory: ROOT });
+  let threw = false;
+  try { await hooksY.event({ event: { type: "session.idle", properties: { sessionID: "t-exit-no-client" } } }); } catch { threw = true; }
+  t("出口门禁：ctx 无 client → event 静默降级不抛错（never-throw 契约）", threw === false);
 }
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} quality-gate 回归：${pass} 通过 / ${fail} 失败`);

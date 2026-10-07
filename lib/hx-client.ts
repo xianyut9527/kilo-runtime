@@ -121,10 +121,14 @@ function isOverloadErr(err) {
   // 503 + 渠道/模型不可用报文（model_not_found/no available channel）：确定性故障——
   // 渠道没配/下线，退避重试与断路器冷却都救不了（渠道不会因 30s 等待恢复）。
   // 按非过载处理：不 trip 断路器（网关本身健康）、不进 2s/6s 退避，快速失败换路。
-  // 2026-09-28 查漏补缺：正则与 provider/hx-failover CHANNEL_UNAVAILABLE_503_RE 对齐补
-  // "no active channel candidate"（NO_ROUTE_CANDIDATE 的 503 变体）——缺失时该形态会被
-  // 误判为过载：白退避 ~8s 且 trip 断路器，与「快速失败换路」语义相悖（口径漂移修复）。
-  if (err?.statusCode === 503 && /model_not_found|no available channel|model.?not.?available|no active channel candidate/i.test(String(err?.message ?? "") + String(err?.responseHeaders?.get?.("x-error") ?? ""))) {
+  // 2026-09-28 查漏补缺：正则与 provider/hx-failover 对齐补 "no active channel candidate"
+  // （NO_ROUTE_CANDIDATE 的 503 变体）——缺失时该形态会被误判为过载：白退避 ~8s 且
+  // trip 断路器，与「快速失败换路」语义相悖（口径漂移修复）。
+  // 2026-10-01 根治对齐（同 provider 侧 CHANNEL_UNAVAILABLE_RE）：补 "model not exist"
+  // （404/503 同措辞变体，生产实证 2026-10-01 21:50 glm-5.3-flash）与 NO_ROUTE_CANDIDATE
+  // 本体；404 渠道签名形态在 ask() 侧经 NON_RETRYABLE_STATUS 早退（不 trip 不退避），
+  // 本正则只守 503 入口——两文件签名集必须同源维护，改一处必改另一处。
+  if (err?.statusCode === 503 && /model_not_found|no[_-]?route[_-]?candidate|no available channel|model.?not.?available|no active channel candidate|model not exist/i.test(String(err?.message ?? "") + String(err?.responseHeaders?.get?.("x-error") ?? ""))) {
     return false;
   }
   if (err?.statusCode === 503) return true;

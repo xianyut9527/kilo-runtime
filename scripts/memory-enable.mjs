@@ -104,7 +104,15 @@ function enableDir(dir) {
   const root = path.join(dataDir(), "memory", folder);
   const stateFile = path.join(root, "state.json");
   if (fs.existsSync(stateFile)) {
-    const st = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    // 损坏的 state.json 不得炸批量流程（--db 模式一个坏根会中断其余全部启用）：
+    // 解析失败按「已有状态不动」口径跳过并告警，绝不覆盖人工/异常状态文件
+    let st;
+    try {
+      st = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    } catch (e) {
+      console.warn(`${TAG} WARN: state.json 解析失败，按已有状态跳过（不覆盖）: ${stateFile}（${String(e?.message ?? e).slice(0, 80)}）`);
+      return { canonical, root, changed: false };
+    }
     console.log(`${TAG} skip (state exists, enabled=${st.enabled}): ${canonical} -> ${root}`);
     return { canonical, root, changed: false };
   }
@@ -162,10 +170,13 @@ function status() {
 function findKiloBin() {
   const extBase = path.join(os.homedir(), ".vscode", "extensions");
   try {
+    // numeric 感知排序（2026-10-01 修复）：目录名按字典序 7.7.9 > 7.7.10，
+    // 纯 .sort() 的 .at(-1) 会取到旧版本扩展；与 db-maintain.sh 的 sort -V 口径对齐
+    const coll = new Intl.Collator(undefined, { numeric: true });
     const cands = fs
       .readdirSync(extBase)
       .filter((d) => /^kilocode\.kilo-code-/.test(d))
-      .sort()
+      .sort((a, b) => coll.compare(a, b))
       .map((d) => path.join(extBase, d, "bin", "kilo.exe"));
     const exe = cands.filter((p) => fs.existsSync(p)).at(-1);
     if (exe) return exe;

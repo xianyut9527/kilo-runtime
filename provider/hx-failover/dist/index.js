@@ -1,4 +1,4 @@
-// kilo-build: src-sha256=8e3c0b0fdd21763611416ee04c0b7d41f4cfa362aef9f12df336fae8e7efbad6
+// kilo-build: src-sha256=3ea6a5f3e95066090c8832db7e728fc0354fcac40fbb99363a45762a106e1857
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)
@@ -24201,6 +24201,13 @@ var DownloadError = class extends (_b15 = AISDKError, _a17 = symbol16, _b15) {
 function isBrowserRuntime(globalThisAny = globalThis) {
   return globalThisAny.window != null;
 }
+function isSameOrigin(url2, baseUrl) {
+  try {
+    return new URL(url2).origin === new URL(baseUrl).origin;
+  } catch (e) {
+    return false;
+  }
+}
 function validateDownloadUrl(url2) {
   let parsed;
   try {
@@ -24383,34 +24390,24 @@ function createSafeLookup(lookup) {
   });
 }
 var safeNodeFetchPromise;
-var initialGlobalFetch = globalThis.fetch;
-var initialGlobalFetchIsNodeDefault = isNodeDefaultFetch(initialGlobalFetch);
 function isNodeRuntime() {
-  var _a22, _b22;
+  var _a22, _b22, _c;
   const runtimeProcess = globalThis.process;
-  return ((_a22 = runtimeProcess == null ? void 0 : runtimeProcess.release) == null ? void 0 : _a22.name) === "node" && ((_b22 = runtimeProcess.versions) == null ? void 0 : _b22.bun) == null;
+  return ((_a22 = runtimeProcess == null ? void 0 : runtimeProcess.release) == null ? void 0 : _a22.name) === "node" && ((_b22 = runtimeProcess.versions) == null ? void 0 : _b22.bun) == null && ((_c = runtimeProcess.versions) == null ? void 0 : _c.deno) == null && runtimeProcess.title !== "workerd" && globalThis.EdgeRuntime == null;
 }
 async function getDefaultDownloadFetch() {
-  if (!isNodeRuntime() || !initialGlobalFetchIsNodeDefault || globalThis.fetch !== initialGlobalFetch) {
+  if (!isNodeRuntime()) {
     return globalThis.fetch;
   }
   return safeNodeFetchPromise != null ? safeNodeFetchPromise : safeNodeFetchPromise = createSafeNodeFetch();
 }
-function isNodeDefaultFetch(fetch) {
-  if (typeof fetch !== "function") {
-    return false;
-  }
-  const source = Function.prototype.toString.call(fetch);
-  return source.includes("internal/deps/undici") || source.includes("lazy loading of undici");
-}
 async function createSafeNodeFetch() {
-  const [{ createRequire }, { lookup }] = await Promise.all([
+  const [module, { lookup }] = await Promise.all([
     loadNodeModule("node:module"),
     loadNodeModule("node:dns")
   ]);
-  const { Agent, fetch } = createRequire(getCurrentModulePath())(
-    "undici"
-  );
+  const nodeRequire = module.createRequire(getCurrentModulePath());
+  const { Agent, fetch } = nodeRequire("undici");
   const dispatcher = new Agent({
     connect: {
       lookup: createSafeLookup(lookup)
@@ -24450,20 +24447,29 @@ function getCurrentModulePath() {
   }
 }
 var MAX_DOWNLOAD_REDIRECTS = 10;
+async function getValidatedFetch(customFetch) {
+  return customFetch == null || customFetch === globalThis.fetch ? await getDefaultDownloadFetch() : customFetch;
+}
 async function fetchWithValidatedRedirects({
   url: url2,
   headers,
   abortSignal,
-  maxRedirects = MAX_DOWNLOAD_REDIRECTS
+  maxRedirects = MAX_DOWNLOAD_REDIRECTS,
+  fetch: customFetch,
+  trustedOrigin
 }) {
+  var _a22;
   const baseInit = { signal: abortSignal };
   if (headers !== void 0) {
     baseInit.headers = headers;
   }
   let currentUrl = url2;
   for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
-    validateDownloadUrl(currentUrl);
-    const fetch = await getDefaultDownloadFetch();
+    const isTrustedHop = trustedOrigin !== void 0 && isSameOrigin(currentUrl, trustedOrigin);
+    if (!isTrustedHop) {
+      validateDownloadUrl(currentUrl);
+    }
+    const fetch = isTrustedHop && customFetch != null ? customFetch : isTrustedHop ? globalThis.fetch : await getValidatedFetch(customFetch);
     const response = await fetch(currentUrl, {
       ...baseInit,
       redirect: "manual"
@@ -24477,7 +24483,7 @@ async function fetchWithValidatedRedirects({
       }
       return await fetch(currentUrl, { ...baseInit, redirect: "follow" });
     }
-    const location = response.headers.get("location");
+    const location = (_a22 = response.headers) == null ? void 0 : _a22.get("location");
     if (response.status >= 300 && response.status < 400 && location) {
       await cancelResponseBody(response);
       currentUrl = new URL(location, currentUrl).toString();
@@ -24723,7 +24729,7 @@ function withUserAgentSuffix(headers, ...userAgentSuffixParts) {
   );
   return Object.fromEntries(normalizedHeaders.entries());
 }
-var VERSION = true ? "4.0.55" : "0.0.0-test";
+var VERSION = true ? "4.0.57" : "0.0.0-test";
 var suspectProtoRx = /"(?:_|\\u005[Ff])(?:_|\\u005[Ff])(?:p|\\u0070)(?:r|\\u0072)(?:o|\\u006[Ff])(?:t|\\u0074)(?:o|\\u006[Ff])(?:_|\\u005[Ff])(?:_|\\u005[Ff])"\s*:/;
 var suspectConstructorRx = /"(?:c|\\u0063)(?:o|\\u006[Ff])(?:n|\\u006[Ee])(?:s|\\u0073)(?:t|\\u0074)(?:r|\\u0072)(?:u|\\u0075)(?:c|\\u0063)(?:t|\\u0074)(?:o|\\u006[Ff])(?:r|\\u0072)"\s*:/;
 function _parse3(text) {
@@ -26396,6 +26402,358 @@ var createJsonResponseHandler = (responseSchema) => async ({ response, url: url2
     rawValue: parsedResult.rawValue
   };
 };
+function startsWithStructuredValue(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const firstCharacter = value.trimStart()[0];
+  return firstCharacter === "{" || firstCharacter === "[";
+}
+var StreamingToolCallArgumentState = class {
+  constructor(initialValue = "") {
+    this.structure = { kind: "undetermined" };
+    this.append(initialValue);
+  }
+  get hasCompleteStructuredValue() {
+    return this.structure.kind === "structured" && this.structure.complete === true;
+  }
+  append(delta) {
+    let nextStructure = this.structure;
+    for (const character of delta) {
+      if (nextStructure.kind === "undetermined") {
+        if (/\s/.test(character)) {
+          continue;
+        }
+        if (character !== "{" && character !== "[") {
+          nextStructure = { kind: "other" };
+          continue;
+        }
+        nextStructure = {
+          kind: "structured",
+          stack: [character],
+          inString: false,
+          escaped: false,
+          complete: false
+        };
+        continue;
+      }
+      if (nextStructure.kind !== "structured" || nextStructure.complete) {
+        continue;
+      }
+      if (nextStructure.inString) {
+        if (nextStructure.escaped) {
+          nextStructure.escaped = false;
+        } else if (character === "\\") {
+          nextStructure.escaped = true;
+        } else if (character === '"') {
+          nextStructure.inString = false;
+        }
+        continue;
+      }
+      if (character === '"') {
+        nextStructure.inString = true;
+      } else if (character === "{" || character === "[") {
+        nextStructure.stack.push(character);
+      } else if (character === "}" || character === "]") {
+        const expectedOpening = character === "}" ? "{" : "[";
+        if (nextStructure.stack[nextStructure.stack.length - 1] !== expectedOpening) {
+          nextStructure = { kind: "other" };
+          continue;
+        }
+        nextStructure.stack.pop();
+        if (nextStructure.stack.length === 0) {
+          nextStructure.complete = true;
+        }
+      }
+    }
+    this.structure = nextStructure;
+  }
+};
+var StreamingToolCallTracker = class {
+  constructor(controller, options = {}) {
+    this.toolCalls = [];
+    this.toolCallsById = /* @__PURE__ */ new Map();
+    this.toolCallsByIndex = /* @__PURE__ */ new Map();
+    this.usedToolCallIds = /* @__PURE__ */ new Set();
+    this.nextGeneratedIdSuffixes = /* @__PURE__ */ new Map();
+    var _a22, _b22;
+    this.controller = controller;
+    this._generateId = (_a22 = options.generateId) != null ? _a22 : generateId;
+    this.typeValidation = (_b22 = options.typeValidation) != null ? _b22 : "none";
+    this.extractMetadata = options.extractMetadata;
+    this.buildToolCallProviderMetadata = options.buildToolCallProviderMetadata;
+  }
+  processDelta(toolCallDelta) {
+    var _a22, _b22;
+    const wireName = (_a22 = toolCallDelta.function) == null ? void 0 : _a22.name;
+    const hasBlankName = typeof wireName === "string" && wireName.trim().length === 0;
+    const wireId = this.getNonBlankString(toolCallDelta.id);
+    const name22 = this.getNonBlankString(wireName);
+    const { index } = toolCallDelta;
+    const resolution = this.resolveToolCall({
+      wireId,
+      index,
+      name: name22,
+      hasExplicitCallStart: name22 != null && startsWithStructuredValue((_b22 = toolCallDelta.function) == null ? void 0 : _b22.arguments)
+    });
+    if (resolution.kind === "ambiguous") {
+      return;
+    }
+    let toolCall;
+    if (resolution.kind === "new") {
+      if (hasBlankName) {
+        return;
+      }
+      toolCall = this.processNewToolCall(toolCallDelta, {
+        wireId,
+        index,
+        name: name22
+      });
+    } else {
+      toolCall = resolution.toolCall;
+      if (wireId != null) {
+        this.associateWireId(toolCall, wireId);
+      }
+      this.processExistingToolCall(toolCall, toolCallDelta);
+    }
+    if (index != null) {
+      this.associateIndex(toolCall, index);
+    }
+  }
+  flush() {
+    const toolCalls = this.toolCalls.every((toolCall) => toolCall.index != null) ? [...this.toolCalls].sort(
+      (a, b) => a.index - b.index || a.sequence - b.sequence
+    ) : this.toolCalls;
+    for (const toolCall of toolCalls) {
+      if (!toolCall.hasFinished) {
+        this.finishToolCall(toolCall);
+      }
+    }
+  }
+  resolveToolCall({
+    wireId,
+    index,
+    name: name22,
+    hasExplicitCallStart
+  }) {
+    const indexedToolCalls = index != null ? this.toolCallsByIndex.get(index) : void 0;
+    const matchingIndexedToolCalls = this.filterToolCallsByName(
+      indexedToolCalls,
+      name22
+    );
+    if (wireId != null) {
+      const toolCallsWithId = this.toolCallsById.get(wireId);
+      if (toolCallsWithId != null) {
+        if (index != null) {
+          const matchingToolCalls = matchingIndexedToolCalls.filter(
+            (toolCall) => toolCallsWithId.has(toolCall)
+          );
+          const matchingToolCall = this.resolveMatchingToolCall(
+            matchingToolCalls,
+            hasExplicitCallStart
+          );
+          if (matchingToolCall.kind !== "new") {
+            return matchingToolCall;
+          }
+          if (name22 != null) {
+            return { kind: "new" };
+          }
+          if (indexedToolCalls != null) {
+            return { kind: "ambiguous" };
+          }
+          return this.resolveMatchingToolCall([...toolCallsWithId], false);
+        }
+        if (name22 != null) {
+          const matchingToolCalls = [...toolCallsWithId].filter(
+            (toolCall) => toolCall.function.name === name22
+          );
+          return this.resolveMatchingToolCall(
+            matchingToolCalls,
+            hasExplicitCallStart
+          );
+        }
+        return this.resolveMatchingToolCall([...toolCallsWithId], false);
+      }
+      if (matchingIndexedToolCalls.length > 0) {
+        return hasExplicitCallStart ? { kind: "new" } : this.resolveMatchingToolCall(matchingIndexedToolCalls, false);
+      }
+      return { kind: "new" };
+    }
+    if (indexedToolCalls != null) {
+      return this.resolveMatchingToolCall(
+        matchingIndexedToolCalls,
+        hasExplicitCallStart
+      );
+    }
+    if (name22 != null) {
+      return { kind: "new" };
+    }
+    const unfinishedToolCalls = this.toolCalls.filter(
+      (toolCall) => !toolCall.hasFinished
+    );
+    if (unfinishedToolCalls.length === 1) {
+      return { kind: "existing", toolCall: unfinishedToolCalls[0] };
+    }
+    return unfinishedToolCalls.length > 1 ? { kind: "ambiguous" } : { kind: "new" };
+  }
+  filterToolCallsByName(toolCalls, name22) {
+    if (toolCalls == null) {
+      return [];
+    }
+    return [...toolCalls].filter(
+      (toolCall) => name22 == null || toolCall.function.name === name22
+    );
+  }
+  resolveMatchingToolCall(toolCalls, hasExplicitCallStart) {
+    if (toolCalls.length === 0) {
+      return { kind: "new" };
+    }
+    if (!hasExplicitCallStart) {
+      return toolCalls.length === 1 ? { kind: "existing", toolCall: toolCalls[0] } : { kind: "ambiguous" };
+    }
+    const continuableToolCalls = toolCalls.filter(
+      (toolCall) => !toolCall.argumentState.hasCompleteStructuredValue
+    );
+    if (continuableToolCalls.length === 1) {
+      return { kind: "existing", toolCall: continuableToolCalls[0] };
+    }
+    return continuableToolCalls.length > 1 ? { kind: "ambiguous" } : { kind: "new" };
+  }
+  processNewToolCall(toolCallDelta, {
+    wireId,
+    index,
+    name: name22
+  }) {
+    var _a22, _b22, _c, _d, _e;
+    if (this.typeValidation === "required") {
+      if (toolCallDelta.type !== "function") {
+        throw new InvalidResponseDataError({
+          data: toolCallDelta,
+          message: `Expected 'function' type.`
+        });
+      }
+    } else if (this.typeValidation === "if-present") {
+      if (toolCallDelta.type != null && toolCallDelta.type !== "function") {
+        throw new InvalidResponseDataError({
+          data: toolCallDelta,
+          message: `Expected 'function' type.`
+        });
+      }
+    }
+    if (name22 == null) {
+      throw new InvalidResponseDataError({
+        data: toolCallDelta,
+        message: `Expected 'function.name' to be a string.`
+      });
+    }
+    const id = this.createToolCallId(wireId);
+    this.controller.enqueue({
+      type: "tool-input-start",
+      id,
+      toolName: name22
+    });
+    const toolCall = {
+      id,
+      index: index != null ? index : void 0,
+      sequence: this.toolCalls.length,
+      type: "function",
+      function: {
+        name: name22,
+        arguments: (_b22 = (_a22 = toolCallDelta.function) == null ? void 0 : _a22.arguments) != null ? _b22 : ""
+      },
+      argumentState: new StreamingToolCallArgumentState(
+        (_d = (_c = toolCallDelta.function) == null ? void 0 : _c.arguments) != null ? _d : ""
+      ),
+      hasFinished: false,
+      metadata: (_e = this.extractMetadata) == null ? void 0 : _e.call(this, toolCallDelta)
+    };
+    this.toolCalls.push(toolCall);
+    if (wireId != null) {
+      this.associateWireId(toolCall, wireId);
+    }
+    if (toolCall.function.arguments.length > 0) {
+      this.controller.enqueue({
+        type: "tool-input-delta",
+        id: toolCall.id,
+        delta: toolCall.function.arguments
+      });
+    }
+    return toolCall;
+  }
+  associateWireId(toolCall, wireId) {
+    let toolCallsWithId = this.toolCallsById.get(wireId);
+    if (toolCallsWithId == null) {
+      toolCallsWithId = /* @__PURE__ */ new Set();
+      this.toolCallsById.set(wireId, toolCallsWithId);
+    }
+    toolCallsWithId.add(toolCall);
+  }
+  associateIndex(toolCall, index) {
+    let toolCallsWithIndex = this.toolCallsByIndex.get(index);
+    if (toolCallsWithIndex == null) {
+      toolCallsWithIndex = /* @__PURE__ */ new Set();
+      this.toolCallsByIndex.set(index, toolCallsWithIndex);
+    }
+    toolCallsWithIndex.add(toolCall);
+  }
+  createToolCallId(wireId) {
+    var _a22, _b22;
+    if (wireId != null && !this.usedToolCallIds.has(wireId)) {
+      this.usedToolCallIds.add(wireId);
+      return wireId;
+    }
+    const generatedId = (_a22 = this.getNonBlankString(this._generateId())) != null ? _a22 : "tool-call";
+    if (!this.usedToolCallIds.has(generatedId)) {
+      this.usedToolCallIds.add(generatedId);
+      return generatedId;
+    }
+    const initialSuffix = (_b22 = this.nextGeneratedIdSuffixes.get(generatedId)) != null ? _b22 : 1;
+    const maximumSuffix = initialSuffix + this.usedToolCallIds.size;
+    for (let suffix = initialSuffix; suffix <= maximumSuffix; suffix++) {
+      const suffixedId = `${generatedId}-${suffix}`;
+      if (!this.usedToolCallIds.has(suffixedId)) {
+        this.usedToolCallIds.add(suffixedId);
+        this.nextGeneratedIdSuffixes.set(generatedId, suffix + 1);
+        return suffixedId;
+      }
+    }
+    throw new Error("Failed to create a unique tool call ID.");
+  }
+  getNonBlankString(value) {
+    return value != null && value.trim().length > 0 ? value : void 0;
+  }
+  processExistingToolCall(toolCall, toolCallDelta) {
+    var _a22;
+    if (!toolCall.hasFinished && ((_a22 = toolCallDelta.function) == null ? void 0 : _a22.arguments) != null) {
+      toolCall.argumentState.append(toolCallDelta.function.arguments);
+      toolCall.function.arguments += toolCallDelta.function.arguments;
+      this.controller.enqueue({
+        type: "tool-input-delta",
+        id: toolCall.id,
+        delta: toolCallDelta.function.arguments
+      });
+    }
+  }
+  finishToolCall(toolCall) {
+    var _a22;
+    this.controller.enqueue({
+      type: "tool-input-end",
+      id: toolCall.id
+    });
+    const providerMetadata = (_a22 = this.buildToolCallProviderMetadata) == null ? void 0 : _a22.call(
+      this,
+      toolCall.metadata
+    );
+    this.controller.enqueue({
+      type: "tool-call",
+      toolCallId: toolCall.id,
+      toolName: toolCall.function.name,
+      input: toolCall.function.arguments,
+      ...providerMetadata ? { providerMetadata } : {}
+    });
+    toolCall.hasFinished = true;
+  }
+};
 function withoutTrailingSlash(url2) {
   return url2 == null ? void 0 : url2.replace(/\/$/, "");
 }
@@ -27017,12 +27375,55 @@ var OpenAICompatibleChatLanguageModel = class {
       abortSignal: options.abortSignal,
       fetch: this.config.fetch
     });
-    const toolCalls = [];
+    const providerOptionsName = metadataKey;
+    let toolCallTracker;
     const pendingToolCalls = /* @__PURE__ */ new Map();
+    const forwardedToolCallIndices = /* @__PURE__ */ new Set();
+    const processToolCallDelta = (toolCallDelta) => {
+      var _a22, _b16, _c, _d, _e;
+      const index = toolCallDelta.index;
+      if (index == null || forwardedToolCallIndices.has(index)) {
+        toolCallTracker.processDelta(toolCallDelta);
+        return;
+      }
+      let pending = pendingToolCalls.get(index);
+      if (pending == null) {
+        pending = {
+          id: (_a22 = toolCallDelta.id) != null ? _a22 : null,
+          bufferedArguments: "",
+          extraContent: (_b16 = toolCallDelta.extra_content) != null ? _b16 : null
+        };
+        pendingToolCalls.set(index, pending);
+      } else {
+        if (pending.id == null && toolCallDelta.id != null) {
+          pending.id = toolCallDelta.id;
+        }
+        if (pending.extraContent == null && toolCallDelta.extra_content != null) {
+          pending.extraContent = toolCallDelta.extra_content;
+        }
+      }
+      const argumentsDelta = (_c = toolCallDelta.function) == null ? void 0 : _c.arguments;
+      if (argumentsDelta != null) {
+        pending.bufferedArguments += argumentsDelta;
+      }
+      const name15 = (_d = toolCallDelta.function) == null ? void 0 : _d.name;
+      if (name15 != null) {
+        toolCallTracker.processDelta({
+          index,
+          id: pending.id,
+          function: {
+            name: name15,
+            arguments: pending.bufferedArguments
+          },
+          extra_content: (_e = pending.extraContent) != null ? _e : void 0
+        });
+        pendingToolCalls.delete(index);
+        forwardedToolCallIndices.add(index);
+      }
+    };
     let finishReason;
     let usage = void 0;
     let isFirstChunk = true;
-    const providerOptionsName = metadataKey;
     let isActiveReasoning = false;
     let isActiveText = false;
     const convertUsage = (usage2) => this.convertUsage(usage2);
@@ -27030,10 +27431,22 @@ var OpenAICompatibleChatLanguageModel = class {
       stream: response.pipeThrough(
         new TransformStream({
           start(controller) {
+            toolCallTracker = new StreamingToolCallTracker(
+              controller,
+              {
+                generateId,
+                extractMetadata: (delta) => {
+                  var _a22, _b16;
+                  const thoughtSignature = (_b16 = (_a22 = delta.extra_content) == null ? void 0 : _a22.google) == null ? void 0 : _b16.thought_signature;
+                  return thoughtSignature ? { [providerOptionsName]: { thoughtSignature } } : void 0;
+                },
+                buildToolCallProviderMetadata: (metadata) => metadata
+              }
+            );
             controller.enqueue({ type: "stream-start", warnings });
           },
           transform(chunk, controller) {
-            var _a22, _b16, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v;
+            var _a22, _b16;
             if (options.includeRawChunks) {
               controller.enqueue({ type: "raw", rawValue: chunk.rawValue });
             }
@@ -27131,113 +27544,12 @@ var OpenAICompatibleChatLanguageModel = class {
                 isActiveReasoning = false;
               }
               for (const toolCallDelta of delta.tool_calls) {
-                const index = (_c = toolCallDelta.index) != null ? _c : toolCalls.length;
-                if (toolCalls[index] == null) {
-                  if (toolCallDelta.index != null) {
-                    let pending = pendingToolCalls.get(index);
-                    if (pending == null) {
-                      pending = {
-                        id: (_d = toolCallDelta.id) != null ? _d : null,
-                        bufferedArguments: "",
-                        thoughtSignature: (_g = (_f = (_e = toolCallDelta.extra_content) == null ? void 0 : _e.google) == null ? void 0 : _f.thought_signature) != null ? _g : void 0
-                      };
-                      pendingToolCalls.set(index, pending);
-                    } else {
-                      if (pending.id == null && toolCallDelta.id != null) {
-                        pending.id = toolCallDelta.id;
-                      }
-                      if (pending.thoughtSignature == null && ((_i = (_h = toolCallDelta.extra_content) == null ? void 0 : _h.google) == null ? void 0 : _i.thought_signature) != null) {
-                        pending.thoughtSignature = toolCallDelta.extra_content.google.thought_signature;
-                      }
-                    }
-                    const argumentsDelta = (_j = toolCallDelta.function) == null ? void 0 : _j.arguments;
-                    if (argumentsDelta != null) {
-                      pending.bufferedArguments += argumentsDelta;
-                    }
-                    const name15 = (_k = toolCallDelta.function) == null ? void 0 : _k.name;
-                    if (name15 == null) {
-                      continue;
-                    }
-                    pendingToolCalls.delete(index);
-                    if (pending.id == null) {
-                      throw new InvalidResponseDataError({
-                        data: toolCallDelta,
-                        message: `Expected 'id' to be a string.`
-                      });
-                    }
-                    controller.enqueue({
-                      type: "tool-input-start",
-                      id: pending.id,
-                      toolName: name15
-                    });
-                    toolCalls[index] = {
-                      id: pending.id,
-                      type: "function",
-                      function: {
-                        name: name15,
-                        arguments: pending.bufferedArguments
-                      },
-                      hasFinished: false,
-                      thoughtSignature: pending.thoughtSignature
-                    };
-                  } else {
-                    if (toolCallDelta.id == null) {
-                      throw new InvalidResponseDataError({
-                        data: toolCallDelta,
-                        message: `Expected 'id' to be a string.`
-                      });
-                    }
-                    if (((_l = toolCallDelta.function) == null ? void 0 : _l.name) == null) {
-                      throw new InvalidResponseDataError({
-                        data: toolCallDelta,
-                        message: `Expected 'function.name' to be a string.`
-                      });
-                    }
-                    controller.enqueue({
-                      type: "tool-input-start",
-                      id: toolCallDelta.id,
-                      toolName: toolCallDelta.function.name
-                    });
-                    toolCalls[index] = {
-                      id: toolCallDelta.id,
-                      type: "function",
-                      function: {
-                        name: toolCallDelta.function.name,
-                        arguments: (_m = toolCallDelta.function.arguments) != null ? _m : ""
-                      },
-                      hasFinished: false,
-                      thoughtSignature: (_p = (_o = (_n = toolCallDelta.extra_content) == null ? void 0 : _n.google) == null ? void 0 : _o.thought_signature) != null ? _p : void 0
-                    };
-                  }
-                  const toolCall2 = toolCalls[index];
-                  if (((_q = toolCall2.function) == null ? void 0 : _q.name) != null && ((_r = toolCall2.function) == null ? void 0 : _r.arguments) != null) {
-                    if (toolCall2.function.arguments.length > 0) {
-                      controller.enqueue({
-                        type: "tool-input-delta",
-                        id: toolCall2.id,
-                        delta: toolCall2.function.arguments
-                      });
-                    }
-                  }
-                  continue;
-                }
-                const toolCall = toolCalls[index];
-                if (toolCall.hasFinished) {
-                  continue;
-                }
-                if (((_s = toolCallDelta.function) == null ? void 0 : _s.arguments) != null) {
-                  toolCall.function.arguments += (_u = (_t = toolCallDelta.function) == null ? void 0 : _t.arguments) != null ? _u : "";
-                }
-                controller.enqueue({
-                  type: "tool-input-delta",
-                  id: toolCall.id,
-                  delta: (_v = toolCallDelta.function.arguments) != null ? _v : ""
-                });
+                processToolCallDelta(toolCallDelta);
               }
             }
           },
           flush(controller) {
-            var _a22, _b16, _c, _d, _e;
+            var _a22, _b16, _c, _d;
             if (isActiveReasoning) {
               controller.enqueue({ type: "reasoning-end", id: "reasoning-0" });
             }
@@ -27245,36 +27557,14 @@ var OpenAICompatibleChatLanguageModel = class {
               controller.enqueue({ type: "text-end", id: "txt-0" });
             }
             for (const [index, pending] of pendingToolCalls) {
-              throw new InvalidResponseDataError({
-                data: {
-                  index,
-                  id: pending.id,
-                  function: { arguments: pending.bufferedArguments }
-                },
-                message: `Expected 'function.name' to be a string.`
+              toolCallTracker.processDelta({
+                index,
+                id: pending.id,
+                function: { arguments: pending.bufferedArguments }
               });
             }
-            for (const toolCall of toolCalls.filter(
-              (toolCall2) => !toolCall2.hasFinished
-            )) {
-              controller.enqueue({
-                type: "tool-input-end",
-                id: toolCall.id
-              });
-              controller.enqueue({
-                type: "tool-call",
-                toolCallId: (_a22 = toolCall.id) != null ? _a22 : generateId(),
-                toolName: toolCall.function.name,
-                input: toolCall.function.arguments,
-                ...toolCall.thoughtSignature ? {
-                  providerMetadata: {
-                    [providerOptionsName]: {
-                      thoughtSignature: toolCall.thoughtSignature
-                    }
-                  }
-                } : {}
-              });
-            }
+            pendingToolCalls.clear();
+            toolCallTracker.flush();
             if (finishReason == null) {
               finishReason = { unified: "error", raw: void 0 };
               controller.enqueue({
@@ -27289,11 +27579,11 @@ var OpenAICompatibleChatLanguageModel = class {
               [providerOptionsName]: {},
               ...metadataExtractor == null ? void 0 : metadataExtractor.buildMetadata()
             };
-            if (((_b16 = usage == null ? void 0 : usage.completion_tokens_details) == null ? void 0 : _b16.accepted_prediction_tokens) != null) {
-              providerMetadata[providerOptionsName].acceptedPredictionTokens = (_c = usage == null ? void 0 : usage.completion_tokens_details) == null ? void 0 : _c.accepted_prediction_tokens;
+            if (((_a22 = usage == null ? void 0 : usage.completion_tokens_details) == null ? void 0 : _a22.accepted_prediction_tokens) != null) {
+              providerMetadata[providerOptionsName].acceptedPredictionTokens = (_b16 = usage == null ? void 0 : usage.completion_tokens_details) == null ? void 0 : _b16.accepted_prediction_tokens;
             }
-            if (((_d = usage == null ? void 0 : usage.completion_tokens_details) == null ? void 0 : _d.rejected_prediction_tokens) != null) {
-              providerMetadata[providerOptionsName].rejectedPredictionTokens = (_e = usage == null ? void 0 : usage.completion_tokens_details) == null ? void 0 : _e.rejected_prediction_tokens;
+            if (((_c = usage == null ? void 0 : usage.completion_tokens_details) == null ? void 0 : _c.rejected_prediction_tokens) != null) {
+              providerMetadata[providerOptionsName].rejectedPredictionTokens = (_d = usage == null ? void 0 : usage.completion_tokens_details) == null ? void 0 : _d.rejected_prediction_tokens;
             }
             controller.enqueue({
               type: "finish",
@@ -28084,7 +28374,7 @@ async function fileToBlob(file2) {
   const data = file2.data instanceof Uint8Array ? file2.data : convertBase64ToUint8Array(file2.data);
   return new Blob([data], { type: file2.mediaType });
 }
-var VERSION2 = true ? "2.0.79" : "0.0.0-test";
+var VERSION2 = true ? "2.0.81" : "0.0.0-test";
 function createOpenAICompatible(options) {
   const baseURL = withoutTrailingSlash(options.baseURL);
   const providerName = options.name;
@@ -28309,7 +28599,7 @@ function gateBufferedStream(chunks) {
     }
   });
 }
-async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, toolHoldMs) {
+async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, toolHoldMs, model) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   const chunks = [];
@@ -28318,17 +28608,30 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
   const deadline = Date.now() + holdMs;
   let toolHolding = false;
   let toolDeadline = 0;
-  const passthrough = () => new Response(gateReplayStream(reader, chunks), {
-    status: res.status,
-    statusText: res.statusText,
-    headers: res.headers
+  const passthrough = (reason) => {
+    gateTelemetry(reason ?? "passthrough", { toolHolding }, model);
+    return new Response(gateReplayStream(reader, chunks), {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers
+    });
+  };
+  const gateTelemetryBudget = /* @__PURE__ */ new Map();
+  const gateTelemetry = (reason, extra, fromModel) => {
+    const key = `gate:${reason}`;
+    const now = Date.now();
+    if (now - (gateTelemetryBudget.get(key) ?? 0) < 1e4) return;
+    gateTelemetryBudget.set(key, now);
+    logFailover({ action: "gate_release", from: fromModel ?? "unknown", reason, ...extra }).catch(() => {
+    });
+  };
+  const cancelReader = () => Promise.resolve(reader.cancel()).catch((e) => {
+    if (e?.name !== "InvalidStateError") throw e;
   });
   const rejectToolHold = (reason) => {
-    try {
-      reader.cancel().catch(() => {
-      });
-    } catch {
-    }
+    gateTelemetry(`toolhold_reject_${reason}`, toolHolding ? { toolHolding: true } : {}, model);
+    cancelReader().catch(() => {
+    });
     const err = new Error(`hx-failover: reasoning-gate toolHold ${reason}\uFF0C\u534A\u622A\u5DE5\u5177\u53C2\u6570\u672A\u4EA4\u4ED8\uFF0C\u5F03\u6D41\u6309\u53EF\u91CD\u8BD5\u9519\u8BEF\u4E0A\u629B`);
     err.statusCode = 200;
     err.gateToolHoldReject = reason;
@@ -28341,7 +28644,7 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
     bufferedBytes += value.byteLength ?? value.length ?? 0;
     text += dec.decode(value, { stream: true });
     if (!toolHolding && GATE_TEXT.test(text)) {
-      return passthrough();
+      return passthrough("text_released");
     }
     if (!toolHolding && GATE_TOOL.test(text)) {
       toolHolding = true;
@@ -28351,11 +28654,11 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
       if (Date.now() > toolDeadline) return rejectToolHold("inter_chunk_timeout");
       toolDeadline = Date.now() + toolHoldMs;
     } else if (Date.now() > deadline) {
-      return passthrough();
+      return passthrough("hold_timeout_release");
     }
     if (bufferedBytes > bufferLimitBytes) {
       if (toolHolding) return rejectToolHold("buffer_limit");
-      return passthrough();
+      return passthrough("buffer_limit_release");
     }
   }
   if (retryLeft > 0 && GATE_LENGTH_FINISH.test(text) && !GATE_ACTIONABLE.test(text)) {
@@ -28367,12 +28670,9 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
       next = null;
     }
     if (next && next.ok && next.body) {
-      try {
-        reader.cancel().catch(() => {
-        });
-      } catch {
-      }
-      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs);
+      cancelReader().catch(() => {
+      });
+      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs, model);
     }
     try {
       next?.body?.cancel?.()?.catch?.(() => {
@@ -28389,18 +28689,19 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
       next = null;
     }
     if (next && next.ok && next.body) {
-      try {
-        reader.cancel().catch(() => {
-        });
-      } catch {
-      }
-      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs);
+      cancelReader().catch(() => {
+      });
+      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs, model);
     }
     try {
       next?.body?.cancel?.()?.catch?.(() => {
       });
     } catch {
     }
+  }
+  if (!GATE_ACTIONABLE.test(text)) {
+    const finish = /"finish_reason"\s*:\s*"(\w+)"/.exec(text);
+    gateTelemetry("stream_end_release", { finishReason: finish?.[1] ?? "unknown", toolHolding, retryLeft }, model);
   }
   return new Response(gateBufferedStream(chunks), {
     status: res.status,
@@ -28446,7 +28747,7 @@ function withReasoningGate(baseFetch, cfg) {
     if (!res.ok || !res.body) return res;
     let gated;
     try {
-      gated = await gateConsume(res, mkRetry, retries, holdMs, bufferLimitBytes, toolHoldMs);
+      gated = await gateConsume(res, mkRetry, retries, holdMs, bufferLimitBytes, toolHoldMs, model);
     } catch (e) {
       if (e?.gateToolHoldReject) {
         try {
@@ -28473,9 +28774,16 @@ function isCoolingFactory(cooldown) {
     return true;
   };
 }
-function markFailedFactory(cooldown) {
-  return function markFailed(id, cooldownMs) {
+function markFailedFactory(cooldown, lastFailure) {
+  return function markFailed(id, cooldownMs, err) {
     cooldown.set(id, Date.now() + cooldownMs);
+    if (lastFailure && err !== void 0) {
+      lastFailure.set(id, {
+        at: Date.now(),
+        status: err?.statusCode ?? err?.status,
+        message: String(err?.message ?? err)
+      });
+    }
   };
 }
 function backoffAbortError() {
@@ -28533,8 +28841,7 @@ function isCancellation(err) {
   const code = err?.code ?? err?.cause?.code;
   return code === "ABORT_ERR";
 }
-var CHANNEL_UNAVAILABLE_503_RE = /model_not_found|no available channel|model.?not.?available|no active channel candidate/i;
-var CHANNEL_UNAVAILABLE_404_RE = /NO_ROUTE_CANDIDATE|no active channel candidate/i;
+var CHANNEL_UNAVAILABLE_RE = /model_not_found|no[_-]?route[_-]?candidate|no available channel|model.?not.?available|no active channel candidate|model not exist/i;
 function channelUnavailableText(err) {
   const parts = [
     err?.message,
@@ -28550,10 +28857,7 @@ function isRetryable(err) {
   if (err?.gateToolHoldReject) return true;
   const status = err?.statusCode ?? err?.status ?? err?.response?.status;
   if (typeof status === "number") {
-    if (status === 503 && CHANNEL_UNAVAILABLE_503_RE.test(channelUnavailableText(err))) {
-      return false;
-    }
-    if (status === 404 && CHANNEL_UNAVAILABLE_404_RE.test(channelUnavailableText(err))) {
+    if ((status === 503 || status === 404) && CHANNEL_UNAVAILABLE_RE.test(channelUnavailableText(err))) {
       return false;
     }
     if (status >= 200 && status < 300) return true;
@@ -28573,9 +28877,7 @@ function isOverloadErr(err) {
 function isChannelUnavailable(err) {
   const status = err?.statusCode ?? err?.status;
   if (status !== 503 && status !== 404) return false;
-  const text = channelUnavailableText(err);
-  if (status === 404) return CHANNEL_UNAVAILABLE_404_RE.test(text);
-  return CHANNEL_UNAVAILABLE_503_RE.test(text);
+  return CHANNEL_UNAVAILABLE_RE.test(channelUnavailableText(err));
 }
 function isStreamBreakError(err) {
   if (isCancellation(err)) return false;
@@ -28636,8 +28938,9 @@ function createHxFailover(options) {
   for (const k of EXTENSION_KEYS) delete sdkOptions[k];
   const cooldownMs = Number(failoverOpts?.cooldownMs) > 0 ? Number(failoverOpts.cooldownMs) : DEFAULT_COOLDOWN_MS;
   const cooldown = /* @__PURE__ */ new Map();
+  const lastFailure = /* @__PURE__ */ new Map();
   const isCooling = isCoolingFactory(cooldown);
-  const markFailed = markFailedFactory(cooldown);
+  const markFailed = markFailedFactory(cooldown, lastFailure);
   const noticeCooldownMs = Number(failoverOpts?.noticeCooldownMs) > 0 ? Number(failoverOpts.noticeCooldownMs) : cooldownMs;
   const noticeDedup = /* @__PURE__ */ new Map();
   const overloadBackoffMs = Array.isArray(failoverOpts?.overloadBackoffMs) && failoverOpts.overloadBackoffMs.every((n) => Number.isFinite(n) && n >= 0) ? failoverOpts.overloadBackoffMs : OVERLOAD_BACKOFF_MS;
@@ -28669,7 +28972,7 @@ function createHxFailover(options) {
           }
           if (!isRetryable(err)) {
             if (isChannelUnavailable(err)) {
-              markFailed(id, cooldownMs);
+              markFailed(id, cooldownMs, err);
               await logFailover({
                 from: modelId,
                 at: id,
@@ -28703,7 +29006,7 @@ function createHxFailover(options) {
             }
             continue;
           }
-          markFailed(id, cooldownMs);
+          markFailed(id, cooldownMs, err);
           await logFailover({
             from: modelId,
             at: id,
@@ -28720,10 +29023,21 @@ function createHxFailover(options) {
       let maxUntil = cooldown.get(modelId) ?? 0;
       for (const m of chain.slice(1)) maxUntil = Math.max(maxUntil, cooldown.get(m) ?? 0);
       const remainS = Math.max(1, Math.ceil((maxUntil - Date.now()) / 1e3));
-      await logFailover({ from: modelId, action: "exhausted_cooldown", remainMs: maxUntil - Date.now() });
+      const lastFails = [];
+      for (const m of chain) {
+        if ((cooldown.get(m) ?? 0) <= Date.now()) continue;
+        const f = lastFailure.get(m);
+        if (f) lastFails.push({ model: m, status: f.status, message: f.message });
+      }
+      await logFailover({
+        from: modelId,
+        action: "exhausted_cooldown",
+        remainMs: maxUntil - Date.now(),
+        ...lastFails.length ? { lastFails } : {}
+      });
       const retryHeaders = { "retry-after": String(remainS) };
       throw new APICallError({
-        message: `hx-failover: \u4E3B\u6A21\u578B\u4E0E\u5168\u90E8\u5907\u7528\u5747\u5728\u51B7\u5374\u4E2D\uFF08\u4E0A\u4E00\u8F6E\u5DF2\u5B9E\u6D4B\u5931\u8D25\uFF09\uFF0C\u7EA6 ${remainS}s \u540E\u81EA\u52A8\u6062\u590D \u2014\u2014 \u8DF3\u8FC7\u91CD\u8BD5\u907F\u514D\u7A7A\u8F6C`,
+        message: lastFails.length ? lastFails.map((f) => `[${f.model}${f.status === void 0 || f.status === null ? "" : ` HTTP ${f.status}`}] ${f.message}`).join("\n") : `hx-failover: \u4E3B\u6A21\u578B\u4E0E\u5168\u90E8\u5907\u7528\u5747\u5728\u51B7\u5374\u4E2D\uFF08\u4E0A\u4E00\u8F6E\u5DF2\u5B9E\u6D4B\u5931\u8D25\uFF09\uFF0C\u7EA6 ${remainS}s \u540E\u81EA\u52A8\u6062\u590D \u2014\u2014 \u8DF3\u8FC7\u91CD\u8BD5\u907F\u514D\u7A7A\u8F6C`,
         url: void 0,
         statusCode: 503,
         responseHeaders: retryHeaders,
@@ -28799,21 +29113,47 @@ function createHxFailover(options) {
   }
   function withChunkWatchdog(stream, ms, modelId) {
     let timer = null;
+    let terminated = null;
     const clear = () => {
       if (timer) {
         clearTimeout(timer);
         timer = null;
       }
     };
+    const telemetryBudget = /* @__PURE__ */ new Map();
+    const telemetry = (action, reason) => {
+      const key = reason ? `${action}:${reason}` : action;
+      const now = Date.now();
+      const last = telemetryBudget.get(key) ?? 0;
+      if (now - last < 1e4) return;
+      telemetryBudget.set(key, now);
+      logFailover({ action, model: modelId, ...reason ? { reason } : {} }).catch(() => {
+      });
+    };
+    const terminate = (reason) => {
+      if (terminated) return false;
+      terminated = reason;
+      clear();
+      telemetry("watchdog_disarmed", reason);
+      return true;
+    };
     const arm = (controller) => {
+      if (terminated) return;
       clear();
       timer = setTimeout(() => {
+        timer = null;
+        if (!terminate("timeout_fired")) {
+          telemetry("watchdog_disarmed", "timeout_retry_fired");
+          return;
+        }
         try {
           controller.error(new Error(`hx-failover: ${modelId} \u6D41\u5F0F\u54CD\u5E94\u8D85\u8FC7 ${ms}ms \u65E0\u65B0\u6570\u636E\uFF08chunkTimeout \u770B\u95E8\u72D7\uFF09\uFF0C\u4E3B\u52A8\u4E2D\u65AD`));
-        } catch {
+        } catch (e) {
+          if (e?.name !== "InvalidStateError") throw e;
         }
       }, ms);
       timer.unref?.();
+      telemetry("watchdog_armed");
     };
     const watch = new TransformStream({
       start(controller) {
@@ -28824,10 +29164,10 @@ function createHxFailover(options) {
         controller.enqueue(chunk);
       },
       flush() {
-        clear();
+        terminate("flush");
       },
       cancel() {
-        clear();
+        terminate("cancel");
       }
     });
     return stream.pipeThrough(watch);

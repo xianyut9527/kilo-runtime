@@ -205,6 +205,36 @@ const PermissionGuardImpl = async () => {
     "tool.execute.before": async (input, output) => {
       const tool = input?.tool;
       const args = output?.args;
+      // 长时 task 子代理硬约束（2026-10-01 反向审查必修项）：父会话 180s 内未见工具回执
+      // 会触发 turn hard-limit（kilocode#12706）把子代理整条标 interrupted。提示词层保不住
+      // LLM 估时，只有权限层能兜——未显式 background:true 的 task 拒绝，强制走 background
+      // 由完成通知交付，父会话不挂等待遇窗。与 INSTRUCTIONS.md「>2min 必须 background」纪律同源。
+      if (tool === "task") {
+        const bg = args?.background;
+        // 严格白名单（层3审查必修②）：仅 true 或 trim+lower 后恰为 "true" 视为背景。
+        // 黑名单（"false"/"0" 之外全 truthy 放行）会把 "yes"/1 等也当背景——虽然方向
+        // 无害，但守卫语义应只认规范形态；其余一切形态 → 未声明背景（拒绝路径，
+        // 多一次显式重试的成本换掉判定歧义）。
+        const isBackground = bg === true
+          || (typeof bg === "string" && bg.trim().toLowerCase() === "true");
+        if (!isBackground) {
+          const text = `${args?.description ?? ""} ${args?.prompt ?? ""}`.toLowerCase();
+          // 短任务豁免（r2 修正 + 层3复审必修①）：
+          //   - 中文分支不得带 \b（CJK 之间 \b 恒不成立，「秒级检查」原样误拦）；
+          //   - 分钟类只认显式短时长枚举（半/一/两/[12]），带前置非数字守卫——
+          //     「30分钟以内」「12分钟以内」不得借「2分钟以内」子串假放行；
+          //     守卫用 (?:^|[^0-9]) 而非 lookbehind（层3复审：兼容旧 V8 无 (?<!) 语法）；
+          //   - 英文分支带边界且防子串假放行（quickly/fast-forward/short-circuit/mapping
+          //     都是不相干描述词），只留 quick(?!ly)/trivial 两个低碰撞词。
+          const explicitlyShort = /秒级|秒内|半分钟|(?:^|[^0-9])(?:一|两|[12])分钟(?:内|以内)|<[=\s]*[12]\s*分钟|\bquick(?!ly)\b|\btrivial\b/.test(text);
+          if (!explicitlyShort) {
+            throw new Error(
+              `blocked by permission-guard: task 未显式声明 background:true 且未明确说明任务极短（秒级/两分钟以内）——` +
+              `父会话 180s 硬上限（kilocode#12706）会掐死未在窗口内交付的子代理。请加 background:true 重试，由完成通知交付结果。`
+            );
+          }
+        }
+      }
       const bashLike = tool === "bash" || tool === "shell";
       const fileLike = tool === "read" || tool === "edit" || tool === "write" || tool === "list";
       if (!bashLike && !fileLike) return;

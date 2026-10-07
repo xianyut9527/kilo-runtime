@@ -14,7 +14,7 @@
     "build": "node build.mjs"
   },
   "devDependencies": {
-    "@ai-sdk/openai-compatible": "^2.0.75",
+    "@ai-sdk/openai-compatible": "^2.0.81",
     "@ai-sdk/provider": "^3.0.16",
     "esbuild": "^0.25.0"
   }

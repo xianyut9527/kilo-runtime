@@ -59,7 +59,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 // runDualReview 走 hook 内动态 import——模块级爆炸半径隔离（非注册表原因：
@@ -75,7 +75,15 @@ let DATA_DIR;
 try {
   DATA_DIR = path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"), "kilo");
 } catch {
-  DATA_DIR = ".";
+  // 兜底改 tmpdir（层 3 r2 必修项①）：原 "." 兜底会在 homedir() 异常时把
+  // tsc-cache/memory 探测路径落进当前工作目录（= 用户项目仓库），污染工作区。
+  // tmpdir() 同异常（双重病态）→ null：两个消费点（memoryRootFor/tscbuildInfoFor）
+  // 各自 try 包裹，null 时自然降级（探测返回 null / tsc 走全量无缓存），不会崩
+  try {
+    DATA_DIR = path.join(tmpdir(), "kilo");
+  } catch {
+    DATA_DIR = null;
+  }
 }
 
 // ⑥ 部署≠生效检测（2026-09-24 查漏补缺）：Kilo 不热加载插件——install.ps1 下发新版后，
@@ -106,7 +114,12 @@ let tscIncrementalOk = null; // null=未探测；false=项目 TS 过老/写失�
 
 // ── 会话级状态（sessionID 分桶）──────────────────────────────
 const sessions = new Map(); // sessionID -> { commands, reads, lastTodos, edited, fileChecks }
-const MAX_SESSIONS = 20;
+// 层 3 r4 必修②：原 20 桶 + Map 创建序驱逐（keys().next() 恒取最老「创建」的桶，
+// 活跃与否无关）——Agent Manager 扇出下父会话最早创建、每轮都在用，第 21 个新会话
+// 出现即被踢，层 2 门禁状态（验证账本/todo 快照）静默丢失 = 硬门禁绕过。
+// 修复：touch 提升实现真 LRU + 容量 64（桶内 commands/reads/edited 已有各自上限，
+// 64 桶最坏 MB 级，常驻宿主安全余量充足）。
+const MAX_SESSIONS = 64;
 const MAX_COMMANDS = 200;
 const MAX_READS = 100;
 const MAX_EDITED = 500;
@@ -114,16 +127,21 @@ const MAX_EDITED = 500;
 function bucketOf(input) {
   const id = String(input?.sessionID ?? "__global__");
   let s = sessions.get(id);
-  if (!s) {
-    s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, dualReviewedAtCodeEditV: 0, planReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, exitContractWarned: false, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null, reviewFailedAtCodeEditV: 0, reviewFailedAtRound: 0, reviewFailedCount: 0, driftChecked: false, highRiskDelegated: false, delegated: [], degradations: [], lastStaleCheck: 0 };
+  if (s) {
+    // 真 LRU：任何一次访问都提升到队尾，驱逐对象恒为「最久未被使用」而非「最久未创建」
+    sessions.delete(id);
     sessions.set(id, s);
-    if (sessions.size > MAX_SESSIONS) {
-      // LRU 驱逐前清理挂起的诊断定时器：否则回调会在已脱离 Map 的会话对象上空跑 tsc
-      const oldestKey = sessions.keys().next().value;
-      const evicted = sessions.get(oldestKey);
-      if (evicted?.diagTimer) { clearTimeout(evicted.diagTimer); evicted.diagTimer = null; }
-      sessions.delete(oldestKey);
-    }
+    return s;
+  }
+  s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, dualReviewedAtCodeEditV: 0, planReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, exitContractWarned: false, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null, reviewFailedAtCodeEditV: 0, reviewFailedAtRound: 0, reviewFailedCount: 0, driftChecked: false, highRiskDelegated: false, delegated: [], degradations: [], lastStaleCheck: 0, exitNudges: 0, exitNudgeAt: 0, exitNudgeFp: "", exitGateCapped: false, exitGateInFlight: false, lastStatus: "", exitCheckTimer: null, childUnsettled: new Map(), childReg: "", parentIDCache: undefined };
+  sessions.set(id, s);
+  if (sessions.size > MAX_SESSIONS) {
+    // LRU 驱逐前清理挂起的定时器：否则回调会在已脱离 Map 的会话对象上空跑 tsc / 空注入门禁
+    const oldestKey = sessions.keys().next().value;
+    const evicted = sessions.get(oldestKey);
+    if (evicted?.diagTimer) { clearTimeout(evicted.diagTimer); evicted.diagTimer = null; }
+    if (evicted?.exitCheckTimer) { clearTimeout(evicted.exitCheckTimer); evicted.exitCheckTimer = null; }
+    sessions.delete(oldestKey);
   }
   return s;
 }
@@ -734,39 +752,60 @@ function providerEditsOf(editedPaths) {
 
 // 产物入口硬编码 dist/index.js：本仓唯一自研 provider（hx-failover）的 build 产物即此，
 // 从 package.json main/exports 动态解析属过度工程——出现第二个 provider 时再泛化。
+// 口径 = 内容指纹优先（2026-10-01 改造，与 install.ps1 0e5beb0 同源；替代原纯 mtime）：
+// git checkout/还原会把 src 与 dist 的 mtime 同步（install.ps1 当年换口径的实证根因），
+// 原 mtime 比对在「编辑过 src 后经 git 操作」的交付上会假报新鲜——dab55da 实证：src 改了
+// 未重建 dist，交付节点层 2 未拦，运行旧 dist 四天后才由 install -Check 指纹比对捕获。
+// build.mjs 在 dist 首行嵌入 src/index.js 的 sha256，指纹比对不依赖文件系统时间。
+// src 内非 index.js 的编辑：多入口会被 build.mjs 断言 fail-fast 拦截，未重建窗口期
+// 用 mtime 兜底（>= 原口径）；无有效指纹的 dist 整体回落 mtime 口径（与旧行为一致）。
 function distStaleOf(root, pkg, srcFiles) {
   try {
     const pkgDir = path.join(root, "provider", pkg);
     const dist = path.join(pkgDir, "dist", "index.js");
     if (!fs.existsSync(dist)) {
       // 编辑过 src 而 dist 不存在 = 从未构建，恰是要拦的假信心场景（非 fail-open）
-      return { stale: true, missing: true };
+      return { stale: true, missing: true, fingerprint: "absent" };
     }
     const distMtime = fs.statSync(dist).mtimeMs;
     let newestEdit = -Infinity;
+    let nonIndexEdit = -Infinity; // index.js 的变更由指纹锚定，mtime 兜底只看其余 src 编辑
     for (const rel of srcFiles ?? []) {
       const full = path.join(pkgDir, "src", rel);
       if (!fs.existsSync(full)) continue; // 编辑后被删除/重命名：跳过，无 mtime 可比
-      newestEdit = Math.max(newestEdit, fs.statSync(full).mtimeMs);
+      const mt = fs.statSync(full).mtimeMs;
+      newestEdit = Math.max(newestEdit, mt);
+      if (String(rel).replace(/\\/g, "/") !== "index.js") nonIndexEdit = Math.max(nonIndexEdit, mt);
     }
-    // >= ：物理上 build 写 dist 晚于编辑 src，mtimeMs 亚秒精度下相等概率≈0，
-    // 取 >= 防极瞬间漏拦；未来时间戳等病态情形由 verify-skipped 逃生门兜底
-    return { stale: newestEdit >= distMtime, missing: false };
+    const srcIndex = path.join(pkgDir, "src", "index.js");
+    if (fs.existsSync(srcIndex)) {
+      // 严格整行匹配（与 install.ps1 同口径）：BOM/CR/旧版无指纹产物归入 absent 类
+      const banner = fs.readFileSync(dist, "utf8").replace(/^\uFEFF/, "").split("\n", 1)[0].replace(/\r$/, "");
+      const m = banner.match(/^\/\/\s*kilo-build:\s*src-sha256=([0-9a-f]{64})$/);
+      if (m) {
+        const srcHash = createHash("sha256").update(fs.readFileSync(srcIndex, "utf8")).digest("hex");
+        if (m[1] !== srcHash) return { stale: true, missing: false, fingerprint: "mismatch" };
+        return { stale: nonIndexEdit >= distMtime, missing: false, fingerprint: "match" };
+      }
+    }
+    // 无指纹/无 src/index.js：回落 mtime 全量口径（>= 防亚秒精度漏拦；病态时间戳由 verify-skipped 兜底）
+    return { stale: newestEdit >= distMtime, missing: false, fingerprint: "absent" };
   } catch (e) {
     console.error(TAG, "distStaleOf 探测失败（fail-open 放行）：", e?.message ?? e);
-    return { stale: false, missing: false, error: String(e?.message ?? e).slice(0, 120) }; // fs 异常 fail-open 但必留日志，不静默
+    return { stale: false, missing: false, fingerprint: "error", error: String(e?.message ?? e).slice(0, 120) }; // fs 异常 fail-open 但必留日志，不静默
   }
 }
 
 // 层 3 触发口径（before/after 钩子共用，防两处漂移）：
-// 高风险文件命中即触发（文件数无关）；普通改动须含代码且跨 ≥3 文件。
-// ⚠️ 「跨 ≥3 文件」按 s.edited 计**全部编辑文件（含文档）**，非仅代码文件——
-// 「1 代码 + 2 文档」也会触发；口径与旧 ≥5 时代一致，阈值降低后触发面相应扩大。
-// 阈值 2026-09-22 两调：先 ≥3→≥5（48h 遥测 22 次审查累计墙钟 35min，触发过频），
-// 同日用户决策回调 ≥3——人工复检多遍的返工成本高于单次自动审查（输出限长前
-// 5~8min/次、限长后 2~4min/次，见 README 性能基线），质量优先；纯文档会话不烧审查费。
+// 高风险文件命中即触发（文件数无关）；普通改动须 ≥3 个**代码文件**。
+// 2026-10-07 口径切换（用户预授权）：计数从 s.edited（全部编辑文件，含文档）改为 codeEdits
+// （仅代码文件）——「1 代码 + 2 文档」不再触发，文档不计入触发面。
+// 阈值沿革：≥3（全文件）→≥5（全文件，48h 遥测 22 次审查累计墙钟 35min，2026-09-22）
+// →回调 ≥3（全文件，同日用户决策：人工复检返工成本高于单次自动审查，质量优先）
+// →≥3（codeEdits，2026-10-07 用户指示嫌频时改按代码文件计数而非再调数字）。
+// 纯文档会话不烧审查费（层 2 同样豁免文档，口径对齐）。
 function isComplexDelivery(s, codeEdits) {
-  return (s?.highRisk?.size ?? 0) > 0 || ((codeEdits?.length ?? 0) > 0 && (s?.edited?.size ?? 0) >= 3);
+  return (s?.highRisk?.size ?? 0) > 0 || (codeEdits?.length ?? 0) >= 3;
 }
 
 // ── todo 证据核对（层 1）──────────────────────────────────────
@@ -1234,10 +1273,337 @@ async function reviewSubject(root, s, editedList) {
   return parts.join("\n\n").slice(0, 24000);
 }
 
-const QualityGateImpl = async ({ directory } = {}) => {
+// ── 回合出口门禁（2026-10-03 收口审计专项）────────────────────
+// 实证缺口：kilo.db 近 7 天审计，14 个带 todo 会话终止时清单未落定（9 模型提前收口 /
+// 3 APIError 杀循环 / 1 length 烧尽 / 1 用户中止）。既有门禁只挂「todo 全 completed」
+// 交付节点，对「带着 pending/in_progress 结束回合」零拦截——本门禁补上出口这条边。
+// 机制：session.idle（及 session.error 落定后的延迟复检）时，未落定清单 → 经插件 client
+// 注入一条续跑/表态指令（promptAsync）。防误伤六豁免 + 同快照封顶 2 次 + 快照变更重置，
+// 全部 fail-open：门禁自身故障绝不影响宿主（钩子抛错会污染插件注册表，2026-09-22 教训）。
+// v2 子代理终局聚合（同日按建议优化）：子会话豁免不注入，但未落定清单登记进父桶
+// （childUnsettled）→ 父侧 todowrite 回注 / 父出口聚合注入（reason=child-unsettled），
+// 补上「父会话续派前核对子代理未完成项」的机制通道；子补完终局则登记撤销。
+const MAX_EXIT_NUDGES = 2;
+const EXIT_NUDGE_COOLDOWN_MS = 15_000;
+const EXIT_ERROR_SETTLE_MS = 12_000; // error 事件延迟复检窗：给 failover/重试想循环落定时间，防 busy 期注入
+// 一次性诊断：ctx.client 缺失/形状不符时门禁会静默停用——必须留一条可查日志，
+// 否则升级 Kilo 后契约漂移表现为「门禁从不触发」而无人察觉（7.8.x 版本漂移风险实证）。
+let exitGateClientWarned = false;
+
+// 纯函数（经 _export 离线回归）：未落定项数组；空清单/全落定 → null。
+// 单条清单仅在 in_progress（明确干到一半）时纳入——pending 单条多为纯问答记账，噪音大于收益。
+function todosIncomplete(list) {
+  const arr = Array.isArray(list) ? list : [];
+  if (arr.length === 0) return null;
+  const undone = arr.filter((t) => {
+    const st = String(t?.status ?? "");
+    return st !== "completed" && st !== "cancelled";
+  });
+  if (undone.length === 0) return null;
+  if (arr.length === 1) return String(arr[0]?.status ?? "") === "in_progress" ? undone : null;
+  return undone;
+}
+
+// 合法停点识别：末条文本以问题/请示收尾 → 等待用户是正确行为，不注入。
+// 只宽认尾部窗口（防中段无关问号误豁免）；短语表宁多勿漏——误豁免方向安全（少注入不错注入）。
+// 「等待用户：」是 INSTRUCTIONS 规定的显式停点标记（门禁注入文本亦要求模型回这句），
+// 必须被识别，否则遵从纪律的模型反被二次注入（2026-10-03 查漏修复）；英文项目同理。
+function asksUser(text) {
+  const t = String(text ?? "").replace(/[\s`#*>-]+$/g, "");
+  if (!t) return false;
+  const tail = Array.from(t).slice(-160).join("");
+  return (
+    /[?？]\s*$/.test(tail) ||
+    /等待用户|请指示|请确认|请选|请回复|等你|等您|需要你|是否继续|要不要|waiting for you|awaiting your|let me know/i.test(tail)
+  );
+}
+
+// error 落定复检判据（纯函数，经 _export 离线回归）：busy/retry = failover/重试想循环尚未
+// 落定 → 放弃本次复检（真 idle 时另有即时路径接管）；状态未知（""）偏向检查。
+function errorSettleDue(lastStatus) {
+  return !(lastStatus === "busy" || lastStatus === "retry");
+}
+
+// ── v2 子代理终局聚合（2026-10-03 按建议优化）───────────────────
+// 痛点：子代理带半截清单终局时，既有设计对子会话豁免注入（防与父会话文件竞争），
+// 但父侧只收到 runtime 的完成通知——「报告=完成」的默认信任没有清单证据，
+// INSTRUCTIONS 出口纪律「父会话续派前核对未完成项」缺机制支撑。
+// 方案：子会话未落定清单登记进父桶 s.childUnsettled（childID → {items,at,reported}），
+// 双通道上报父侧：① 父任意 todowrite 的结果回注（工具结果直达模型视野，标记 reported
+// 防出口重复烧额度）；② 父出口门禁聚合注入（与父自身未落定清单共用 cap/冷却指纹矩阵，
+// reason=child-unsettled）。子会话补完后终局 → 登记撤销，防陈旧提醒。
+// 已知边界：孙代（子-子代理）聚合只到直接父一层；子代理自身不再收到注入（豁免不变）。
+const CHILD_UNSETTLED_MAX = 10; // 扇出上限保护：超限的新子不登记（父侧 runtime 通知仍在）
+
+// 未上报的子聚合项（纯投影，经 _export 供离线回归断言 reported 状态）
+function pendingChildrenOf(s) {
+  const out = [];
+  if (s?.childUnsettled instanceof Map) {
+    for (const [id, e] of s.childUnsettled) {
+      if (e && !e.reported) out.push({ id, items: (e.items ?? []).slice(), at: e.at ?? 0 });
+    }
+  }
+  return out;
+}
+
+// 子终局时效标签：聚合项登记时间（at）→ 父侧判断「多新/多陈旧」的依据
+//（刚登记的先核对产物，几天前的多半已在其他回合处理——at 若无人读取即死状态，
+// 2026-10-03 审查要求「引入未使用」清零而接入展示）
+function childAgeLabel(at, now) {
+  const sec = Math.max(0, Math.floor(((Number(now) || 0) - (Number(at) || 0)) / 1000));
+  if (sec < 60) return "刚刚";
+  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟前`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时前`;
+  return `${Math.floor(sec / 86400)} 天前`;
+}
+
+function childUnsettledText(kids, now = Date.now()) {
+  const list = kids ?? [];
+  const shown = list.slice(0, 5).map((k) => `${String(k.id ?? "").slice(0, 28)}（${childAgeLabel(k.at, now)}登记，${(k.items ?? []).length} 项：${(k.items ?? []).slice(0, 3).map((i) => `[${String(i).slice(0, 70)}]`).join(" ")}）`);
+  if (list.length > shown.length) shown.push(`另有 ${list.length - shown.length} 条（出口门禁将随后续事件补报）`);
+  return shown.join("；");
+}
+
+// 子侧登记（父桶可能不存在——bucketOf 建桶是合理副作用，父会话本就活着）。
+// 返回值 = 是否真登记（调用方据此决定 childReg 标记；审查修复：静默丢弃会让父侧
+// 永久漏提醒且不可见——容量满优先淘汰已上报项，全未上报则记降级账本升级人工）。
+function registerChildUnsettled(childID, parentID, undone) {
+  try {
+    const p = bucketOf({ sessionID: parentID });
+    if (!(p.childUnsettled instanceof Map)) p.childUnsettled = new Map();
+    if (!p.childUnsettled.has(childID) && p.childUnsettled.size >= CHILD_UNSETTLED_MAX) {
+      let evict = null;
+      for (const [id, e] of p.childUnsettled) if (e?.reported) { evict = id; break; }
+      if (evict) p.childUnsettled.delete(evict);
+      else {
+        recordDegradation(p, "子代理终局聚合上限（未上报子项满 10）", `${childID} 的未落定清单未登记（父侧 runtime 完成通知仍在，建议手动核对子任务）`);
+        return false;
+      }
+    }
+    // items 存前归一：换行折叠为空格（多行内容会破坏注入口/回注的列表结构）
+    const src = (undone ?? []).slice(0, 5).map((t) => `${String(t?.status ?? "pending")}:${String(t?.content ?? "").replace(/\s+/g, " ").trim().slice(0, 60)}`);
+    if ((undone ?? []).length > 5) src.push(`+${(undone ?? []).length - 5} 项未列出`); // 截断可见（审查修复：父不知清单被截）
+    p.childUnsettled.set(childID, { items: src, at: Date.now(), reported: false });
+    return true;
+  } catch { return false; /* 登记失败静默：子侧豁免照常 */ }
+}
+
+function removeChildUnsettled(parentID, childID) {
+  try {
+    const p = sessions.get(String(parentID)); // 只读：父桶不在了说明聚合项已随 LRU 蒸发
+    if (p?.childUnsettled instanceof Map) p.childUnsettled.delete(childID);
+  } catch { /* 静默 */ }
+}
+
+// cap 降级登记（本地预检与完整路径共用，幂等：已登记不重复）
+function recordExitCap(s, undone, kids) {
+  if (s.exitGateCapped) return;
+  s.exitGateCapped = true;
+  const detail = (undone ?? []).slice(0, 3).map((t) => String(t?.content ?? "").slice(0, 40)).join(" / ")
+    || (kids ?? []).map((k) => String(k?.id ?? "")).join(" / ");
+  recordDegradation(s, "回合出口门禁提醒已达上限而清单仍未落定（升级人工）", detail);
+}
+
+// 未落定快照指纹：todowrite 清单内容/状态变化、或子聚合项集合变化 → 指纹变化 → 封顶计数重置。
+// 动机（审查 r1#7）：多轮长会话累计 cap=2 会让前段白烧、后段真提前收口反而没人管。
+// v2：children 并入指纹——新子代理终局 = 新快照，父侧重新获得 2 次提醒额度。
+function exitNudgeFingerprint(todos, children) {
+  const base = (Array.isArray(todos) ? todos : [])
+    .map((t) => `${String(t?.status ?? "")}:${String(t?.content ?? "").slice(0, 60)}`)
+    .join("|");
+  const kids = (Array.isArray(children) ? children : [])
+    .map((c) => `${c?.id ?? ""}:${(c?.items ?? []).join(",")}`)
+    .join(";");
+  return (kids ? `${base}|c:${kids}` : base).slice(0, 2000);
+}
+
+// 判定矩阵（纯函数，经 _export 离线回归）。对 s 的唯一副作用是「快照变更→计数重置」登记
+// （exitNudges/exitNudgeFp），语义属门禁账本而非决策逻辑，测试可直接断言桶状态。
+// v2：undone（父自身未落定项）与 children（子聚合项）任一存在即可能注入；
+// 自身落定但 children 非空 → reason=child-unsettled。isChild 分支在接线层已提前返回，
+// 此处保留作纵深防御（豁免优先级不变）。
+function exitGateVerdict(s, { now, hasWork, isChild, aborted, errored, askingUser, undone, children, fingerprint }) {
+  const hasOwn = !!undone && undone.length > 0;
+  const hasKids = Array.isArray(children) && children.length > 0;
+  if (!hasOwn && !hasKids) return { act: false, reason: "all-settled" };
+  if (s.exitNudgeFp !== fingerprint) {
+    s.exitNudges = 0;
+    s.exitNudgeFp = fingerprint;
+    // 查漏修复 A（2026-10-03 二轮）：capped 标记同样跟快照走——否则旧清单烧过 cap 后，
+    // 新清单再烧 cap 的升级人工事件被永久拦截、账本静默缺失（recordDegradation 去重
+    // 按 detail 文本区分，事件本身必须能再入一次）。
+    s.exitGateCapped = false;
+  }
+  if ((s.exitNudges ?? 0) >= MAX_EXIT_NUDGES) return { act: false, reason: "nudge-cap" };
+  if (now - (s.exitNudgeAt ?? 0) < EXIT_NUDGE_COOLDOWN_MS) return { act: false, reason: "cooldown" };
+  if (!hasWork) return { act: false, reason: "no-work" };
+  if (isChild) return { act: false, reason: "child-session" };
+  if (aborted) return { act: false, reason: "user-aborted" };
+  if (askingUser) return { act: false, reason: "awaiting-user" };
+  if (!hasOwn) return { act: true, reason: "child-unsettled" };
+  return { act: true, reason: errored ? "auto-resume-error" : "todos-pending" };
+}
+
+// 注入文本：自解释（来源/计数/收口三选一/上限语义），三种正确行为对应三种病
+// （继续干 / 全部落定并注明 / 显式声明等待），杜绝「无声半收口」形态。
+// v2：children 子聚合块并入文本；undone 与 children 都可能有（混合场景两段都给）。
+function exitNudgeText(undone, n, reason, total, children, now = Date.now()) {
+  const und = Array.isArray(undone) ? undone : [];
+  const kids = Array.isArray(children) ? children : [];
+  const head = und.length > 0
+    ? `[quality-gate 回合出口门禁 #${n}/${MAX_EXIT_NUDGES}] 本回合已结束，但验收清单未落定（${(Number(total) || 0) - und.length}/${total} 完成）：\n${und.slice(0, 5).map((t) => `  - [${String(t?.status ?? "pending")}] ${String(t?.content ?? "").slice(0, 80)}`).join("\n")}\n\n`
+    : `[quality-gate 回合出口门禁 #${n}/${MAX_EXIT_NUDGES}] 本回合已结束，但子任务侧仍有未落定事项：\n`;
+  const kidShown = kids.slice(0, 5).map((k) => `  - 子会话 ${String(k.id ?? "").slice(0, 28)}（${childAgeLabel(k.at, now)}登记，${(k.items ?? []).length} 项）：${(k.items ?? []).slice(0, 3).map((i) => `[${String(i).slice(0, 70)}]`).join(" ")}`);
+  if (kids.length > kidShown.length) kidShown.push(`  - （另有 ${kids.length - kidShown.length} 个子会话未列出，将随后续事件补报）`);
+  const kidBlock = kids.length > 0
+    ? `以下子代理终局时清单未落定，续派或收口前逐条核对（不得默认「报告=完成」）：\n${kidShown.join("\n")}\n\n`
+    : "";
+  const ownBody =
+    reason === "auto-resume-error"
+      ? "上一回合因 API 错误终止，请从首个未落定项继续执行（先核对文件与 todo 实际状态，勿重复已完成工作）。\n"
+      : "任务确实未完 → 立即从未落定项继续，todo 随做随更新；交付确已完成 → 把剩余条目全部置 completed 或 cancelled（cancel 在交付说明给理由）；确在等用户决策 → 明确回一句「等待用户：<所问事项>」，不得无声收口。\n";
+  const kidBody = "子任务确已完成 → 核对其实际产物后在交付说明注明；未完成 → 重新派发补完（有 task_id 的同会话续跑，勿盲目重派）；确在等用户决策 → 明确回一句「等待用户：<所问事项>」，不得无声收口。\n";
+  return `${head}${kidBlock}${und.length > 0 ? ownBody : ""}${kids.length > 0 ? kidBody : ""}（同一清单状态下提醒达 ${MAX_EXIT_NUDGES} 次后门禁不再注入，记入降级账本升级人工。）`;
+}
+
+const QualityGateImpl = async ({ directory, client } = {}) => {
   // 工作区根由 Kilo 注入（同 compaction-anchor/memory-bootstrap 契约）；
   // 用它而非 process.cwd()，否则 worktree/monorepo 场景下 tsconfig 探测必败、检查静默关闭
   if (directory) projectRoot = directory;
+
+  // 并发互斥（查漏修复 B，2026-10-03 二轮）：idle 即时路径与 error 延迟复检可同窗进入，
+  // 而冷却/计数判定要等消息读取+发送完成才更新——无锁时两路会先后通过判定双重注入，
+  // 一次烧光两条额度。加锁后第二路直接跳过（真需要提醒时后续 idle 仍会接管）。
+  async function exitGateCheck(sid) {
+    const s = sessions.get(sid);
+    if (!s) return; // 无桶会话在主体内同样早退，这里不为其加锁
+    if (s.exitGateInFlight) return;
+    s.exitGateInFlight = true;
+    try {
+      await exitGateCheckInner(sid);
+    } finally {
+      s.exitGateInFlight = false;
+    }
+  }
+
+  // 门禁检查主体（idle 即时 / error 延迟复检共用）。全程 fail-open：
+  // 任何一步取不到可信信息（读消息失败/parentID 不可得）都偏向「不注入」——
+  // 错误方向只会漏一次提醒，反向（误注入子代理/中止会话）会引发文件竞争与用户冒犯。
+  async function exitGateCheckInner(sid) {
+    try {
+      if (!client || typeof client.session?.promptAsync !== "function") {
+        if (!exitGateClientWarned) {
+          exitGateClientWarned = true;
+          console.error(TAG, "出口门禁：ctx.client 不可用（无 promptAsync），门禁停用——核对该 Kilo 版本的插件 ctx 契约");
+        }
+        return;
+      }
+      const s = sessions.get(sid); // 只读：从未 todowrite 过的会话无桶，自然跳过（绝不 bucketOf 建桶）
+      if (!s) return;
+      const own = Array.isArray(s.lastTodos) ? s.lastTodos : [];
+      const undone = todosIncomplete(own);
+      if (!undone && s.childReg) {
+        // v2 撤销：子代理后续补完（清单全落定）→ 从父侧聚合登记移除，防陈旧提醒
+        removeChildUnsettled(s.childReg, sid);
+        s.childReg = "";
+      }
+      const kids = pendingChildrenOf(s);
+      if (!undone && kids.length === 0) return; // 自身落定且无未上报子聚合项（含无清单且从未被登记）
+      const hasWork = (s.edited?.size ?? 0) > 0 || (s.commands?.length ?? 0) > 0 || (s.delegated?.length ?? 0) > 0;
+      // 本地预检早退（按建议优化②）：已知父会话（parentIDCache === ""，首次检查时定案缓存）
+      // 的判定矩阵前段（cap/冷却/no-work；all-settled 已在上方早退）纯本地可定案——命中即
+      // 返回，跳过两次 HTTP（消息/session.get）。远端相关豁免（child-session/user-aborted/
+      // awaiting-user）在矩阵中均位于这些检查之后，不会改变本地结论；子会话（cache 非空）
+      // 与未知会话照走完整路径（aborted 判定必须取远端）。
+      if (s.parentIDCache === "") {
+        const vLocal = exitGateVerdict(s, { now: Date.now(), hasWork, isChild: false, aborted: false, errored: false, askingUser: false, undone, children: kids, fingerprint: exitNudgeFingerprint(own, kids) });
+        if (!vLocal.act) {
+          if (vLocal.reason === "nudge-cap") recordExitCap(s, undone, kids);
+          return;
+        }
+      }
+      let aborted = false;
+      let errored = false;
+      let askingUser = false;
+      try {
+        const res = await client.session.messages({ path: { id: sid } });
+        const list = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+        const lastAssistant = list.slice().reverse().find((m) => m?.info?.role === "assistant");
+        if (!lastAssistant) return; // 无 assistant 回复可依据：不注入
+        const errName = String(lastAssistant?.info?.error?.name ?? "");
+        aborted = errName === "MessageAbortedError";
+        errored = !!lastAssistant?.info?.error && !aborted;
+        const parts = Array.isArray(lastAssistant.parts) ? lastAssistant.parts : [];
+        askingUser =
+          parts.some((p) => p?.type === "tool" && /question/i.test(String(p.tool ?? ""))) ||
+          asksUser(parts.filter((p) => p?.type === "text" && typeof p.text === "string").map((p) => p.text).join("\n"));
+      } catch (e) {
+        // 末条消息不可得：保守不注入，但必须可见——契约漂移时这里会持续报错而非静默停摆
+        console.error(TAG, "出口门禁：读取会话消息失败，跳过：", e?.message ?? e);
+        return;
+      }
+      let isChild = false;
+      let parentID = "";
+      try {
+        const sg = await client.session.get({ path: { id: sid } });
+        parentID = String(sg?.data?.parentID ?? "");
+        isChild = !!parentID;
+        s.parentIDCache = parentID; // 定案缓存：parentID 会话生命周期内不变，供本地预检早退
+      } catch (e) {
+        isChild = true; // parentID 不可得 → 保守当子代理（子代理收口归父会话衔接，注入会引发文件竞争）
+        console.error(TAG, "出口门禁：parentID 不可得，按子代理保守跳过：", e?.message ?? e);
+      }
+      if (isChild) {
+        // v2 子代理终局聚合：子会话不注入（原豁免不变），未落定清单登记进父桶，
+        // 由父侧 todowrite 回注 / 出口注入统一核对。aborted 子代理跳过登记：
+        // 用户手停子任务的语义父侧已收到 runtime 通知，再聚合是重复噪音。
+        // 已知边界：孙代聚合只到直接父一层（子-子代理罕见，不递归上报）。
+        if (parentID && undone && !aborted) {
+          if (registerChildUnsettled(sid, parentID, undone)) s.childReg = parentID; // 登记成功才记撤销锚点
+        } else if (parentID && aborted && s.childReg) {
+          // 审查修复：先登记后被中止的子代理 → 撤销父侧陈旧项（不撤销则父收到过期未落定提醒）
+          removeChildUnsettled(parentID, sid);
+          s.childReg = "";
+        }
+        return;
+      }
+      // 本地预检以实际输入即可定案的路径不变（isChild 已在上方提前返回，此处恒 false 为纵深防御）
+      const fingerprint = exitNudgeFingerprint(own, kids);
+      const v = exitGateVerdict(s, { now: Date.now(), hasWork, isChild: false, aborted, errored, askingUser, undone, children: kids, fingerprint });
+      if (!v.act) {
+        if (v.reason === "nudge-cap") recordExitCap(s, undone, kids);
+        return;
+      }
+      // 陈旧撤销竞态防护（审查修复）：kids 快照取自两次 await 之前，等待窗内子代理可能
+      // 已补完并撤销父侧登记——发送前重查 pending，全撤且父自身也落定则放弃本次注入
+      // （宁漏一次提醒，不拿陈旧清单烧额度）
+      const pendingNow = pendingChildrenOf(s);
+      const kidsSend = kids.filter((k) => pendingNow.some((n) => n.id === k.id));
+      if (!undone && kidsSend.length === 0) return;
+      const promptText = exitNudgeText(undone, (s.exitNudges ?? 0) + 1, v.reason, own.length, kidsSend);
+      // 发送成功才计数：失败不烧上限额度（审查 r1#8）
+      await client.session.promptAsync({
+        path: { id: sid },
+        body: {
+          parts: [{ type: "text", text: promptText }],
+          messageID: `msg_quality_gate_exit_${sid}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+        },
+      });
+      s.exitNudges = (s.exitNudges ?? 0) + 1;
+      s.exitNudgeAt = Date.now();
+      // v2：仅标记本次注入文本实际覆盖（前 5 条）的子聚合项 reported——审查修复：
+      // 标记范围大于送达范围会让未列出的子项被静默抑制（指纹变化 → 后续事件补报）；
+      // 发送失败路径不到达此处，保持 unreported 等待下次事件重试
+      for (const k of kidsSend.slice(0, 5)) {
+        const e = s.childUnsettled instanceof Map ? s.childUnsettled.get(k.id) : null;
+        if (e) e.reported = true;
+      }
+      console.error(`${TAG} 出口门禁注入(${v.reason}) session=${sid} nudge=${s.exitNudges}/${MAX_EXIT_NUDGES}`);
+    } catch (e) {
+      console.error(TAG, "exit gate check failed:", e?.message ?? e); // fail-open
+    }
+  }
+
   return {
     // 层 2 硬门禁（fail-closed 点之一，另一处是层 3 审查闭环）：编辑过代码文件 × 未验证/未登记跳过
     // → 否决 todowrite 的「全部标记完成」。报错即行动指引（跑验证或显式登记跳过）。
@@ -1252,7 +1618,7 @@ const QualityGateImpl = async ({ directory } = {}) => {
         const codeEdits = codeEditsOf(s);
         // 层 3 闭环硬阻断（交付前）：上轮审查未通过且其后没有任何新编辑（= 未尝试修复）→ 否决。
         // 修复过文件则放行本次 todowrite，由 after 钩子在交付节点重新审查（修复→再审循环）。
-        // 触发口径与 after 钩子一致：高风险文件，或含代码改动且跨 ≥3 文件——
+        // 触发口径与 after 钩子一致：高风险文件，或 ≥3 个代码文件（2026-10-07 起 codeEdits 口径）——
         // 纯文档会话不送付费审查（层 2 同样豁免文档，口径对齐）。
         const complexEarly = isComplexDelivery(s, codeEdits);
         if (complexEarly && s.reviewPending && !hasAcceptMarker(s) && s.editVersion === s.reviewPending.editVersion) {
@@ -1265,7 +1631,7 @@ const QualityGateImpl = async ({ directory } = {}) => {
         }
         if (codeEdits.length === 0) return; // 非代码编辑不受限
         if (hasSkipMarker(s)) return;
-        // dist 新鲜度：provider src 改了未重建 dist → 即使下面的验证 exit 0 也是旧行为
+        // dist 新鲜度（内容指纹口径）：provider src 改了未重建 dist → 即使下面的验证 exit 0 也是旧行为
         // （fail-closed：先于 hasVerified 判定，防止「测试通过」掩盖过期产物）
         const provEdits = providerEditsOf(codeEdits);
         const stalePkgs = [];
@@ -1277,7 +1643,7 @@ const QualityGateImpl = async ({ directory } = {}) => {
         if (stalePkgs.length > 0) {
           throw new Error(
             `[quality-gate] 层 2 dist 新鲜度：本会话编辑过 ${stalePkgs.map((p) => `provider/${p}/src`).join("、")}，` +
-            `但对应 dist/index.js 比 src 旧——验证跑的是旧行为，install -Check 也会拦截下发。` +
+            `但对应 dist/index.js 未锚定当前 src 内容（构建指纹失配/过期）——验证跑的是旧行为，install -Check 也会拦截下发。` +
             `在 ${stalePkgs.map((p) => `provider/${p}`).join("、")} 跑 npm run build 重建后再标记全部完成；` +
             `确无法构建则执行 echo "verify-skipped: <原因>" 显式登记。`
           );
@@ -1413,6 +1779,21 @@ const QualityGateImpl = async ({ directory } = {}) => {
                 `请补做或明确说明，不要留空口声明：\n` +
                 suspicious.map((x) => `  - ${x}`).join("\n")
             );
+          }
+          // v2 子代理终局聚合（todowrite 回注通道）：工具结果直达模型视野，标注后记
+          // reported——同集合不再走出口注入重复烧额度；无后续 todowrite 的子项仍由出口路径兜底
+          const kidsView = pendingChildrenOf(s);
+          if (kidsView.length > 0) {
+            notes.push(
+              `ℹ️ 子代理终局未落定清单（续派/收口前逐条核对，不得默认「报告=完成」）：${childUnsettledText(kidsView)}——` +
+                `已完成请核对其实际产物后在交付说明注明；未完成重新派发补完（有 task_id 的同会话续跑）。`
+            );
+            // 只标记回注文本实际展示的前 5 条（childUnsettledText 同界）——未展示的
+            // 保持 unreported，由出口注入补报（审查修复：标记范围不得大于送达范围）
+            for (const k of kidsView.slice(0, 5)) {
+              const e = s.childUnsettled instanceof Map ? s.childUnsettled.get(k.id) : null;
+              if (e) e.reported = true;
+            }
           }
           const codeEdits = codeEditsOf(s);
           const allDone = todos.length > 0 && todos.every((t) => t?.status === "completed");
@@ -1662,6 +2043,42 @@ const QualityGateImpl = async ({ directory } = {}) => {
       }
     },
 
+    // 回合出口门禁事件面。契约（2026-10-03 对运行中 7.8.3 二进制反编译实证）：
+    // 插件 event 钩子分发为 `hooks.event?.({ event: { id, type, properties } })`（properties=事件 data）；
+    // session.idle properties={sessionID}、session.error={sessionID?, error}、session.status={sessionID, status}。
+    // session.error 不直接注入：延迟 EXIT_ERROR_SETTLE_MS 复检，且复检时 lastStatus 仍 busy/retry
+    // （failover/重试想循环未落定）就放弃——真 idle 时另有即时路径接管。
+    event: async (input) => {
+      try {
+        const ev = input?.event;
+        if (!ev) return;
+        const sid = ev.properties?.sessionID ?? ev.properties?.info?.id;
+        if (!sid) return;
+        const key = String(sid);
+        if (ev.type === "session.status") {
+          const s0 = sessions.get(key);
+          if (s0) s0.lastStatus = String(ev.properties?.status?.type ?? "");
+          return;
+        }
+        if (ev.type === "session.idle") {
+          await exitGateCheck(key);
+          return;
+        }
+        if (ev.type === "session.error") {
+          const s1 = sessions.get(key);
+          if (!s1) return;
+          if (s1.exitCheckTimer) clearTimeout(s1.exitCheckTimer);
+          s1.exitCheckTimer = setTimeout(() => {
+            s1.exitCheckTimer = null;
+            if (!errorSettleDue(s1.lastStatus)) return;
+            exitGateCheck(key);
+          }, EXIT_ERROR_SETTLE_MS);
+        }
+      } catch (e) {
+        console.error(TAG, "event hook failed:", e?.message ?? e); // fail-open：事件面故障不得上抛
+      }
+    },
+
     // B 修复：验收清单压缩锚点——与 compaction-anchor 插件共用
     // experimental.session.compacting 钩子（Kilo 对多插件同钩子为顺序聚合，顺序不可知）。
     // 双方契约：一律**追加合并**（out.context = [...existing, ...lines]），按各自标记幂等——
@@ -1710,6 +2127,8 @@ export const _export = {
   staleDeployOf, moduleBasenamesOf, hasTestRefFor,
   eslintConfigIn, reviewRetryAllowed, todoAnchorLines, unreviewedMarkerLine, driftCheckDue,
   diagRunFailureOf, isDelegateCall, reviewFailPrefix,
+  todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText,
+  pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel,
   bucketOf, // 离线回归测试缝：断言钩子对会话桶的登记副作用（如 s.highRisk/s.delegated），只读使用
   VERIFY_CMD_RE, HIGH_RISK_RE,
 };

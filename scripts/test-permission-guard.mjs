@@ -323,6 +323,37 @@ t("bash cp .git-credentials 拦截", await blocked("bash", { command: "cp .git-c
 t("read id_dsa 拦截", await blocked("read", { filePath: "proj/id_dsa" }));
 t("read .git-credentials.example 放行", !(await blocked("read", { filePath: "proj/.git-credentials.example" })));
 
+// ── task background 硬约束（2026-10-01 #12706 专项 P1 + r2/层3 审计边界） ──
+// 拒绝侧：未声明/显式 false/字符串假值/无参，以及一切非白名单形态
+// （background:"false" 是模型不想走背景的高发形态；"yes"/数字 1 均不认）。
+t("task 无 background 拒绝", await blocked("task", { description: "analyze whole repo", prompt: "read all files" }));
+t("task background:false 拒绝", await blocked("task", { background: false, description: "analyze", prompt: "read" }));
+t("task background:\"false\" 拒绝（字符串假值）", await blocked("task", { background: "false", description: "analyze", prompt: "read" }));
+t("task background:\"0\" 拒绝", await blocked("task", { background: "0", description: "analyze", prompt: "read" }));
+t("task background:\"yes\" 拒绝（白名单外形态）", await blocked("task", { background: "yes", description: "analyze", prompt: "read" }));
+t("task background:1 拒绝（数字不认）", await blocked("task", { background: 1, description: "analyze", prompt: "read" }));
+t("task 无参数拒绝且不炸", await blocked("task", undefined));
+// 放行侧：显式背景严格白名单（trim+lower 容错规范变体）
+t("task background:true 放行", !(await blocked("task", { background: true, description: "long analysis", prompt: "audit everything" })));
+t("task background:\"true\" 放行", !(await blocked("task", { background: "true", description: "x", prompt: "y" })));
+t("task background:\" TRUE \" 放行（大小写+空白容错）", !(await blocked("task", { background: " TRUE ", description: "x", prompt: "y" })));
+// 短任务豁免：中文短语后接汉字不得被 \b 误拦（r2 修正）；数字上限收口（层3必修①）
+t("task 秒级检查（CJK 后接汉字）豁免放行", !(await blocked("task", { description: "秒级检查冒烟", prompt: "run smoke" })));
+t("task 两分钟以内 豁免放行", !(await blocked("task", { description: "重构，两分钟以内完成", prompt: "x" })));
+t("task 1分钟以内（阿拉伯数字）豁免放行", !(await blocked("task", { description: "x", prompt: "预计 1分钟以内" })));
+t("task <2 分钟 豁免放行", !(await blocked("task", { description: "x", prompt: "预计 <2 分钟" })));
+t("task <=2分钟 豁免放行", !(await blocked("task", { description: "x", prompt: "耗时<=2分钟" })));
+t("task trivial 豁免放行", !(await blocked("task", { description: "trivial typo fix", prompt: "x" })));
+// 假放行防线（r2 + 层3必修①）：长时长描述词不得成为豁免凭据
+t("task 30分钟以内 拒绝（数字上限收口）", await blocked("task", { description: "x", prompt: "大约 30分钟以内完成" }));
+t("task 12分钟以内 拒绝（lookbehind 防子串）", await blocked("task", { description: "x", prompt: "约12分钟以内" }));
+t("task quickly 分析整仓 拒绝（quick 子串不豁免）", await blocked("task", { description: "quickly analyze the entire monorepo and rewrite", prompt: "x" }));
+t("task fast-forward 长任务 拒绝（fast 已移除豁免）", await blocked("task", { description: "fast-forward the rebase of 500 commits", prompt: "x" }));
+t("task mapping 词云 拒绝（ping 已移除豁免）", await blocked("task", { description: "build the complete mapping table", prompt: "x" }));
+t("task short 但耗时 拒绝（short 已移除豁免）", await blocked("task", { description: "short in words but 30min of work", prompt: "x" }));
+// 非 task 工具不受本规则波及（防误伤面扩大）
+t("非 task 工具无 background 概念不受影响", !(await blocked("bash", { command: "npm test" })));
+
 console.log(`\n${fail === 0 ? "✅" : "❌"} permission-guard 回归：${pass} 通过 / ${fail} 失败`);
 if (fail > 0) console.log(`失败用例：\n  - ${failed.join("\n  - ")}`);
 process.exit(fail === 0 ? 0 : 1);
