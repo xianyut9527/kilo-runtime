@@ -37,7 +37,8 @@ try {
 
 // 工具函数经 _export 命名空间暴露（非顶层导出——Kilo vE2 会把每个导出函数当工厂调用）
 const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf, moduleBasenamesOf, hasTestRefFor, eslintConfigIn, reviewRetryAllowed, todoAnchorLines, unreviewedMarkerLine, driftCheckDue, diagRunFailureOf, isDelegateCall, reviewFailPrefix, todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText,
-    pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel } = mod._export ?? mod;
+    pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel,
+    setFileCheck, addHighRisk, rememberCommand, MAX_FILE_CHECKS, MAX_HIGH_RISK, SLEEP_CMD_RE } = mod._export ?? mod;
 let pass = 0, fail = 0;
 const failed = [];
 // t 双模（层 3 必修项②）：cond 传函数则在其内部捕获异常记为 fail（含错误信息），
@@ -1131,6 +1132,42 @@ t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/todo
   let threw = false;
   try { await hooksY.event({ event: { type: "session.idle", properties: { sessionID: "t-exit-no-client" } } }); } catch { threw = true; }
   t("出口门禁：ctx 无 client → event 静默降级不抛错（never-throw 契约）", threw === false);
+}
+
+// ── 体检 2026-10-07 闭环：次级有界化 + Start-Sleep 行为纪律记账 ──
+{
+  console.log("== 有界化（fileChecks/highRisk 上限驱逐）==");
+  const sb = mod._export.bucketOf({ sessionID: "t-bounded" });
+  for (let i = 0; i < MAX_FILE_CHECKS + 5; i++) setFileCheck(sb, `f${i}.ts`, { kind: "ts", mtimeMs: i, diags: [] });
+  t("fileChecks 封顶 MAX_FILE_CHECKS", sb.fileChecks.size === MAX_FILE_CHECKS);
+  t("fileChecks 最早键被驱逐、最新保留", !sb.fileChecks.has("f0.ts") && sb.fileChecks.has(`f${MAX_FILE_CHECKS + 4}.ts`));
+  const sLru = mod._export.bucketOf({ sessionID: "t-bounded-lru" });
+  setFileCheck(sLru, "A.ts", { kind: "ts", mtimeMs: 1, diags: [] });
+  setFileCheck(sLru, "B.ts", { kind: "ts", mtimeMs: 2, diags: [] });
+  setFileCheck(sLru, "A.ts", { kind: "ts", mtimeMs: 3, diags: [] }); // 重复 set → delete+set 提升为新近项
+  for (let i = 0; i < MAX_FILE_CHECKS - 1; i++) setFileCheck(sLru, `x${i}.ts`, { kind: "ts", mtimeMs: i, diags: [] });
+  t("LRU 提升：热文件 A 保留、最早的 B 被驱逐", sLru.fileChecks.has("A.ts") && !sLru.fileChecks.has("B.ts") && sLru.fileChecks.size === MAX_FILE_CHECKS);
+  const sRisk = mod._export.bucketOf({ sessionID: "t-bounded-risk" });
+  for (let i = 0; i < MAX_HIGH_RISK + 3; i++) addHighRisk(sRisk, `r${i}.ts`);
+  t("highRisk 封顶 MAX_HIGH_RISK", sRisk.highRisk.size === MAX_HIGH_RISK);
+  t("highRisk 最早项被驱逐、最新保留", !sRisk.highRisk.has("r0.ts") && sRisk.highRisk.has(`r${MAX_HIGH_RISK + 2}.ts`));
+
+  console.log("== Start-Sleep 行为纪律记账（命令动词位锚定）==");
+  t("命中：行首", SLEEP_CMD_RE.test("Start-Sleep -Seconds 5"));
+  t("命中：分号后命令位", SLEEP_CMD_RE.test("Write-Host x; Start-Sleep -Seconds 180"));
+  t("命中：&& 后命令位", SLEEP_CMD_RE.test("npm test && Start-Sleep -s 30"));
+  t("命中：位置参数秒数", SLEEP_CMD_RE.test("Start-Sleep 180"));
+  t("不误报：引号内文本", !SLEEP_CMD_RE.test('echo "Start-Sleep -Seconds 5"'));
+  t("不误报：行中裸词无分隔符", !SLEEP_CMD_RE.test("Write-Host Start-Sleep -Seconds"));
+  t("不误报：Start-Sleeping 词边界外", !SLEEP_CMD_RE.test("Start-Sleeping 5"));
+  const sSlp = mod._export.bucketOf({ sessionID: "t-sleep-ledger" });
+  rememberCommand(sSlp, "Start-Sleep -Seconds 180", 0, 1);
+  t("记账触发：sleepWarned 置位 + 降级账本入账", sSlp.sleepWarned === true && (sSlp.degradations ?? []).some((d) => d.includes("Start-Sleep")));
+  const cnt = (sSlp.degradations ?? []).length;
+  rememberCommand(sSlp, "Start-Sleep -Seconds 60", 0, 2);
+  rememberCommand(sSlp, 'echo "Start-Sleep -Seconds 5"', 0, 3);
+  t("幂等：重复与文本形态不再追加账本", sSlp.degradations.length === cnt);
+  t("命令本体仍入证据池", sSlp.commands.length === 3);
 }
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} quality-gate 回归：${pass} 通过 / ${fail} 失败`);

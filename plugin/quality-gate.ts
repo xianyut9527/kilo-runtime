@@ -123,6 +123,24 @@ const MAX_SESSIONS = 64;
 const MAX_COMMANDS = 200;
 const MAX_READS = 100;
 const MAX_EDITED = 500;
+// 体检 2026-10-07 次级有界化：fileChecks（mtime 键控诊断缓存）/highRisk（高风险文件
+// 登记）此前是桶内唯二无上限结构，随触过的不同文件数单调增长（长会话大仓可达数千项）。
+// 封顶不改变门禁语义：fileChecks 命中失效最多退化为重跑一次诊断；highRisk 只看 >0，
+// 驱逐最早登记项不改变「本会话触碰过高风险文件」的事实判定。
+const MAX_FILE_CHECKS = 200;
+const MAX_HIGH_RISK = 100;
+
+// setFileCheck：重复诊断 delete+set 提升（近似 LRU，防首个热文件被误驱逐）+ 超限删最早键
+function setFileCheck(s, file, entry) {
+  if (s.fileChecks?.has(file)) s.fileChecks.delete(file);
+  s.fileChecks.set(file, entry);
+  if (s.fileChecks.size > MAX_FILE_CHECKS) s.fileChecks.delete(s.fileChecks.keys().next().value);
+}
+
+function addHighRisk(s, file) {
+  s.highRisk.add(file);
+  if (s.highRisk.size > MAX_HIGH_RISK) s.highRisk.delete(s.highRisk.values().next().value);
+}
 
 function bucketOf(input) {
   const id = String(input?.sessionID ?? "__global__");
@@ -133,7 +151,7 @@ function bucketOf(input) {
     sessions.set(id, s);
     return s;
   }
-  s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, dualReviewedAtCodeEditV: 0, planReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, exitContractWarned: false, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null, reviewFailedAtCodeEditV: 0, reviewFailedAtRound: 0, reviewFailedCount: 0, driftChecked: false, highRiskDelegated: false, delegated: [], degradations: [], lastStaleCheck: 0, exitNudges: 0, exitNudgeAt: 0, exitNudgeFp: "", exitGateCapped: false, exitGateInFlight: false, lastStatus: "", exitCheckTimer: null, childUnsettled: new Map(), childReg: "", parentIDCache: undefined };
+  s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, dualReviewedAtCodeEditV: 0, planReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, exitContractWarned: false, sleepWarned: false, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null, reviewFailedAtCodeEditV: 0, reviewFailedAtRound: 0, reviewFailedCount: 0, driftChecked: false, highRiskDelegated: false, delegated: [], degradations: [], lastStaleCheck: 0, exitNudges: 0, exitNudgeAt: 0, exitNudgeFp: "", exitGateCapped: false, exitGateInFlight: false, lastStatus: "", exitCheckTimer: null, childUnsettled: new Map(), childReg: "", parentIDCache: undefined };
   sessions.set(id, s);
   if (sessions.size > MAX_SESSIONS) {
     // LRU 驱逐前清理挂起的定时器：否则回调会在已脱离 Map 的会话对象上空跑 tsc / 空注入门禁
@@ -194,6 +212,15 @@ function rememberCommand(s, cmd, exit, editV) {
   }
   s.commands.push({ cmd: scrubCommand(cmd), exit, editV });
   if (s.commands.length > MAX_COMMANDS) s.commands.shift();
+  // 行为纪律记账（体检 2026-10-07 闭环，纯提醒不拦截、不进任何门禁）：裸 Start-Sleep
+  // 轮询是 7 天实测 700 次/288min 的最大单类墙钟浪费（kilo.db 分期实测；2026-10-06
+  // GLOBAL-NOTES 教训已禁但此前无机械防线）。命令动词位锚定，echo/文本字样不误报；
+  // 会话一次幂等（sleepWarned），重复出现不再刷账本。
+  if (!s.sleepWarned && SLEEP_CMD_RE.test(cmd)) {
+    s.sleepWarned = true;
+    recordDegradation(s, "行为纪律（裸 Start-Sleep 等待）",
+      `${scrubCommand(cmd).slice(0, 100)}——等后台进程走 background_process monitor / schedule_wakeup，同步短等用单条 bash 自带 timeout`);
+  }
 }
 
 // 验证命令识别：只认命令动词位（命令开头或 ; | || && 之后），自由子串会误放行
@@ -202,6 +229,10 @@ function rememberCommand(s, cmd, exit, editV) {
 // 与直跑 test 前缀脚本（bun test-x.mjs——本仓离线测试的既定形态）也计入。
 const VERIFY_CMD_RE =
   /(?:^|[;|]|&&|\|\|)\s*(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test|lint|check|typecheck|type-check|build)\b|(?:npx|bunx)\s+(?:jest|vitest|tsc|eslint|ruff)\b|(?:jest|vitest|mypy|pytest|eslint|ruff|tsc)\s|go\s+(?:test|vet)\b|cargo\s+(?:test|check|clippy)\b|python[0-9.]*\s+-m\s+(?:pytest|unittest)\b|(?:mvn|gradlew?)\b[^;&|\n]*\btest\b|make\s+(?:test|check|lint)\b|dotnet\s+test\b|phpunit\b|(?:node|bun|deno|python[0-9.]*)\s+(?:[\w\/\\.-]*[\/\\])?tests?[\w\/\\.-]*\.(?:mjs|cjs|js|ts|tsx|py)\b)/i;
+
+// 裸 Start-Sleep 识别（行为纪律记账用，非门禁）：命令动词位锚定——行首或 ; | & 分隔符
+// 之后才算命令位；`echo "Start-Sleep -Seconds 5"` 类文本字样不误报（引号非分隔符）。
+const SLEEP_CMD_RE = /(?:^|[;|&])\s*Start-Sleep\s+(?:[-\d])/i;
 
 // ── 退出码遮蔽识别（P0-3 误报治理）──────────────────────────
 // 这些形态下命令自身的 exit 不可信（失败会被吞成 0）：只算「跑过」，不参与「跑赢」判定。
@@ -500,9 +531,16 @@ async function persistResidualFixup(fixSection) {
       if (next === md) return true; // 已沉淀过（幂等）
       // 原子写：Node 在 Windows 走 MoveFileExW+REPLACE_EXISTING，rename 直接覆盖
       // （windows_rename_overwrite_rotation 教训：先 rm 反而引入丢档窗口）
+      // 失败轮必须回收 tmp：rename 被并发读者/杀软短暂锁住时，本轮 tmp 变
+      // <dataDir>/memory 根的永久孤儿（再体检 2026-10-07：重试每轮新开 tmp，无人清即垃圾）
       const tmp = `${file}.qg-tmp-${process.pid}-${Date.now() % 100000}-${attempt}`;
-      fs.writeFileSync(tmp, next, "utf8");
-      fs.renameSync(tmp, file);
+      try {
+        fs.writeFileSync(tmp, next, "utf8");
+        fs.renameSync(tmp, file);
+      } catch (e) {
+        try { fs.rmSync(tmp, { force: true }); } catch { /* 回收失败只能留日志，不二次抛 */ }
+        throw e; // 外抛走既有 fail-open 降级（外层 catch 记账），语义不变
+      }
       const after = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
       if (after.includes(line)) {
         console.error(`${TAG} 残余必须修复项已沉淀进项目记忆 Open Questions（review_residual）`);
@@ -539,8 +577,13 @@ async function persistLineSafe(line) {
     const next = insertUnderHeading(md, "## Open Questions", line);
     if (next === md) return true; // 幂等：已沉淀过
     const tmp = `${file}.qg-tmp-${process.pid}-${Date.now() % 100000}`;
-    fs.writeFileSync(tmp, next, "utf8");
-    fs.renameSync(tmp, file);
+    try {
+      fs.writeFileSync(tmp, next, "utf8");
+      fs.renameSync(tmp, file);
+    } catch (e) {
+      try { fs.rmSync(tmp, { force: true }); } catch { /* 同上：孤儿回收 */ }
+      throw e; // 外抛走既有 catch 的 fail-open 记账，语义不变
+    }
     return true;
   } catch (e) {
     console.error(TAG, "unreviewed 留痕沉淀失败（fail-open，不影响交付）:", e?.message ?? e);
@@ -1005,7 +1048,7 @@ async function tsDiagnose(file, dir, s) {
   }
   const lines = String(out ?? "").split(/\r?\n/).filter((l) => /\((\d+),(\d+)\)|error TS\d+/.test(l));
   const diags = lines.filter((l) => l.includes(file));
-  s.fileChecks.set(file, { kind: "ts", mtimeMs, diags });
+  setFileCheck(s, file, { kind: "ts", mtimeMs, diags });
   return diags;
 }
 
@@ -1024,7 +1067,7 @@ async function ruffDiagnose(file, dir, s) {
     recordDegradation(s, "静态检查异常（ruff 运行失败）", `${file.split(/[\\/]/).pop()}：${String(err?.message ?? err).slice(0, 80)}——诊断可能缺失`);
   }
   const diags = String(out ?? "").split(/\r?\n/).filter((l) => l.trim());
-  s.fileChecks.set(file, { kind: "py", mtimeMs, diags });
+  setFileCheck(s, file, { kind: "py", mtimeMs, diags });
   return diags;
 }
 
@@ -1055,7 +1098,7 @@ async function eslintDiagnose(file, dir, s) {
     recordDegradation(s, "静态检查异常（eslint 运行失败）", `${file.split(/[\\/]/).pop()}：${String(err?.message ?? err).slice(0, 80)}——诊断可能缺失`);
   }
   const diags = String(out ?? "").split(/\r?\n/).filter((l) => l.trim());
-  s.fileChecks.set(file, { kind: "eslint", mtimeMs, diags });
+  setFileCheck(s, file, { kind: "eslint", mtimeMs, diags });
   return diags;
 }
 
@@ -1737,7 +1780,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
             rememberEdit(s, file);
             // 层 3 高风险触发登记（isComplexDelivery 依赖 s.highRisk.size>0）：高风险文件命中
             // 即触发交付审查，文件数无关——此登记与下方提醒是两件事，绝不可互相替代（曾误删）。
-            if (isHighRiskFile(file)) s.highRisk.add(file);
+            if (isHighRiskFile(file)) addHighRisk(s, file);
             // C 修复（高风险越级提醒，一次性）：高风险文件由主 agent 直接编辑，但会话里
             // 没有任何委派痕迹（task/general）→ 与 INSTRUCTIONS「高风险实现委派 general@max」
             // 路由冲突，提醒一次由模型自行决断（提醒不拦截，宁漏报不误报——
@@ -2130,7 +2173,9 @@ export const _export = {
   todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText,
   pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel,
   bucketOf, // 离线回归测试缝：断言钩子对会话桶的登记副作用（如 s.highRisk/s.delegated），只读使用
-  VERIFY_CMD_RE, HIGH_RISK_RE,
+  setFileCheck, addHighRisk, // 有界化辅助（体检 2026-10-07）：上限驱逐语义离线回归
+  rememberCommand, MAX_FILE_CHECKS, MAX_HIGH_RISK, // Start-Sleep 记账接线 + 上限常量断言
+  VERIFY_CMD_RE, HIGH_RISK_RE, SLEEP_CMD_RE,
 };
 
 export default QualityGate;

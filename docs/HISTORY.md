@@ -162,6 +162,8 @@ macOS / Linux（bash）：
 
 **event 表是无条件清空的**：`db-maintain.sh` 对 `event`（纯事件溯源流水，`--days` 对它无效）一律 `DELETE` 全表并顺带清空 `event_sequence`；`--days` 只作用于 `message`/`session`/`todo`。这符合设计——已结束会话的内容不依赖 event 重放。
 
+**storage-maintain 集成（2026-10-07 二次体检）**：`db-maintain.sh` 在 WAL checkpoint 后自动调 `node scripts/storage-maintain.mjs --run --keep-snapshots --days 30`，覆盖 DB 之外的增长项——`storage/session_diff`（已删会话的孤儿 diff，实测 2,685 个/192MB）、`log`、`tsc-cache`，外加 **tool-output 失控看门狗**（单文件 >256MB 且 mtime 闲置 >60min 才删；正被写入的文件 mtime 持续更新天然落在宽限内；删除写 `storage-maintain-audit.log` 审计；`--bigfile-bytes 0` 可禁用）。背景：2026-10-03 事故——`node -e` 死循环把单条工具输出灌到 1.35GB，内置 hourly 清理只删 7 天外文件对活跃失控文件无防线；单文件大小上限属二进制行为无法配置，看门狗是配置层唯一防线。storage-maintain 失败只告警、不影响 DB 清理退出码。
+
 安全边界：`cleanup.sh` 绝不删 `$TEMP/kilo` 本身（Kilo 运行时还在往里写），也绝不碰 `~/.local/share/kilo`（会话/记忆/凭证）与 `~/.config/kilo`（配置本体）；判定只看 mtime 且逐条打印。
 **VACUUM 故意不自动化**：它需要独占锁并整体重写文件，Kilo 活着时执行必然打断并发会话（见下条根因）。自动化只跑 `db-maintain.sh --no-vacuum`（分批短锁）；需要回收文件空间时关掉全部 Kilo 后人工跑 `./db-maintain.sh`。**`--status` 会显示「可回收: X GB 空闲页（VACUUM 后文件约 Y GB）」**（2026-09-27 加：`--no-vacuum` 只 DELETE 不缩文件，不显示这一行会让人误以为瘦身没生效）。
 维护日志落在 `~/.local/state/kilo/maintenance/*.log`，自身保留最近 14 份；到期状态记在 `state.json`（`cleanup.sh` 无状态，到期判断由包装脚本负责）。
@@ -173,6 +175,17 @@ macOS / Linux（bash）：
 1. **备份裁剪必须「先裁剪、后创建」**。若先创建再裁剪，新备份会参与排序，而同秒产生的备份 `LastWriteTime` 并列，靠排序排除会把自己删掉（实测 `install.ps1` 把刚建的 zip 删了）。`install.sh` / `install.ps1` 现均为先裁剪后创建，且裁剪只在真实写盘模式（`--dry-run` / `-Check` 不删任何文件）。
 2. **PowerShell 5.1 的静默陷阱**：`Compress-Archive` 在目标目录为空时**既不报错也不产出文件**（必须回查产物再打印路径，否则会报一个并不存在的「成功」备份）；`Compare-Object -DifferenceObject $null` 直接抛异常（空目录漂移检测需显式 `@()` 包住管道结果）；`$MyInvocation.MyCommand.Path` 在函数体内是空串，脚本自身路径要用 `$PSCommandPath`（曾导致自启快捷方式生成 `-File ""` 却打印「已安装」）。
 3. **原生进程 stderr 在 `$ErrorActionPreference='Stop'` 下会变成终止异常**（2026-09-27 专项，维护停摆另一半根因）：`kilo-maintenance.ps1` 全局 `Stop`，而 `db-maintain.sh` 的「单批耗时 >6s」诊断告警走 stderr——PS 5.1 把它当 `RemoteException`/`NativeCommandError` 抛出，`RunOnce` 在第一批 DELETE 提交后即 abort，**DB 瘦身从未跑完**（error.log 有据）。修法：native 调用期间临时把偏好降为 `Continue`，只用 `$LASTEXITCODE` 判成败（退出码才是真相，stderr 只是诊断文本），调用后 `finally` 还原。凡是包装外部进程的 PS 脚本都要按此处理。
+
+**事件流之外的增长项（2026-10-07 三次体检，性能专项）**——「越用越卡」实测根因与处置：
+
+- **上下文负载（真正的根因）**：实测每步真实 prompt ≈ **p50 100k / p90 146k token**（`input + cache.read + cache.write`，近 3 天 22.5k 步；`cache.write` 恒 0 = 上游 prompt 缓存不生效，历史每步**全量重传**）。单步墙钟 p50 6.4s / p90 32s / p99 184s。上下文大头是历史里堆积的工具输出：`part` 表按 tool 分桶，`read` 一类累计 **406MB**、`bash` 147MB，今日单条最大 `read` 输出 373KB。**处置：`tool_output` 20480B → 8192B / 2000 行 → 800 行**（超限全文落盘、可重读，无损），把常驻输出的边际成本从 ≈5k token/条降到 ≈2k token/条。实测负载-耗时对照：125k token ≈7s、150k ≈16s、300k ≈28s。
+  - 反面证据（**不要再走的路**）：同日两次下调 `compaction.threshold_percent`（85→80→70）与放宽 `kimi-k3` 的 `limit.context` 到 600k 都无效——doom 事件规模是 **1.25-18MB（≈31-450 万 token）** 的跃迁，任何 70/80/85 阈值都拦不住；把 `code.variant` max→high 同样无效（分档实测：`glm-5.3-flash` 简单任务 low 7-8s / high 5-12s / max 9-51s，档位不是主因）。三处已各自回滚/还原，并在模板注释里留下「复核后再改」的条件。
+- **压缩位模型必须能收敛**：`agent.compaction.model` 当日被改成 `kimi-k3`，但该模型在压缩尺寸负载下实测**空响应**（`Compaction worker returned an empty response`，content_len=0、reasoning 打满 max_tokens）；同一 400KB 压缩负载对照跑：`deepseek-v4.1-flash` 195 字 / 9.9s、`glm-5.3-flash` 16.1s、`kimi-k3` 21.9s 且空输出。压缩位空响应 = 会话不收敛 = 每步重传全量负载，故已回滚为 `deepseek-v4.1-flash@low`（也是全库最大分母的零空响应模型）。
+- **kilo.db 未做 VACUUM 的膨胀**：文件 **7.34GB**，有效页仅 ≈1.65GB、**空闲页 5.4GB（74%）**——历史 DELETE 只把页放进 freelist，文件不缩，扫描变慢且占盘。回收需**独占锁**：关掉全部 Kilo 后人工跑 `./db-maintain.sh`（会自动带 VACUUM）。
+- **数据目录回收**：`storage-maintain.mjs` 已接进 `db-maintain.sh`（session_diff/log/tsc-cache 30 天窗 + tool-output 失控大文件看门狗）；当前待回收约 `snapshot` 423MB + `storage` 179MB + `tool-output` 28MB + `log` 6MB。
+
+**模板编辑与下发（2026-10-07 补）**：改 `kilo.json.tmpl` 后，可用 `node scripts/render-config.mjs [--dry]` 直接在仓库内渲染+校验+语义 diff+备份下发（与 `install.sh` 同管线，省去整包下发），随后仍应跑一次 `./install.sh --check` 确认零漂移。
+
 
 **已删**（评估过，非运行时资产）：
 - knowledge-base（知识已固化进 INSTRUCTIONS.md）、telemetry/metrics 脚本（被动诊断）、AGENTS 模板（未接线）。

@@ -15,6 +15,10 @@
 #   ./db-maintain.sh --batch N     调整 event 每批删除行数（默认 50000）
 #   ./db-maintain.sh --batch-msg N 调整 message 每批删除行数（默认 2000，级联 part 更重）
 #
+# 集成（2026-10-07）：DB 清理完成后自动跑 storage-maintain（session_diff/log/tsc-cache
+# 30 天窗 + tool-output 失控看门狗 256MB/闲置 60min），失败只告警不中断 DB 清理。
+# 本脚本不解决调度——建议空闲窗口每周跑一次（或接入 Kilo 定时任务）。
+#
 # 安全性：只 DELETE 事件流/过期消息；不触碰 memory、credential、project。
 #
 # 2026-09-15 复查（为什么会出现「Failed to execute statement / UnknownError」）：
@@ -216,6 +220,21 @@ echo ""
 echo "== WAL checkpoint + 校验 =="
 q "PRAGMA wal_checkpoint(TRUNCATE)" >/dev/null && echo "  checkpoint ok" || FAILED=1
 echo "  integrity: $(q 'PRAGMA integrity_check' | tail -n1 | tr -d '\r')"
+
+# 4) 存储垃圾回收（session_diff/log/tsc-cache 30 天窗 + tool-output 失控看门狗）
+#    独立工具：失败只告警，不影响本脚本的退出码（DB 清理状态仍以 FAILED 为准）
+echo ""
+echo "== storage-maintain（存储垃圾回收）=="
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if command -v node >/dev/null 2>&1; then
+  if node "$SCRIPT_DIR/scripts/storage-maintain.mjs" --run --keep-snapshots --days 30; then
+    echo "  storage-maintain ok"
+  else
+    echo "  ⚠ storage-maintain 失败（不影响 DB 清理结果，可单独重跑）" >&2
+  fi
+else
+  echo "  ⚠ node 不可用，跳过 storage-maintain" >&2
+fi
 
 echo ""
 echo "== 完成 =="

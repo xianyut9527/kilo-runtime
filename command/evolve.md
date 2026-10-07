@@ -22,8 +22,14 @@ agent: code
    INSTRUCTIONS.md（行为策略）/ kilo.json.tmpl（权限、路由）/ plugin（自动化）。
    先展示拟改动 diff，经用户确认后改仓库并跑 `./install.ps1` 部署验证。单项经验不够通用就留在项目记忆层。
 5. **修剪全局经验层**：整理 `~/.config/kilo/GLOBAL-NOTES.md`——去重合并、删除过时/低价值条目、
-   总量压回 ~1KB；连续两个复盘周期仍然有效且高度通用的条目，提议升格进 INSTRUCTIONS.md（需确认）。
-6. **报告**：入库条数（remember/correct/forget 分列）+ GLOBAL-NOTES 修剪明细 + SSOT 拟改动清单（或"无需升级"）。
+   总量压回 ~1KB（4KB 硬封顶由 memory-bootstrap 插件自动执行，超限行已无损移入
+   `GLOBAL-NOTES.parked.md`——本步顺带审阅 parked 文件：升格进 INSTRUCTIONS.md（需确认）
+   或确认无价值后删除）；连续两个复盘周期仍然有效且高度通用的条目，提议升格进 INSTRUCTIONS.md（需确认）。
+   同步审阅项目记忆 `project.md` 的 `## Open Questions`：已处置/已修复的 `review_residual_*`
+   与 `review_unreviewed_*` 条目移入对应 Facts/Decisions（一行一条带 key）或删除——
+   只留真正待跟进的残余项，防止残留清单单调膨胀（体检 2026-10-07）。
+6. **报告**：入库条数（remember/correct/forget 分列）+ GLOBAL-NOTES/parked 修剪明细 +
+   Open Questions 残余处置明细 + SSOT 拟改动清单（或"无需升级"）。
 
 ## 边界
 

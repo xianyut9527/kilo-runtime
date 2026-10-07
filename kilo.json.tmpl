@@ -87,14 +87,14 @@
   "agent": {
     "code": {
       "model": "hx/glm-5.3-flash",
-      // 一次输出质量杠杆（2026-09-30 升 max）。此前 2026-09-28 钉 high：上游默认档
-      // 深思考不足 → 首过质量不稳 → 返工循环。升级依据（质量顶级口径）：
-      // ① kimi@max 长输入猝死是 k2.6 分母的负数据，对 glm 族无直接证据；
-      // ② reasoningGate v2 死亡自动扩预算（×2、clamp 32768-65536）+降档重试兜底
-      //    length 猝死，max 档尾部风险已被客户端收敛；
-      // ③ 95% 工作走本槽，思考深度对首过质量的传递放大最大。
-      // 代价＝思考期首字间隔变长；A/B 验证规则（git 红线）：单变量切换，同任务对比
-      // code@high vs code@max 输出质量与体感延迟，实测劣于 high 则回退改本行。
+      // 一次输出质量杠杆：钉 max（2026-09-30 升档，2026-10-07 复核定案保留）。
+      // 2026-09-28 先钉 high 的依据是「上游默认档深思考不足 → 首过质量不稳 → 返工」；
+      // 09-30 升 max 的补充依据：① kimi@max 长输入猝死是 k2.6 分母的负数据，对 glm 族
+      // 无直接证据；② reasoningGate v2 死亡自动扩预算（×2、clamp 32768-65536）+ 降档
+      // 重试已兜住 max 档的 length 猝死；③ 95% 工作走本槽，思考深度对首过质量的传递
+      // 放大最大。代价＝思考期首字间隔变长，本机实测 max 档首字 41s（对照 low/high 6s）
+      // ——若日后确认「慢」主要来自本档，按单变量 A/B（同任务 code@high vs code@max）
+      // 复核后再回退，不要在没有对照的情况下反复改这一行。
       "variant": "max",
     },
     "plan": {
@@ -120,12 +120,23 @@
       "variant": "low",
     },
     "compaction": {
-      // 压缩是摘要任务，不需要深度推理。实测 kilo.db 30 条 compaction 全跑 variant=max，
-      // 其中 output=0（空补全）→ "Compaction worker returned an empty response" 偶发报错。
-      // max 档思考预算深、首字间隔长，纯推理打满则 0 输出（与 upstream_thinking_budget_pure_reasoning_failure 同模式）。
-      // schema 约束：variant 仅在 agent 用「自己配置的 model」时生效——必须同时钉死 model，
-      // 否则 compaction 继续继承会话当前模型+variant，覆盖不生效。
-      // 钉 glm-5.3-flash：样本内空响应最少（11 跑 0 空），且压缩不再随会话模型漂移。
+      // 压缩是摘要任务，不需要深度推理，钉 low 档（max 档思考预算深、纯推理打满则
+      // 0 输出 → "Compaction worker returned an empty response"，kilo.db 30 条实测；
+      // schema 约束：variant 仅在 agent 用「自己配置的 model」时生效——必须同时钉死
+      // model，否则 compaction 继承会话当前模型+variant，覆盖不生效）。
+      // 2026-10-07 kimi-k3 → deepseek-v4.1-flash（本行当日被改过两次，此处回滚到实测
+      // 站得住的选项）：
+      //  · kimi-k3 在压缩位**实测失败**——本轮直连复现 4 次压缩尺寸（400KB 负载）
+      //    全部命中 opencode.log 的 "Compaction worker returned an empty response",
+      //    content_len=0 且 reasoning 打满 max_tokens=8192；而 deepseek-v4.1-flash
+      //    同一负载稳定产出 195 字摘要、耗时 9.9s（glm-5.3-flash 16.1s / kimi-k3 21.9s
+      //    且空输出）。压缩位空响应 = 会话不收敛 → 每步重新上传全量负载，
+      //    这是「越用越卡」的直接机制。
+      //  · 该模型另有全库最大分母的零空响应记录（11 跑 0 空）与最快的压缩墙钟。
+      //  · kimi-k3 仍是 plan 位模型（那一位实跑正常）——本处只动压缩位。
+      // 窗口口径：压缩模型窗口 = 会话负载的回收上限；deepseek-v4.1-flash 登记
+      // 200k/32k（与上游实际一致，见 models 表）。越窗的极端会话由「tool_output
+      // 8KB 限流 + failover 换路」兜底，不再靠改这一个数字解决。
       "model": "hx/deepseek-v4.1-flash",
       "variant": "low",
     },
@@ -173,27 +184,40 @@
   },
 
   // ── 上下文压缩（长会话不丢关键信息）─────────────────────────────
-  // token 到上下文窗口 85% 时自动触发压缩
   "compaction": {
     "auto": true,
     // 压缩时顺手裁剪老的工具输出（它们最占空间）
     "prune": true,
     // 最近 6 轮用户消息保留原文（含其后 assistant/工具回复）
     "tail_turns": 6,
-    // 压缩后最多保 4 万 token 的近期内容不进摘要
-    "preserve_recent_tokens": 40000,
+    // 压缩后最多保 2.4 万 token 的近期内容不进摘要（40000→24000，2026-10-07）。
+    // 与 tool_output 8KB 上限配套：尾巴本身被截断后已很轻，2.4 万足够覆盖最近
+    // 6 轮原文；把省下的 1.6 万 token 让给「压缩后每步重新付费」的常驻负载。
+    "preserve_recent_tokens": 24000,
     // 给压缩过程本身留 3.2 万 token 缓冲（防溢出）
     "reserved": 32000,
-    // 触发阈值（7.6.2 官方字段）
+    // 触发阈值（7.6.2 官方字段）= 上下文窗口百分比。
+    // 2026-10-07 还原 85：本机 doom-lock 事件的真实尺寸是 1.25-1.8MB（≈31-45 万
+    // token，见 opencode.log「payload still large after pruning」最大 18.1MB 记录），
+    // 远高于 200k 窗，任何 70/80/85 阈值都拦不住一次 30 万 token 的越窗跃迁——
+    // 降阈值只是让压缩更频繁（每轮一次 low-variant 后台调用），并不解决越窗。
+    // 真正的兜底是 ① tool_output 8KB 让负载涨得慢、② 压缩位模型必须有足够大的窗
+    // （见 agent.compaction 与 models.<compaction model>.limit.context）。
     "threshold_percent": 85,
   },
 
   // ── 工具输出截断（防单条输出撑爆上下文）─────────────────────────
-  // 超 2000 行或 20KB：全文落盘，只留预览在上下文里。
-  // 51200 让大输出常驻上下文，每轮 prefill 重复付费；落盘的文件模型需要时可重读，无损。
+  // 超 800 行或 8KB：全文落盘，只留预览在上下文里（可重读，无损）。
+  // 2026-10-07 实测收口：原 20480B 的单条工具输出 ≈5k token，且**每一步都被完整
+  // 重传一遍**——本机上游 prompt 缓存实测不生效（kilo.db：cache.read 有值但
+  // cache.write 恒 0，每步全量 prefill），实测真实 prompt ≈ p50 100k / p90 146k
+  // token（input+cache.read+write，近 3 天 22.5k 步），p90 单步 32s、p99 184s。
+  // 大头就是历史里堆积的大工具输出：read 一类就累计 406MB（kilo.db 按 tool 分桶），
+  // 今日单条最大 read 输出 373KB。20KB→8KB 让常驻上下文的输出量降到 ≈2k token/条，
+  // 落盘全文仍可重读——这是「每步重新付费」的唯一直接杠杆。
   "tool_output": {
-    "max_lines": 2000,
-    "max_bytes": 20480,
+    "max_lines": 800,
+    "max_bytes": 8192,
   },
 
   // ── 文件监视忽略（watcher 不盯这些，省 CPU）────────────────────
@@ -416,8 +440,14 @@
       "name": "hx",
       "npm": "file:///__KILO_CONFIG__/provider/hx-failover",
       "options": {
-        // 上游 OpenAI 兼容端点
-        "baseURL": "https://openllamas.com/v1",
+        // 上游 OpenAI 兼容端点（SSOT 唯一真源）。
+        // 2026-10-07 还原：4807907 把本行改回 openllamas.com 是无依据的改动 —— 实测
+        // openllamas.com 对当前 key 返回 401 INVALID_API_KEY（curl 探针），而
+        // llamas.nat100.top 对该 key 返回 200 且模型齐全。endpoint 失效是「极慢」的
+        // 直接放大器：每个 hop 先打一个 401/超时，failover 再退避重试下一个模型，
+        // 单步墙钟成倍拉长。b9965ef 记录的迁移（natapp4）后又发现 natapp4 也不认
+        // 当前 key（401 Invalid token），故回到 llamas.nat100.top（实测可用）。
+        "baseURL": "https://llamas.nat100.top/v1",
         // MoA/dual_review 分析调用总时长上限（kilo.json options.timeout 唯一消费方 = 这两个工具）。
         // ⚠️ 主模型循环不消费本键（provider/hx-failover 不读它，2026-09-21 DB 实证：
         // 27 例 >120s 的 step-finish 正常完成，120s 从未生效于主链路；主链路只有 chunkTimeout 空闲看门狗）。
@@ -624,8 +654,11 @@
             "output": ["text"],
           },
           "limit": {
-            // K3 实际 1M 上下文 / max_completion_tokens 默认 131072（可至 1M）；
-            // 保守口径先按 200k/32k 登记（压缩提前触发无害），冒烟后可放宽
+            // 2026-10-07 还原 600k→200k：600k 是本机从未有渠道验证过的数字（当日
+            // 与压缩换岗一起写入，随后实测 kimi-k3 在压缩位直接空响应，见
+            // agent.compaction 注释）。registry 里的 context 会参与上下文占用计算，
+            // 一个未经验证的大窗数字会让「何时该压缩」的判断失真。回到与上游实际
+            // 一致的 200k；K3 若日后确有更大窗可用，按实测再放宽。
             "context": 200000,
             "output": 32000,
           },

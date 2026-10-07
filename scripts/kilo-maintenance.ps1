@@ -6,12 +6,13 @@
   kilo.db 的事件溯源流水，都没有回收者 —— 本脚本是这三者的统一维护入口。
 
   组成：
-    1) cleanup.sh --run           临时目录 + 配置备份保留（无 DB 锁）
-    2) db-maintain.sh --no-vacuum kilo.db 事件/过期会话瘦身（分批短锁，Kilo 活着也安全）
+    1) cleanup.sh --run            临时目录 + 配置备份保留（无 DB 锁）
+    2) storage-maintain.mjs --run  数据目录增长项回收：session_diff/log/snapshot 留 30 天（无 DB 锁）
+    3) db-maintain.sh --no-vacuum  kilo.db 事件/过期会话瘦身（分批短锁，Kilo 活着也安全）
        · VACUUM（回收文件空间）保持人工执行 —— 需独占锁，会打断并发会话
 
   用法：
-    .\kilo-maintenance.ps1 -RunOnce       立即执行一次（清理 + DB 瘦身）
+    .\kilo-maintenance.ps1 -RunOnce       立即执行一次（清理 + 数据目录回收 + DB 瘦身）
     .\kilo-maintenance.ps1 -CleanupOnly   只清理，不碰 DB
     .\kilo-maintenance.ps1 -DbStatus      只打印 kilo.db 体检（只读）
     .\kilo-maintenance.ps1 -AutoIfDue     按到期规则执行（登录自启用；清理 >1 天、DB >7 天）
@@ -58,7 +59,7 @@ $StartupDir = [Environment]::GetFolderPath('Startup')
 $StartupLnk = Join-Path $StartupDir 'kilo-maintenance.lnk'
 $TaskDaily   = 'kilo-maintenance-daily'
 $TaskWeekly  = 'kilo-maintenance-weekly'
-$TaskDesc    = 'Kilo 维护：临时文件/配置备份清理 + kilo.db 瘦身（VACUUM 保持人工）'
+$TaskDesc    = 'Kilo 维护：临时文件/配置备份/数据目录(session_diff/log/snapshot)清理 + kilo.db 瘦身（VACUUM 保持人工）'
 $CleanupEveryDays = 1
 $DbEveryDays      = 7
 
@@ -84,10 +85,17 @@ function Resolve-Bash {
     throw 'FAIL: 找不到 bash.exe（清理/维护脚本需要 Git Bash）'
 }
 
-# 跑一个仓库内脚本：传原生正斜杠路径，避免 Git Bash 对反斜杠/盘符的歧义
+function Resolve-Node {
+    $cmd = Get-Command node.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    throw 'FAIL: 找不到 node.exe（storage-maintain.mjs 数据目录回收需要 Node）'
+}
+
+# 跑一个仓库内脚本：传原生正斜杠路径，避免 Git Bash 对反斜杠/盘符的歧义。
+# -Node 开关：用 node 跑 .mjs（storage-maintain）；默认走 Git Bash（.sh）。
 function Invoke-RepoScript {
-    param([string]$Script, [string[]]$ScriptArgs = @(), [string]$Label)
-    $bash = Resolve-Bash
+    param([string]$Script, [string[]]$ScriptArgs = @(), [string]$Label, [switch]$Node)
+    $exe = if ($Node) { Resolve-Node } else { Resolve-Bash }
     $scriptPath = Join-Path $RepoDir $Script
     if (-not (Test-Path $scriptPath)) { throw "FAIL: 仓库脚本缺失 $Script" }
     $scriptNative = $scriptPath -replace '\\', '/'
@@ -112,7 +120,7 @@ function Invoke-RepoScript {
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $output = & $bash $scriptNative @ScriptArgs 2>&1
+        $output = & $exe $scriptNative @ScriptArgs 2>&1
         $rc = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $prevEap
@@ -130,8 +138,13 @@ function Invoke-RepoScript {
 }
 
 function Invoke-Cleanup {
-    # 临时目录兄弟项留 3 天；Kilo 托管临时目录内部留 7 天；配置备份留最近 2 个
-    return Invoke-RepoScript -Script 'cleanup.sh' -ScriptArgs @('--run', '--days', '3', '--tmp-days', '7', '--keep-backups', '2') -Label 'cleanup'
+    # 临时目录兄弟项留 3 天；Kilo 托管临时目录内部留 7 天；配置备份留最近 2 个；
+    # 数据目录增长项（session_diff/log/snapshot，2026-10-07 体检闭环）留 30 天。
+    # 两者失败都不互相阻断：返回首个非零退出码（后续步骤照跑）。
+    $rc1 = Invoke-RepoScript -Script 'cleanup.sh' -ScriptArgs @('--run', '--days', '3', '--tmp-days', '7', '--keep-backups', '2') -Label 'cleanup'
+    $rc2 = Invoke-RepoScript -Script 'scripts/storage-maintain.mjs' -ScriptArgs @('--run', '--days', '30') -Label 'storage' -Node
+    if ($rc1 -ne 0) { return $rc1 }
+    return $rc2
 }
 
 function Invoke-DbMaintain {
@@ -262,6 +275,9 @@ if ($Unregister) {
 
 if ($Register) {
     $bash = Resolve-Bash
+    # 注册前置校验：storage-maintain.mjs 走 node——缺 Node 在注册时就报，
+    # 而不是每天 04:00 任务静默失败（error.log 才能发现）
+    $node = Resolve-Node
     $self = $SelfPath
     $actionClean = New-ScheduledTaskAction -Execute 'powershell.exe' `
         -Argument ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "{0}" -CleanupOnly' -f $self) `
@@ -290,7 +306,7 @@ if ($Register) {
         exit 2
     }
     Write-Host "[TASK] 已注册：$TaskDaily（每日 04:00 清理）、$TaskWeekly（每周日 04:30 清理 + DB 瘦身）"
-    Write-Host "[TASK] bash: $bash"
+    Write-Host "[TASK] bash: $bash  node: $node"
     Write-Host "[TASK] VACUUM 未自动化（需独占锁）：在 Kilo 全部关闭后人工跑 ./db-maintain.sh"
     exit 0
 }
