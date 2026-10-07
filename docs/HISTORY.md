@@ -266,6 +266,8 @@ node scripts\test-quality-gate.mjs
 # permission-guard 动态守护回归（离线，不联网；改 permission-guard.ts/SECRET_PATH 后必跑）
 node scripts\test-permission-guard.mjs
 
+# db-maintain 离线回归（不联网、不碰真实 kilo.db；改 db-maintain.sh 后必跑）
+node scripts\test-db-maintain.mjs
 # 断路器回归（离线，不联网；改 lib/hx-client.ts 后必跑；必须 node，见脚本内 bun 守卫）
 node --experimental-strip-types scripts\test-circuit-breaker.mjs
 
