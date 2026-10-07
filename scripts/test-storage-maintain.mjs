@@ -67,6 +67,8 @@ function fixture() {
   mk(path.join("memory", "proj-abc", "project.md"), 100, old);
   mk("session-export.db", 900, old);
   mk("failover-events.jsonl", 700, old);
+  // 大日志封顶目标:必须 mtime 新鲜,否则会先被上面的「30 天文件级修剪」删掉
+  mk(path.join("log", "huge.log"), 40 * 1024 * 1024, fresh);
   // tool-output 看门狗目标(小阈值测试用 --bigfile-bytes 控制)
   mk(path.join("tool-output", "tool_runaway001"), 5000, new Date(Date.now() - 2 * 3600_000)); // 失控+闲置
   mk(path.join("tool-output", "tool_active001"), 5000, fresh); // 大小够但活跃(1h 内)→保留
@@ -82,7 +84,8 @@ function fixture() {
   const r = run(["--status", "--days", "30"], root);
   t("退出码 0", r.status === 0);
   t("json 解析", r.json != null);
-  t("预览字节数 = 文件级超期之和(1000+2000+1500) + snapshot 整目录(4000+1000)", r.json?.plannedBytes === 9500);
+  t("预览字节数 ≥ 文件级超期(1000+2000+1500) + snapshot 整目录(4000+1000)（另含日志截断释放量）",
+    r.json?.plannedBytes >= 9500, `planned=${r.json?.plannedBytes}`);
   t("dry-run deleted=0", r.json?.deleted === 0);
   t("session_diff 文件未动", fs.readdirSync(path.join(root, "storage", "session_diff")).length === before.length);
   t("旧文件仍在", fs.existsSync(path.join(root, "storage", "session_diff", "ses_old.json")));
@@ -95,8 +98,10 @@ function fixture() {
   const root = fixture();
   const r = run(["--run", "--days", "30"], root);
   t("退出码 0", r.status === 0);
-  t("删除 4 项(3 文件 + 1 个 snapshot 目录)", r.json?.deleted === 4);
-  t("释放字节 = 9500", r.json?.deletedBytes === 9500);
+  t("删除项数 = 3 文件 + 1 snapshot 目录 + 1 日志截断", r.json?.deleted === 5, `deleted=${r.json?.deleted}`);
+  // 日志截断释放量 = 41_943_040 − 8_388_608 = 33_554_432B（fixture 的 40MiB 文件），另加 9500B 文件删除
+  t("释放字节 = 9500 + 日志截断 32MiB",
+    r.json?.deletedBytes >= 33554432 + 9500 && r.json?.deletedBytes < 34 * 1024 * 1024, `bytes=${r.json?.deletedBytes}`);
   t("旧 session_diff 已删", !fs.existsSync(path.join(root, "storage", "session_diff", "ses_old.json")));
   t("新 session_diff 保留", fs.existsSync(path.join(root, "storage", "session_diff", "ses_new.json")));
   t("旧 log 已删", !fs.existsSync(path.join(root, "log", "kilo.log.old")));
@@ -118,7 +123,7 @@ function fixture() {
   const root = fixture();
   const r = run(["--run", "--days", "30", "--keep-snapshots"], root);
   t("退出码 0", r.status === 0);
-  t("只删 3 项(session_diff+log+tsc-cache)", r.json?.deleted === 3);
+  t("只删 3 项(session_diff+log+tsc-cache) + 日志截断 1", r.json?.deleted === 4, `deleted=${r.json?.deleted}`);
   t("snapshot 旧目录保留(--keep-snapshots)", fs.existsSync(path.join(root, "snapshot", "deadbeef")));
   fs.rmSync(root, { recursive: true, force: true });
 }
@@ -159,7 +164,7 @@ function fixture() {
   // 6a) dry-run:命中清单但不动盘
   const rd = run2(["--status", "--days", "30", "--bigfile-bytes", "1024"]);
   t("dry-run 退出码 0", rd.status === 0);
-  t("dry-run plannedBytes 含失控大文件(9500+5000)", rd.json?.plannedBytes === 14500);
+  t("dry-run plannedBytes 含失控大文件与日志截断", rd.json?.plannedBytes > 14500, `planned=${rd.json?.plannedBytes}`);
   t("dry-run bigfileDeleted=0", rd.json?.bigfileDeleted === 0);
   t("失控文件未动", fs.existsSync(path.join(root, "tool-output", "tool_runaway001")));
   // 6b) --run:删失控+闲置,保留活跃与小文件;写审计日志
@@ -170,7 +175,7 @@ function fixture() {
   t("小文件保留(阈值未命中)", fs.existsSync(path.join(root, "tool-output", "tool_small001")));
   t("bigfileDeleted=1", rr.json?.bigfileDeleted === 1);
   t("bigfileBytes=5000", rr.json?.bigfileBytes === 5000);
-  t("总删除=5(时间窗4+看门狗1)", rr.json?.deleted === 5);
+  t("总删除=6(时间窗4 + 看门狗1 + 日志截断1)", rr.json?.deleted === 6, `deleted=${rr.json?.deleted}`);
   const audit = fs.readFileSync(path.join(root, "storage-maintain-audit.log"), "utf8");
   t("审计日志含被删文件名与大小", audit.includes("tool_runaway001") && audit.includes("5000B"));
   // 6c) --bigfile-bytes 0 禁用看门狗
@@ -192,6 +197,24 @@ function fixture() {
     t(`拒绝 ${d}`, run(["--status"], d).status === 1);
   const ok = run(["--status"], path.join(os.tmpdir(), `sm-ok-${process.pid}-fixture`));
   t("fixture 子目录正常放行(不存在=退出 0)", ok.status === 0);
+}
+
+// ── 8) 大日志封顶:超 32MB 截尾部,小的不动 ──────────────────
+{
+  console.log("== 8) 大日志封顶 ==");
+  const root = fixture();
+  const huge = path.join(root, "log", "huge.log");
+  const small = path.join(root, "log", "kilo.log");
+  const beforeSmall = fs.statSync(small).size;
+  const r = run(["--run", "--days", "30"], root);
+  t("退出码 0", r.status === 0);
+  const sz = fs.statSync(huge).size;
+  t("40MB 日志已截断到 ~8MB 尾部", sz > 7 * 1024 * 1024 && sz < 9 * 1024 * 1024, `size=${sz}`);
+  t("截断保留尾部而非清空(含原内容标记)", fs.readFileSync(huge, "utf8").includes("已截断"));
+  t("小日志未被动(未超阈值)", fs.statSync(small).size === beforeSmall);
+  t("截断写入审计日志", fs.existsSync(path.join(root, "storage-maintain-audit.log")) &&
+    /log-trim log\/huge\.log/.test(fs.readFileSync(path.join(root, "storage-maintain-audit.log"), "utf8")));
+  fs.rmSync(root, { recursive: true, force: true });
 }
 
 // ── 汇总 ───────────────────────────────────────────────────

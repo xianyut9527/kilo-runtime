@@ -19,7 +19,7 @@
     .\kilo-maintenance.ps1 -AutoIfDue     按到期规则执行（登录自启用；清理 >1 天、DB >7 天）
     .\kilo-maintenance.ps1 -InstallStartup    安装登录自启（免管理员）
     .\kilo-maintenance.ps1 -UninstallStartup  移除登录自启
-    .\kilo-maintenance.ps1 -Register      注册系统计划任务（每日 04:00 清理；每周日 04:30 清理+DB，需管理员）
+    .\kilo-maintenance.ps1 -Register      注册系统计划任务（登录时清理 / 登录时清理+DB，需管理员）
     .\kilo-maintenance.ps1 -Unregister    删除系统计划任务
     .\kilo-maintenance.ps1 -Status        查看计划任务/自启与最近日志
 
@@ -299,8 +299,13 @@ if ($Register) {
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew
 
-    $tDaily  = New-ScheduledTaskTrigger -Daily -At 04:00
-    $tWeekly = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 04:30
+    # 触发器（2026-10-07 修正）：原用「每日 04:00 / 周日 04:30」。实测本机并非常开——
+    # 开机 10-07 01:14、连续运行最久 23h，04:00 常落在关机时段：日志只有 09-27/10-01/10-07
+    # 三天有记录，而 kilo 会话每天都有，说明计划任务基本没跑过。改为与自启同语义的
+    # 「登录时触发」，并开启 StartWhenAvailable（错过则在下次可用时补跑）。
+    # 注意：任务与自启会各跑一次，靠 state.json 的到期判断（清理>1天/DB>7天）天然幂等。
+    $tDaily  = New-ScheduledTaskTrigger -AtLogOn
+    $tWeekly = New-ScheduledTaskTrigger -AtLogOn
 
     try {
         Register-ScheduledTask -TaskName $TaskDaily -Action $actionClean -Trigger $tDaily -Principal $principal -Settings $settings -Description $TaskDesc -Force | Out-Null
@@ -313,7 +318,8 @@ if ($Register) {
         Write-Warning "[TASK] 免管理员替代方案：以管理员身份重开 PowerShell 后重跑本命令，或改用 -InstallStartup（登录自启 + 到期判断）。"
         exit 2
     }
-    Write-Host "[TASK] 已注册：$TaskDaily（每日 04:00 清理）、$TaskWeekly（每周日 04:30 清理 + DB 瘦身）"
+    Write-Host "[TASK] 已注册：$TaskDaily（登录时清理）、$TaskWeekly（登录时清理 + DB 瘦身）"
+    Write-Host "[TASK] 触发器=登录时 + StartWhenAvailable（错过补跑）；两者靠 state.json 到期判断保持幂等"
     Write-Host "[TASK] bash: $bash  node: $node"
     Write-Host "[TASK] VACUUM 已按阈值自动化（空闲页 ≥25% 且无 kilo 写者才跑；否则跳过）"
     exit 0

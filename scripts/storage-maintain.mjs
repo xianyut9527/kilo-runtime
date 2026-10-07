@@ -200,6 +200,8 @@ const CUTOFF = Date.now() - DAYS * 86400_000;
 const DRY = MODE !== "run";
 let plannedBytes = 0, deleted = 0, deletedBytes = 0, deleteFailed = 0;
 let bigfileDeleted = 0, bigfileBytes = 0;
+const MAX_LOG_BYTES = 32 * 1024 * 1024; // 单日志文件上限（超过即截尾）
+const LOG_KEEP_BYTES = 8 * 1024 * 1024; // 截断后保留尾部
 const failures = [];
 
 // 只清理「删除后变空」的目录,且不得越过目标根;根目录本身保留
@@ -311,6 +313,44 @@ for (const t of TARGETS) {
 }
 for (const t of PRUNE_DIRS) pruneDirs(t);
 bigfileWatch();
+capBigLogs();
+
+// ── 大日志文件封顶(log/opencode.log)────────────────────────
+// mtime 修剪抓不到它：这是「活跃的单个大文件」，一直在写、mtime 永远新鲜。
+// 首行自述峰值曾达 291MB（permission-eval INFO 刷屏），实测当前 6MB。
+// 与 tool-output 看门狗同一思路但更保守：只截尾部保留最新的 N MB，绝不删整个文件
+// （日志是排障唯一线索）。用「读尾 + 写临时 + rename 原子替换」避免半截文件。
+// ⚠️ 上限常量声明在文件末尾的「调用段」常量区（函数声明会提升，const 不会——
+//    首次实现把 const 放在调用点之后，触发 TDZ: Cannot access before initialization）。
+function capBigLogs() {
+  const dir = path.join(DATA_DIR, "log");
+  if (!fs.existsSync(dir)) { console.log("[OK] log 不存在(跳过)"); return; }
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return; }
+  for (const name of names.filter((f) => f.endsWith(".log"))) {
+    const p = path.join(dir, name);
+    let st;
+    try { st = fs.lstatSync(p); } catch { continue; }
+    if (!st.isFile() || st.size <= MAX_LOG_BYTES) continue;
+    if (DRY) { console.log(`[DRY] 截断日志 ${name} ${MB(st.size)} → 保留尾部 ${MB(LOG_KEEP_BYTES)}`); plannedBytes += st.size - LOG_KEEP_BYTES; continue; }
+    try {
+      const fd = fs.openSync(p, "r");
+      const buf = Buffer.alloc(LOG_KEEP_BYTES);
+      fs.readSync(fd, buf, 0, LOG_KEEP_BYTES, st.size - LOG_KEEP_BYTES);
+      fs.closeSync(fd);
+      const tmp = `${p}.trim-${process.pid}`;
+      fs.writeFileSync(tmp, `[storage-maintain] 已截断：原 ${st.size}B，保留尾部 ${LOG_KEEP_BYTES}B（${new Date().toISOString()}）\n` + buf.toString("utf8"));
+      fs.renameSync(tmp, p);
+      const freed = st.size - LOG_KEEP_BYTES;
+      console.log(`[DEL] 截断日志 ${name} ${MB(st.size)} → ${MB(LOG_KEEP_BYTES)}`);
+      deleted++; deletedBytes += freed;
+      try { fs.appendFileSync(path.join(DATA_DIR, "storage-maintain-audit.log"), `${new Date().toISOString()} log-trim log/${name} ${st.size}B->${LOG_KEEP_BYTES}B\n`); } catch {}
+    } catch (e) {
+      deleteFailed++; failures.push(`log/${name}: ${e.message}`);
+      console.error(`[WARN] 日志截断失败(可能被占用,跳过) log/${name}: ${e.message}`);
+    }
+  }
+}
 
 // ── 报告-only(体量盘点,绝不删)─────────────────────────────
 console.log("");

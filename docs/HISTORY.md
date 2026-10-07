@@ -186,6 +186,15 @@ macOS / Linux（bash）：
 - **kilo.db 未做 VACUUM 的膨胀**：文件 **7.34GB**，有效页仅 ≈1.65GB、**空闲页 5.4GB（74%）**——历史 DELETE 只把页放进 freelist，文件不缩，扫描变慢且占盘。回收需**独占锁**：关掉全部 Kilo 后人工跑 `./db-maintain.sh`（会自动带 VACUUM）。
 - **数据目录回收**：`storage-maintain.mjs` 已接进 `db-maintain.sh`（session_diff/log/tsc-cache 30 天窗 + tool-output 失控大文件看门狗）；当前待回收约 `snapshot` 423MB + `storage` 179MB + `tool-output` 28MB + `log` 6MB。
 
+**维护链自身的两个缺口（2026-10-07 二次查漏）**：
+
+1. **计划任务触发器选错了时段**：原注册为「每日 04:00 / 周日 04:30」，但本机并非常开——实测开机 10-07 01:14、连续运行最久 23h，04:00 常落在关机时段。
+   证据：维护日志只有 2026-09-27 / 10-01 / 10-07 三天有记录，而 kilo 会话每天都有（`session` 表按天分组可查）。
+   已改为与自启同语义的 **`-AtLogOn` 触发器**（配合 `StartWhenAvailable` 错过补跑）；两者会各跑一次，靠 `state.json` 的到期判断（清理 >1 天 / DB >7 天）天然幂等。
+   注意：`-Register` 需管理员，本机此前注册被拒（`CimException: 拒绝访问`），故当前实际生效的自动化**只有登录自启一条**。
+2. **日志文件是「活跃单文件」，mtime 修剪抓不到**：`log/opencode.log` 首行自述峰值曾达 **291MB**（permission-eval INFO 刷屏），实测当前 6MB。
+   已加 `capBigLogs()`：单日志 > 32MB 时**截尾部保留 8MB**（读尾 + 临时文件 + rename 原子替换，写入 `storage-maintain-audit.log`），绝不整删——日志是排障唯一线索。
+
 **模板编辑与下发（2026-10-07 补）**：改 `kilo.json.tmpl` 后，可用 `node scripts/render-config.mjs [--dry]` 直接在仓库内渲染+校验+语义 diff+备份下发（与 `install.sh` 同管线，省去整包下发），随后仍应跑一次 `./install.sh --check` 确认零漂移。
 
 
