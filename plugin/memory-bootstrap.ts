@@ -115,10 +115,17 @@ function trimNotesToCap(raw, capBytes = GLOBAL_NOTES_CAP_BYTES) {
   if (Buffer.byteLength(text, "utf8") <= capBytes) return { text, parked: [], trimmed: false };
   const nl = text.includes("\r\n") ? "\r\n" : "\n";
   const lines = text.split(/\r?\n/);
+  // 2026-10-08 修正：真机文件没有 `## Notes` 段头（结构是 `# 标题 + HTML 注释 + 条目`），
+  // 旧实现 notesIdx<0 直接放弃 → 封顶从未生效（实测 15281B 超 4KB 常量 3.7 倍）。
+  // 回退口径：无段头时以「首个条目行」为 body 起点——标题/注释/空行全是结构，照旧保留。
   const notesIdx = lines.findIndex((l) => /^##\s*Notes\s*$/.test(l.trim()));
-  if (notesIdx < 0) return { text, parked: [], trimmed: false };
-  const header = lines.slice(0, notesIdx + 1);
-  const body = lines.slice(notesIdx + 1);
+  const bodyStart =
+    notesIdx >= 0
+      ? notesIdx + 1
+      : lines.findIndex((l) => /^\s*-\s/.test(l));
+  if (bodyStart < 0) return { text, parked: [], trimmed: false };
+  const header = lines.slice(0, bodyStart);
+  const body = lines.slice(bodyStart);
   const entryIdx = body.map((l, i) => (/^\s*-\s/.test(l) ? i : -1)).filter((i) => i >= 0);
   let bytes = Buffer.byteLength(text, "utf8");
   const parked = [];
@@ -382,7 +389,7 @@ export const MemoryBootstrap = async (ctx = {}) => {
 // Kilo vE2 契约同 quality-gate/dual-review：工具函数经 _export 命名空间暴露给离线测试
 // （scripts/test-memory-bootstrap.mjs）——对象无 server 属性，kE2 跳过，绝不会被当工厂调用。
 export const _export = {
-  trimNotesToCap, GLOBAL_NOTES_CAP_BYTES,
+  trimNotesToCap, GLOBAL_NOTES_CAP_BYTES, enforceGlobalNotesCap,
   // 2026-10-08 增：项目记忆封顶（离线测试要断言）
   capOneProjectFile, PROJECT_FILE_CAP_BYTES, PROJECT_TARGET_BYTES, PROJECT_FILES,
   // 2026-10-08 二轮查漏：.parked 自身封顶 + sessions/ 存档回收

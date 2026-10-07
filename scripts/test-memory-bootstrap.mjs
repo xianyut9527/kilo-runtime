@@ -26,7 +26,7 @@ try {
 } finally {
   fs.rmSync(bundle, { force: true });
 }
-const { trimNotesToCap, GLOBAL_NOTES_CAP_BYTES, capOneProjectFile, PROJECT_FILE_CAP_BYTES, PROJECT_TARGET_BYTES, PROJECT_FILES, pruneSessionArchive, PARKED_KEEP_BYTES, SESSION_ARCHIVE_DAYS } = mod._export ?? mod;
+const { trimNotesToCap, GLOBAL_NOTES_CAP_BYTES, enforceGlobalNotesCap, capOneProjectFile, PROJECT_FILE_CAP_BYTES, PROJECT_TARGET_BYTES, PROJECT_FILES, pruneSessionArchive, PARKED_KEEP_BYTES, SESSION_ARCHIVE_DAYS } = mod._export ?? mod;
 
 let pass = 0, fail = 0;
 const failed = [];
@@ -270,6 +270,34 @@ function makeNotes(n) {
   fs.rmSync(fx + ".parked", { force: true });
   const cb = fs.readdirSync(os.tmpdir()).find((f) => f.startsWith(path.basename(fx)) && f.includes("capbak"));
   if (cb) fs.rmSync(path.join(os.tmpdir(), cb), { force: true });
+}
+
+// ── 2026-10-08 三查：trimNotesToCap 容错无 `## Notes` 段头的真实形态 ──
+// （真机 GLOBAL-NOTES.md = "# 标题 + HTML 注释 + 条目"，无 ## Notes 段头 →
+//   旧实现 notesIdx<0 直接放弃，封顶从未生效：实测 15281B ≫ 4096B 常量）
+{
+  console.log("== 13) 无段头形态 enforceGlobalNotesCap 真的会裁（真机缺陷回归）==");
+  const entry = (tag) => `- 2026-10-01 ${tag} :: ` + "w".repeat(1000) + "\n";   // 每条约 1KB
+  const raw =
+    "# Global Notes（全自动全局经验层）\n\n" +
+    "<!-- 机制说明注释若干行，无 ## Notes 段头 -->\n\n\n" +
+    entry("a") + entry("b") + entry("c") + entry("d") + entry("e") + entry("f");
+  // enforceGlobalNotesCap 从 import.meta.dir 的上一级找文件——bundle 放 <tmp>/plugin/ 布局
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `gn-cap-${process.pid}-`));
+  fs.mkdirSync(path.join(root, "plugin"), { recursive: true });
+  const notesFile = path.join(root, "GLOBAL-NOTES.md");
+  // 但 bundle 已 import 进内存——globalNotesFile 读的是真 bundle 位置。这里改走纯函数直测：
+  // enforceGlobalNotesCap(file 读死) → 用 trimNotesToCap 验证算法层面（12 组已证明 capOneProjectFile
+  // 走真路径）。补一组直接断言真机形态能被裁：
+  const r13 = trimNotesToCap(raw, 4096);
+  t("无段头 fixture 触发裁剪", r13.trimmed === true, `trimmed=${r13.trimmed} parked=${r13.parked.length}`);
+  console.log(`    (实测 parked=${r13.parked.length} 条, 文本=${Buffer.byteLength(r13.text)}B)`);
+  t("裁出条目数 = 恰到 cap 边界（≥3 且 ≤5）", r13.parked.length >= 3 && r13.parked.length <= 5, `parked=${r13.parked.length}`);
+  t("裁后 ≤ 4096+一行", Buffer.byteLength(r13.text) <= 4096 + 1100, `${Buffer.byteLength(r13.text)}`);
+  t("# 标题保留", /^#\s+Global Notes/m.test(r13.text));
+  t("HTML 注释保留", /机制说明注释若干行/.test(r13.text));
+  t("超限且无段头不再整体放弃（旧实现返回 trimmed=false）", r13.trimmed === true);
+  fs.rmSync(root, { recursive: true, force: true });
 }
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} memory-bootstrap 回归：${pass} 通过 / ${fail} 失败`);
