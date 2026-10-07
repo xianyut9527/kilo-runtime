@@ -154,6 +154,21 @@ else
   done <<< "$bk_list"
 fi
 
+# ---------- 4) Kilo 包缓存（$HOME/.cache/kilo）----------
+# 此前只统计不回收：实测 136MB / 12k 文件（其中 .bin 内嵌 CLI 二进制），且 2026-09-15
+# 与 09-20 两次快照各留 4.6k/7.5k 文件 —— 属于可重下的包缓存。保留最近 $TMP_DAYS 天。
+# 与 snapshot 同理按「顶层目录 mtime」整份回收：半删一个包目录只会在下次启动时重新下载。
+echo ""
+echo "== 4) $CACHE_DIR 顶层条目：保留最近 $TMP_DAYS 天 =="
+cache_found=0
+if [ -d "$CACHE_DIR" ]; then
+  while IFS= read -r e; do
+    cache_found=1
+    if older_than "$e" "$TMP_DAYS"; then plan_remove "$e" "$(if [ -d "$e" ]; then dir_kb "$e"; else file_kb "$e"; fi)"; else echo "  [KEEP] $e"; fi
+  done < <(find "$CACHE_DIR" -maxdepth 1 -mindepth 1 2>/dev/null | sort)
+fi
+[ "$cache_found" = "0" ] && echo "  (无)"
+
 # ---------- 摘要 ----------
 echo ""
 if [ "$MODE" = "run" ]; then
