@@ -182,6 +182,8 @@ function enforceGlobalNotesCap() {
 // project.md 头部解析），故策略比 GLOBAL-NOTES 简单：按「文件大小」直接裁，超限全量进 parked。
 const PROJECT_FILE_CAP_BYTES = 32 * 1024;       // 32KB/文件：远超正常项目记忆承载量
 const PROJECT_TARGET_BYTES = 24 * 1024;        // 封顶时裁到 ≤24KB，给接下来几轮留余量
+const PARKED_KEEP_BYTES = 256 * 1024;          // .parked 自身上限（append-only 防二次膨胀）
+const SESSION_ARCHIVE_DAYS = 90;               // sessions/<会话>.md 保留窗（只增不减项）
 const PROJECT_FILES = ["project.md", "corrections.md", "environment.md", "index.kmem"];
 
 function projectRoot() {
@@ -210,10 +212,38 @@ function enforceProjectMemoryCap() {
           console.error(`${TAG} project-memory 超 ${PROJECT_FILE_CAP_BYTES}B 封顶：${file.replace(DATA_DIR + path.sep, "")} ${st.size}B→${fs.statSync(file).size}B，parked → ${parkedPath.replace(DATA_DIR + path.sep, "")}，备份 ${path.basename(bak)}`);
         }
       }
+      // sessions/<时间戳>_<sessionID>_id_<hash>.md：每会话落一个（2026-10-08 二轮查漏：
+      // 实测 92 文件/362KB 且只增不减）。按 mtime 保留窗回收——这是「会话存档」性质，
+      // 与 project.md（活记忆）不同：过期即删，无 parked/备份（内容已进 project.md）。
+      pruneSessionArchive(root);
     }
   } catch {
     // 静默 —— 封顶失败不影响主流程
   }
+}
+
+// sessions/ 存档回收（2026-10-08 二轮查漏）：每会话一个 .md，只增不减。
+// 按文件 mtime 判保留窗（SESSION_ARCHIVE_DAYS），过期删除——会话存档的实质内容已由
+// consolidate 汇总进 project.md，这里只是过程留痕，无需 parked/备份。
+function pruneSessionArchive(root) {
+  try {
+    const dir = path.join(root, "sessions");
+    if (!fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return;
+    const cutoff = Date.now() - SESSION_ARCHIVE_DAYS * 86400_000;
+    let removed = 0;
+    for (const name of fs.readdirSync(dir)) {
+      const p = path.join(dir, name);
+      let st;
+      try { st = fs.lstatSync(p); } catch { continue; }
+      if (!st.isFile()) continue;                          // symlink/目录跳过
+      if (!/\.md$/.test(name)) continue;                    // 只回收 .md 存档
+      if (st.mtimeMs >= cutoff) continue;                   // 保留窗内不动
+      try { fs.rmSync(p, { force: true }); removed++; } catch { /* 删除失败跳过 */ }
+    }
+    if (removed > 0) {
+      console.error(`${TAG} sessions/ 存档回收：${removed} 个超 ${SESSION_ARCHIVE_DAYS} 天文件已删（${root.replace(DATA_DIR + path.sep, "")}）`);
+    }
+  } catch { /* 回收失败不影响主流程 */ }
 }
 
 function capOneProjectFile(file, currentSize) {
@@ -252,9 +282,24 @@ function capOneProjectFile(file, currentSize) {
   // ③ 无 parked 视为不动（结构异常，不破坏）—— 但有 capbak，原始内容已留底
   if (parked.length === 0) return { trimmed: false, parkedPath: "", bak };
   // ④ parked 归档（按 `<!-- parked ... -->` 块，与 GLOBAL-NOTES 风格一致）
+  //    ⚠️ parked 自身也封顶（2026-10-08 二轮查漏）：append-only 会让它成为下一个无限增长源
+  //    （实测已 640KB 累计）。保留最新 PARKED_KEEP_BYTES，旧的丢弃——capbak 才是完整兜底。
   const parkedPath = file + ".parked";
   const note = `<!-- parked ${new Date().toISOString().slice(0, 10)} —— 超 ${PROJECT_FILE_CAP_BYTES}B 封顶裁出（2026-10-08 根治：autoinject 静态膨胀），内容无损仅不再注入 -->`;
-  fs.appendFileSync(parkedPath, nl + note + nl + parked.join(nl) + nl, "utf8");
+  const parkedBlock = nl + note + nl + parked.join(nl) + nl;
+  try {
+    const prev = fs.existsSync(parkedPath) ? fs.readFileSync(parkedPath, "utf8") : "";
+    const combined = prev + parkedBlock;
+    if (Buffer.byteLength(combined, "utf8") > PARKED_KEEP_BYTES) {
+      // 保尾（最新裁出项）——按字节从尾部截，找行边界避免切碎一行
+      let cut = combined.length - PARKED_KEEP_BYTES;
+      const nlIdx = combined.indexOf(nl, cut);
+      if (nlIdx > 0) cut = nlIdx + nl.length;
+      fs.writeFileSync(parkedPath, `<!-- 已按 ${PARKED_KEEP_BYTES}B 封顶截断（旧项丢弃，完整原始见同目录 .capbak-<日期>） -->${nl}${combined.slice(cut)}`, "utf8");
+    } else {
+      fs.writeFileSync(parkedPath, combined, "utf8");
+    }
+  } catch { /* parked 封顶失败不阻断主流程（capbak 已落） */ }
   // ⑤ 写回裁剪版（只动这一会话的 project memory 根，无并发读者）
   const trimmedText = [...header, ...body].join(nl);
   fs.writeFileSync(file, trimmedText.endsWith(nl) ? trimmedText : trimmedText + nl, "utf8");
@@ -343,4 +388,6 @@ export const _export = {
   trimNotesToCap, GLOBAL_NOTES_CAP_BYTES,
   // 2026-10-08 增：项目记忆封顶（离线测试要断言）
   capOneProjectFile, PROJECT_FILE_CAP_BYTES, PROJECT_TARGET_BYTES, PROJECT_FILES,
+  // 2026-10-08 二轮查漏：.parked 自身封顶 + sessions/ 存档回收
+  pruneSessionArchive, PARKED_KEEP_BYTES, SESSION_ARCHIVE_DAYS,
 };

@@ -26,7 +26,7 @@ try {
 } finally {
   fs.rmSync(bundle, { force: true });
 }
-const { trimNotesToCap, GLOBAL_NOTES_CAP_BYTES, capOneProjectFile, PROJECT_FILE_CAP_BYTES, PROJECT_TARGET_BYTES, PROJECT_FILES } = mod._export ?? mod;
+const { trimNotesToCap, GLOBAL_NOTES_CAP_BYTES, capOneProjectFile, PROJECT_FILE_CAP_BYTES, PROJECT_TARGET_BYTES, PROJECT_FILES, pruneSessionArchive, PARKED_KEEP_BYTES, SESSION_ARCHIVE_DAYS } = mod._export ?? mod;
 
 let pass = 0, fail = 0;
 const failed = [];
@@ -202,6 +202,46 @@ function makeNotes(n) {
   // 清理
   fs.rmSync(bundle2, { force: true });
   fs.rmSync(tmpData, { recursive: true, force: true });
+}
+
+// ── 2026-10-08 二轮查漏：.parked 自身封顶 + sessions/ 存档回收 ──
+{
+  console.log("== 10) .parked 自身封顶（append-only 防二次膨胀）==");
+  t("PARKED_KEEP_BYTES=256KB 常量", PARKED_KEEP_BYTES === 256 * 1024);
+  const fx = path.join(os.tmpdir(), `parked-cap-${process.pid}.md`);
+  const line = "- item :: " + "y".repeat(200) + "\n";
+  // 直接构造超限 combined：先写 300KB 再 cap 一次（走 capOneProjectFile 的 parked 分支）
+  fs.writeFileSync(fx, "## Facts\n\n" + line.repeat(1400), "utf8");  // 300KB 主文件
+  // 预置 300KB parked（模拟历史堆积）
+  fs.writeFileSync(fx + ".parked", line.repeat(1400), "utf8");
+  const beforeParked = fs.statSync(fx + ".parked").size;
+  t("预置 parked 超 256KB", beforeParked > 256 * 1024, `before=${beforeParked}`);
+  capOneProjectFile(fx, fs.statSync(fx).size);
+  const afterParked = fs.statSync(fx + ".parked").size;
+  t("cap 后 parked ≤ 256KB + 一行余量", afterParked <= 256 * 1024 + 512, `after=${afterParked}`);
+  t("parked 含截断标注", /封顶截断/.test(fs.readFileSync(fx + ".parked", "utf8")));
+  fs.rmSync(fx, { force: true });
+  fs.rmSync(fx + ".parked", { force: true });
+  const cb = fs.readdirSync(os.tmpdir()).find((f) => f.startsWith(path.basename(fx)) && f.includes("capbak"));
+  if (cb) fs.rmSync(path.join(os.tmpdir(), cb), { force: true });
+}
+{
+  console.log("== 11) sessions/ 存档回收 ==");
+  t("SESSION_ARCHIVE_DAYS=90", SESSION_ARCHIVE_DAYS === 90);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `sess-prune-${process.pid}-`));
+  fs.mkdirSync(path.join(root, "sessions"), { recursive: true });
+  const old = new Date(Date.now() - 100 * 86400_000);   // 100 天前
+  const fresh = new Date();
+  const mk = (name, when) => { const f = path.join(root, "sessions", name); fs.writeFileSync(f, "x", "utf8"); fs.utimesSync(f, when, when); };
+  mk("old1.md", old); mk("old2.md", old); mk("new1.md", fresh);
+  mk("notes.txt", old);                                  // 非 .md 不动
+  pruneSessionArchive(root);
+  t("超 90 天的 .md 已删", !fs.existsSync(path.join(root, "sessions", "old1.md")) && !fs.existsSync(path.join(root, "sessions", "old2.md")));
+  t("窗口内 .md 保留", fs.existsSync(path.join(root, "sessions", "new1.md")));
+  t("非 .md 不动", fs.existsSync(path.join(root, "sessions", "notes.txt")));
+  pruneSessionArchive(path.join(root, "nonexistent"));   // 无 sessions 目录不炸
+  t("无 sessions 目录不抛错", true);
+  fs.rmSync(root, { recursive: true, force: true });
 }
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} memory-bootstrap 回归：${pass} 通过 / ${fail} 失败`);
