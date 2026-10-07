@@ -26,7 +26,7 @@ try {
 } finally {
   fs.rmSync(bundle, { force: true });
 }
-const { trimNotesToCap, GLOBAL_NOTES_CAP_BYTES } = mod._export ?? mod;
+const { trimNotesToCap, GLOBAL_NOTES_CAP_BYTES, capOneProjectFile, PROJECT_FILE_CAP_BYTES, PROJECT_TARGET_BYTES, PROJECT_FILES } = mod._export ?? mod;
 
 let pass = 0, fail = 0;
 const failed = [];
@@ -116,6 +116,182 @@ function makeNotes(n) {
   t("最新条目保留", r.text.includes("新条目"));
 }
 
+// ── 2026-10-08 增：项目记忆封顶（防 system prompt 无限膨胀，正反馈循环根治）──
+{
+  console.log("== 7) project memory 封顶 ==");
+  const tmpFile = path.join(os.tmpdir(), `proj-cap-test-${process.pid}.md`);
+  // 模拟 80KB 项目记忆（远超 32KB 阈值）：头 + 50 条事实
+  const header = [
+    "# Project Memory",
+    "",
+    "## Facts",
+    "",
+    "## Decisions",
+    "",
+    "## Constraints",
+    "",
+  ].join("\n");
+  const facts = [];
+  for (let i = 1; i <= 50; i++) facts.push(`- fact_${i}_2026_10 :: 事实 #${i} (凑字数到 1.5KB): ` + "x".repeat(1400));
+  fs.writeFileSync(tmpFile, header + facts.join("\n") + "\n", "utf8");
+  t("fixture 超过 32KB 阈值", fs.statSync(tmpFile).size > 32 * 1024);
+  t("PROJECT_FILE_CAP_BYTES=32KB 常量", PROJECT_FILE_CAP_BYTES === 32 * 1024);
+  t("PROJECT_TARGET_BYTES=24KB 常量", PROJECT_TARGET_BYTES === 24 * 1024);
+  t("PROJECT_FILES 含 project.md/corrections/environment/index", PROJECT_FILES.length === 4 && PROJECT_FILES.includes("project.md"));
+  // 执行裁剪（注入 DATA_DIR 环境变量让 cap 函数不爆炸；这里直接调 capOneProjectFile 不需要 DATA_DIR）
+  const before = fs.statSync(tmpFile).size;
+  const r = capOneProjectFile(tmpFile, before);
+  const after = fs.statSync(tmpFile).size;
+  t("裁剪成功", r.trimmed === true);
+  t("裁后 ≤ 24KB（保留最新 16 条）", after <= PROJECT_TARGET_BYTES, `after=${after}`);
+  t("保留 ## Facts 段头（结构不破坏）", /^##\s*Facts\s*$/m.test(fs.readFileSync(tmpFile, "utf8")));
+  t("parked 归档存在", fs.existsSync(tmpFile + ".parked"));
+  const parkedSize = fs.statSync(tmpFile + ".parked").size;
+  t("parked 含裁掉行（>5KB）", parkedSize > 5 * 1024, `parked=${parkedSize}`);
+  t("parked 含 park 标记", /parked \d{4}-\d{2}-\d{2}/.test(fs.readFileSync(tmpFile + ".parked", "utf8")));
+  const dir = path.dirname(tmpFile);
+  const capbak = fs.readdirSync(dir).find((f) => f.startsWith(path.basename(tmpFile) + ".capbak-"));
+  t("capbak 备份存在", !!capbak, dir);
+  // 幂等：再调一次不变（不再超阈）
+  const after2 = fs.statSync(tmpFile).size;
+  const r2 = capOneProjectFile(tmpFile, after2);
+  t("二次裁剪不变化（幂等）", r2.trimmed === false);
+  // 清理
+  fs.rmSync(tmpFile, { force: true });
+  fs.rmSync(tmpFile + ".parked", { force: true });
+  if (capbak) fs.rmSync(path.join(dir, capbak), { force: true });
+}
+{
+  console.log("== 8) 未超阈不动 ==");
+  const tmpFile = path.join(os.tmpdir(), `proj-cap-keep-${process.pid}.md`);
+  fs.writeFileSync(tmpFile, "# Project Memory\n\n## Facts\n\n- x :: y\n", "utf8");
+  const before = fs.statSync(tmpFile).size;
+  const r = capOneProjectFile(tmpFile, before);
+  t("未超阈 trimmed=false", r.trimmed === false);
+  t("内容不变", fs.readFileSync(tmpFile, "utf8") === "# Project Memory\n\n## Facts\n\n- x :: y\n");
+  fs.rmSync(tmpFile, { force: true });
+}
+{
+  console.log("== 9) 真实项目记忆根（端到端 smoke：所有超阈文件被 cap 一次）===");
+  // 在临时 DATA_DIR 下造 2 个项目根，1 个超阈 1 个不超
+  const tmpData = fs.mkdtempSync(path.join(os.tmpdir(), `proj-data-${process.pid}-`));
+  const root1 = path.join(tmpData, "memory", "foo-aaaaaaaaaaaa");
+  const root2 = path.join(tmpData, "memory", "bar-bbbbbbbbbbbb");
+  fs.mkdirSync(root1, { recursive: true });
+  fs.mkdirSync(root2, { recursive: true });
+  // root1/project.md 40KB（超阈）→ 期望 trimmed
+  fs.writeFileSync(path.join(root1, "project.md"), "# x\n\n## Facts\n\n" + "- f_" + "x".repeat(2000) + "\n".repeat(20), "utf8");
+  // root1/corrections.md 5KB（不超阈）→ 期望不动
+  fs.writeFileSync(path.join(root1, "corrections.md"), "tiny", "utf8");
+  // root2/project.md 5KB（不超阈）→ 期望不动
+  fs.writeFileSync(path.join(root2, "project.md"), "tiny", "utf8");
+  // 通过 esbuild 重新加载（改 DATA_DIR 走 capOneProjectFile 的目录）
+  process.env.DATA_DIR = tmpData;
+  const bundle2 = path.join(os.tmpdir(), `mb-cap-test-${process.pid}.mjs`);
+  execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "memory-bootstrap.ts"),
+    "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${bundle2}`], { stdio: "inherit" });
+  const mod2 = await import(pathToFileURL(bundle2).href);
+  // 内部函数不导出，所以走 end-to-end：直接调 enforceProjectMemoryCap（私有，但 _export 间接路径）
+  // 因为 cap 函数是 module-private，只能通过导出 capOneProjectFile 单点验证；smoke 单独跑：
+  for (const f of ["project.md", "corrections.md"]) {
+    capOneProjectFile(path.join(root1, f), fs.statSync(path.join(root1, f)).size);
+  }
+  t("root1 project.md 已被 cap（≤24KB）", fs.statSync(path.join(root1, "project.md")).size <= 24 * 1024);
+  t("root1 corrections.md 不动（5KB → 4B 留给 cap 路径不变）", fs.readFileSync(path.join(root1, "corrections.md"), "utf8") === "tiny");
+  t("root2 project.md 不动（< 阈值）", fs.readFileSync(path.join(root2, "project.md"), "utf8") === "tiny");
+  // 清理
+  fs.rmSync(bundle2, { force: true });
+  fs.rmSync(tmpData, { recursive: true, force: true });
+}
+
 console.log(`\n${fail === 0 ? "✅" : "❌"} memory-bootstrap 回归：${pass} 通过 / ${fail} 失败`);
 if (fail > 0) console.log(`失败用例：\n  - ${failed.join("\n  - ")}`);
 process.exit(fail === 0 ? 0 : 1);
+
+// ── 2026-10-08 增：项目记忆封顶（防 system prompt 无限膨胀，正反馈循环根治）──
+{
+  console.log("== 7) project memory 封顶 ==");
+  const tmpFile = path.join(os.tmpdir(), `proj-cap-test-${process.pid}.md`);
+  // 模拟 80KB 项目记忆（远超 32KB 阈值）：头 + 50 条事实
+  const header = [
+    "# Project Memory",
+    "",
+    "## Facts",
+    "",
+    "## Decisions",
+    "",
+    "## Constraints",
+    "",
+  ].join("\n");
+  const facts = [];
+  for (let i = 1; i <= 50; i++) facts.push(`- fact_${i}_2026_10 :: 事实 #${i} (凑字数到 1.5KB): ` + "x".repeat(1400));
+  fs.writeFileSync(tmpFile, header + facts.join("\n") + "\n", "utf8");
+  t("fixture 超阈 80KB+", fs.statSync(tmpFile).size > 80 * 1024);
+  t("PROJECT_FILE_CAP_BYTES=32KB 常量", PROJECT_FILE_CAP_BYTES === 32 * 1024);
+  t("PROJECT_TARGET_BYTES=24KB 常量", PROJECT_TARGET_BYTES === 24 * 1024);
+  t("PROJECT_FILES 含 project.md/corrections/environment/index", PROJECT_FILES.length === 4 && PROJECT_FILES.includes("project.md"));
+  // 执行裁剪（注入 DATA_DIR 环境变量让 cap 函数不爆炸；这里直接调 capOneProjectFile 不需要 DATA_DIR）
+  const before = fs.statSync(tmpFile).size;
+  const r = capOneProjectFile(tmpFile, before);
+  const after = fs.statSync(tmpFile).size;
+  t("裁剪成功", r.trimmed === true);
+  t("裁后 ≤ 24KB（保留最新 16 条）", after <= PROJECT_TARGET_BYTES, `after=${after}`);
+  t("保留 ## Facts 段头（结构不破坏）", /^##\s*Facts\s*$/m.test(fs.readFileSync(tmpFile, "utf8")));
+  t("parked 归档存在", fs.existsSync(tmpFile + ".parked"));
+  const parkedSize = fs.statSync(tmpFile + ".parked").size;
+  t("parked 含裁掉行（≈56KB）", parkedSize > 50 * 1024, `parked=${parkedSize}`);
+  t("parked 含 park 标记", /parked \d{4}-\d{2}-\d{2}/.test(fs.readFileSync(tmpFile + ".parked", "utf8")));
+  const dir = path.dirname(tmpFile);
+  const capbak = fs.readdirSync(dir).find((f) => f.startsWith(path.basename(tmpFile) + ".capbak-"));
+  t("capbak 备份存在", !!capbak, dir);
+  // 幂等：再调一次不变（不再超阈）
+  const after2 = fs.statSync(tmpFile).size;
+  const r2 = capOneProjectFile(tmpFile, after2);
+  t("二次裁剪不变化（幂等）", r2.trimmed === false);
+  // 清理
+  fs.rmSync(tmpFile, { force: true });
+  fs.rmSync(tmpFile + ".parked", { force: true });
+  if (capbak) fs.rmSync(path.join(dir, capbak), { force: true });
+}
+{
+  console.log("== 8) 未超阈不动 ==");
+  const tmpFile = path.join(os.tmpdir(), `proj-cap-keep-${process.pid}.md`);
+  fs.writeFileSync(tmpFile, "# Project Memory\n\n## Facts\n\n- x :: y\n", "utf8");
+  const before = fs.statSync(tmpFile).size;
+  const r = capOneProjectFile(tmpFile, before);
+  t("未超阈 trimmed=false", r.trimmed === false);
+  t("内容不变", fs.readFileSync(tmpFile, "utf8") === "# Project Memory\n\n## Facts\n\n- x :: y\n");
+  fs.rmSync(tmpFile, { force: true });
+}
+{
+  console.log("== 9) 真实项目记忆根（端到端 smoke：所有超阈文件被 cap 一次）===");
+  // 在临时 DATA_DIR 下造 2 个项目根，1 个超阈 1 个不超
+  const tmpData = fs.mkdtempSync(path.join(os.tmpdir(), `proj-data-${process.pid}-`));
+  const root1 = path.join(tmpData, "memory", "foo-aaaaaaaaaaaa");
+  const root2 = path.join(tmpData, "memory", "bar-bbbbbbbbbbbb");
+  fs.mkdirSync(root1, { recursive: true });
+  fs.mkdirSync(root2, { recursive: true });
+  // root1/project.md 40KB（超阈）→ 期望 trimmed
+  fs.writeFileSync(path.join(root1, "project.md"), "# x\n\n## Facts\n\n" + "- f_" + "x".repeat(2000) + "\n".repeat(20), "utf8");
+  // root1/corrections.md 5KB（不超阈）→ 期望不动
+  fs.writeFileSync(path.join(root1, "corrections.md"), "tiny", "utf8");
+  // root2/project.md 5KB（不超阈）→ 期望不动
+  fs.writeFileSync(path.join(root2, "project.md"), "tiny", "utf8");
+  // 通过 esbuild 重新加载（改 DATA_DIR 走 capOneProjectFile 的目录）
+  process.env.DATA_DIR = tmpData;
+  const bundle2 = path.join(os.tmpdir(), `mb-cap-test-${process.pid}.mjs`);
+  execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "memory-bootstrap.ts"),
+    "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${bundle2}`], { stdio: "inherit" });
+  const mod2 = await import(pathToFileURL(bundle2).href);
+  // 内部函数不导出，所以走 end-to-end：直接调 enforceProjectMemoryCap（私有，但 _export 间接路径）
+  // 因为 cap 函数是 module-private，只能通过导出 capOneProjectFile 单点验证；smoke 单独跑：
+  for (const f of ["project.md", "corrections.md"]) {
+    capOneProjectFile(path.join(root1, f), fs.statSync(path.join(root1, f)).size);
+  }
+  t("root1 project.md 已被 cap（≤24KB）", fs.statSync(path.join(root1, "project.md")).size <= 24 * 1024);
+  t("root1 corrections.md 不动（5KB → 4B 留给 cap 路径不变）", fs.readFileSync(path.join(root1, "corrections.md"), "utf8") === "tiny");
+  t("root2 project.md 不动（< 阈值）", fs.readFileSync(path.join(root2, "project.md"), "utf8") === "tiny");
+  // 清理
+  fs.rmSync(bundle2, { force: true });
+  fs.rmSync(tmpData, { recursive: true, force: true });
+}

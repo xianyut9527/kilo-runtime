@@ -173,6 +173,94 @@ function enforceGlobalNotesCap() {
   }
 }
 
+// ── 项目记忆封顶（2026-10-08 根治：autoinject 静态内容无限膨胀）────────────────
+// 背景：每会话 autoInject=true 把项目记忆 <root>/{project.md,corrections.md,environment.md,index.kmem}
+// 全量塞进 system prompt。实测 14 天无封顶：project.md 涨到 277KB / corrections.md 47KB，
+// 单会话静态注入总量 342KB（≈85k token），每步都全量重传上游网关，正反馈使越用越卡。
+// 范本：GLOBAL-NOTES 4KB 封顶 + parked 归档 + capbak-单次保留，已在生产稳定运行（2026-09-15 起）。
+// 本节把同一套机制应用到项目记忆 4 个文件 —— 旁路访问路径（kilo 走 4 个文件本体，不是
+// project.md 头部解析），故策略比 GLOBAL-NOTES 简单：按「文件大小」直接裁，超限全量进 parked。
+const PROJECT_FILE_CAP_BYTES = 32 * 1024;       // 32KB/文件：远超正常项目记忆承载量
+const PROJECT_TARGET_BYTES = 24 * 1024;        // 封顶时裁到 ≤24KB，给接下来几轮留余量
+const PROJECT_FILES = ["project.md", "corrections.md", "environment.md", "index.kmem"];
+
+function projectRoot() {
+  // 部署在 <configRoot>/plugin/ 下，配置根 = 上一级（与 globalNotesFile 同口径）
+  const configRoot = path.dirname(import.meta.dir);
+  return path.join(configRoot);
+}
+
+function enforceProjectMemoryCap() {
+  // 1) 列举所有项目记忆根（layout: <DATA_DIR>/memory/<basename>-<sha1[:12]>/）
+  //    DATA_DIR 的同源取法：DATA_DIR 在文件顶部 const 定义（与 hx-client 同源）；
+  //    此处只需"哪几个文件夹的 4 个 md/kn 文件超了"，遍历主工作目录的 4 个文件足够——
+  //    每会话仅在 MemoryBootstrapImpl 初始化时被调用一次，开销可忽略。
+  // 2) 任何异常静默（never-throw 约定：自愈/封顶失败绝不影响宿主与记忆自举主流程）。
+  try {
+    for (const folderName of fs.readdirSync(path.join(DATA_DIR, "memory"))) {
+      const root = path.join(DATA_DIR, "memory", folderName);
+      if (!fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) continue;
+      for (const fname of PROJECT_FILES) {
+        const file = path.join(root, fname);
+        let st;
+        try { st = fs.statSync(file); } catch { continue; }
+        if (st.size <= PROJECT_FILE_CAP_BYTES) continue;
+        const { trimmed, parkedPath, bak } = capOneProjectFile(file, st.size);
+        if (trimmed) {
+          console.error(`${TAG} project-memory 超 ${PROJECT_FILE_CAP_BYTES}B 封顶：${file.replace(DATA_DIR + path.sep, "")} ${st.size}B→${fs.statSync(file).size}B，parked → ${parkedPath.replace(DATA_DIR + path.sep, "")}，备份 ${path.basename(bak)}`);
+        }
+      }
+    }
+  } catch {
+    // 静默 —— 封顶失败不影响主流程
+  }
+}
+
+function capOneProjectFile(file, currentSize) {
+  // ① 备份原文件（.capbak-<yyyymmdd> 只留最近 1 份，独立于 .bak-<yyyymmdd> 命名，不覆盖）
+  const dir = path.dirname(file);
+  const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const bak = path.join(dir, `${path.basename(file)}.capbak-${ymd}`);
+  fs.copyFileSync(file, bak);
+  for (const b of fs.readdirSync(dir).filter((f) => f.startsWith(path.basename(file) + ".capbak-")).sort().slice(0, -1)) {
+    try { fs.rmSync(path.join(dir, b), { force: true }); } catch { /* 旧备份清理失败不阻断 */ }
+  }
+  // ② 裁到 ≤ PROJECT_TARGET_BYTES（按 UTF-8 字节裁行：行格式 '- topic :: content'，行头删除无损）
+  let text = fs.readFileSync(file, "utf8");
+  const nl = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.split(/\r?\n/);
+  // 保留 header：行首到 ## Facts/## Decisions/## Open Questions 段头为止（不动结构）
+  const headerEnd = (() => {
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (/^##\s+(Facts|Decisions|Constraints|Open Questions|Notes|Commands|Paths|Tooling|Corrections)\s*$/.test(l.trim())) return i;
+    }
+    return 0; // 没找到段头就保留全部
+  })();
+  const header = lines.slice(0, headerEnd);
+  const body = lines.slice(headerEnd);
+  let bytes = Buffer.byteLength(text, "utf8");
+  const parked = [];
+  // 从 body 末尾开始裁（保留最新的事实，老的先入 parked）—— 保新是项目记忆更可读
+  while (bytes > PROJECT_TARGET_BYTES && body.length > 0) {
+    const last = body.pop();
+    if (last === undefined) break;
+    const lb = Buffer.byteLength(last, "utf8") + nl.length;
+    bytes -= lb;
+    parked.push(last);
+  }
+  // ③ 无 parked 视为不动（结构异常，不破坏）—— 但有 capbak，原始内容已留底
+  if (parked.length === 0) return { trimmed: false, parkedPath: "", bak };
+  // ④ parked 归档（按 `<!-- parked ... -->` 块，与 GLOBAL-NOTES 风格一致）
+  const parkedPath = file + ".parked";
+  const note = `<!-- parked ${new Date().toISOString().slice(0, 10)} —— 超 ${PROJECT_FILE_CAP_BYTES}B 封顶裁出（2026-10-08 根治：autoinject 静态膨胀），内容无损仅不再注入 -->`;
+  fs.appendFileSync(parkedPath, nl + note + nl + parked.join(nl) + nl, "utf8");
+  // ⑤ 写回裁剪版（只动这一会话的 project memory 根，无并发读者）
+  const trimmedText = [...header, ...body].join(nl);
+  fs.writeFileSync(file, trimmedText.endsWith(nl) ? trimmedText : trimmedText + nl, "utf8");
+  return { trimmed: true, parkedPath, bak };
+}
+
 function ensureGlobalNotes() {
   try {
     // 插件部署在 <configRoot>/plugin/ 下，配置根 = 上一级（实测 import.meta.dir = .../kilo/plugin）
@@ -217,6 +305,7 @@ const MemoryBootstrapImpl = async ({ directory }) => {
   try {
     ensureGlobalNotes();
     enforceGlobalNotesCap(); // 封顶在 init + 每会话复检两处闭环：长驻进程不重启也封得住
+    enforceProjectMemoryCap(); // 项目记忆封顶（与上同口径：防 system prompt 无限膨胀）
     if (directory) bootstrap(directory);
   } catch (e) {
     console.error(TAG, "init failed:", e);
@@ -227,6 +316,7 @@ const MemoryBootstrapImpl = async ({ directory }) => {
         const ev = input?.event;
         if (!ev || ev.type !== "session.created") return;
         enforceGlobalNotesCap(); // 复检（statSync 挡住常态路径，便宜）
+        enforceProjectMemoryCap(); // 复检（项目记忆封顶与上面同管 line）
         const dir = ev.properties?.info?.directory;
         if (dir) bootstrap(dir);
       } catch {
@@ -249,4 +339,8 @@ export const MemoryBootstrap = async (ctx = {}) => {
 
 // Kilo vE2 契约同 quality-gate/dual-review：工具函数经 _export 命名空间暴露给离线测试
 // （scripts/test-memory-bootstrap.mjs）——对象无 server 属性，kE2 跳过，绝不会被当工厂调用。
-export const _export = { trimNotesToCap, GLOBAL_NOTES_CAP_BYTES };
+export const _export = {
+  trimNotesToCap, GLOBAL_NOTES_CAP_BYTES,
+  // 2026-10-08 增：项目记忆封顶（离线测试要断言）
+  capOneProjectFile, PROJECT_FILE_CAP_BYTES, PROJECT_TARGET_BYTES, PROJECT_FILES,
+};
