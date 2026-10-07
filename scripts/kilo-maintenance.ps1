@@ -8,8 +8,9 @@
   组成：
     1) cleanup.sh --run            临时目录 + 配置备份保留（无 DB 锁）
     2) storage-maintain.mjs --run  数据目录增长项回收：session_diff/log/snapshot 留 30 天（无 DB 锁）
-    3) db-maintain.sh --no-vacuum  kilo.db 事件/过期会话瘦身（分批短锁，Kilo 活着也安全）
-       · VACUUM（回收文件空间）保持人工执行 —— 需独占锁，会打断并发会话
+    3) db-maintain.sh               kilo.db 事件/过期会话瘦身（分批短锁，Kilo 活着也安全）
+       · VACUUM（回收文件空间）按阈值自动执行：空闲页占比 ≥ VACUUM_MIN_PCT（默认 25%）
+         且无 kilo 写者时才跑（实测 7.34GB→1.49GB 约 150s）；否则自动跳过，绝不打断会话
 
   用法：
     .\kilo-maintenance.ps1 -RunOnce       立即执行一次（清理 + 数据目录回收 + DB 瘦身）
@@ -142,6 +143,9 @@ function Invoke-Cleanup {
     # 数据目录增长项（session_diff/log/snapshot，2026-10-07 体检闭环）留 30 天。
     # 两者失败都不互相阻断：返回首个非零退出码（后续步骤照跑）。
     $rc1 = Invoke-RepoScript -Script 'cleanup.sh' -ScriptArgs @('--run', '--days', '3', '--tmp-days', '7', '--keep-backups', '2') -Label 'cleanup'
+    # 2026-10-07：不再带 --keep-snapshots。snapshot 是每个项目一份的影子 git 对象库（实测 423MB）
+    # 且永不回收——storage-maintain 现按「顶层目录 mtime 超期」整份删除（只删含 .git/objects 的目录，
+    # 不碰活跃库），这是「越用越臃肿」的最后一个无回收增长项。
     $rc2 = Invoke-RepoScript -Script 'scripts/storage-maintain.mjs' -ScriptArgs @('--run', '--days', '30') -Label 'storage' -Node
     if ($rc1 -ne 0) { return $rc1 }
     return $rc2
@@ -149,7 +153,11 @@ function Invoke-Cleanup {
 
 function Invoke-DbMaintain {
     param([switch]$StatusOnly)
-    $a = @('--no-vacuum', '--days', '30')
+    # 2026-10-07：不再无条件 --no-vacuum。db-maintain.sh 现自带 VACUUM 门槛——
+    # 「空闲页占比 ≥ VACUUM_MIN_PCT（默认 25%）且当前无 kilo 写者」才执行，否则自动跳过。
+    # 因此自动维护可以在无人值守时安全回收文件空间（此前只 DELETE，文件永不缩：
+    # 实测 7.34GB 文件里 5.4GB 是 freelist 空洞）。Kilo 开着时该步自然跳过，不打断会话。
+    $a = @('--days', '30')
     if ($StatusOnly) { $a = @('--status') }
     return Invoke-RepoScript -Script 'db-maintain.sh' -ScriptArgs $a -Label 'db'
 }
@@ -307,7 +315,7 @@ if ($Register) {
     }
     Write-Host "[TASK] 已注册：$TaskDaily（每日 04:00 清理）、$TaskWeekly（每周日 04:30 清理 + DB 瘦身）"
     Write-Host "[TASK] bash: $bash  node: $node"
-    Write-Host "[TASK] VACUUM 未自动化（需独占锁）：在 Kilo 全部关闭后人工跑 ./db-maintain.sh"
+    Write-Host "[TASK] VACUUM 已按阈值自动化（空闲页 ≥25% 且无 kilo 写者才跑；否则跳过）"
     exit 0
 }
 

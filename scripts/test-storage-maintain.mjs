@@ -57,8 +57,11 @@ function fixture() {
   mk(path.join("log", "kilo.log"), 300, fresh);
   mk(path.join("tsc-cache", "deadbeef01.tsbuildinfo"), 1500, old);
   mk(path.join("tsc-cache", "cafe02.tsbuildinfo"), 200, fresh);
-  mk(path.join("snapshot", "sub", "old.bin"), 4000, old);
-  mk(path.join("snapshot", "sub", "new.bin"), 600, fresh);
+  // snapshot:目录级回收目标 —— 顶层目录含 objects/ 或 .git 且「目录自身 mtime」超期
+  mk(path.join("snapshot", "deadbeef", "objects", "aa", "old.bin"), 4000, old);
+  mk(path.join("snapshot", "deadbeef", "objects", "bb", "old2.bin"), 1000, old);
+  fs.utimesSync(path.join(root, "snapshot", "deadbeef"), old, old); // 目录 mtime 超期
+  mk(path.join("snapshot", "cafebabe", "objects", "cc", "new.bin"), 600, fresh);
   // 报告-only:kilo.db / memory / session-export.db(必须存活)
   mk("kilo.db", 3000, old);
   mk(path.join("memory", "proj-abc", "project.md"), 100, old);
@@ -79,7 +82,7 @@ function fixture() {
   const r = run(["--status", "--days", "30"], root);
   t("退出码 0", r.status === 0);
   t("json 解析", r.json != null);
-  t("预览字节数 = 四个超期文件之和(1000+2000+1500+4000)", r.json?.plannedBytes === 8500);
+  t("预览字节数 = 文件级超期之和(1000+2000+1500) + snapshot 整目录(4000+1000)", r.json?.plannedBytes === 9500);
   t("dry-run deleted=0", r.json?.deleted === 0);
   t("session_diff 文件未动", fs.readdirSync(path.join(root, "storage", "session_diff")).length === before.length);
   t("旧文件仍在", fs.existsSync(path.join(root, "storage", "session_diff", "ses_old.json")));
@@ -92,16 +95,16 @@ function fixture() {
   const root = fixture();
   const r = run(["--run", "--days", "30"], root);
   t("退出码 0", r.status === 0);
-  t("删除 4 项", r.json?.deleted === 4);
-  t("释放字节 = 8500", r.json?.deletedBytes === 8500);
+  t("删除 4 项(3 文件 + 1 个 snapshot 目录)", r.json?.deleted === 4);
+  t("释放字节 = 9500", r.json?.deletedBytes === 9500);
   t("旧 session_diff 已删", !fs.existsSync(path.join(root, "storage", "session_diff", "ses_old.json")));
   t("新 session_diff 保留", fs.existsSync(path.join(root, "storage", "session_diff", "ses_new.json")));
   t("旧 log 已删", !fs.existsSync(path.join(root, "log", "kilo.log.old")));
   t("新 log 保留", fs.existsSync(path.join(root, "log", "kilo.log")));
   t("旧 tsbuildinfo 已删(闲置项目缓存回收)", !fs.existsSync(path.join(root, "tsc-cache", "deadbeef01.tsbuildinfo")));
   t("新 tsbuildinfo 保留", fs.existsSync(path.join(root, "tsc-cache", "cafe02.tsbuildinfo")));
-  t("旧 snapshot 已删", !fs.existsSync(path.join(root, "snapshot", "sub", "old.bin")));
-  t("新 snapshot 保留", fs.existsSync(path.join(root, "snapshot", "sub", "new.bin")));
+  t("超期 snapshot 目录整份已删", !fs.existsSync(path.join(root, "snapshot", "deadbeef")));
+  t("窗口内 snapshot 目录保留", fs.existsSync(path.join(root, "snapshot", "cafebabe", "objects", "cc", "new.bin")));
   t("kilo.db 存活(报告-only)", fs.existsSync(path.join(root, "kilo.db")));
   t("memory 存活(报告-only)", fs.existsSync(path.join(root, "memory", "proj-abc", "project.md")));
   t("session-export.db 存活(报告-only)", fs.existsSync(path.join(root, "session-export.db")));
@@ -116,7 +119,7 @@ function fixture() {
   const r = run(["--run", "--days", "30", "--keep-snapshots"], root);
   t("退出码 0", r.status === 0);
   t("只删 3 项(session_diff+log+tsc-cache)", r.json?.deleted === 3);
-  t("snapshot 旧文件保留", fs.existsSync(path.join(root, "snapshot", "sub", "old.bin")));
+  t("snapshot 旧目录保留(--keep-snapshots)", fs.existsSync(path.join(root, "snapshot", "deadbeef")));
   fs.rmSync(root, { recursive: true, force: true });
 }
 
@@ -156,7 +159,7 @@ function fixture() {
   // 6a) dry-run:命中清单但不动盘
   const rd = run2(["--status", "--days", "30", "--bigfile-bytes", "1024"]);
   t("dry-run 退出码 0", rd.status === 0);
-  t("dry-run plannedBytes 含失控大文件(8500+5000)", rd.json?.plannedBytes === 13500);
+  t("dry-run plannedBytes 含失控大文件(9500+5000)", rd.json?.plannedBytes === 14500);
   t("dry-run bigfileDeleted=0", rd.json?.bigfileDeleted === 0);
   t("失控文件未动", fs.existsSync(path.join(root, "tool-output", "tool_runaway001")));
   // 6b) --run:删失控+闲置,保留活跃与小文件;写审计日志

@@ -162,10 +162,12 @@ macOS / Linux（bash）：
 
 **event 表是无条件清空的**：`db-maintain.sh` 对 `event`（纯事件溯源流水，`--days` 对它无效）一律 `DELETE` 全表并顺带清空 `event_sequence`；`--days` 只作用于 `message`/`session`/`todo`。这符合设计——已结束会话的内容不依赖 event 重放。
 
+**snapshot 目录级回收（2026-10-07 三次体检）**：`snapshot/<project-sha>/<snapshot-sha>/` 是 Kilo 为每个项目维护的影子 git 对象库，**永不自回收**（实测 423MB / 14 个项目）。`storage-maintain.mjs` 新增 `PRUNE_DIRS`：按**顶层目录 mtime** 整份删除（只删「≤2 层内出现 `objects/`/`.git/`」且目录 mtime 超保留窗的目录，不跟随 symlink、不碰活跃库）——逐文件删会在一个 git 库里制造半残对象，故必须目录级。`--keep-snapshots` 仍可整体跳过。
+
 **storage-maintain 集成（2026-10-07 二次体检）**：`db-maintain.sh` 在 WAL checkpoint 后自动调 `node scripts/storage-maintain.mjs --run --keep-snapshots --days 30`，覆盖 DB 之外的增长项——`storage/session_diff`（已删会话的孤儿 diff，实测 2,685 个/192MB）、`log`、`tsc-cache`，外加 **tool-output 失控看门狗**（单文件 >256MB 且 mtime 闲置 >60min 才删；正被写入的文件 mtime 持续更新天然落在宽限内；删除写 `storage-maintain-audit.log` 审计；`--bigfile-bytes 0` 可禁用）。背景：2026-10-03 事故——`node -e` 死循环把单条工具输出灌到 1.35GB，内置 hourly 清理只删 7 天外文件对活跃失控文件无防线；单文件大小上限属二进制行为无法配置，看门狗是配置层唯一防线。storage-maintain 失败只告警、不影响 DB 清理退出码。
 
 安全边界：`cleanup.sh` 绝不删 `$TEMP/kilo` 本身（Kilo 运行时还在往里写），也绝不碰 `~/.local/share/kilo`（会话/记忆/凭证）与 `~/.config/kilo`（配置本体）；判定只看 mtime 且逐条打印。
-**VACUUM 故意不自动化**：它需要独占锁并整体重写文件，Kilo 活着时执行必然打断并发会话（见下条根因）。自动化只跑 `db-maintain.sh --no-vacuum`（分批短锁）；需要回收文件空间时关掉全部 Kilo 后人工跑 `./db-maintain.sh`。**`--status` 会显示「可回收: X GB 空闲页（VACUUM 后文件约 Y GB）」**（2026-09-27 加：`--no-vacuum` 只 DELETE 不缩文件，不显示这一行会让人误以为瘦身没生效）。
+**VACUUM 已按阈值自动化（2026-10-07 改）**：`db-maintain.sh` 自带门槛——「空闲页占比 ≥ `VACUUM_MIN_PCT`（默认 25%）且当前无 kilo 写者」才执行 VACUUM，否则自动跳过；`--no-vacuum` 可显式关闭，`--force` 可强制。背景：此前自动化无条件只跑 `--no-vacuum`，**文件永不缩**——实测 7.34GB 文件里 5.4GB（74%）是历史 DELETE 留下的 freelist 空洞（扫描变慢 + 白占盘），一次阈值触发即回收为 1.49GB（约 150s）。更早还有第二层停摆：原实现在检测到写者时 `exit 1` **中止整个脚本**，而 `kilo.exe` 常驻（后台进程 runner）使 writers 恒 >0 —— DELETE 清理与 WAL checkpoint **自 2026-09-27 起从未执行过**（`state.json` 的 `lastDb` 为证）。现改为**降级跳过 VACUUM、继续做完 DELETE + checkpoint**。自动化入口：登录自启 `-AutoIfDue`（清理 >1 天、DB >7 天）已装；系统计划任务需管理员跑 `-Register`（每日 04:00 清理、周日 04:30 清理+DB）。**`--status` 会显示「可回收: X GB 空闲页（VACUUM 后文件约 Y GB）」**（2026-09-27 加：`--no-vacuum` 只 DELETE 不缩文件，不显示这一行会让人误以为瘦身没生效）。
 维护日志落在 `~/.local/state/kilo/maintenance/*.log`，自身保留最近 14 份；到期状态记在 `state.json`（`cleanup.sh` 无状态，到期判断由包装脚本负责）。
 **失败可观测**：登录自启是隐藏进程，任何未捕获异常都会写入 `maintenance/error.log`（`-Status` 会带出最近 3 条）——自启「看起来没跑」时先看这里，常见原因：仓库被移动（快捷方式指向绝对路径）或 Git Bash 缺失。
 

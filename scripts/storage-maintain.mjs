@@ -103,7 +103,12 @@ const TARGETS = [
   { rel: path.join("storage", "session_diff"), optional: false },
   { rel: "log", optional: false },
   { rel: "tsc-cache", optional: false }, // quality-gate tsbuildinfo:闲置项目的增量缓存就是垃圾
-  { rel: "snapshot", optional: true }, // 可被 --keep-snapshots 跳过
+  { rel: "snapshot", optional: true }, // 文件级目标（保留，兼容既有 --keep-snapshots 语义）
+];
+
+// 目录级目标：按顶层目录 mtime 整份回收（snapshot 的影子 git 库）
+const PRUNE_DIRS = [
+  { rel: "snapshot", optional: true },
 ];
 
 // 报告-only 清单:固定名 → 提示语(绝不删除,只算体量给人看)
@@ -211,6 +216,70 @@ function rmdirIfEmptyBottomUp(dir, root) {
   try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir); } catch { /* 空目录清理失败不追责 */ }
 }
 
+// 目录级回收目标（2026-10-07 增）：按「顶层目录的 mtime」整体判定，而不是逐个文件——
+// snapshot/<sha>/<snapshot-sha>/ 是 Kilo 为每个项目建的一份影子 git 对象库（423MB 实测），
+// 单个文件 mtime 混杂（对象会按需重写），逐文件删除会在一个 git 库里制造半残对象；
+// 目录级删除只丢「已经过期不用」的整份影子库，语义干净。
+// 安全线：只删「本目录自身 mtime 超期」且「含 .git 或 objects 子目录」的目录，
+// 不跟随 symlink 且必须落在 DATA_DIR 的固定子目录内（同 TARGETS 的边界）。
+// 判断目录是否像一份 git 影子对象库：在 ≤2 层内出现 objects/ 或 .git/（绝不跟随 symlink）
+function looksLikeGitStore(dir, depth = 2) {
+  if (depth < 0) return false;
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return false; }
+  for (const n of names) {
+    if (n === "objects" || n === ".git") {
+      try { if (fs.lstatSync(path.join(dir, n)).isDirectory()) return true; } catch { /* skip */ }
+    }
+  }
+  if (depth === 0) return false;
+  for (const n of names) {
+    const p2 = path.join(dir, n);
+    let st;
+    try { st = fs.lstatSync(p2); } catch { continue; }
+    if (st.isDirectory() && looksLikeGitStore(p2, depth - 1)) return true;
+  }
+  return false;
+}
+
+function dirBytes(dir) {
+  const tr = tree(dir);
+  return { bytes: bytesOf(tr), files: tr.files.length, links: tr.links };
+}
+
+function pruneDirs(t) {
+  if (t.optional && KEEP_SNAPSHOTS) { console.log(`[KEEP] ${t.rel}(--keep-snapshots 跳过目录级回收)`); return; }
+  const root = path.join(DATA_DIR, t.rel);
+  if (!fs.existsSync(root)) { console.log(`[OK] ${t.rel} 不存在(跳过)`); return; }
+  const rtr = tree(root);
+  console.log(`== ${t.rel}/ 目录级: 共 ${rtr.files.length} 文件 / ${MB(bytesOf(rtr))} ==`);
+  let names;
+  try { names = fs.readdirSync(root); } catch { console.log(`[OK] ${t.rel} 不可读(跳过)`); return; }
+  for (const name of names) {
+    const dir = path.join(root, name);
+    let st;
+    try { st = fs.lstatSync(dir); } catch { continue; }
+    if (!st.isDirectory()) continue;            // symlink/文件一律跳过
+    // 只处理「看起来像一份 git 影子库」的目录：含 .git 或 objects（可能嵌套在
+    // snapshot/<project-sha>/<snapshot-sha>/objects —— 实测结构如此，故按 ≤2 层探测）。
+    // 探测不到就不动：宁可漏收，绝不误删用户数据目录。
+    if (!looksLikeGitStore(dir)) continue;
+    if (st.mtimeMs >= CUTOFF) continue;         // 目录 mtime 在保留窗内 → 保留
+    const { bytes, files } = dirBytes(dir);
+    const rel = path.relative(DATA_DIR, dir);
+    if (DRY) { console.log(`[DRY] 删除目录 ${rel}/  ${files} 文件 / ${MB(bytes)}`); plannedBytes += bytes; continue; }
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      console.log(`[DEL] 目录 ${rel}/  ${files} 文件 / ${MB(bytes)}`);
+      deleted++; deletedBytes += bytes;
+    } catch (e) {
+      deleteFailed++; failures.push(`${rel}: ${e.message}`);
+      console.error(`[WARN] 目录删除失败(可能被占用,跳过) ${rel}: ${e.message}`);
+    }
+    plannedBytes += bytes;
+  }
+}
+
 function pruneTarget(t) {
   const dir = path.join(DATA_DIR, t.rel);
   if (t.optional && KEEP_SNAPSHOTS) { console.log(`[KEEP] ${t.rel}(--keep-snapshots 跳过)`); return; }
@@ -236,7 +305,11 @@ function pruneTarget(t) {
 
 console.log("");
 console.log(`== 删除目标(保留 ${DAYS} 天)==`);
-for (const t of TARGETS) pruneTarget(t);
+for (const t of TARGETS) {
+  if (t.rel === "snapshot") continue; // 交由 PRUNE_DIRS 目录级处理（逐文件删除会残害 git 对象库）
+  pruneTarget(t);
+}
+for (const t of PRUNE_DIRS) pruneDirs(t);
 bigfileWatch();
 
 // ── 报告-only(体量盘点,绝不删)─────────────────────────────

@@ -141,20 +141,43 @@ PAGE_SIZE=$(read_pragma 'PRAGMA page_size') || true
 if [ "$PAGE_COUNT" -gt 0 ] && [ "$PAGE_SIZE" -gt 0 ]; then
   FREE_GB=$(awk -v f="$FREE_COUNT" -v s="$PAGE_SIZE" 'BEGIN{printf "%.2f", f*s/1073741824}')
   USED_GB=$(awk -v c="$PAGE_COUNT" -v f="$FREE_COUNT" -v s="$PAGE_SIZE" 'BEGIN{printf "%.2f", (c-f)*s/1073741824}')
-  echo "  可回收:     ${FREE_GB} GB 空闲页（VACUUM 后文件约 ${USED_GB} GB；需独占锁，关掉全部 Kilo 后人工跑）"
+  FREE_PCT=$(awk -v f="$FREE_COUNT" -v c="$PAGE_COUNT" 'BEGIN{printf "%d", (c>0?100*f/c:0)}')
+  echo "  可回收:     ${FREE_GB} GB 空闲页 / ${USED_GB} GB 有效页（空闲占比 ${FREE_PCT}%）"
 fi
+
+# VACUUM 门槛（2026-10-07）：维护自动化此前只跑 --no-vacuum，是「文件永不缩」的根因——
+# 实测 7.34GB 文件里 5.4GB（74%）是历史 DELETE 留下的 freelist 空洞：扫描变慢且占盘。
+# 空闲占比达阈值（默认 25%）且无 Kilo 写者时才值得付一次独占锁（实测 7.34GB→1.49GB
+# 约 150s；期间并发 Kilo 写库会失败）；占比低时 VACUUM 收益小于风险，跳过。
+# VACUUM_MIN_PCT=0 表示永不自动 VACUUM。
+VACUUM_MIN_PCT="${VACUUM_MIN_PCT:-25}"
 
 if [ "$MODE" = "status" ]; then
   echo "  integrity:  $(q 'PRAGMA integrity_check' | tail -n1 | tr -d '\r')"
+  if [ "$DO_VACUUM" = "1" ] && [ "$IS_LIVE" = "1" ]; then
+    if [ "$(writers)" -gt 0 ]; then
+      echo "  维护建议:   Kilo 有写者 → VACUUM 自动跳过（关闭全部 Kilo 后跑 ./db-maintain.sh 即回收）"
+    elif [ "${FREE_PCT:-0}" -ge "$VACUUM_MIN_PCT" ]; then
+      echo "  维护建议:   空闲占比 ${FREE_PCT}% ≥ ${VACUUM_MIN_PCT}% 且无写者 → 现在跑 ./db-maintain.sh 可回收 ${FREE_GB} GB"
+    else
+      echo "  维护建议:   空闲占比 ${FREE_PCT}% < ${VACUUM_MIN_PCT}%，无需 VACUUM"
+    fi
+  fi
   exit 0
 fi
 
+# VACUUM 前门禁（2026-10-07 修正）：有 kilo 写者时不 *中止* 整个脚本，而是**降级跳过**
+# VACUUM 继续做完 DELETE 清理 + WAL checkpoint。旧行为 exit 1 的后果是：只要 kilo.exe 常驻
+# （后台进程 runner 会一直活着=writers 恒 >0），DELETE 清理与 WAL 回收**从未执行过**
+# （实测 state.json lastDb 停在 2026-09-27，DB 从那时起只增不减）。
+# 独占锁只有 VACUUM 需要；分批 DELETE 用短事务，Kilo 活着是安全的。
+# --force：显式要求即使有写者也要 VACUUM。
+SKIP_VACUUM=0
 if [ "$DO_VACUUM" = "1" ] && [ "$FORCE" != "1" ] && [ "$IS_LIVE" = "1" ] && [ "$(writers)" -gt 0 ]; then
-  echo "" >&2
-  echo "拒绝执行 VACUUM：检测到 $(writers) 个 kilo 进程在跑。" >&2
-  echo "  VACUUM 需独占锁，会让正在进行的会话写库失败（busy_timeout=5s → 「Failed to execute statement」）。" >&2
-  echo "  选择：关掉其它 Kilo 窗口后重跑；或加 --no-vacuum（只清理不回收空间）；或 --force 强制。" >&2
-  exit 1
+  echo "  跳过 VACUUM：检测到 $(writers) 个 kilo 进程在跑（独占锁会让在跑的会话写库失败）——"
+  echo "  本轮只做 DELETE 清理 + WAL checkpoint；空闲页留在库里，等无写者时再回收。" >&2
+  echo "  想强制回收：关掉全部 Kilo 后重跑本脚本（或加 --force）。" >&2
+  SKIP_VACUUM=1
 fi
 
 CUTOFF=$(node -e "console.log(Date.now() - $DAYS*86400000)")
@@ -208,11 +231,18 @@ q "DELETE FROM session WHERE time_created < $CUTOFF AND id NOT IN (SELECT DISTIN
 q "DELETE FROM todo WHERE session_id NOT IN (SELECT id FROM session)" >/dev/null || FAILED=1
 echo "    done ($([ "$FAILED" = "0" ] && echo ok || echo '有失败，见上'))"
 
-if [ "$DO_VACUUM" = "1" ]; then
+if [ "$DO_VACUUM" = "1" ] && [ "$SKIP_VACUUM" = "0" ] && [ "${FREE_PCT:-0}" -ge "$VACUUM_MIN_PCT" ]; then
   echo ""
-  echo "== VACUUM（回收磁盘空间，可能需要几分钟）=="
+  echo "== VACUUM（空闲占比 ${FREE_PCT}% ≥ ${VACUUM_MIN_PCT}%，回收磁盘空间，可能需要几分钟）=="
   q "VACUUM" >/dev/null || FAILED=1
   echo "  $([ "$FAILED" = "0" ] && echo ok || echo 'FAILED')"
+elif [ "$DO_VACUUM" = "1" ]; then
+  echo ""
+  if [ "$SKIP_VACUUM" = "1" ]; then
+    echo "== VACUUM 跳过（有 kilo 写者）=="
+  else
+    echo "== VACUUM 跳过（空闲占比 ${FREE_PCT:-0}% < ${VACUUM_MIN_PCT}%，收益小于风险）=="
+  fi
 fi
 
 # 3) 回收 WAL + 校验（旧版只写注释未实现 checkpoint，WAL 会一直挂在数据目录）
@@ -226,8 +256,17 @@ echo "  integrity: $(q 'PRAGMA integrity_check' | tail -n1 | tr -d '\r')"
 echo ""
 echo "== storage-maintain（存储垃圾回收）=="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# MSYS 路径转换：git-bash 下 node 是原生 Windows 程序，收到 /d/work/... 会解析成
+# D:\d\work\... → MODULE_NOT_FOUND（2026-10-07 实测：db-maintain 的自动回收步骤一直
+# 静默失败，session_diff/log/snapshot 因而从未被回收）。cygpath -m 转成 D:/... 形式；
+# 非 MSYS 环境（Linux/macOS）没有 cygpath，原样使用。
+if command -v cygpath >/dev/null 2>&1; then
+  STORAGE_SCRIPT="$(cygpath -m "$SCRIPT_DIR/scripts/storage-maintain.mjs")"
+else
+  STORAGE_SCRIPT="$SCRIPT_DIR/scripts/storage-maintain.mjs"
+fi
 if command -v node >/dev/null 2>&1; then
-  if node "$SCRIPT_DIR/scripts/storage-maintain.mjs" --run --keep-snapshots --days 30; then
+  if node "$STORAGE_SCRIPT" --run --days 30; then
     echo "  storage-maintain ok"
   else
     echo "  ⚠ storage-maintain 失败（不影响 DB 清理结果，可单独重跑）" >&2
