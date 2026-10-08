@@ -503,8 +503,8 @@ if (-not $DryRun -and -not $Check -and $script:reloadWhat.Count -gt 0) {
 if (-not $DryRun -and -not $Check) {
     $startupDir = [Environment]::GetFolderPath('Startup')
     $startupLnk = Join-Path $startupDir 'kilo-maintenance.lnk'
+    $maintScript = Join-Path $ScriptDir 'scripts\kilo-maintenance.ps1'
     if (Test-Path -LiteralPath $startupLnk) {
-        $maintScript = Join-Path $ScriptDir 'scripts\kilo-maintenance.ps1'
         $lnkTarget = $null
         try {
             $sh = New-Object -ComObject WScript.Shell
@@ -538,6 +538,16 @@ if (-not $DryRun -and -not $Check) {
             # 自愈失败不中止 install：下发已完成，快捷方式重建失败只损失「下次登录自动维护」，
             # 提示人工 -InstallStartup 即可；此时 exit 1 反而让调用方误判为部署失败。
             if ($healRc -ne 0) { Write-Warning "[INSTALL] WARN: 自启重建失败（exit=$healRc）——请人工跑 scripts\kilo-maintenance.ps1 -InstallStartup" }
+        }
+    }
+    else {
+        # 快捷方式完全不存在（2026-10-08 体检缺口）：自愈分支只管「已存在但失效」，
+        # 从未安装过则静默——自动维护（临时文件清理 + DB 瘦身）就一直没人跑。
+        # 不自动安装（安装自启是用户显式选择，-InstallStartup 语义）；只指路。
+        if (Test-Path -LiteralPath $maintScript) {
+            Write-Host ''
+            Write-Warning "[INSTALL] 登录自启未安装——维护任务（临时文件清理 + kilo.db 瘦身）不会自动执行。"
+            Write-Host "[INSTALL] 一次性安装：powershell -NoProfile -ExecutionPolicy Bypass -File `"$maintScript`" -InstallStartup"
         }
     }
 }

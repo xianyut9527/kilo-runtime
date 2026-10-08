@@ -1,13 +1,19 @@
 // 渲染 kilo.json.tmpl → 部署副本（严格复刻 install.sh 的渲染管线：占位符替换 → 去 // 行 → 剥尾随逗号），
 // 校验为合法 JSON、无残留占位符；先备份再原子写。dry=1 时只打印 diff，不写盘。
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const REPO = "D:/work/kilo-runtime";
-const CFG = "C:/Users/Administrator/.config/kilo";
+// 路径全部动态派生（2026-10-08 修：原硬编码 D:/work + C:/Users/Administrator 是作者机路径，
+// 下发到任何别的机器都跑不了）。REPO 从本文件位置上溯（scripts/ → 仓库根）；HOME 取真实家目录；
+// CFG 走 XDG_CONFIG_HOME 兑底 ~/.config/kilo（与 storage-maintain/db-maintain 同口径）。
+// 统一正斜杠：替换进 JSON 字符串的路径需正斜杠，且 Kilo 不展开 ~ 必须绝对路径。
+const REPO = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const HOME = os.homedir().replace(/\\/g, "/");
+const CFG = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "kilo").replace(/\\/g, "/");
 const TMPL = path.join(REPO, "kilo.json.tmpl");
 const DEPLOYED = path.join(CFG, "kilo.json");
-const HOME = "C:/Users/Administrator";
 const DRY = process.argv.includes("--dry");
 
 // 1) 渲染
@@ -77,11 +83,16 @@ for (const d of diffs) console.log("   " + d);
 
 if (DRY) { console.log("[DRY] 未写盘"); process.exit(0); }
 
-// 4) 备份 + 原子写
+// 4) 备份 + 原子写（2026-10-08 修：目标目录/副本可能不存在——首次部署时 copyFileSync 会崩）
+fs.mkdirSync(CFG, { recursive: true });
 const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15);
-const bak = `${DEPLOYED}.bak-${stamp}`;
-fs.copyFileSync(DEPLOYED, bak);
+let bakNote = "无既存副本，跳过备份";
+if (fs.existsSync(DEPLOYED)) {
+  const bak = `${DEPLOYED}.bak-${stamp}`;
+  fs.copyFileSync(DEPLOYED, bak);
+  bakNote = `备份 ${path.basename(bak)}`;
+}
 const tmp = `${DEPLOYED}.tmp-${process.pid}`;
 fs.writeFileSync(tmp, text.endsWith("\n") ? text : text + "\n", "utf8");
 fs.renameSync(tmp, DEPLOYED);
-console.log(`== 已下发：${DEPLOYED}（备份 ${path.basename(bak)}）==`);
+console.log(`== 已下发：${DEPLOYED}（${bakNote}）==`);

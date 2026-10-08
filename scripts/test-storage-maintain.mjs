@@ -23,10 +23,11 @@ const t = (name, cond) => {
   else { failed.push(name); console.error(`  FAIL: ${name}`); fail++; }
 };
 
-const run = (args, dataDir) => {
+const run = (args, dataDir, env) => {
   // timeout:被测脚本卡死/等待输入时终止测试,防永久阻塞(层3 审查必修项)
+  // env:可选注入环境变量(如 STORAGE_MAINT_SIM_RENAME_EPERM 触发降级路径),缺省继承 process.env
   const r = spawnSync(process.execPath, [SCRIPT, ...args, "--data-dir", dataDir, "--json"],
-    { encoding: "utf8", timeout: 30_000 });
+    { encoding: "utf8", timeout: 30_000, env: env ? { ...process.env, ...env } : process.env });
   if (r.signal === "SIGTERM") throw new Error(`被测脚本超时被终止: ${args.join(" ")}`);
   // 子进程崩溃/被杀时 status 为 null:显式抛错,防后续断言拿 null 比对出误导性失败
   if (r.status === null) throw new Error(`被测进程异常终止: ${args.join(" ")} stderr=${(r.stderr || "").slice(0, 200)}`);
@@ -50,13 +51,18 @@ function fixture() {
     fs.utimesSync(p, when, when);
     return p;
   };
-  // 删除目标:session_diff / log / tsc-cache / snapshot(嵌套子目录)
+  // 删除目标:session_diff / log / tsc-cache / snapshot(嵌套子目录) / session_share(60d 专窗)
   mk(path.join("storage", "session_diff", "ses_old.json"), 1000, old);
   mk(path.join("storage", "session_diff", "ses_new.json"), 500, fresh);
   mk(path.join("log", "kilo.log.old"), 2000, old);
   mk(path.join("log", "kilo.log"), 300, fresh);
   mk(path.join("tsc-cache", "deadbeef01.tsbuildinfo"), 1500, old);
   mk(path.join("tsc-cache", "cafe02.tsbuildinfo"), 200, fresh);
+  // session_share:60 天独立保留窗 —— fixture 的 old=40d 落在 60d 窗内必须保留；
+  // 另造一个 70d 的超窗文件验证专窗真的生效（--days 30 仍删 70d 文件）
+  const older = new Date(Date.now() - 70 * DAY);
+  mk(path.join("storage", "session_share", "ses_keep40d.json"), 300, old);
+  mk(path.join("storage", "session_share", "ses_purge70d.json"), 300, older);
   // snapshot:目录级回收目标 —— 顶层目录含 objects/ 或 .git 且「目录自身 mtime」超期
   mk(path.join("snapshot", "deadbeef", "objects", "aa", "old.bin"), 4000, old);
   mk(path.join("snapshot", "deadbeef", "objects", "bb", "old2.bin"), 1000, old);
@@ -98,7 +104,7 @@ function fixture() {
   const root = fixture();
   const r = run(["--run", "--days", "30"], root);
   t("退出码 0", r.status === 0);
-  t("删除项数 = 3 文件 + 1 snapshot 目录 + 1 日志截断", r.json?.deleted === 5, `deleted=${r.json?.deleted}`);
+  t("删除项数 = 4 文件(含 session_share 70d) + 1 snapshot 目录 + 1 日志截断", r.json?.deleted === 6, `deleted=${r.json?.deleted}`);
   // 日志截断释放量 = 41_943_040 − 8_388_608 = 33_554_432B（fixture 的 40MiB 文件），另加 9500B 文件删除
   t("释放字节 = 9500 + 日志截断 32MiB",
     r.json?.deletedBytes >= 33554432 + 9500 && r.json?.deletedBytes < 34 * 1024 * 1024, `bytes=${r.json?.deletedBytes}`);
@@ -108,6 +114,8 @@ function fixture() {
   t("新 log 保留", fs.existsSync(path.join(root, "log", "kilo.log")));
   t("旧 tsbuildinfo 已删(闲置项目缓存回收)", !fs.existsSync(path.join(root, "tsc-cache", "deadbeef01.tsbuildinfo")));
   t("新 tsbuildinfo 保留", fs.existsSync(path.join(root, "tsc-cache", "cafe02.tsbuildinfo")));
+  t("session_share 40d 文件保留(60d 专窗 > 40d)", fs.existsSync(path.join(root, "storage", "session_share", "ses_keep40d.json")));
+  t("session_share 70d 文件已删(超 60d 专窗)", !fs.existsSync(path.join(root, "storage", "session_share", "ses_purge70d.json")));
   t("超期 snapshot 目录整份已删", !fs.existsSync(path.join(root, "snapshot", "deadbeef")));
   t("窗口内 snapshot 目录保留", fs.existsSync(path.join(root, "snapshot", "cafebabe", "objects", "cc", "new.bin")));
   t("kilo.db 存活(报告-only)", fs.existsSync(path.join(root, "kilo.db")));
@@ -123,7 +131,7 @@ function fixture() {
   const root = fixture();
   const r = run(["--run", "--days", "30", "--keep-snapshots"], root);
   t("退出码 0", r.status === 0);
-  t("只删 3 项(session_diff+log+tsc-cache) + 日志截断 1", r.json?.deleted === 4, `deleted=${r.json?.deleted}`);
+  t("只删 4 项(session_diff+log+tsc-cache+session_share) + 日志截断 1", r.json?.deleted === 5, `deleted=${r.json?.deleted}`);
   t("snapshot 旧目录保留(--keep-snapshots)", fs.existsSync(path.join(root, "snapshot", "deadbeef")));
   fs.rmSync(root, { recursive: true, force: true });
 }
@@ -175,8 +183,7 @@ function fixture() {
   t("小文件保留(阈值未命中)", fs.existsSync(path.join(root, "tool-output", "tool_small001")));
   t("bigfileDeleted=1", rr.json?.bigfileDeleted === 1);
   t("bigfileBytes=5000", rr.json?.bigfileBytes === 5000);
-  t("总删除=6(时间窗4 + 看门狗1 + 日志截断1)", rr.json?.deleted === 6, `deleted=${rr.json?.deleted}`);
-  const audit = fs.readFileSync(path.join(root, "storage-maintain-audit.log"), "utf8");
+  t("总删除=7(时间窗5 + 看门狗1 + 日志截断1)", rr.json?.deleted === 7, `deleted=${rr.json?.deleted}`);  const audit = fs.readFileSync(path.join(root, "storage-maintain-audit.log"), "utf8");
   t("审计日志含被删文件名与大小", audit.includes("tool_runaway001") && audit.includes("5000B"));
   // 6c) --bigfile-bytes 0 禁用看门狗
   const r0root = fixture();
@@ -214,6 +221,28 @@ function fixture() {
   t("小日志未被动(未超阈值)", fs.statSync(small).size === beforeSmall);
   t("截断写入审计日志", fs.existsSync(path.join(root, "storage-maintain-audit.log")) &&
     /log-trim log\/huge\.log/.test(fs.readFileSync(path.join(root, "storage-maintain-audit.log"), "utf8")));
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+// ── 9) 大日志封顶降级路径:rename EPERM → ftruncate 就地截短 + 清 .trim 孤儿 ──
+{
+  console.log("== 9) 大日志封顶降级路径(ftruncate + 清孤儿) ==");
+  const root = fixture();
+  const logDir = path.join(root, "log");
+  const huge = path.join(logDir, "huge.log");
+  // 注入 EPERM 模拟活跃日志被持有:强制走 ftruncate 降级路径
+  const r = run(["--run", "--days", "30"], root, { STORAGE_MAINT_SIM_RENAME_EPERM: "huge.log" });
+  t("退出码 0(降级成功不算失败)", r.status === 0);
+  const sz = fs.statSync(huge).size;
+  t("降级就地截短到 ~8MB 尾部", sz > 7 * 1024 * 1024 && sz < 9 * 1024 * 1024, `size=${sz}`);
+  t("降级路径标记写入(含'降级',区别于主路径)", fs.readFileSync(huge, "utf8").includes("降级"));
+  t("审计记为 log-trim-fallback(非主路径 log-trim)",
+    fs.existsSync(path.join(root, "storage-maintain-audit.log")) &&
+    /log-trim-fallback log\/huge\.log/.test(fs.readFileSync(path.join(root, "storage-maintain-audit.log"), "utf8")));
+  // 核心回归:rename 前写出的 .trim-<pid> 临时文件必须被 catch 清掉,不留 ~8MB 孤儿
+  const orphans = fs.readdirSync(logDir).filter((n) => n.includes(".trim-"));
+  t("无 .trim- 孤儿残留(降级路径清理临时文件)", orphans.length === 0, `orphans=${orphans.join(",")}`);
+  t("截断计入 deleted(与主路径同口径,共 6 项)", r.json?.deleted === 6, `deleted=${r.json?.deleted}`);
   fs.rmSync(root, { recursive: true, force: true });
 }
 

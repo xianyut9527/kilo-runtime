@@ -20,7 +20,6 @@ scripts/memory-enable.mjs
 scripts/memory-sync.mjs
 scripts/storage-maintain.mjs
 scripts/render-config.mjs
-scripts/test-db-maintain.mjs
 provider/hx-failover/src/
 provider/hx-failover/dist/
 provider/hx-failover/package.json

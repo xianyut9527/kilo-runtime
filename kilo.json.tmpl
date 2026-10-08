@@ -344,6 +344,10 @@
     "edit": {
       "*": "ask",
       "src/**": "allow",
+      // package-lock.json 不以 .lock 结尾，末尾 *.lock 兜底盖不住 → 必须单列。
+      // permission-guard 插件 PROTECTED_PATH 已含它；此处补静态层，使插件被降级禁用时锁文件防线仍独立成立。
+      "package-lock.json": "deny",
+      "**/package-lock.json": "deny",
       "npm-shrinkwrap.json": "deny",
       "**/npm-shrinkwrap.json": "deny",
       "pnpm-lock.yaml": "deny",
@@ -441,6 +445,8 @@
       "npm": "file:///__KILO_CONFIG__/provider/hx-failover",
       "options": {
         // 上游 OpenAI 兼容端点（SSOT 唯一真源）。
+        // ⚠️ 防回归（2026-10-08）：不要改回 openllamas.com 或 xianyu1.natapp4.cc —— 两者均对
+        // 当前 key 返回 401（实测探针）。任何改动前必须先 curl 探针验证新端点认 key。
         // 2026-10-07 还原：4807907 把本行改回 openllamas.com 是无依据的改动 —— 实测
         // openllamas.com 对当前 key 返回 401 INVALID_API_KEY（curl 探针），而
         // llamas.nat100.top 对该 key 返回 200 且模型齐全。endpoint 失效是「极慢」的

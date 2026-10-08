@@ -17,6 +17,8 @@
 //
 // 删除目标(仅 mtime 超期,删除前列全清单+字节):
 //   storage/session_diff/**  log/**  snapshot/**(可选)
+//   storage/session_share/**(60 天独立窗,2026-10-08 补;每会话一份共享元数据缓存,
+//   删除不丢会话本体;独立窗防「暂停超过 DB 保留窗的会话恢复断链」)
 //   tsc-cache/**(quality-gate 的 .tsbuildinfo 增量缓存,每项目一个、可数十 MB;
 //   超期删除只损失一次增量暖机,下次全量自愈——2026-10-07 再体检补上的增长项)
 //   tool-output/tool_* 失控大文件(>阈值 且 闲置>宽限;缓存性质,正被写入的文件跳过不删)
@@ -104,6 +106,12 @@ const TARGETS = [
   { rel: "log", optional: false },
   { rel: "tsc-cache", optional: false }, // quality-gate tsbuildinfo:闲置项目的增量缓存就是垃圾
   { rel: "snapshot", optional: true }, // 文件级目标（保留，兼容既有 --keep-snapshots 语义）
+  // session_share（2026-10-08 体检补上）:每会话一份共享元数据 JSON,内容只有
+  // {id, ingestPath} 两个字段(纯可再生缓存,删除不丢会话本体,DB message 不受影响)。
+  // 本机 share=disabled 照写不误,5128 文件孤儿化(session 已被 30 天保留窗从 DB 删除,
+  // share 文件却永生)。保留窗用 SHARE_DAYS=60(独立于 --days,防「暂停超过 DB 窗的
+  // 会话恢复时断链」):60 天未动 = 该会话连一次恢复都没有,按缓存回收。
+  { rel: path.join("storage", "session_share"), optional: false, days: 60 },
 ];
 
 // 目录级目标：按顶层目录 mtime 整份回收（snapshot 的影子 git 库）
@@ -286,11 +294,14 @@ function pruneTarget(t) {
   const dir = path.join(DATA_DIR, t.rel);
   if (t.optional && KEEP_SNAPSHOTS) { console.log(`[KEEP] ${t.rel}(--keep-snapshots 跳过)`); return; }
   if (!fs.existsSync(dir)) { console.log(`[OK] ${t.rel} 不存在(跳过)`); return; }
+  // 目标可带独立保留窗（如 session_share 的 60 天,防暂停会话恢复断链）；缺省用 --days
+  const targetDays = Number.isInteger(t.days) && t.days >= 1 ? t.days : DAYS;
+  const cutoff = Date.now() - targetDays * 86400_000;
   const tr = tree(dir);
-  const stale = tr.files.filter((f) => f.mtimeMs < CUTOFF);
+  const stale = tr.files.filter((f) => f.mtimeMs < cutoff);
   const fresh = tr.files.length - stale.length;
   const staleBytes = stale.reduce((a, f) => a + f.size, 0);
-  console.log(`== ${t.rel}: 共 ${tr.files.length} 文件 / ${MB(bytesOf(tr))},超 ${DAYS} 天 ${stale.length} 文件 / ${MB(staleBytes)}` +
+  console.log(`== ${t.rel}: 共 ${tr.files.length} 文件 / ${MB(bytesOf(tr))},超 ${targetDays} 天 ${stale.length} 文件 / ${MB(staleBytes)}` +
     `${tr.links ? `,跳过 symlink/特殊文件 ${tr.links}` : ""}${tr.unreadable ? `,不可读 ${tr.unreadable}` : ""} ==`);
   for (const f of stale) {
     const rel = path.relative(DATA_DIR, f.p);
@@ -338,19 +349,28 @@ function capBigLogs() {
     // 修复：rename 失败时降级为「读尾 + r+ 就地 ftruncate + 写回尾部」——append 持有
     // 允许共享写，原地截短不掉文件身份，kilo 继续往同一 inode 追加（POSIX 是 inode 语义
     // 天然安全；Windows append 句柄的写入偏移由系统维护，实测截后继续追加正常）。
+    const tmp = `${p}.trim-${process.pid}`;
     try {
       const fd = fs.openSync(p, "r");
       const buf = Buffer.alloc(LOG_KEEP_BYTES);
       fs.readSync(fd, buf, 0, LOG_KEEP_BYTES, st.size - LOG_KEEP_BYTES);
       fs.closeSync(fd);
-      const tmp = `${p}.trim-${process.pid}`;
       fs.writeFileSync(tmp, `[storage-maintain] 已截断：原 ${st.size}B，保留尾部 ${LOG_KEEP_BYTES}B（${new Date().toISOString()}）\n` + buf.toString("utf8"));
+      // 测试注入点（默认不激活）：模拟活跃日志 rename EPERM，触发 ftruncate 降级路径的离线覆盖
+      if (process.env.STORAGE_MAINT_SIM_RENAME_EPERM === name) {
+        const err = new Error(`EPERM: operation not permitted, rename '${tmp}' -> '${p}' (simulated)`);
+        err.code = "EPERM";
+        throw err;
+      }
       fs.renameSync(tmp, p);
       const freed = st.size - LOG_KEEP_BYTES;
       console.log(`[DEL] 截断日志 ${name} ${MB(st.size)} → ${MB(LOG_KEEP_BYTES)}`);
       deleted++; deletedBytes += freed;
       try { fs.appendFileSync(path.join(DATA_DIR, "storage-maintain-audit.log"), `${new Date().toISOString()} log-trim log/${name} ${st.size}B->${LOG_KEEP_BYTES}B\n`); } catch {}
     } catch (e) {
+      // 进入降级/失败路径：先清掉上面可能已写出的 .trim 临时文件，避免每次降级泄漏一个 ~8MB 孤儿
+      // （tmp 以 pid 命名、不被 .log 过滤匹配，原实现遗留后只能等 30 天窗口清 → 在防膨胀代码里造膨胀）
+      try { fs.rmSync(tmp, { force: true }); } catch {}
       // 降级路径：就地截短（ftruncate），保尾部内容
       try {
         const fd2 = fs.openSync(p, "r+");

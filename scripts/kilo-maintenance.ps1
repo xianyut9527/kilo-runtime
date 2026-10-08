@@ -60,7 +60,7 @@ $StartupDir = [Environment]::GetFolderPath('Startup')
 $StartupLnk = Join-Path $StartupDir 'kilo-maintenance.lnk'
 $TaskDaily   = 'kilo-maintenance-daily'
 $TaskWeekly  = 'kilo-maintenance-weekly'
-$TaskDesc    = 'Kilo 维护：临时文件/配置备份/数据目录(session_diff/log/snapshot)清理 + kilo.db 瘦身（VACUUM 保持人工）'
+$TaskDesc    = 'Kilo 维护：临时文件/配置备份/数据目录(session_diff/log/snapshot)清理 + kilo.db 瘦身（VACUUM 按阈值自动）'
 $CleanupEveryDays = 1
 $DbEveryDays      = 7
 
@@ -140,7 +140,8 @@ function Invoke-RepoScript {
 
 function Invoke-Cleanup {
     # 临时目录兄弟项留 3 天；Kilo 托管临时目录内部留 7 天；配置备份留最近 2 个；
-    # 数据目录增长项（session_diff/log/snapshot，2026-10-07 体检闭环）留 30 天。
+    # 数据目录增长项（session_diff/log/tsc-cache 30 天；session_share 60 天独立窗；
+    # snapshot 按顶层目录 mtime 整份删除，2026-10-07/10-08 体检闭环）。
     # 两者失败都不互相阻断：返回首个非零退出码（后续步骤照跑）。
     $rc1 = Invoke-RepoScript -Script 'cleanup.sh' -ScriptArgs @('--run', '--days', '3', '--tmp-days', '7', '--keep-backups', '2') -Label 'cleanup'
     # 2026-10-07：不再带 --keep-snapshots。snapshot 是每个项目一份的影子 git 对象库（实测 423MB）
@@ -214,7 +215,7 @@ function Install-StartupShortcut {
     }
     Write-Host "[STARTUP] 已安装登录自启：$StartupLnk"
     Write-Host "[STARTUP] 目标脚本：$SelfPath"
-    Write-Host "[STARTUP] 触发条件：清理间隔 > $CleanupEveryDays 天、DB 瘦身间隔 > $DbEveryDays 天（VACUUM 仍需人工）"
+    Write-Host "[STARTUP] 触发条件：清理间隔 > $CleanupEveryDays 天、DB 瘦身间隔 > $DbEveryDays 天（VACUUM 按阈值自动，无需人工）"
 }
 
 if ($Status) {
@@ -251,6 +252,7 @@ if ($Status) {
     Write-Host ("[AUTO] 上次清理：{0}（{1}）  上次 DB 瘦身：{2}（{3}）" -f `
         $(if ($st.lastCleanup) { $st.lastCleanup } else { '从未' }), $(if (Test-Due $st.lastCleanup $CleanupEveryDays) { '已到期' } else { '未到期' }), `
         $(if ($st.lastDb) { $st.lastDb } else { '从未' }), $(if (Test-Due $st.lastDb $DbEveryDays) { '已到期' } else { '未到期' }))
+    Write-Host "[AUTO] DB 瘦身：VACUUM 按阈值自动（空闲占比 ≥25% 且无写者才执行，无需人工；详见 -DbStatus）"
     Write-Host "[LOG ] $LogDir"
     if (Test-Path $LogDir) {
         Get-ChildItem -LiteralPath $LogDir -File | Sort-Object LastWriteTime -Descending |

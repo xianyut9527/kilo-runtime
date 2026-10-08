@@ -88,11 +88,11 @@ macOS / Linux（bash）：
 | `provider/hx-failover/test-failover.mjs` | provider 离线回归（50 例，不打真实网络） | `node provider/hx-failover/test-failover.mjs`：假 fetch 驱动真实 doStream——降级切换/通知注入/冷却不污染/看门狗触发/流中断 isRetryable/reasoningEcho 补写/fatal 透传+遥测落盘/扩展键剥除/排队回执拦截/过载退避/干净断连重包装/主模型冷却跳过+通知去重+全链 fail-fast/渠道不可用零重试快换 hop（9h/9i）+ 404 变体（9j 零重试换链/9k 普通 404 仍 fatal/9l code 仅在 body.code 五路提取命中/9m 只冷却本模型）/**全冷却 503 附 retry-after（9n，dual_review 必修项⑥：冷却期 Kilo 重试每 4-20s 重撞 fail-fast 的遥测实证）**/退避期 abortSignal 立即打断（9o，取消不再睡满 500-6000ms 退避）全覆盖；改 `src/index.js` 后先 `npm run build` 再必跑（测的是 dist 行为） |
 | `provider/hx-failover/test-reasoning-gate.mjs` | 推理门控离线回归（28 例，不打真实网络） | `node provider/hx-failover/test-reasoning-gate.mjs`：假 fetch 注入死亡/成功响应驱动真实 dist 门控——SSE/非流式救活、扩预算+降档 body 断言、耗尽原样透传、门控关闭零接触、hold 超时直通、buffer-cap、tool_calls 判定、echo 组合、缺省字段注入；**v2 工具调用原子化（2026-09-29）**：toolHold 期慢滴超时弃流重试（T5 drip-retry，call===2）、跨 chunk 原子（T8：签名被切成两 chunk 中途断流→原子重试零重复）、toolHold 超字节上限弃流重试（T9 buffer-limit）；与 test-failover 同口径改 src 后必跑 |
 | `provider/hx-failover/e2e-rescue.mjs` | 推理门控手动 E2E（打真实网关） | `node provider/hx-failover/e2e-rescue.mjs`：真实上游死亡 → 门控自动扩预算重试 → 救活断言；单发未死输出 E2E-SKIP（死亡是概率事件，不构成失败）。日常不跑，验证根治效果时手动执行 |
-| `install.*` | 下发器 | 清单驱动 / 幂等 / 备份 / 漂移检测（含 provider dist 新鲜度检查）；备份只保留最近 2 个（`KILO_KEEP_BACKUPS` 可调，需 ≥1 整数；非法值告警后按默认 2，绝不中断下发）。`install.sh` 用 `--dry-run/--check`，`install.ps1` 用 `-DryRun/-Check`，**参数风格不同**。**备份移位（2026-09-27 二轮审查）**：此前备份在差异判定之前无条件执行——空跑 install（same-only）每次白烧一个 ~12MB tar/zip（实测「差异/写入: 0」仍产 [BACKUP]）；两端（ps1/sh 对齐）改为预检通过后、写入前、且**仅当确有差异**才 prune+打包，预检失败中止时未删任何东西。**install.ps1 自启自愈块（2026-09-27）**：Startup 里 kilo-maintenance.lnk 目标脚本不存在时自动按当前路径重建（仅已存在才修复，不替用户新增自启）；子进程调用带 PS 5.1 stderr 陷阱防护（临时降 EAP=Continue、只看 $LASTEXITCODE、失败 WARN 不中止 install——下发已完成后炸掉比半完成更糟） |
+| `install.*` | 下发器 | 清单驱动 / 幂等 / 备份 / 漂移检测（含 provider dist 新鲜度检查）；备份只保留最近 2 个（`KILO_KEEP_BACKUPS` 可调，需 ≥1 整数；非法值告警后按默认 2，绝不中断下发）。`install.sh` 用 `--dry-run/--check`，`install.ps1` 用 `-DryRun/-Check`，**参数风格不同**。**备份移位（2026-09-27 二轮审查）**：此前备份在差异判定之前无条件执行——空跑 install（same-only）每次白烧一个 ~12MB tar/zip（实测「差异/写入: 0」仍产 [BACKUP]）；两端（ps1/sh 对齐）改为预检通过后、写入前、且**仅当确有差异**才 prune+打包，预检失败中止时未删任何东西。**install.ps1 自启自愈块（2026-09-27）**：Startup 里 kilo-maintenance.lnk 目标脚本不存在时自动按当前路径重建（仅已存在才修复，不替用户新增自启）；子进程调用带 PS 5.1 stderr 陷阱防护（临时降 EAP=Continue、只看 $LASTEXITCODE、失败 WARN 不中止 install——下发已完成后炸掉比半完成更糟）。**2026-10-08 补**：快捷方式完全未安装时显式 WARN 并给出一行安装命令（自愈分支只管「已存在但失效」） |
 | `.vscode/settings.json` | 仓库级编辑器体验 | 把 `kilo.json.tmpl` 关联为 `jsonc`——模板获得语法高亮 / 括号匹配 / 语法错误红线（VS Code 打开本仓库即生效）；非运行时资产，不进 `install.manifest` |
-| `db-maintain.sh` | kilo.db 在线瘦身 | 清事件溯源/过期会话（实测 14.2GB→1.1GB），不碰记忆与凭证；分批短事务 + VACUUM 写者门禁 + WAL checkpoint；体检含「可回收 X GB 空闲页」行（`--no-vacuum` 只 DELETE 不缩文件，2026-09-27 加；PRAGMA 读取失败静默跳过该行——体检信息不得反过来变成 --status 的单点故障） |
+| `db-maintain.sh` | kilo.db 在线瘦身 | 清事件溯源/过期会话（实测 14.2GB→1.1GB），不碰记忆与凭证；分批短事务 + VACUUM 阈值门控（空闲占比 ≥25% 且无写者，否则降级跳过）+ auto_vacuum=2 同连接转换 + incremental_vacuum 增量回收（`--ivac`）+ WAL checkpoint；体检含「可回收 X GB 空闲页」行（`--no-vacuum` 只 DELETE 不缩文件，2026-09-27 加；PRAGMA 读取失败静默跳过该行——体检信息不得反过来变成 --status 的单点故障） |
 | `cleanup.sh` | 运行痕迹清理 | Kilo 托管临时目录内过期条目 + `%TEMP%` 下 `kilo*` 兄弟项 + `~/.config/kilo.backup-*` 保留上限；**默认 dry-run** |
-| `scripts/kilo-maintenance.ps1` | 维护调度入口 | 组合上面两个脚本 + 到期判断 + 登录自启/计划任务；VACUUM 保持人工 |
+| `scripts/kilo-maintenance.ps1` | 维护调度入口 | 组合上面两个脚本 + 到期判断 + 登录自启/计划任务；VACUUM 按阈值自动（无需人工） |
 
 ## 记忆与进化架构（2026-09-15 专项）
 
@@ -164,10 +164,10 @@ macOS / Linux（bash）：
 
 **snapshot 目录级回收（2026-10-07 三次体检）**：`snapshot/<project-sha>/<snapshot-sha>/` 是 Kilo 为每个项目维护的影子 git 对象库，**永不自回收**（实测 423MB / 14 个项目）。`storage-maintain.mjs` 新增 `PRUNE_DIRS`：按**顶层目录 mtime** 整份删除（只删「≤2 层内出现 `objects/`/`.git/`」且目录 mtime 超保留窗的目录，不跟随 symlink、不碰活跃库）——逐文件删会在一个 git 库里制造半残对象，故必须目录级。`--keep-snapshots` 仍可整体跳过。
 
-**storage-maintain 集成（2026-10-07 二次体检）**：`db-maintain.sh` 在 WAL checkpoint 后自动调 `node scripts/storage-maintain.mjs --run --keep-snapshots --days 30`，覆盖 DB 之外的增长项——`storage/session_diff`（已删会话的孤儿 diff，实测 2,685 个/192MB）、`log`、`tsc-cache`，外加 **tool-output 失控看门狗**（单文件 >256MB 且 mtime 闲置 >60min 才删；正被写入的文件 mtime 持续更新天然落在宽限内；删除写 `storage-maintain-audit.log` 审计；`--bigfile-bytes 0` 可禁用）。背景：2026-10-03 事故——`node -e` 死循环把单条工具输出灌到 1.35GB，内置 hourly 清理只删 7 天外文件对活跃失控文件无防线；单文件大小上限属二进制行为无法配置，看门狗是配置层唯一防线。storage-maintain 失败只告警、不影响 DB 清理退出码。
+**storage-maintain 集成（2026-10-07 二次体检，2026-10-08 补 session_share）**：`db-maintain.sh` 在 WAL checkpoint 后自动调 `node scripts/storage-maintain.mjs --run --days 30`（不带 `--keep-snapshots`——snapshot 目录级回收随此调用生效），覆盖 DB 之外的增长项——`storage/session_diff`（已删会话的孤儿 diff，实测 2,685 个/192MB）、`log`、`tsc-cache`、`storage/session_share`（60 天独立窗），外加 **tool-output 失控看门狗**（单文件 >256MB 且 mtime 闲置 >60min 才删；正被写入的文件 mtime 持续更新天然落在宽限内；删除写 `storage-maintain-audit.log` 审计；`--bigfile-bytes 0` 可禁用）。背景：2026-10-03 事故——`node -e` 死循环把单条工具输出灌到 1.35GB，内置 hourly 清理只删 7 天外文件对活跃失控文件无防线；单文件大小上限属二进制行为无法配置，看门狗是配置层唯一防线。storage-maintain 失败只告警、不影响 DB 清理退出码。
 
 安全边界：`cleanup.sh` 绝不删 `$TEMP/kilo` 本身（Kilo 运行时还在往里写），也绝不碰 `~/.local/share/kilo`（会话/记忆/凭证）与 `~/.config/kilo`（配置本体）；判定只看 mtime 且逐条打印。
-**VACUUM 已按阈值自动化（2026-10-07 改）**：`db-maintain.sh` 自带门槛——「空闲页占比 ≥ `VACUUM_MIN_PCT`（默认 25%）且当前无 kilo 写者」才执行 VACUUM，否则自动跳过；`--no-vacuum` 可显式关闭，`--force` 可强制。背景：此前自动化无条件只跑 `--no-vacuum`，**文件永不缩**——实测 7.34GB 文件里 5.4GB（74%）是历史 DELETE 留下的 freelist 空洞（扫描变慢 + 白占盘），一次阈值触发即回收为 1.49GB（约 150s）。更早还有第二层停摆：原实现在检测到写者时 `exit 1` **中止整个脚本**，而 `kilo.exe` 常驻（后台进程 runner）使 writers 恒 >0 —— DELETE 清理与 WAL checkpoint **自 2026-09-27 起从未执行过**（`state.json` 的 `lastDb` 为证）。现改为**降级跳过 VACUUM、继续做完 DELETE + checkpoint**。自动化入口：登录自启 `-AutoIfDue`（清理 >1 天、DB >7 天）已装；系统计划任务需管理员跑 `-Register`（每日 04:00 清理、周日 04:30 清理+DB）。**`--status` 会显示「可回收: X GB 空闲页（VACUUM 后文件约 Y GB）」**（2026-09-27 加：`--no-vacuum` 只 DELETE 不缩文件，不显示这一行会让人误以为瘦身没生效）。
+**VACUUM 已按阈值自动化（2026-10-07 改）**：`db-maintain.sh` 自带门槛——「空闲页占比 ≥ `VACUUM_MIN_PCT`（默认 25%）且当前无 kilo 写者」才执行 VACUUM，否则自动跳过；`--no-vacuum` 可显式关闭，`--force` 可强制。背景：此前自动化无条件只跑 `--no-vacuum`，**文件永不缩**——实测 7.34GB 文件里 5.4GB（74%）是历史 DELETE 留下的 freelist 空洞（扫描变慢 + 白占盘），一次阈值触发即回收为 1.49GB（约 150s）。更早还有第二层停摆：原实现在检测到写者时 `exit 1` **中止整个脚本**，而 `kilo.exe` 常驻（后台进程 runner）使 writers 恒 >0 —— DELETE 清理与 WAL checkpoint **自 2026-09-27 起从未执行过**（`state.json` 的 `lastDb` 为证）。现改为**降级跳过 VACUUM、继续做完 DELETE + checkpoint**。自动化入口：登录自启 `-AutoIfDue`（清理 >1 天、DB >7 天）已装；系统计划任务需管理员跑 `-Register`（每日 04:00 清理、周日 04:30 清理+DB）。**`--status` 会显示「可回收: X GB 空闲页 / Y GB 有效页（空闲占比 Z%）」并给出「维护建议」行**（2026-09-27 加：`--no-vacuum` 只 DELETE 不缩文件，不显示这一行会让人误以为瘦身没生效；2026-10-07 阈值化后改为有效页+占比+当前是否值得 VACUUM 的建议）。
 维护日志落在 `~/.local/state/kilo/maintenance/*.log`，自身保留最近 14 份；到期状态记在 `state.json`（`cleanup.sh` 无状态，到期判断由包装脚本负责）。
 **失败可观测**：登录自启是隐藏进程，任何未捕获异常都会写入 `maintenance/error.log`（`-Status` 会带出最近 3 条）——自启「看起来没跑」时先看这里，常见原因：仓库被移动（快捷方式指向绝对路径）或 Git Bash 缺失。
 
@@ -183,7 +183,7 @@ macOS / Linux（bash）：
 - **上下文负载（真正的根因）**：实测每步真实 prompt ≈ **p50 100k / p90 146k token**（`input + cache.read + cache.write`，近 3 天 22.5k 步；`cache.write` 恒 0 = 上游 prompt 缓存不生效，历史每步**全量重传**）。单步墙钟 p50 6.4s / p90 32s / p99 184s。上下文大头是历史里堆积的工具输出：`part` 表按 tool 分桶，`read` 一类累计 **406MB**、`bash` 147MB，今日单条最大 `read` 输出 373KB。**处置：`tool_output` 20480B → 8192B / 2000 行 → 800 行**（超限全文落盘、可重读，无损），把常驻输出的边际成本从 ≈5k token/条降到 ≈2k token/条。实测负载-耗时对照：125k token ≈7s、150k ≈16s、300k ≈28s。
   - 反面证据（**不要再走的路**）：同日两次下调 `compaction.threshold_percent`（85→80→70）与放宽 `kimi-k3` 的 `limit.context` 到 600k 都无效——doom 事件规模是 **1.25-18MB（≈31-450 万 token）** 的跃迁，任何 70/80/85 阈值都拦不住；把 `code.variant` max→high 同样无效（分档实测：`glm-5.3-flash` 简单任务 low 7-8s / high 5-12s / max 9-51s，档位不是主因）。三处已各自回滚/还原，并在模板注释里留下「复核后再改」的条件。
 - **压缩位模型必须能收敛**：`agent.compaction.model` 当日被改成 `kimi-k3`，但该模型在压缩尺寸负载下实测**空响应**（`Compaction worker returned an empty response`，content_len=0、reasoning 打满 max_tokens）；同一 400KB 压缩负载对照跑：`deepseek-v4.1-flash` 195 字 / 9.9s、`glm-5.3-flash` 16.1s、`kimi-k3` 21.9s 且空输出。压缩位空响应 = 会话不收敛 = 每步重传全量负载，故已回滚为 `deepseek-v4.1-flash@low`（也是全库最大分母的零空响应模型）。
-- **kilo.db 未做 VACUUM 的膨胀**：文件 **7.34GB**，有效页仅 ≈1.65GB、**空闲页 5.4GB（74%）**——历史 DELETE 只把页放进 freelist，文件不缩，扫描变慢且占盘。回收需**独占锁**：关掉全部 Kilo 后人工跑 `./db-maintain.sh`（会自动带 VACUUM）。
+- **kilo.db 未做 VACUUM 的膨胀**：文件 **7.34GB**，有效页仅 ≈1.65GB、**空闲页 5.4GB（74%）**——历史 DELETE 只把页放进 freelist，文件不缩，扫描变慢且占盘。回收需**独占锁**：此前需关掉全部 Kilo 人工跑；现按阈值自动（空闲占比 ≥25% 且无写者时执行，见上文「VACUUM 已按阈值自动化」段），且 2026-10-08 起首次 VACUUM 同连接转 auto_vacuum=2，此后常态由 incremental_vacuum 短锁增量回收。
 - **数据目录回收**：`storage-maintain.mjs` 已接进 `db-maintain.sh`（session_diff/log/tsc-cache 30 天窗 + tool-output 失控大文件看门狗）；当前待回收约 `snapshot` 423MB + `storage` 179MB + `tool-output` 28MB + `log` 6MB。
 
 **维护链自身的两个缺口（2026-10-07 二次查漏）**：
@@ -212,6 +212,14 @@ macOS / Linux（bash）：
 **模板编辑与下发（2026-10-07 补）**：改 `kilo.json.tmpl` 后，可用 `node scripts/render-config.mjs [--dry]` 直接在仓库内渲染+校验+语义 diff+备份下发（与 `install.sh` 同管线，省去整包下发），随后仍应跑一次 `./install.sh --check` 确认零漂移。
 
 
+**2026-10-08 五查（「越用越卡」收尾审计与固化）**：
+
+- **auto_vacuum=2 转换 + incremental_vacuum 闭环**：阈值门控只解决「何时缩」，缩完仍会只增不缩。现 `db-maintain.sh` 在 VACUUM 时经 sqlite3 同连接执行 `PRAGMA auto_vacuum=2; VACUUM;` 一次成型（kilo CLI 每条语句独立连接、PRAGMA 写不持久化——实测证实），此后 DELETE 释放的页由 `PRAGMA incremental_vacuum(N)`（`--ivac`，默认 20000 页≈80MB，短锁）增量归还磁盘；sqlite3 缺失或转换失败自动降级旧 VACUUM，不中断。
+- **storage-maintain 新增 session_share 60 天回收窗**：`storage/session_share/**` 是每会话一份的纯缓存 JSON（实测 5128 个孤儿文件），保留窗 60 天、独立于 `--days`——防「暂停超过 DB 保留窗的会话恢复时断链」。
+- **离线回归补齐**：`test-db-maintain.mjs` 37 项（伪造 kilo.exe 桩离线应答每条 SQL、XDG_DATA_HOME 沙箱隔离；覆盖写者门禁降级/阈值门控/auto_vacuum 转换与降级/incremental 闭环/`--status`/参数校验/cygpath 路径转换），`test-storage-maintain.mjs` 52 项（含 session_share）。三处静默缺陷由此锁定（写者门禁 exit 1 从未清理、VACUUM 从未自动执行、路径转换失败静默不回收）。
+- **manifest 修正**：`scripts/test-db-maintain.mjs` 从下发清单移除——它依赖仓库根 `db-maintain.sh`（不在清单），部署副本必然以 127 失败；测试脚本统一 repo-only 口径（与 test-storage-maintain 等同）。
+- **install.ps1 自启缺失提示**：登录自启完全未安装时显式 WARN + 一行安装命令（此前只在「已存在但失效」时警告，从未安装过则整个维护链静默缺失）。
+
 **已删**（评估过，非运行时资产）：
 - knowledge-base（知识已固化进 INSTRUCTIONS.md）、telemetry/metrics 脚本（被动诊断）、AGENTS 模板（未接线）。
 - `plan.md` 架构决策记录（2026-09-15）：硬约束已固化进本文档 + INSTRUCTIONS.md，模型路由表反而先过期失真；不再保留会漂移的副本。
@@ -235,7 +243,7 @@ macOS / Linux（bash）：
   - `dual_review` / `moa`：审查素材（diff 片段、任务描述）额外发往上游参考/裁决模型（单次共 3 次调用）；
   - `web_search` / `webfetch` 已放行；Kilo 自身遥测已关（`privacy_mode: true`）。
 - **failover 遥测口径**：`~/.local/share/kilo/failover-events.jsonl` 只记模型名/动作/HTTP 状态/错误摘要（≤200 字），**不含对话与 prompt 内容**；5MB 轮转只保一代。
-- **破坏性操作默认安全**：`cleanup.sh` 默认 dry-run 逐条打印；`db-maintain.sh` 分批短事务、VACUUM 仅人工；install 写盘前自动备份（保留 2 份）；agent 权限三道防线（permission-guard 动态拦截 → 静态规则 → deny 兜底）。
+- **破坏性操作默认安全**：`cleanup.sh` 默认 dry-run 逐条打印；`db-maintain.sh` 分批短事务、VACUUM 按阈值自动（空闲占比 ≥25% 且无写者，否则降级跳过）；install 写盘前自动备份（保留 2 份）；agent 权限三道防线（permission-guard 动态拦截 → 静态规则 → deny 兜底）。
 
 ## 关键约定（改配置前必读）
 
@@ -283,6 +291,12 @@ node scripts\memory-enable.mjs
 # 跨项目记忆同步回归（改 scripts/memory-sync.mjs 或 memory-enable.mjs 后必跑）
 node scripts\test-memory-sync.mjs
 
+# memory-bootstrap 离线回归（改 plugin/memory-bootstrap.ts 的 GLOBAL-NOTES 修剪逻辑后必跑）
+node scripts\test-memory-bootstrap.mjs
+
+# 插件加载契约回归（离线；改 plugin/*.ts 导出面或 lib/ 后必跑）
+node scripts\test-plugin-contract.mjs
+
 # quality-gate 纯函数回归（离线，不联网；改 quality-gate.ts/正则后必跑）
 node scripts\test-quality-gate.mjs
 
@@ -291,6 +305,8 @@ node scripts\test-permission-guard.mjs
 
 # db-maintain 离线回归（不联网、不碰真实 kilo.db；改 db-maintain.sh 后必跑）
 node scripts\test-db-maintain.mjs
+# storage-maintain 离线回归（不联网、不碰真实数据目录；改 storage-maintain.mjs 后必跑）
+node scripts\test-storage-maintain.mjs
 # 断路器回归（离线，不联网；改 lib/hx-client.ts 后必跑；必须 node，见脚本内 bun 守卫）
 node --experimental-strip-types scripts\test-circuit-breaker.mjs
 
