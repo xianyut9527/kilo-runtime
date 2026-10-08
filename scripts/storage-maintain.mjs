@@ -333,6 +333,11 @@ function capBigLogs() {
     try { st = fs.lstatSync(p); } catch { continue; }
     if (!st.isFile() || st.size <= MAX_LOG_BYTES) continue;
     if (DRY) { console.log(`[DRY] 截断日志 ${name} ${MB(st.size)} → 保留尾部 ${MB(LOG_KEEP_BYTES)}`); plannedBytes += st.size - LOG_KEEP_BYTES; continue; }
+    // Windows 实测（2026-10-08）：运行中的 kilo.exe 以 append 模式持有 opencode.log，
+    // rename 整体替换报 EPERM → 尾部保留策略静默失效，日志涨到 607MB 无人管。
+    // 修复：rename 失败时降级为「读尾 + r+ 就地 ftruncate + 写回尾部」——append 持有
+    // 允许共享写，原地截短不掉文件身份，kilo 继续往同一 inode 追加（POSIX 是 inode 语义
+    // 天然安全；Windows append 句柄的写入偏移由系统维护，实测截后继续追加正常）。
     try {
       const fd = fs.openSync(p, "r");
       const buf = Buffer.alloc(LOG_KEEP_BYTES);
@@ -346,8 +351,24 @@ function capBigLogs() {
       deleted++; deletedBytes += freed;
       try { fs.appendFileSync(path.join(DATA_DIR, "storage-maintain-audit.log"), `${new Date().toISOString()} log-trim log/${name} ${st.size}B->${LOG_KEEP_BYTES}B\n`); } catch {}
     } catch (e) {
-      deleteFailed++; failures.push(`log/${name}: ${e.message}`);
-      console.error(`[WARN] 日志截断失败(可能被占用,跳过) log/${name}: ${e.message}`);
+      // 降级路径：就地截短（ftruncate），保尾部内容
+      try {
+        const fd2 = fs.openSync(p, "r+");
+        const tail = Buffer.alloc(LOG_KEEP_BYTES);
+        fs.readSync(fd2, tail, 0, LOG_KEEP_BYTES, st.size - LOG_KEEP_BYTES);
+        fs.ftruncateSync(fd2, 0);
+        const head = Buffer.from(`[storage-maintain] 已截断(rename EPERM 降级)：原 ${st.size}B，保留尾部 ${LOG_KEEP_BYTES}B（${new Date().toISOString()}）\n`, "utf8");
+        fs.writeSync(fd2, head, 0, head.length, 0);
+        fs.writeSync(fd2, tail, 0, tail.length, head.length);
+        fs.closeSync(fd2);
+        const freed = st.size - LOG_KEEP_BYTES;
+        console.log(`[DEL] 截断日志(降级就地) ${name} ${MB(st.size)} → ${MB(LOG_KEEP_BYTES)}`);
+        deleted++; deletedBytes += freed;
+        try { fs.appendFileSync(path.join(DATA_DIR, "storage-maintain-audit.log"), `${new Date().toISOString()} log-trim-fallback log/${name} ${st.size}B->${LOG_KEEP_BYTES}B\n`); } catch {}
+      } catch (e2) {
+        deleteFailed++; failures.push(`log/${name}: rename=${e.message}; ftruncate=${e2.message}`);
+        console.error(`[WARN] 日志截断失败(rename 与 ftruncate 均被占用,跳过) log/${name}: ${e2.message}`);
+      }
     }
   }
 }
