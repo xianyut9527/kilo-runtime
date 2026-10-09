@@ -1,4 +1,4 @@
-// W3.6 模型失败自动降级（移植 legacy Virtual Quota Fallback 的语义）
+﻿// W3.6 模型失败自动降级（移植 legacy Virtual Quota Fallback 的语义）
 //
 // 契约（7.6.2 实测）：
 //   - provider 工厂被调用时收到 { name, baseURL, apiKey, headers, fetch }
@@ -236,6 +236,20 @@ function withReasoningEcho(baseFetch) {
 //   - 审查必修三项落实：①截断重试有界——retryLeft 递减，天然无重试风暴；②超时/
 //     超限直通语义保持——回放缓冲+接管剩余，字节零丢失、不劣化底线；③空数组正则
 //     防御——GATE_TOOL 要求 [ 后跟 {，"tool_calls":[] 不误入 toolHold 锁死。
+//
+// v3（2026-10-08「初始化死寂」专项）：reasoning delta 流式透传。
+//   病灶：v2 对工具回合整条流扣留到流尾（含 reasoning 段），48h 实测 67% 步骤首有
+//   part 延迟 p50=19s/p90=103s，上游明明在生成，UI 死寂如卡死。
+//   修法：probe 期首个 reasoning delta 即转「观察流式透传」（gateStreamRelay）——
+//   - Response 立即返回，reasoning 帧即达即转，SDK 实时产出 reasoning-delta（思考可见）；
+//   - tool_calls 起始字节仍原子化：命中帧整帧起缓冲，扣到源尾才回放（半截参数零透传，
+//     断流/超时/超限→流内 mkRetryRaw 整体重试，与 fetch 层 reject 同语义、零重复）；
+//   - 死亡重试（缺口 A/B）在流尾判定——已透传的 reasoning 与重试响应无缝续接在同一
+//     Response 流（reasoning part id 固定 "reasoning-0" 且状态机幂等，SDK 自愈）；
+//   - 非流式 application/json 一律不进透传（免两段 JSON 拼接炸 doGenerate 的 parse）；
+//   - 已透传态唯一语义损失：toolHold 期错误从「fetch 层 reject（withFailover 同 hop
+//     静默重试）」降为「流内续试 1 次 + Kilo 会话级重试兜底」——reasoning 已透传无法
+//     整体重放，这是透传 UX 的固有代价（toolhold_reject 48h 实测 ~0 条，可接受）。
 const GATE_ACTIONABLE = /"(?:content|tool_calls)"\s*:\s*(?:"[^"]+"|\[)/;
 // v2 拆分判定（死亡判定仍用上面的组合式 GATE_ACTIONABLE，语义原样保留）：
 //   - 前导引号防误命中：锚点是带引号的键名 "content"/"tool_calls"——
@@ -246,6 +260,15 @@ const GATE_ACTIONABLE = /"(?:content|tool_calls)"\s*:\s*(?:"[^"]+"|\[)/;
 //     空数组没有可截断的工具参数，误入 toolHold 只会白白扣留整条流到超时/流尾）。
 const GATE_TEXT = /"content"\s*:\s*"[^"]+"/;
 const GATE_TOOL = /"tool_calls"\s*:\s*\[\s*\{/;
+// v3 reasoning 探针（锚点口径与 GATE_TEXT 同构：前导引号防转义命中，只认 reasoning_content
+// 一种键名——链上 glm/deepseek/kimi 全用该键；delta.reasoning 变体不入探针，宁漏不误）。
+const GATE_REASONING = /"reasoning_content"\s*:\s*"/;
+// v3 终局帧探针：命中即 pre-hold（终局帧收纳进 holdBag 扣到流尾）——死亡判定在流尾统一
+// 处理，就地续试时整包丢弃，绝不「交付 [DONE] 后再续写」（SDK 的 [DONE] 终结 SSE 解析，
+// 续写必丢失）。只认带引号的 finish_reason 值：OpenAI 兼容 SSE 每个 chunk 都带
+// "finish_reason":null（若含它会把透传泵退化回整流扣留，专项成果自毁），null 不命中；
+// 转义形态 \"finish_reason\" 的 content 内嵌 JSON 不会命（键名锚同上）。
+const GATE_STREAM_TAIL = /"finish_reason"\s*:\s*"|data:\s*\[DONE\]/;
 // 死亡 finish 形态：length=推理吃光预算（经典）；stop=正常收尾但正文全空（空摘要事故形态）。
 // stop 必须与 !GATE_ACTIONABLE 联合判定（在 gateConsume 调用点保证）：出现正文时早已
 // 提前放行，流尾仍无正文的 stop 才是死亡；不匹配 finish（缺字段/其他值）不重试，
@@ -292,6 +315,265 @@ function gateReplayStream(reader, chunks) {
   });
 }
 
+// ── v3（2026-10-08「初始化死寂」专项）：reasoning delta 流式透传泵 ────────────
+// Response 立即返回（free-running 泵在后台逐 chunk 分类、即达即转）。
+// 入口约定：gateConsume probe 期命中 GATE_REASONING（首个 reasoning delta）且
+// content-type 为 SSE 时调用本函数；reader 的 seedChunks（probe 缓冲，含首个
+// reasoning 帧的先行字节）由泵先行回放，再接管剩余。
+// 逐帧语义（正则/预算与 v2 probe 同源，唯一差异是「reasoning 不再扣留」）：
+//   - 观察态 → chunk 原样转发（SDK 实时产出 reasoning-delta，思考可见——专项收益）；
+//   - tool_calls 起始（跨 chunk 累积命中）→ holdKind="tool"：该帧起收 holdBag 扣到
+//     源尾——半截参数零透传（原子化核心）；inter-chunk 超时/字节超限 → mkRetryRaw
+//     原体重试成功则整包丢弃换源续读（v2 rejectToolHold 在「fetch 已返回、reasoning
+//     已透传」下的等价形态：fetch 层 reject 不可达，只退到流内重试+会话级兜底）；
+//   - 终局帧（带值 finish_reason / data:[DONE]）→ holdKind="tail"：扣到流尾，死亡
+//     判定在流尾统一做——[DONE] 一旦交付，SDK 的 SSE 解析终结，续写必丢；
+//     tail 扣留期超时（极端挂尾）→ 放行扣留帧转观察（劣化但有界，挂死由外层
+//     chunkTimeout 看门狗兜底），不无限悬置；
+//   - 流尾死亡判定复用 v2 正则：缺口 A（finish=length|stop 且 !GATE_ACTIONABLE）/
+//     缺口 B（GATE_TOOL+finish=length）→ mkRetry 补丁体重试，成功 → 丢弃本跳 holdBag
+//     换源续读（SDK reasoning part id 固定 "reasoning-0" 且状态机幂等，跨跳拼接安全）；
+//     失败/耗尽 → holdBag 原样回放（=v2 「原样回放死亡流」底线）。
+//   - 正文粘滞护栏（2026-10-08 审计）：观察态一旦透传过非空 content（contentDelivered
+//     粘滞、换源不清零），一切续试（缺口 B / 观察断流 / hold 断流 / tool 超时超限）都会
+//     使第二跳正文拼接成调用方可见重复 → 一律放弃续试、按各路径终局底线处置（缺口 B →
+//     原样回放；观察断流 → 原样上抛；tool hold → reject 可重试错；tail hold → 回放收尾）。
+//     reasoning 拼接重复是 relay 设计已接受代价，正文重复不可接受；缺口 A 在正文已透传
+//     时被同跳 GATE_ACTIONABLE 挡住（正文已在 text 里），无需额外护栏。
+// 取消直通不变式：isCancellation 一律 fail(err) 原样上抛/reader.cancel 级联，不吞；
+// 取消护栏（审计必修）：任何续试点先查 consumerGone——已取消则不再发起新请求/换源
+// （取消后的多余上游请求 + 换源后无人 cancel 的连接泄漏），在途续试响应体即时归还。
+// hold 期续试失败的错误形态对齐 rejectToolHold（gateToolHoldReject 标志，isRetryable
+// 消费后走 Kilo 会话级重试）——半截参数仍未透传，重试零重复。
+// 遥测：入口 reasoning_released（在 gateConsume 记）、终局 stream_end_release
+// （含 relayed 字节数）；节流复用 gateTelemetry（模块级 gateTelemetryBudget）。
+function gateStreamRelay(res, reader, seedChunks, model, opts) {
+  const { mkRetry, mkRetryRaw, retryLeft: retryBudget, toolHoldMs, bufferLimitBytes, holdMs, telemetry } = opts;
+
+  // 泵与 cancel() 共享的状态（cancel 需触达 upstream，故提升到函数作用域）
+  let upstream = reader;
+  let consumerGone = false; // 消费方已 cancel 输出流：stop 泵+级联取消上游
+  let dec = new TextDecoder();
+  let text = "";            // 本跳累积判定文本（换源重置，v2 每跳独立判定等价）
+  let holdBag = [];         // 扣留帧（tool 半截参数 / 终局帧）
+  let holdBytes = 0;
+  let holdKind = null;      // null=观察态 | "tool" | "tail"
+  let holdDeadline = 0;     // inter-chunk 窗口（chunk 到达时评估，无读超时 race）
+  let delivered = 0;        // 已透传字节（跨跳累计，遥测/诊断用）
+  // 观察态已透传正文（content）——跨跳粘滞、换源不清零（正文一经交付无法收回）：
+  // 缺口 B（tool_calls+finish=length）重试会追加第二跳 content → 调用方看到重复正文；
+  // 已交付正文时禁用缺口 B（回退 publishHoldBag 原样回放 = v2 口径，reasoning 拼接
+  // 重复为 relay 设计已接受，正文重复不可接受）。
+  let contentDelivered = false;
+  let retryLeft = retryBudget;
+
+  async function pump(controller) {
+    const close = () => { try { controller.close(); } catch { /* 已终态 */ } };
+    const fail = (err) => { try { controller.error(err); } catch { /* 已终态 */ } };
+    const emit = (chunk) => {
+      if (consumerGone) return false;
+      try { controller.enqueue(chunk); return true; } catch { consumerGone = true; return false; }
+    };
+    const resetStreamState = () => {
+      text = ""; dec = new TextDecoder();
+      holdBag = []; holdBytes = 0; holdKind = null; holdDeadline = 0;
+    };
+    const publishHoldBag = () => {
+      const bag = holdBag;
+      holdBag = []; holdBytes = 0; holdKind = null;
+      for (const c of bag) if (!emit(c)) return;
+    };
+    // 就地续试：patched=true → mkRetry（补丁体，缺口 A/B）；false → mkRetryRaw（原体，
+    // hold 断流/超时/超限）。与 v2 同源预算 retryLeft 递减，防重试风暴。
+    // 返回："cancelled" | null（无预算/失败）| Response（成功）。
+    const splice = async (reason, patched) => {
+      if (retryLeft <= 0) return null;
+      if (consumerGone) return null; // 取消护栏：已取消不再发起新上游请求
+      let next = null;
+      try {
+        next = patched ? await mkRetry(reason) : await mkRetryRaw(reason);
+      } catch (err) {
+        if (isCancellation(err)) fail(err); // 取消直通：isCancellation 不容错不变式
+        return null;
+      }
+      // 取消护栏：续试请求在途期间消费者已 cancel → 新响应体立即取消归还，不换源
+      if (consumerGone) {
+        try { next?.body?.cancel?.()?.catch?.(() => {}); } catch { /* 忽略 */ }
+        return null;
+      }
+      if (next && next.ok && next.body) { retryLeft--; return next; }
+      try { next?.body?.cancel?.()?.catch?.(() => {}); } catch { /* 忽略 */ }
+      return null;
+    };
+
+    try {
+      const preq = seedChunks.slice();
+      for (;;) {
+        // 取消护栏（2026-10-08 审计）：cancel() 后 pending read 可能以 done/失败返回，
+        // 泵不得继续 splice（会在已取消的流上发起多余上游请求、且换源后新 upstream
+        // 无人 cancel 泄漏连接）——所有续试点统一先过此门。
+        if (consumerGone) { cancelCurrent(); return; }
+        let chunk;
+        let isDone = false;
+        if (preq.length > 0) {
+          chunk = preq.shift(); // 回放 probe 缓冲（含首个 reasoning 帧所在流段）
+        } else {
+          let r;
+          try { r = await upstream.read(); }
+          catch (err) {
+            if (isCancellation(err)) { fail(err); return; } // 取消直通（v1 同不变式）
+            // 观察态断流：正文已透传 → 不可整流重放（重试必致正文重复），直接原样上抛；
+            // 仅纯 reasoning 已透传（正文未交付）时原体重试
+            if (holdKind === null) {
+              if (!contentDelivered) {
+                const out = await splice("break", false);
+                if (out) { cancelCurrent(); resetStreamState(); upstream = out.body.getReader(); continue; }
+              }
+              telemetry("relay_break_release", { relayed: delivered, contentDelivered }, model);
+              fail(err); // 断流原样上抛（withStreamBreakRewrap 重包装 → Kilo 会话级重试）
+              return;
+            }
+            // hold 期断流：半截参数在 holdBag → 原体重试，成功丢弃整包换源（零重复）；
+            // 正文已透传（tool 起始前已观察放行过 content）时同观察态口径不上抛重试包
+            const out = contentDelivered ? null : await splice(holdKind === "tool" ? "hold_break" : "tail_break", false);
+            if (out) { cancelCurrent(); resetStreamState(); upstream = out.body.getReader(); continue; }
+            telemetry("relay_hold_break_release", { holdKind, relayed: delivered, contentDelivered }, model);
+            if (holdKind === "tool") {
+              // 半截参数不可交付 → 可重试错误（对齐 rejectToolHold 形态，会话级重试）
+              const e = new Error(`hx-failover: reasoning-gate relay toolHold 断流且${contentDelivered ? "正文已透传不可整流重试" : "续试失败"}，半截工具参数未透传，按可重试错误上抛`);
+              e.statusCode = 200; e.gateToolHoldReject = "hold_break";
+              fail(e);
+            } else {
+              publishHoldBag(); close();
+            }
+            return;
+          }
+          chunk = r.value;
+          isDone = r.done;
+        }
+
+        if (isDone) {
+          // 取消护栏：cancel() 后 pending read 以 done 返回 → 不再做死亡判定/续试
+          if (consumerGone) { cancelCurrent(); return; }
+          // ── 流尾：死亡判定 + 终局处置（v2 gateConsume 尾部语义的接续形态）──
+          const finish = /"finish_reason"\s*:\s*"(\w+)"/.exec(text)?.[1] ?? "unknown";
+          const wasHolding = holdKind === "tool" || holdKind === "tail";
+          // 缺口 A：推理吃光预算/正文全空（正文已透传时本不可能成立，护栏双保险）
+          if (retryLeft > 0 && !contentDelivered && GATE_LENGTH_FINISH.test(text) && !GATE_ACTIONABLE.test(text)) {
+            const out = await splice(undefined, true);
+            if (out) {
+              cancelCurrent(); resetStreamState();
+              upstream = out.body.getReader();
+              telemetry("relay_gap_retry", { via: "relay_gap_a", relayed: delivered }, model);
+              continue;
+            }
+          }
+          // 缺口 B：tool_calls + finish=length（参数被截断，与缺口 A 互斥）；
+          // 正文已透传 → 禁用（重试第二跳 content 会拼接成可见重复），回退原样回放
+          if (retryLeft > 0 && !contentDelivered && GATE_TOOL.test(text) && /"finish_reason"\s*:\s*"length"/.test(text)) {
+            const out = await splice("truncated_tool_args", true);
+            if (out) {
+              cancelCurrent(); resetStreamState();
+              upstream = out.body.getReader();
+              telemetry("relay_gap_retry", { via: "relay_gap_b", relayed: delivered }, model);
+              continue;
+            }
+          }
+          // 终局出口：扣留帧原样回放（死亡流/合法终局的 v2 底线——不劣化）
+          publishHoldBag();
+          telemetry("stream_end_release", { finishReason: finish, toolHolding: wasHolding, retryLeft, relayed: delivered }, model);
+          close();
+          return;
+        }
+
+        // ── 每 chunk 分类（与 v2 probe ①②③④ 一致 + ⑤观察放行）──
+        text += dec.decode(chunk, { stream: true });
+        const size = chunk.byteLength ?? chunk.length ?? 0;
+        // ② tool_calls 起始：扣留起点（半截参数零透传，原子化核心）
+        if (holdKind === null && GATE_TOOL.test(text)) {
+          holdKind = "tool";
+          holdDeadline = Date.now() + toolHoldMs;
+          holdBag.push(chunk); holdBytes += size;
+          continue;
+        }
+        // ④ 终局帧 pre-hold：[DONE] 交付即终结 SDK SSE 解析，扣到死亡判定之后
+        if (holdKind === null && GATE_STREAM_TAIL.test(text)) {
+          holdKind = "tail";
+          holdDeadline = Date.now() + holdMs;
+          holdBag.push(chunk); holdBytes += size;
+          continue;
+        }
+        if (holdKind === "tool") {
+          holdBag.push(chunk); holdBytes += size;
+          // ③ toolHold inter-chunk 超时/字节超限：原体重试（必修项①——直通=交付残缺件）；
+          // 正文已透传 → 跳过续试（重试必致正文重复），直接按可重试错误上抛
+          if (Date.now() > holdDeadline || holdBytes > bufferLimitBytes) {
+            const lim = holdBytes > bufferLimitBytes ? "buffer_limit" : "inter_chunk_timeout";
+            const out = contentDelivered ? null : await splice(lim, false);
+            if (out) { cancelCurrent(); resetStreamState(); upstream = out.body.getReader(); telemetry("reasoning_gate_retry", { via: `relay_${lim}`, relayed: delivered }, model); continue; }
+            telemetry("stream_break_release", { via: `relay_${lim}`, relayed: delivered, contentDelivered }, model);
+            // 续试失败 → 可重试错误上抛（retryLeft 共享递减已耗尽；会话级重试兜底）
+            const e = new Error(`hx-failover: reasoning-gate relay toolHold ${lim}，续试失败，半截工具参数未透传，按可重试错误上抛`);
+            e.statusCode = 200; e.gateToolHoldReject = lim;
+            fail(e);
+            return;
+          }
+          holdDeadline = Date.now() + toolHoldMs;
+          continue;
+        }
+        if (holdKind === "tail") {
+          holdBag.push(chunk); holdBytes += size;
+          // tail 扣留期超时（极端挂尾）：放行扣留帧转观察，有界劣化不做无限悬置
+          if (Date.now() > holdDeadline || holdBytes > bufferLimitBytes) {
+            telemetry("stream_tail_timeout_release", { relayed: delivered }, model);
+            publishHoldBag(); // holdKind 归 null，后续帧直接观察放行
+            // 扣留帧里若夹带正文（畸形流在终局帧后还有 content），已交付即粘滞
+            if (GATE_TEXT.test(text)) contentDelivered = true;
+            continue;
+          }
+          continue;
+        }
+        // ⑤ 观察态：reasoning/正文/角色帧即达即转（专项收益）
+        if (emit(chunk)) {
+          // 正文粘滞标记：非空 content 一旦透传（本跳或此前跳），一切续试禁用
+          if (GATE_TEXT.test(text)) contentDelivered = true;
+          delivered += size;
+        } else { cancelCurrent(); return; }
+      }
+    } catch (fatal) {
+      // 泵内意外：兜底原样上抛（不吞任何非预期异常）
+      telemetry("relay_pump_error", { error: String(fatal?.message ?? fatal).slice(0, 200) }, model);
+      fail(fatal);
+    }
+  }
+  function cancelCurrent() {
+    Promise.resolve(upstream?.cancel?.()).catch(() => { /* 取消幂等：流可能已结束 */ });
+  }
+
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        pump(controller).catch((e) => {
+          try { controller.error(e); } catch { /* 已终态 */ }
+        });
+      },
+      cancel(reason) {
+        consumerGone = true;
+        return Promise.resolve(upstream?.cancel?.(reason)).catch(() => { /* 幂等 */ });
+      },
+    }),
+    { status: res.status, statusText: res.statusText, headers: res.headers },
+  );
+}
+
+// gate_release 遥测节流 Map（module 级，2026-10-08「巨卡」专项）：
+// 跨 gateConsume 调用共享，同 model 同 reason 10s 只记一条——原在 gateConsume 内新建，
+// gateConsume 每响应调一次 → 节流退化为 per-call 永不命中 → 实证遥测里几乎每个成功流
+// 都有一条 gate_release:text_released（4.85MB/36.6k 行）。引用规则：gateTelemetry
+// 闭包引用模块顶层 const（与 GATE_* 常量同层，esbuild 顶层提升安全；TDZ 教训见 gateConsume
+// 内注释：只在「闭包引用函数内 const」时踩）。
+const gateTelemetryBudget = new Map();
+
 // 纯缓冲回放流（流已结束：死亡/非死亡整包原样透传）。
 function gateBufferedStream(chunks) {
   let i = 0;
@@ -302,14 +584,6 @@ function gateBufferedStream(chunks) {
     },
   });
 }
-
-// gate_release 遥测节流 Map（module 级，2026-10-08「巨卡」专项）：
-// 跨 gateConsume 課用共享，同 model 同 reason 10s 只记一条——原在 gateConsume 内新建，
-// gateConsume 每响应调一次 → 节流退化为 per-call 永不命中 → 实证遥测里几乎每个成功流
-// 都有一条 gate_release:text_released（4.85MB/36.6k 行）。引用规则：gateTelemetry
-// 闭包引用模块顶层 const（与 GATE_* 常量同层，esbuild 顶层提升安全；TDZ 教训见 gateConsume
-// 内注释：只在「闭包引用函数内 const」时踩）。
-const gateTelemetryBudget = new Map();
 
 // 扣留观察一个 2xx 响应 body 并裁决（递归有界：每 hop retryLeft-1、独立 holdDeadline）。
 // 返回 Response：
@@ -325,7 +599,12 @@ const gateTelemetryBudget = new Map();
 //     原样上抛——不在本层用读超时竞争：race 输掉的一方仍占着 read 队列，
 //     会把后续 chunk 吞给已被放弃的读取（实测数据丢失）。
 //   - 流结束：死亡且可重试 → mkRetry() 下一跳同样门控；其余 → 原始字节原样回放。
-async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, toolHoldMs, model) {
+// v3（2026-10-08 死寂专项）新增 ②.5：首个 reasoning delta（GATE_REASONING）且
+// content-type 为 SSE → 转 gateStreamRelay 观察透传（Response 立即返回，reasoning
+// 即达即转，「工具回合整流扣留」的死寂主要 phenotype 就在这条路径上）；非 SSE
+// （application/json 整流响应）不进 relay——doGenerate 需要「一段完整 JSON」，
+// 重试后两段拼接必炸句法解析，继续走 v2 原路（整流缓冲/死亡判定/原样回放）。
+async function gateConsume(res, mkRetry, mkRetryRaw, retryLeft, holdMs, bufferLimitBytes, toolHoldMs, model) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   const chunks = [];
@@ -334,6 +613,8 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
   const deadline = Date.now() + holdMs;
   let toolHolding = false; // toolHold 原子化缓冲中（tool_calls 起始已出现，扣留到流尾）
   let toolDeadline = 0;    // inter-chunk deadline：从上一 chunk 起算的 toolHoldMs 窗口
+  // v3：仅 SSE 可透传（headers.get 兼容无 Headers 实现的测试替身）
+  const isRelayableSse = () => /event-stream/i.test(String(res?.headers?.get?.("content-type") ?? ""));
 
   // 放弃门控：回放已缓冲 + 接管剩余（真正的直通，不丢后续字节）。
   // 仅用于「缓冲内无半截工具参数」的路径（文本放行 / 非 toolHold 期超时与超限）。
@@ -411,6 +692,16 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
       toolHolding = true;
       toolDeadline = Date.now() + toolHoldMs;
     }
+    // ②.5（v3 死寂专项）：首个 reasoning delta + SSE → 观察透传。放在 ③④ 之前——
+    // 死寂问题高发于「上游慢滴 reasoning」长尾（B 段 p99=176s），probe 的 holdMs/
+    // 缓冲上限不该先扣留它；② 已命中的流（toolHolding）不转——toolHold 原子化优先。
+    if (!toolHolding && isRelayableSse() && GATE_REASONING.test(text)) {
+      gateTelemetry("reasoning_released", { bufferedBytes }, model);
+      return gateStreamRelay(res, reader, chunks, model, {
+        mkRetry, mkRetryRaw, retryLeft, toolHoldMs, bufferLimitBytes, holdMs,
+        telemetry: gateTelemetry,
+      });
+    }
     // ③ deadline 族（都在 chunk 到达时评估，绝不引入读超时 race）：
     //    toolHold 期 = inter-chunk 语义——上一 chunk 距今超 toolHoldMs → 弃流重试
     //    （必修项①：缓冲含半截参数，直通=交付残缺件）；chunk 在流则重置窗口
@@ -440,7 +731,7 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
     try { next = await mkRetry(); } catch (e) { if (isCancellation(e)) throw e; next = null; } // 其余网络错 → 回退原样回放
     if (next && next.ok && next.body) {
       cancelReader().catch(() => {});
-      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs, model);
+      return gateConsume(next, mkRetry, mkRetryRaw, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs, model);
     }
     try { next?.body?.cancel?.()?.catch?.(() => {}); } catch { /* 忽略 */ }
   }
@@ -455,7 +746,7 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
     try { next = await mkRetry("truncated_tool_args"); } catch (e) { if (isCancellation(e)) throw e; next = null; } // 取消直通；网络错 → 回退原样回放
     if (next && next.ok && next.body) {
       cancelReader().catch(() => {}); // 幂等：上游已结束则静默
-      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs, model);
+      return gateConsume(next, mkRetry, mkRetryRaw, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs, model);
     }
     try { next?.body?.cancel?.()?.catch?.(() => {}); } catch { /* 忽略 */ }
   }
@@ -514,6 +805,16 @@ function withReasoningGate(baseFetch, cfg) {
       }
       return call(input, { ...init, body: patched });
     };
+    // v3（relay 泵专用）：原体重发（不补丁、不换模型）——reasoning 已透传给调用方时，
+    // 断流/超时/超限的重试只能复用原请求体（补丁体改变 max_tokens/effort，两跳输出
+    // 无法对齐续接；原体重发保 reasoning 拼接连续）。遥测记 reasoning_gate_retry
+    // reason=raw_*，attempt 与 mkRetry 共享口径。
+    const mkRetryRaw = async (reason) => {
+      attempt++;
+      await logFailover({ action: "reasoning_gate_retry", from: model, attempt, reason: `raw_${reason ?? "unknown"}` });
+      console.error(`hx-failover: reasoning-gate ${model} relay 流内续试（${reason ?? "unknown"}），第 ${attempt} 次（原体重发）`);
+      return call(input, init);
+    };
 
     const res = await call(input, init);
     if (!res.ok || !res.body) return res;
@@ -521,9 +822,10 @@ function withReasoningGate(baseFetch, cfg) {
     // ——与无门控时 body 读取断裂的错误语义一致，只是发生点从流消费期提前到 fetch 期。
     // v2 起工具参数尚在 toolHold 缓冲内（从未交付调用方），断流重试零重复（原子化）；
     // toolHold 期超时/超限走 rejectToolHold 弃流重试（必修项①），同样零交付。
+    // v3 relay 泵在流内续试（mkRetryRaw）与流尾死亡重试（mkRetry）：budget 同源（retryLeft）。
     let gated;
     try {
-      gated = await gateConsume(res, mkRetry, retries, holdMs, bufferLimitBytes, toolHoldMs, model);
+      gated = await gateConsume(res, mkRetry, mkRetryRaw, retries, holdMs, bufferLimitBytes, toolHoldMs, model);
     } catch (e) {
       // 弃流重试的遥测（缓冲内半截参数从未交付）：可回溯 gate 弃流事件。
       // 遥测自身失败不得吞掉/覆盖原始弃流错误（r2 建议项防护）。

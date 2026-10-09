@@ -484,10 +484,18 @@
         // fetch 出口扣留响应直到出现正文/工具调用才放行；判定死亡则用「扩预算
         // （×2、下限 32768、上限 65536）+ 降推理档」的请求体自动重发 1 次，
         // 仍死则原样透传（与关闭时字节一致）。9527 网关是无源码 new-api 二进制，
-        // 服务端改不了 → 客户端兜底。可调对象：{holdMs, retries, minTokens, maxTokens, toolHoldMs}。
+        // 服务端改不了 → 客户端兜底。可调对象：{holdMs, retries, minTokens, maxTokens,
+        // toolHoldMs, bufferLimitBytes}。
         // v2（2026-09-29 Tool-execution-aborted 专项）：工具调用原子化——tool_calls 起始后
         // 扣留到流尾才回放（inter-chunk 超时 toolHoldMs，默认 120s，断流重试零重复）；
         // tool_calls+finish=length 参数被输出预算截断 → 扩预算重发（遥测 reason=truncated_tool_args）。
+        // v3（2026-10-08 初始化死寂专项）：首个 reasoning delta（SSE）即转观察透传——
+        // 响应立即返回、reasoning 即达即转（旧行为把整个工具回合扣留到流尾，首反馈
+        // p50=9.5s/p90=29.6s）；tool_calls 起始帧仍整帧起扣留（半截参数零透传原子化
+        // 不变），流尾统一死亡判定；正文已透传（contentDelivered 跨跳粘滞）时禁用
+        // 截断重试（正文零重复，防第二跳拼接）；取消后所有续试点先查 consumerGone
+        // （零多余上游请求）；reject 终态经 SDK 包装为 isRetryable APICallError，
+        // Kilo 会话级重试兜底。
         "reasoningGate": true,
         // 故障降级链：主模型失败→依次切换，每跳重试 2 次，
         // 失败模型冷却 60s（冷却对全链生效：主模型上一轮刚降级过，本轮直接从首个

@@ -1,4 +1,4 @@
-// 推理门控（reasoningGate）回归：假 fetch 注入死亡/成功响应，驱动真实 dist 代码路径。
+﻿// 推理门控（reasoningGate）回归：假 fetch 注入死亡/成功响应，驱动真实 dist 代码路径。
 // 覆盖：死亡→重试→救活（SSE 与非流式）、重试耗尽原样透传、门控关闭零接触、
 //       扣留超时转直通、tool_calls 可行动、reasoningEcho 组合、重试 body 修补正确性、
 //       finish=stop 空正文（空摘要压缩事故形态）救援/透传/不误伤；
@@ -6,6 +6,8 @@
 //       完整工具流 held-to-completion 回放、finish=length 截断参数缺口 B 重试、
 //       纯文本流式保留、toolHold 慢滴/超限弃流重试（必修项①）、toolHold 期取消
 //       直通、空数组不锁死、签名跨 chunk 切分累积匹配（必修项②）。
+//       v3 审计加固（2026-10-08）：取消后零多余上游请求（cancel 护栏）、正文已透传
+//       时缺口 B 禁用（正文零重复）、toolHold reject 终态可重试形态锁定（P1）。
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp, readFile } from "node:fs/promises";
@@ -809,6 +811,240 @@ function sseStopDeath() {
     && ev20.some((r) => r.from === "gate-tele-text" && r.reason === "text_released"));
   check("gate-tele-stream-end     :", ev20.some((r) => r.from === "gate-tele-dead"
     && r.reason === "stream_end_release" && r.finishReason === "length"));
+}
+
+// ── 21.（v3 死寂专项）reasoning 首 delta 提前可见：全工具回合不再扣留到流尾 ──
+// 病灶形态（48h 遥测 67% 步骤）：reasoning 慢滴 → tool_calls → finish；v2 把整条流
+// 扣到源尾，UI 首反馈 p50=19s/p90=103s。断言：首个 reasoning 相关 part（reasoning-
+// start/delta 或 raw）在 tool_calls 帧（+150ms）与 [DONE]（+650ms）之前到达。
+{
+  let call = 0;
+  const fakeFetch = async () => {
+    call++;
+    const body = new ReadableStream({
+      start(controller) {
+        const enc = new TextEncoder();
+        setTimeout(() => {
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "想一步" } }] })}\n\n`));
+        }, 30);
+        setTimeout(() => {
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ id: "t21", type: "function", function: { name: "run", arguments: "" } }] } }] })}\n\n`));
+          setTimeout(() => {
+            controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ cmd: "dir" }) } }] } }] })}\n\n`));
+            controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] })}\n\n`));
+            controller.enqueue(enc.encode("data: [DONE]\n\n"));
+            controller.close();
+          }, 150);
+        }, 60);
+      },
+    });
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  const provider = createHxFailover({
+    name: "hx", baseURL: "https://stub.local/v1", apiKey: "x", fetch: fakeFetch,
+    failover: { chain: { models: [] } }, reasoningGate: true,
+  });
+  const t0 = Date.now();
+  const { stream } = await provider.languageModel("relay-latency").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: true,
+  });
+  let reasoningMs = null;
+  let firstToolMs = null;
+  let doneMs = null;
+  let toolInput = null;
+  const parts = [];
+  for await (const p of stream) {
+    parts.push(p);
+    const ms = Date.now() - t0;
+    const s = JSON.stringify(p);
+    if (reasoningMs === null && (s.includes("reasoning") || s.includes("想一步"))) reasoningMs = ms;
+    if (firstToolMs === null && (p.type === "tool-input-start" || p.type === "tool-call" || s.includes('"run"'))) firstToolMs = ms;
+    if (p.type === "tool-call" && toolInput === null) toolInput = toolInputOf([p]);
+    if (p.type.startsWith("finish") || p.type === "finish") doneMs = ms;
+  }
+  check("relay-reasoning-early   :", call === 1 && reasoningMs !== null && reasoningMs < 200 && (firstToolMs === null || firstToolMs > (reasoningMs ?? 1e9)));
+  check("relay-tool-atomic       :", toolInput !== null && toolInput.cmd === "dir");
+  check("relay-finish-after-tool :", firstToolMs !== null && doneMs !== null && doneMs >= firstToolMs);
+  check("relay-reasoning-before-tool :", reasoningMs !== null && firstToolMs !== null && reasoningMs < firstToolMs);
+  // 21b. 首个 part 时间：reasoning 可见时间必须显著早于流 EOF（650ms）——死寂消灭的直接断言
+  check("relay-no-dead-silence   :", reasoningMs < 650);
+}
+
+// ── 22. relay 断流续试（原体重发）：reasoning 透传期 break → mkRetryRaw → 零重复 ──
+// 与 T1（toolHold 期断流）对照：relay 观察态断流时 reasoning 字节已交付调用方，
+// 无法整流重放——但重试只走原体（不补丁：补丁体会改变输出预算，两跳拼不出连续
+// 流）。断言第二跳帧接在同一 stream 上且 SDK 正常收尾。
+{
+  let call = 0;
+  const fakeFetch = async () => {
+    call++;
+    if (call === 1) {
+      const body = new ReadableStream({
+        start(controller) {
+          const enc = new TextEncoder();
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "想一半" } }] })}\n\n`));
+          setTimeout(() => controller.error(Object.assign(new Error("tunnel cut mid-reasoning"), { code: "ERR_STREAM_PREMATURE_CLOSE" })), 20);
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }
+    const body = [
+      `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "续上" } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "[raw-resumed]" } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { completion_tokens: 8 } })}\n\n`,
+      "data: [DONE]\n\n",
+    ].join("");
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  const provider = createHxFailover({
+    name: "hx", baseURL: "https://stub.local/v1", apiKey: "x", fetch: fakeFetch,
+    failover: { chain: { models: [] } }, reasoningGate: true,
+  });
+  const { stream } = await provider.languageModel("relay-raw-retry").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: true,
+  });
+  const reasoningParts = [];
+  let text = "";
+  for await (const p of stream) {
+    const s = JSON.stringify(p);
+    if (s.includes("reasoning")) reasoningParts.push(s);
+    if (p.type === "text-delta") text += p.delta ?? p.textDelta ?? "";
+  }
+  check("raw-retry-reasoning-kept:", call === 2 && reasoningMsHas(reasoningParts, "想一半") && reasoningMsHas(reasoningParts, "续上") && text.includes("[raw-resumed]"));
+  let rawRec = null;
+  try {
+    const log = await readFile(join(process.env.XDG_DATA_HOME, "kilo", "failover-events.jsonl"), "utf8");
+    rawRec = log.trim().split("\n").map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
+      .find((e) => e.action === "reasoning_gate_retry" && String(e.reason ?? "").startsWith("raw_"));
+  } catch { /* 无日志文件视为未写入 */ }
+  check("raw-retry-logged        :", rawRec !== null);
+}
+function reasoningMsHas(parts, s) {
+  return parts.some((p) => p.includes(s));
+}
+
+// ── 23.（v3 审计加固）relay 取消护栏：cancel 后不再发起多余上游请求 ─────────
+// 病灶（审计发现）：cancel() 后 pending read 以 done 返回，泵仍进流尾死亡判定 →
+// 缺口 A splice 在已取消的流上再发一次上游请求（换源后无人 cancel 泄漏连接）。
+// 断言：消费首 part 后取消，上游只调 1 次、fixture 侧 cancel 级联到达。
+{
+  let call = 0;
+  let cancelled = false;
+  const fakeFetch = async () => {
+    call++;
+    if (call === 1) {
+      const body = new ReadableStream({
+        start(controller) {
+          const enc = new TextEncoder();
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "想一半" } }] })}\n\n`));
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "length" }] })}\n\n`));
+          controller.enqueue(enc.encode("data: [DONE]\n\n"));
+          // 不 close：模拟挂尾流，等调用方取消
+        },
+        cancel() { cancelled = true; },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }
+    return new Response(sseOk("[should-not-refetch]"), { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  const provider = createHxFailover({
+    name: "hx", baseURL: "https://stub.local/v1", apiKey: "x", fetch: fakeFetch,
+    failover: { chain: { models: [] } }, reasoningGate: true,
+  });
+  const { stream } = await provider.languageModel("relay-cancel").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: true,
+  });
+  const reader = stream.getReader();
+  const first = await reader.read();
+  await new Promise((r) => setTimeout(r, 120));
+  await reader.cancel();
+  await new Promise((r) => setTimeout(r, 200));
+  check("relay-cancel-no-refetch :", !first.done && call === 1 && cancelled === true);
+}
+
+// ── 24.（v3 审计加固）relay 正文粘滞：content 已透传时缺口 B 禁用（零重复）────
+// 病灶（审计发现）：reasoning 透传后正文也已观察放行，随后 tool_calls 截断 +
+// finish=length → 旧缺口 B 补丁重试 → 第二跳 content 拼接成可见重复正文。
+// 断言：正文只出现一次、上游只调 1 次（缺口 B 被 contentDelivered 粘滞禁用，
+// 终局回退 publishHoldBag 原样回放）。
+{
+  let call = 0;
+  const fakeFetch = async () => {
+    call++;
+    if (call === 1) {
+      const body = new ReadableStream({
+        start(controller) {
+          const enc = new TextEncoder();
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "想一半" } }] })}\n\n`));
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "[dup-marker]" } }] })}\n\n`));
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "t24", type: "function", function: { name: "run", arguments: "{\"cmd\":\"di" } }] } }] })}\n\n`));
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "length" }] })}\n\n`));
+          controller.enqueue(enc.encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }
+    return new Response(sseOk("[dup-marker]"), { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  const provider = createHxFailover({
+    name: "hx", baseURL: "https://stub.local/v1", apiKey: "x", fetch: fakeFetch,
+    failover: { chain: { models: [] } }, reasoningGate: true,
+  });
+  const { stream } = await provider.languageModel("relay-content").doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    includeRawChunks: false,
+  });
+  let text = "";
+  try {
+    for await (const p of stream) {
+      if (p.type === "text-delta") text += p.delta ?? p.textDelta ?? "";
+    }
+  } catch { /* 回放半截工具帧的 SDK 侧错误不影响文本断言 */ }
+  const dup = text.split("[dup-marker]").length - 1;
+  check("relay-content-no-dup    :", call === 1 && dup === 1);
+}
+
+// ── 25.（P1 锁定）relay toolHold reject 终态：经 SDK 包装仍为可重试 APICallError ──
+// 审计判读（2026-10-08）：泵内 fail(e)（plain Error + statusCode=200 +
+// gateToolHoldReject）→ SDK wrapResponseBodyStream 包装为 APICallError{200,
+// "Failed to process successful response"} → isStreamBreakError 2xx 分支命中 →
+// rewrapStreamBreak 显式 isRetryable:true → Kilo 会话级重试门放行。本用例把该
+// 链路锁死（旧 dist 同路径，非红绿对照；retries:0 直接走 reject 终态）。
+{
+  let call = 0;
+  const fakeFetch = async () => {
+    call++;
+    const body = new ReadableStream({
+      start(controller) {
+        const enc = new TextEncoder();
+        controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "想一半" } }] })}\n\n`));
+        controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "t25", type: "function", function: { name: "run", arguments: "" } }] } }] })}\n\n`));
+        setTimeout(() => {
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: "{\"cmd\":\"di" } }] } }] })}\n\n`));
+        }, 150);
+      },
+    });
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  const provider = createHxFailover({
+    name: "hx", baseURL: "https://stub.local/v1", apiKey: "x", fetch: fakeFetch,
+    failover: { chain: { models: [] } }, reasoningGate: { toolHoldMs: 40, retries: 0 },
+  });
+  let err = null;
+  try {
+    const { stream } = await provider.languageModel("relay-reject").doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+      includeRawChunks: false,
+    });
+    for await (const p of stream) { /* 排空到错误 */ }
+  } catch (e) { err = e; }
+  let gate = false;
+  for (let c = err, i = 0; c && i < 6; c = c.cause, i++) if (c.gateToolHoldReject) { gate = true; break; }
+  check("relay-reject-retryable :", err !== null && err.isRetryable === true && call === 1 && gate);
 }
 
 const failed = results.filter(([, ok]) => !ok);

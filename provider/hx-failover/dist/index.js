@@ -1,4 +1,4 @@
-// kilo-build: src-sha256=fd6027dbd3f8fc6973eb297fa9632b5b0c17af743bf763b1bf24aef23345ab55
+// kilo-build: src-sha256=1f61dcf31c27c6140ec6ae97c76eb401bbc00833ff3fa9f12ecb7b4db42859c0
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)
@@ -28546,6 +28546,8 @@ function withReasoningEcho(baseFetch) {
 var GATE_ACTIONABLE = /"(?:content|tool_calls)"\s*:\s*(?:"[^"]+"|\[)/;
 var GATE_TEXT = /"content"\s*:\s*"[^"]+"/;
 var GATE_TOOL = /"tool_calls"\s*:\s*\[\s*\{/;
+var GATE_REASONING = /"reasoning_content"\s*:\s*"/;
+var GATE_STREAM_TAIL = /"finish_reason"\s*:\s*"|data:\s*\[DONE\]/;
 var GATE_LENGTH_FINISH = /"finish_reason"\s*:\s*"(?:length|stop)"/;
 var GATE_EFFORT_DOWN = { max: "high", high: "medium", medium: "low", low: "low" };
 function gatePatchRetryBody(bodyText, minTokens, maxTokens) {
@@ -28590,6 +28592,261 @@ function gateReplayStream(reader, chunks) {
     }
   });
 }
+function gateStreamRelay(res, reader, seedChunks, model, opts) {
+  const { mkRetry, mkRetryRaw, retryLeft: retryBudget, toolHoldMs, bufferLimitBytes, holdMs, telemetry } = opts;
+  let upstream = reader;
+  let consumerGone = false;
+  let dec = new TextDecoder();
+  let text = "";
+  let holdBag = [];
+  let holdBytes = 0;
+  let holdKind = null;
+  let holdDeadline = 0;
+  let delivered = 0;
+  let contentDelivered = false;
+  let retryLeft = retryBudget;
+  async function pump(controller) {
+    const close = () => {
+      try {
+        controller.close();
+      } catch {
+      }
+    };
+    const fail = (err) => {
+      try {
+        controller.error(err);
+      } catch {
+      }
+    };
+    const emit = (chunk) => {
+      if (consumerGone) return false;
+      try {
+        controller.enqueue(chunk);
+        return true;
+      } catch {
+        consumerGone = true;
+        return false;
+      }
+    };
+    const resetStreamState = () => {
+      text = "";
+      dec = new TextDecoder();
+      holdBag = [];
+      holdBytes = 0;
+      holdKind = null;
+      holdDeadline = 0;
+    };
+    const publishHoldBag = () => {
+      const bag = holdBag;
+      holdBag = [];
+      holdBytes = 0;
+      holdKind = null;
+      for (const c of bag) if (!emit(c)) return;
+    };
+    const splice = async (reason, patched) => {
+      if (retryLeft <= 0) return null;
+      if (consumerGone) return null;
+      let next = null;
+      try {
+        next = patched ? await mkRetry(reason) : await mkRetryRaw(reason);
+      } catch (err) {
+        if (isCancellation(err)) fail(err);
+        return null;
+      }
+      if (consumerGone) {
+        try {
+          next?.body?.cancel?.()?.catch?.(() => {
+          });
+        } catch {
+        }
+        return null;
+      }
+      if (next && next.ok && next.body) {
+        retryLeft--;
+        return next;
+      }
+      try {
+        next?.body?.cancel?.()?.catch?.(() => {
+        });
+      } catch {
+      }
+      return null;
+    };
+    try {
+      const preq = seedChunks.slice();
+      for (; ; ) {
+        if (consumerGone) {
+          cancelCurrent();
+          return;
+        }
+        let chunk;
+        let isDone = false;
+        if (preq.length > 0) {
+          chunk = preq.shift();
+        } else {
+          let r;
+          try {
+            r = await upstream.read();
+          } catch (err) {
+            if (isCancellation(err)) {
+              fail(err);
+              return;
+            }
+            if (holdKind === null) {
+              if (!contentDelivered) {
+                const out2 = await splice("break", false);
+                if (out2) {
+                  cancelCurrent();
+                  resetStreamState();
+                  upstream = out2.body.getReader();
+                  continue;
+                }
+              }
+              telemetry("relay_break_release", { relayed: delivered, contentDelivered }, model);
+              fail(err);
+              return;
+            }
+            const out = contentDelivered ? null : await splice(holdKind === "tool" ? "hold_break" : "tail_break", false);
+            if (out) {
+              cancelCurrent();
+              resetStreamState();
+              upstream = out.body.getReader();
+              continue;
+            }
+            telemetry("relay_hold_break_release", { holdKind, relayed: delivered, contentDelivered }, model);
+            if (holdKind === "tool") {
+              const e = new Error(`hx-failover: reasoning-gate relay toolHold \u65AD\u6D41\u4E14${contentDelivered ? "\u6B63\u6587\u5DF2\u900F\u4F20\u4E0D\u53EF\u6574\u6D41\u91CD\u8BD5" : "\u7EED\u8BD5\u5931\u8D25"}\uFF0C\u534A\u622A\u5DE5\u5177\u53C2\u6570\u672A\u900F\u4F20\uFF0C\u6309\u53EF\u91CD\u8BD5\u9519\u8BEF\u4E0A\u629B`);
+              e.statusCode = 200;
+              e.gateToolHoldReject = "hold_break";
+              fail(e);
+            } else {
+              publishHoldBag();
+              close();
+            }
+            return;
+          }
+          chunk = r.value;
+          isDone = r.done;
+        }
+        if (isDone) {
+          if (consumerGone) {
+            cancelCurrent();
+            return;
+          }
+          const finish = /"finish_reason"\s*:\s*"(\w+)"/.exec(text)?.[1] ?? "unknown";
+          const wasHolding = holdKind === "tool" || holdKind === "tail";
+          if (retryLeft > 0 && !contentDelivered && GATE_LENGTH_FINISH.test(text) && !GATE_ACTIONABLE.test(text)) {
+            const out = await splice(void 0, true);
+            if (out) {
+              cancelCurrent();
+              resetStreamState();
+              upstream = out.body.getReader();
+              telemetry("relay_gap_retry", { via: "relay_gap_a", relayed: delivered }, model);
+              continue;
+            }
+          }
+          if (retryLeft > 0 && !contentDelivered && GATE_TOOL.test(text) && /"finish_reason"\s*:\s*"length"/.test(text)) {
+            const out = await splice("truncated_tool_args", true);
+            if (out) {
+              cancelCurrent();
+              resetStreamState();
+              upstream = out.body.getReader();
+              telemetry("relay_gap_retry", { via: "relay_gap_b", relayed: delivered }, model);
+              continue;
+            }
+          }
+          publishHoldBag();
+          telemetry("stream_end_release", { finishReason: finish, toolHolding: wasHolding, retryLeft, relayed: delivered }, model);
+          close();
+          return;
+        }
+        text += dec.decode(chunk, { stream: true });
+        const size = chunk.byteLength ?? chunk.length ?? 0;
+        if (holdKind === null && GATE_TOOL.test(text)) {
+          holdKind = "tool";
+          holdDeadline = Date.now() + toolHoldMs;
+          holdBag.push(chunk);
+          holdBytes += size;
+          continue;
+        }
+        if (holdKind === null && GATE_STREAM_TAIL.test(text)) {
+          holdKind = "tail";
+          holdDeadline = Date.now() + holdMs;
+          holdBag.push(chunk);
+          holdBytes += size;
+          continue;
+        }
+        if (holdKind === "tool") {
+          holdBag.push(chunk);
+          holdBytes += size;
+          if (Date.now() > holdDeadline || holdBytes > bufferLimitBytes) {
+            const lim = holdBytes > bufferLimitBytes ? "buffer_limit" : "inter_chunk_timeout";
+            const out = contentDelivered ? null : await splice(lim, false);
+            if (out) {
+              cancelCurrent();
+              resetStreamState();
+              upstream = out.body.getReader();
+              telemetry("reasoning_gate_retry", { via: `relay_${lim}`, relayed: delivered }, model);
+              continue;
+            }
+            telemetry("stream_break_release", { via: `relay_${lim}`, relayed: delivered, contentDelivered }, model);
+            const e = new Error(`hx-failover: reasoning-gate relay toolHold ${lim}\uFF0C\u7EED\u8BD5\u5931\u8D25\uFF0C\u534A\u622A\u5DE5\u5177\u53C2\u6570\u672A\u900F\u4F20\uFF0C\u6309\u53EF\u91CD\u8BD5\u9519\u8BEF\u4E0A\u629B`);
+            e.statusCode = 200;
+            e.gateToolHoldReject = lim;
+            fail(e);
+            return;
+          }
+          holdDeadline = Date.now() + toolHoldMs;
+          continue;
+        }
+        if (holdKind === "tail") {
+          holdBag.push(chunk);
+          holdBytes += size;
+          if (Date.now() > holdDeadline || holdBytes > bufferLimitBytes) {
+            telemetry("stream_tail_timeout_release", { relayed: delivered }, model);
+            publishHoldBag();
+            if (GATE_TEXT.test(text)) contentDelivered = true;
+            continue;
+          }
+          continue;
+        }
+        if (emit(chunk)) {
+          if (GATE_TEXT.test(text)) contentDelivered = true;
+          delivered += size;
+        } else {
+          cancelCurrent();
+          return;
+        }
+      }
+    } catch (fatal) {
+      telemetry("relay_pump_error", { error: String(fatal?.message ?? fatal).slice(0, 200) }, model);
+      fail(fatal);
+    }
+  }
+  function cancelCurrent() {
+    Promise.resolve(upstream?.cancel?.()).catch(() => {
+    });
+  }
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        pump(controller).catch((e) => {
+          try {
+            controller.error(e);
+          } catch {
+          }
+        });
+      },
+      cancel(reason) {
+        consumerGone = true;
+        return Promise.resolve(upstream?.cancel?.(reason)).catch(() => {
+        });
+      }
+    }),
+    { status: res.status, statusText: res.statusText, headers: res.headers }
+  );
+}
+var gateTelemetryBudget = /* @__PURE__ */ new Map();
 function gateBufferedStream(chunks) {
   let i = 0;
   return new ReadableStream({
@@ -28599,8 +28856,7 @@ function gateBufferedStream(chunks) {
     }
   });
 }
-var gateTelemetryBudget = /* @__PURE__ */ new Map();
-async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, toolHoldMs, model) {
+async function gateConsume(res, mkRetry, mkRetryRaw, retryLeft, holdMs, bufferLimitBytes, toolHoldMs, model) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   const chunks = [];
@@ -28609,6 +28865,7 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
   const deadline = Date.now() + holdMs;
   let toolHolding = false;
   let toolDeadline = 0;
+  const isRelayableSse = () => /event-stream/i.test(String(res?.headers?.get?.("content-type") ?? ""));
   const passthrough = (reason) => {
     gateTelemetry(reason ?? "passthrough", { toolHolding }, model);
     return new Response(gateReplayStream(reader, chunks), {
@@ -28650,6 +28907,18 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
       toolHolding = true;
       toolDeadline = Date.now() + toolHoldMs;
     }
+    if (!toolHolding && isRelayableSse() && GATE_REASONING.test(text)) {
+      gateTelemetry("reasoning_released", { bufferedBytes }, model);
+      return gateStreamRelay(res, reader, chunks, model, {
+        mkRetry,
+        mkRetryRaw,
+        retryLeft,
+        toolHoldMs,
+        bufferLimitBytes,
+        holdMs,
+        telemetry: gateTelemetry
+      });
+    }
     if (toolHolding) {
       if (Date.now() > toolDeadline) return rejectToolHold("inter_chunk_timeout");
       toolDeadline = Date.now() + toolHoldMs;
@@ -28672,7 +28941,7 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
     if (next && next.ok && next.body) {
       cancelReader().catch(() => {
       });
-      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs, model);
+      return gateConsume(next, mkRetry, mkRetryRaw, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs, model);
     }
     try {
       next?.body?.cancel?.()?.catch?.(() => {
@@ -28691,7 +28960,7 @@ async function gateConsume(res, mkRetry, retryLeft, holdMs, bufferLimitBytes, to
     if (next && next.ok && next.body) {
       cancelReader().catch(() => {
       });
-      return gateConsume(next, mkRetry, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs, model);
+      return gateConsume(next, mkRetry, mkRetryRaw, retryLeft - 1, holdMs, bufferLimitBytes, toolHoldMs, model);
     }
     try {
       next?.body?.cancel?.()?.catch?.(() => {
@@ -28743,11 +29012,17 @@ function withReasoningGate(baseFetch, cfg) {
       }
       return call(input2, { ...init, body: patched });
     };
+    const mkRetryRaw = async (reason) => {
+      attempt++;
+      await logFailover({ action: "reasoning_gate_retry", from: model, attempt, reason: `raw_${reason ?? "unknown"}` });
+      console.error(`hx-failover: reasoning-gate ${model} relay \u6D41\u5185\u7EED\u8BD5\uFF08${reason ?? "unknown"}\uFF09\uFF0C\u7B2C ${attempt} \u6B21\uFF08\u539F\u4F53\u91CD\u53D1\uFF09`);
+      return call(input2, init);
+    };
     const res = await call(input2, init);
     if (!res.ok || !res.body) return res;
     let gated;
     try {
-      gated = await gateConsume(res, mkRetry, retries, holdMs, bufferLimitBytes, toolHoldMs, model);
+      gated = await gateConsume(res, mkRetry, mkRetryRaw, retries, holdMs, bufferLimitBytes, toolHoldMs, model);
     } catch (e) {
       if (e?.gateToolHoldReject) {
         try {
