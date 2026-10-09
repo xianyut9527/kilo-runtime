@@ -38,6 +38,11 @@
   "privacy_mode": true,
   // 允许模型用网络搜索
   "web_search": true,
+  // 推理块显示档（2026-10-09 定案）：expanded=全文（此前默认，每步刷一大片思考）/
+  // preview=短滚动预览 / headline=只显标题+流式指示器，点开才看全文——零冗余但有心跳，
+  // 不显示冗余思考的同时保留活动指示（v3 透传后思考实时可见，全量显示无信息增量）。
+  // Kilo 原生键（设置界面 Display → Reasoning Blocks 同源），重启 Kilo 生效。
+  "reasoning_display": "headline",
   // 保存后自动跑 formatter（prettier 等）。性能专项验证后保持开启（关它换不来多少速度，还会漂移代码风格）。
   "formatter": true,
   // LSP 代码智能（跳转/补全/诊断），配合 permission.lsp=allow
