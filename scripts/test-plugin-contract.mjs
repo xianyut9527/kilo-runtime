@@ -18,8 +18,14 @@
 //   3. plugin/ 目录下不存在"库文件"（非插件入口）——库必须放 lib/，否则会被当插件加载；
 //   4. 每个插件至少导出一个工厂函数。
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+// 开发期红线（2026-10-11 记忆核心闭环改造）：工厂 init 会触发 memory-bootstrap/memory-store
+// 的 DATA_DIR 写入（自举 scaffold / store 落盘 / 编译产物）——必须在任何插件 import 之前把
+// XDG_DATA_HOME 指向一次性 tmp，绝不允许测试触碰真实 DATA_DIR（~/.local/share/kilo）。
+process.env.XDG_DATA_HOME = fs.mkdtempSync(path.join(os.tmpdir(), `kilo-contract-data-${process.pid}-`));
 
 // 引擎自适应（2026-09-28）：bun 直接跑 TS；node>=22 用 register loader hook 拉平语义
 // （裸相对导入 '../lib/hx-client' 补 .ts 解析 + .ts 源码走原生 strip-types）。
@@ -156,6 +162,9 @@ if (fs.existsSync(LIB_DIR)) {
 const STREAM_TOOLS = [
   { plugin: "moa.ts", tool: "moa", args: { task: "" } },
   { plugin: "dual-review.ts", tool: "dual_review", args: { subject: "" } },
+  // memory-store 三工具（2026-10-11 增）：空参调用必须 resolve string（工具不联网、不调 loadCfg）
+  { plugin: "memory-store.ts", tool: "mem_search", args: {} },
+  { plugin: "memory-store.ts", tool: "mem_get", args: { id: "" } },
 ];
 for (const { plugin, tool, args } of STREAM_TOOLS) {
   const mod = await import(pathToFileURL(path.join(PLUGIN_DIR, plugin)).href);

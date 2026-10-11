@@ -1,0 +1,25 @@
+﻿== 统一离线测试：10 个（node 22.22.0）==
+  PASS  scripts/test-circuit-breaker.mjs         ✅ 404 notexist 错误透传完整（status+body 报文，供 provider 侧签名判定）
+  FAIL  scripts/test-db-maintain.mjs             (exit 1)
+        缺失时明示告警
+        转换失败降级旧 VACUUM（不致命）
+        降级路径有告警
+        退出码 0
+        打印「空闲页 / 有效页（空闲占比 N%）」
+        死锁态(auto_vacuum=0 + 空闲 50%)报「引导死锁」
+        健康态(auto_vacuum=2)不误报死锁
+        真实库路径打印维护建议行（--status 只读，安全）
+        --days 0 → exit 2（0 会删光当日消息）
+        --batch 0 → exit 2（否则 DELETE…LIMIT 0 死循环）
+        未知参数 → exit 2
+        --help 列出 --ivac（usage 锚点回归）
+  PASS  scripts/test-memory-bootstrap.mjs        ✅ memory-bootstrap 回归：60 通过 / 0 失败
+  PASS  scripts/test-memory-sync.mjs             33/33 通过
+  PASS  scripts/test-permission-guard.mjs        ✅ permission-guard 回归：254 通过 / 0 失败
+  PASS  scripts/test-plugin-contract.mjs         31/31 通过
+  PASS  scripts/test-quality-gate.mjs            [quality-gate] 出口门禁注入(child-unsettled) session=ses-agg-p
+  PASS  scripts/test-storage-maintain.mjs        58 passed, 0 failed
+  PASS  provider/hx-failover/test-failover.mjs   [test-failover] 假绿防护：采集 65 条 PASS 结果行，false=0
+  PASS  provider/hx-failover/test-reasoning-gate.mjs ALL 40 PASS
+
+9/10 通过；失败：scripts/test-db-maintain.mjs

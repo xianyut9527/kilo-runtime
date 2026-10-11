@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// memory-bootstrap 离线回归（GLOBAL-NOTES 硬封顶,体检 2026-10-07 闭环）:
+// memory-bootstrap 离线回归（项目记忆封顶 + sessions 回收；2026-10-11 起全局经验层已移交
+// memory-store 插件编译管理，GLOBAL-NOTES 封顶用例随 enforceGlobalNotesCap 移除而删除，
+// 其回归由 scripts/test-memory-store.mjs 承接）:
 // 不联网、不起 Kilo、不碰真实配置目录(纯函数回归,esbuild bundle 模式同 test-quality-gate.mjs)。
 // 用法:node scripts/test-memory-bootstrap.mjs
-// 覆盖:未超限不动 / 超限裁最旧保最新且 header 完整 / 字节上限生效 /
-// 无 ## Notes 锚不动 / CRLF 兼容 / parked 无损(裁掉+保留 = 原有条目全集)。
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -17,6 +17,9 @@ if (!fs.existsSync(esbuildBin)) {
   console.error("[test] esbuild 未安装：先在 provider/hx-failover 跑 npm install");
   process.exit(2);
 }
+// XDG_DATA_HOME 指向一次性 tmp：bundle 导入不触发工厂调用（无 DATA_DIR 写入），这里防御性
+// 隔离与 test-memory-store.mjs 同一红线——测试绝不触碰真实 DATA_DIR
+process.env.XDG_DATA_HOME = fs.mkdtempSync(path.join(os.tmpdir(), `mb-xdg-${process.pid}-`));
 const bundle = path.join(os.tmpdir(), `mb-test-${process.pid}.mjs`);
 execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "memory-bootstrap.ts"),
   "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${bundle}`], { stdio: "inherit" });
@@ -26,7 +29,7 @@ try {
 } finally {
   fs.rmSync(bundle, { force: true });
 }
-const { trimNotesToCap, GLOBAL_NOTES_CAP_BYTES, enforceGlobalNotesCap, capOneProjectFile, PROJECT_FILE_CAP_BYTES, PROJECT_TARGET_BYTES, PROJECT_FILES, pruneSessionArchive, PARKED_KEEP_BYTES, SESSION_ARCHIVE_DAYS } = mod._export ?? mod;
+const { capOneProjectFile, PROJECT_FILE_CAP_BYTES, PROJECT_TARGET_BYTES, PROJECT_FILES, pruneSessionArchive, PARKED_KEEP_BYTES, SESSION_ARCHIVE_DAYS } = mod._export ?? mod;
 
 let pass = 0, fail = 0;
 const failed = [];
@@ -38,87 +41,9 @@ const t = (name, cond) => {
   else { failed.push(name); console.error(`  FAIL: ${name}`); fail++; }
 };
 
-// fixture:真实部署结构的同款模板 header + N 条日期递增条目(每条 ~300B,模拟密集教训行)
-const HEADER = `# Global Notes（全自动全局经验层）
-
-<!-- 机制：跨项目通用教训由 agent 直接追加到下方 Notes 列表（一行一条，格式：- YYYY-MM-DD 教训内容）。
-     不需要用户确认；总量上限约 1KB，/evolve 定期修剪：去重、删过时、成熟条目升格进 INSTRUCTIONS.md（需确认）。
-     本文件是运行时状态，不进下发清单，install 不会覆盖它。 -->
-
-## Notes
-`;
-function makeNotes(n) {
-  const lines = [];
-  for (let i = 0; i < n; i++) {
-    const d = String(1 + i).padStart(2, "0");
-    lines.push(`- 2026-09-${d} 教训${i}：${"长文本内容".repeat(18)}（条目 ${i}）`);
-  }
-  return HEADER + lines.join("\n") + "\n";
-}
-
-// ── 1) 未超限:原样返回 ─────────────────────────────────────
+// ── 1) 项目记忆封顶（防 system prompt 无限膨胀，正反馈循环根治）──
 {
-  console.log("== 1) 未超限不动 ==");
-  const raw = makeNotes(2);
-  const r = trimNotesToCap(raw, GLOBAL_NOTES_CAP_BYTES);
-  t("trimmed=false", r.trimmed === false);
-  t("text 原样", r.text === raw);
-  t("parked 空", r.parked.length === 0);
-}
-
-// ── 2) 超限:裁最旧保最新,header 完整,字节达标 ─────────────
-{
-  console.log("== 2) 超限裁剪 ==");
-  const raw = makeNotes(20); // ~6KB+ > 4096
-  const r = trimNotesToCap(raw, GLOBAL_NOTES_CAP_BYTES);
-  t("trimmed=true", r.trimmed === true);
-  t("header(模板注释)完整保留", r.text.includes("总量上限约 1KB") && r.text.includes("## Notes"));
-  t("最旧条目被裁", r.parked[0].includes("教训0："));
-  t("最新条目保留", r.text.includes("教训19："));
-  t("中间被裁条目不在正文", r.text.includes("教训5：") === false && r.parked.some((l) => l.includes("教训5：")));
-  t("裁剪后 ≤ 上限", Buffer.byteLength(r.text, "utf8") <= GLOBAL_NOTES_CAP_BYTES);
-  t("parked 无损(裁掉+保留=原条目全集)",
-    r.parked.length + (r.text.match(/^- 2026/gm) ?? []).length === 20);
-  t("条目保持日期序(保留段仍递增)", (() => {
-    const kept = (r.text.match(/- 2026-09-(\d+) 教训(\d+)/g) ?? []).map((l) => Number(l.match(/教训(\d+)/)[1]));
-    return kept.every((v, i) => i === 0 || v > kept[i - 1]);
-  })());
-}
-
-// ── 3) 结构意外:无 ## Notes 锚 ─────────────────────────────
-{
-  console.log("== 3) 无锚不动 ==");
-  const raw = "# 别的文件\n- 条目 A\n- 条目 B\n";
-  const r = trimNotesToCap(raw, 10);
-  t("trimmed=false(宁不动,不破坏性改写)", r.trimmed === false && r.text === raw);
-}
-
-// ── 4) CRLF 兼容 ────────────────────────────────────────────
-{
-  console.log("== 4) CRLF 兼容 ==");
-  const raw = makeNotes(20).replace(/\n/g, "\r\n");
-  const r = trimNotesToCap(raw, GLOBAL_NOTES_CAP_BYTES);
-  t("trimmed=true", r.trimmed === true);
-  t("裁剪后 ≤ 上限", Buffer.byteLength(r.text, "utf8") <= GLOBAL_NOTES_CAP_BYTES);
-  t("输出保持 CRLF", r.text.includes("\r\n"));
-  t("最新条目保留", r.text.includes("教训19："));
-}
-
-// ── 5) 空行/非条目结构行不动 ─────────────────────────────────
-{
-  console.log("== 5) 结构行保留 ==");
-  const mkEntry = (tag) => `- 2026-09-01 ${tag}：${"结构测试长条目内容".repeat(36)}\n`;
-  const raw = HEADER + mkEntry("旧条目") + "\n## 其他章节\n\n小节内容行\n\n" + mkEntry("中条目") + mkEntry("新条目");
-  const r = trimNotesToCap(raw, 2000); // 三条 ~1KB 条目 + header ≈ 3.7KB → 恰裁最旧两条
-  t("trimmed=true", r.trimmed === true);
-  t("恰好裁掉最旧两条", r.parked.length === 2 && r.parked[0].includes("旧条目") && r.parked[1].includes("中条目"));
-  t("非条目结构行保留", r.text.includes("## 其他章节") && r.text.includes("小节内容行"));
-  t("最新条目保留", r.text.includes("新条目"));
-}
-
-// ── 2026-10-08 增：项目记忆封顶（防 system prompt 无限膨胀，正反馈循环根治）──
-{
-  console.log("== 7) project memory 封顶 ==");
+  console.log("== 1) project memory 封顶 ==");
   const tmpFile = path.join(os.tmpdir(), `proj-cap-test-${process.pid}.md`);
   // 模拟 80KB 项目记忆（远超 32KB 阈值）：头 + 50 条事实
   const header = [
@@ -138,7 +63,7 @@ function makeNotes(n) {
   t("PROJECT_FILE_CAP_BYTES=32KB 常量", PROJECT_FILE_CAP_BYTES === 32 * 1024);
   t("PROJECT_TARGET_BYTES=24KB 常量", PROJECT_TARGET_BYTES === 24 * 1024);
   t("PROJECT_FILES 含 project.md/corrections/environment/index", PROJECT_FILES.length === 4 && PROJECT_FILES.includes("project.md"));
-  // 执行裁剪（注入 DATA_DIR 环境变量让 cap 函数不爆炸；这里直接调 capOneProjectFile 不需要 DATA_DIR）
+  // 执行裁剪（直接调 capOneProjectFile 不需要 DATA_DIR）
   const before = fs.statSync(tmpFile).size;
   const r = capOneProjectFile(tmpFile, before);
   const after = fs.statSync(tmpFile).size;
@@ -162,7 +87,7 @@ function makeNotes(n) {
   if (capbak) fs.rmSync(path.join(dir, capbak), { force: true });
 }
 {
-  console.log("== 8) 未超阈不动 ==");
+  console.log("== 2) 未超阈不动 ==");
   const tmpFile = path.join(os.tmpdir(), `proj-cap-keep-${process.pid}.md`);
   fs.writeFileSync(tmpFile, "# Project Memory\n\n## Facts\n\n- x :: y\n", "utf8");
   const before = fs.statSync(tmpFile).size;
@@ -172,7 +97,7 @@ function makeNotes(n) {
   fs.rmSync(tmpFile, { force: true });
 }
 {
-  console.log("== 9) 真实项目记忆根（端到端 smoke：所有超阈文件被 cap 一次）===");
+  console.log("== 3) 真实项目记忆根（端到端 smoke：所有超阈文件被 cap 一次）===");
   // 在临时 DATA_DIR 下造 2 个项目根，1 个超阈 1 个不超
   const tmpData = fs.mkdtempSync(path.join(os.tmpdir(), `proj-data-${process.pid}-`));
   const root1 = path.join(tmpData, "memory", "foo-aaaaaaaaaaaa");
@@ -185,28 +110,19 @@ function makeNotes(n) {
   fs.writeFileSync(path.join(root1, "corrections.md"), "tiny", "utf8");
   // root2/project.md 5KB（不超阈）→ 期望不动
   fs.writeFileSync(path.join(root2, "project.md"), "tiny", "utf8");
-  // 通过 esbuild 重新加载（改 DATA_DIR 走 capOneProjectFile 的目录）
-  process.env.DATA_DIR = tmpData;
-  const bundle2 = path.join(os.tmpdir(), `mb-cap-test-${process.pid}.mjs`);
-  execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "memory-bootstrap.ts"),
-    "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${bundle2}`], { stdio: "inherit" });
-  const mod2 = await import(pathToFileURL(bundle2).href);
-  // 内部函数不导出，所以走 end-to-end：直接调 enforceProjectMemoryCap（私有，但 _export 间接路径）
-  // 因为 cap 函数是 module-private，只能通过导出 capOneProjectFile 单点验证；smoke 单独跑：
   for (const f of ["project.md", "corrections.md"]) {
     capOneProjectFile(path.join(root1, f), fs.statSync(path.join(root1, f)).size);
   }
   t("root1 project.md 已被 cap（≤24KB）", fs.statSync(path.join(root1, "project.md")).size <= 24 * 1024);
-  t("root1 corrections.md 不动（5KB → 4B 留给 cap 路径不变）", fs.readFileSync(path.join(root1, "corrections.md"), "utf8") === "tiny");
+  t("root1 corrections.md 不动（未超阈路径不变）", fs.readFileSync(path.join(root1, "corrections.md"), "utf8") === "tiny");
   t("root2 project.md 不动（< 阈值）", fs.readFileSync(path.join(root2, "project.md"), "utf8") === "tiny");
   // 清理
-  fs.rmSync(bundle2, { force: true });
   fs.rmSync(tmpData, { recursive: true, force: true });
 }
 
-// ── 2026-10-08 二轮查漏：.parked 自身封顶 + sessions/ 存档回收 ──
+// ── 4) .parked 自身封顶（append-only 防二次膨胀）──
 {
-  console.log("== 10) .parked 自身封顶（append-only 防二次膨胀）==");
+  console.log("== 4) .parked 自身封顶 ==");
   t("PARKED_KEEP_BYTES=256KB 常量", PARKED_KEEP_BYTES === 256 * 1024);
   const fx = path.join(os.tmpdir(), `parked-cap-${process.pid}.md`);
   const line = "- item :: " + "y".repeat(200) + "\n";
@@ -226,7 +142,7 @@ function makeNotes(n) {
   if (cb) fs.rmSync(path.join(os.tmpdir(), cb), { force: true });
 }
 {
-  console.log("== 11) sessions/ 存档回收 ==");
+  console.log("== 5) sessions/ 存档回收 ==");
   t("SESSION_ARCHIVE_DAYS=90", SESSION_ARCHIVE_DAYS === 90);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `sess-prune-${process.pid}-`));
   fs.mkdirSync(path.join(root, "sessions"), { recursive: true });
@@ -244,9 +160,9 @@ function makeNotes(n) {
   fs.rmSync(root, { recursive: true, force: true });
 }
 
-// ── 2026-10-08 三查：段标题永不删（本条正是自查发现的自身缺陷的回归）──
+// ── 6) 段标题永不删（本条正是自查发现的自身缺陷的回归）──
 {
-  console.log("== 12) 段标题永久保留（初版把整段裁走的缺陷回归）==");
+  console.log("== 6) 段标题永久保留（初版把整段裁走的缺陷回归）==");
   const fx = path.join(os.tmpdir(), `sect-keep-${process.pid}.md`);
   const entry = (tag) => `- ${tag} :: ` + "z".repeat(2500) + "\n";   // 每条约 2.5KB
   // 四个段（含 quality-gate 写入锚点 ## Open Questions），每段若干条目，总量超阈
@@ -272,122 +188,9 @@ function makeNotes(n) {
   if (cb) fs.rmSync(path.join(os.tmpdir(), cb), { force: true });
 }
 
-// ── 2026-10-08 三查：trimNotesToCap 容错无 `## Notes` 段头的真实形态 ──
-// （真机 GLOBAL-NOTES.md = "# 标题 + HTML 注释 + 条目"，无 ## Notes 段头 →
-//   旧实现 notesIdx<0 直接放弃，封顶从未生效：实测 15281B ≫ 4096B 常量）
-{
-  console.log("== 13) 无段头形态 enforceGlobalNotesCap 真的会裁（真机缺陷回归）==");
-  const entry = (tag) => `- 2026-10-01 ${tag} :: ` + "w".repeat(1000) + "\n";   // 每条约 1KB
-  const raw =
-    "# Global Notes（全自动全局经验层）\n\n" +
-    "<!-- 机制说明注释若干行，无 ## Notes 段头 -->\n\n\n" +
-    entry("a") + entry("b") + entry("c") + entry("d") + entry("e") + entry("f");
-  // enforceGlobalNotesCap 从 import.meta.dir 的上一级找文件——bundle 放 <tmp>/plugin/ 布局
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), `gn-cap-${process.pid}-`));
-  fs.mkdirSync(path.join(root, "plugin"), { recursive: true });
-  const notesFile = path.join(root, "GLOBAL-NOTES.md");
-  // 但 bundle 已 import 进内存——globalNotesFile 读的是真 bundle 位置。这里改走纯函数直测：
-  // enforceGlobalNotesCap(file 读死) → 用 trimNotesToCap 验证算法层面（12 组已证明 capOneProjectFile
-  // 走真路径）。补一组直接断言真机形态能被裁：
-  const r13 = trimNotesToCap(raw, 4096);
-  t("无段头 fixture 触发裁剪", r13.trimmed === true, `trimmed=${r13.trimmed} parked=${r13.parked.length}`);
-  console.log(`    (实测 parked=${r13.parked.length} 条, 文本=${Buffer.byteLength(r13.text)}B)`);
-  t("裁出条目数 = 恰到 cap 边界（≥3 且 ≤5）", r13.parked.length >= 3 && r13.parked.length <= 5, `parked=${r13.parked.length}`);
-  t("裁后 ≤ 4096+一行", Buffer.byteLength(r13.text) <= 4096 + 1100, `${Buffer.byteLength(r13.text)}`);
-  t("# 标题保留", /^#\s+Global Notes/m.test(r13.text));
-  t("HTML 注释保留", /机制说明注释若干行/.test(r13.text));
-  t("超限且无段头不再整体放弃（旧实现返回 trimmed=false）", r13.trimmed === true);
-  fs.rmSync(root, { recursive: true, force: true });
-}
+// 清理防御性 XDG tmp
+fs.rmSync(process.env.XDG_DATA_HOME, { recursive: true, force: true });
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} memory-bootstrap 回归：${pass} 通过 / ${fail} 失败`);
 if (fail > 0) console.log(`失败用例：\n  - ${failed.join("\n  - ")}`);
 process.exit(fail === 0 ? 0 : 1);
-
-// ── 2026-10-08 增：项目记忆封顶（防 system prompt 无限膨胀，正反馈循环根治）──
-{
-  console.log("== 7) project memory 封顶 ==");
-  const tmpFile = path.join(os.tmpdir(), `proj-cap-test-${process.pid}.md`);
-  // 模拟 80KB 项目记忆（远超 32KB 阈值）：头 + 50 条事实
-  const header = [
-    "# Project Memory",
-    "",
-    "## Facts",
-    "",
-    "## Decisions",
-    "",
-    "## Constraints",
-    "",
-  ].join("\n");
-  const facts = [];
-  for (let i = 1; i <= 50; i++) facts.push(`- fact_${i}_2026_10 :: 事实 #${i} (凑字数到 1.5KB): ` + "x".repeat(1400));
-  fs.writeFileSync(tmpFile, header + facts.join("\n") + "\n", "utf8");
-  t("fixture 超阈 80KB+", fs.statSync(tmpFile).size > 80 * 1024);
-  t("PROJECT_FILE_CAP_BYTES=32KB 常量", PROJECT_FILE_CAP_BYTES === 32 * 1024);
-  t("PROJECT_TARGET_BYTES=24KB 常量", PROJECT_TARGET_BYTES === 24 * 1024);
-  t("PROJECT_FILES 含 project.md/corrections/environment/index", PROJECT_FILES.length === 4 && PROJECT_FILES.includes("project.md"));
-  // 执行裁剪（注入 DATA_DIR 环境变量让 cap 函数不爆炸；这里直接调 capOneProjectFile 不需要 DATA_DIR）
-  const before = fs.statSync(tmpFile).size;
-  const r = capOneProjectFile(tmpFile, before);
-  const after = fs.statSync(tmpFile).size;
-  t("裁剪成功", r.trimmed === true);
-  t("裁后 ≤ 24KB（保留最新 16 条）", after <= PROJECT_TARGET_BYTES, `after=${after}`);
-  t("保留 ## Facts 段头（结构不破坏）", /^##\s*Facts\s*$/m.test(fs.readFileSync(tmpFile, "utf8")));
-  t("parked 归档存在", fs.existsSync(tmpFile + ".parked"));
-  const parkedSize = fs.statSync(tmpFile + ".parked").size;
-  t("parked 含裁掉行（≈56KB）", parkedSize > 50 * 1024, `parked=${parkedSize}`);
-  t("parked 含 park 标记", /parked \d{4}-\d{2}-\d{2}/.test(fs.readFileSync(tmpFile + ".parked", "utf8")));
-  const dir = path.dirname(tmpFile);
-  const capbak = fs.readdirSync(dir).find((f) => f.startsWith(path.basename(tmpFile) + ".capbak-"));
-  t("capbak 备份存在", !!capbak, dir);
-  // 幂等：再调一次不变（不再超阈）
-  const after2 = fs.statSync(tmpFile).size;
-  const r2 = capOneProjectFile(tmpFile, after2);
-  t("二次裁剪不变化（幂等）", r2.trimmed === false);
-  // 清理
-  fs.rmSync(tmpFile, { force: true });
-  fs.rmSync(tmpFile + ".parked", { force: true });
-  if (capbak) fs.rmSync(path.join(dir, capbak), { force: true });
-}
-{
-  console.log("== 8) 未超阈不动 ==");
-  const tmpFile = path.join(os.tmpdir(), `proj-cap-keep-${process.pid}.md`);
-  fs.writeFileSync(tmpFile, "# Project Memory\n\n## Facts\n\n- x :: y\n", "utf8");
-  const before = fs.statSync(tmpFile).size;
-  const r = capOneProjectFile(tmpFile, before);
-  t("未超阈 trimmed=false", r.trimmed === false);
-  t("内容不变", fs.readFileSync(tmpFile, "utf8") === "# Project Memory\n\n## Facts\n\n- x :: y\n");
-  fs.rmSync(tmpFile, { force: true });
-}
-{
-  console.log("== 9) 真实项目记忆根（端到端 smoke：所有超阈文件被 cap 一次）===");
-  // 在临时 DATA_DIR 下造 2 个项目根，1 个超阈 1 个不超
-  const tmpData = fs.mkdtempSync(path.join(os.tmpdir(), `proj-data-${process.pid}-`));
-  const root1 = path.join(tmpData, "memory", "foo-aaaaaaaaaaaa");
-  const root2 = path.join(tmpData, "memory", "bar-bbbbbbbbbbbb");
-  fs.mkdirSync(root1, { recursive: true });
-  fs.mkdirSync(root2, { recursive: true });
-  // root1/project.md 40KB（超阈）→ 期望 trimmed
-  fs.writeFileSync(path.join(root1, "project.md"), "# x\n\n## Facts\n\n" + "- f_" + "x".repeat(2000) + "\n".repeat(20), "utf8");
-  // root1/corrections.md 5KB（不超阈）→ 期望不动
-  fs.writeFileSync(path.join(root1, "corrections.md"), "tiny", "utf8");
-  // root2/project.md 5KB（不超阈）→ 期望不动
-  fs.writeFileSync(path.join(root2, "project.md"), "tiny", "utf8");
-  // 通过 esbuild 重新加载（改 DATA_DIR 走 capOneProjectFile 的目录）
-  process.env.DATA_DIR = tmpData;
-  const bundle2 = path.join(os.tmpdir(), `mb-cap-test-${process.pid}.mjs`);
-  execFileSync(process.execPath, [esbuildBin, path.join(ROOT, "plugin", "memory-bootstrap.ts"),
-    "--bundle", "--platform=node", "--format=esm", "--external:node:*", `--outfile=${bundle2}`], { stdio: "inherit" });
-  const mod2 = await import(pathToFileURL(bundle2).href);
-  // 内部函数不导出，所以走 end-to-end：直接调 enforceProjectMemoryCap（私有，但 _export 间接路径）
-  // 因为 cap 函数是 module-private，只能通过导出 capOneProjectFile 单点验证；smoke 单独跑：
-  for (const f of ["project.md", "corrections.md"]) {
-    capOneProjectFile(path.join(root1, f), fs.statSync(path.join(root1, f)).size);
-  }
-  t("root1 project.md 已被 cap（≤24KB）", fs.statSync(path.join(root1, "project.md")).size <= 24 * 1024);
-  t("root1 corrections.md 不动（5KB → 4B 留给 cap 路径不变）", fs.readFileSync(path.join(root1, "corrections.md"), "utf8") === "tiny");
-  t("root2 project.md 不动（< 阈值）", fs.readFileSync(path.join(root2, "project.md"), "utf8") === "tiny");
-  // 清理
-  fs.rmSync(bundle2, { force: true });
-  fs.rmSync(tmpData, { recursive: true, force: true });
-}
