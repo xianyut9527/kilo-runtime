@@ -57,7 +57,9 @@
   工具写入（自动去重：命中已有条目则强化计分不重复占位；脚本兜底写 inbox：
   `node -e "fs.appendFileSync('C:/Users/Administrator/.local/share/kilo/memory-store/inbox.md', ...)"` 形式，
   路径按本机 DATA_DIR）；GLOBAL-NOTES.md 是评分编译产物（只读勿手工编辑，直写内容会被下次编译
-  吸收进 store）；检索用 mem_search，需要全文/计入反馈用 mem_get；AGENTS.md 只放项目自身约定，
+  吸收进 store）；检索用 mem_search，需要全文/计入反馈用 mem_get；把命中条目当依据时用 mem_cite
+  （cite 计分影响编译排序），发现可疑/过期条目用 mem_flag 标记（理由 4–200 字符，flagged 不再注入，
+  复位走 /evolve 步骤 5）；AGENTS.md 只放项目自身约定，
   curated 的 INSTRUCTIONS.md 升格需用户确认。
   脚本追加（兜底）一律用 node 单行脚本（bash `node *` 已 allow，不触发询问）；不要用 edit/write 工具——
   配置/数据目录在工作区之外，会触发 external_directory 确认，破坏全自动语义。

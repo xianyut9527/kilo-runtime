@@ -162,9 +162,12 @@ if (fs.existsSync(LIB_DIR)) {
 const STREAM_TOOLS = [
   { plugin: "moa.ts", tool: "moa", args: { task: "" } },
   { plugin: "dual-review.ts", tool: "dual_review", args: { subject: "" } },
-  // memory-store 三工具（2026-10-11 增）：空参调用必须 resolve string（工具不联网、不调 loadCfg）
+  // memory-store 五工具（2026-10-11 增）：空参调用必须 resolve string（工具不联网、不调 loadCfg）
   { plugin: "memory-store.ts", tool: "mem_search", args: {} },
   { plugin: "memory-store.ts", tool: "mem_get", args: { id: "" } },
+  { plugin: "memory-store.ts", tool: "mem_add", args: {} },
+  { plugin: "memory-store.ts", tool: "mem_cite", args: { id: "" } },
+  { plugin: "memory-store.ts", tool: "mem_flag", args: { id: "", reason: "" } },
 ];
 for (const { plugin, tool, args } of STREAM_TOOLS) {
   const mod = await import(pathToFileURL(path.join(PLUGIN_DIR, plugin)).href);

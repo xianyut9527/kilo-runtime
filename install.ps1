@@ -308,35 +308,49 @@ for (const [fn, name] of fnByRef) {
 }
 '@
 # 通用 TS 冒烟执行器：成功返回 $true；vE2 模式传 -Ve2。
+# 红线（2026-10-11 记忆核心闭环改造实证）：$Ve2 分支以假 ctx 真实调用插件工厂，
+# memory-bootstrap/memory-store 的工厂 init 会写 DATA_DIR（scaffold / store 落盘 /
+# 编译产物）——必须把 XDG_DATA_HOME 指向一次性 tmp，绝不允许部署冒烟触碰真实
+# ~/.local/share/kilo（未隔离实证：冒烟在真实 store 落 imported.json/notes.jsonl/
+# injection-log 且把 legacy 导入标记指向仓库文件；import 冒烟无工厂调用，一并隔离作防御）。
 function Invoke-TsSmoke([string]$FileUrl, [switch]$Ve2) {
-    if ($tsSmokeKind -eq 'bun') {
-        if ($Ve2) {
-            $tmpMjs = Join-Path ([System.IO.Path]::GetTempPath()) "kilo-ve2-smoke-$PID.mjs"
-            try {
-                Set-Content -LiteralPath $tmpMjs -Value $ve2SmokeMjs -Encoding UTF8
-                $null = & bun $tmpMjs $FileUrl 2>&1
-                return ($LASTEXITCODE -eq 0)
-            } finally { Remove-Item -LiteralPath $tmpMjs -Force -ErrorAction SilentlyContinue }
+    $savedXdgData = $env:XDG_DATA_HOME
+    $smokeXdg = Join-Path ([System.IO.Path]::GetTempPath()) "kilo-smoke-data-$PID-$(Get-Random)"
+    $env:XDG_DATA_HOME = $smokeXdg
+    try {
+        if ($tsSmokeKind -eq 'bun') {
+            if ($Ve2) {
+                $tmpMjs = Join-Path ([System.IO.Path]::GetTempPath()) "kilo-ve2-smoke-$PID.mjs"
+                try {
+                    Set-Content -LiteralPath $tmpMjs -Value $ve2SmokeMjs -Encoding UTF8
+                    $null = & bun $tmpMjs $FileUrl 2>&1
+                    return ($LASTEXITCODE -eq 0)
+                } finally { Remove-Item -LiteralPath $tmpMjs -Force -ErrorAction SilentlyContinue }
+            }
+            $smokeJs = "import('$FileUrl').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })"
+            $null = & bun -e $smokeJs 2>&1
+            return ($LASTEXITCODE -eq 0)
         }
-        $smokeJs = "import('$FileUrl').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })"
-        $null = & bun -e $smokeJs 2>&1
-        return ($LASTEXITCODE -eq 0)
-    }
-    elseif ($tsSmokeKind -eq 'node22') {
-        if ($Ve2) {
-            $tmpMjs = Join-Path ([System.IO.Path]::GetTempPath()) "kilo-ve2-smoke-$PID.mjs"
-            try {
-                # vE2 脚本自身 import target 也要过 hook（目标可能是 .ts 入口）
-                $ve2WithHook = "const { register } = await import(`"node:module`");`nregister(process.argv[3], import.meta.url);`n" + ($ve2SmokeMjs -replace 'const target = process\.argv\[2\];', 'const target = process.argv[2];')
-                Set-Content -LiteralPath $tmpMjs -Value $ve2WithHook -Encoding UTF8
-                $null = & $tsSmokeCmd $tmpMjs $FileUrl $tsSmokeHookUrl 2>&1
-                return ($LASTEXITCODE -eq 0)
-            } finally { Remove-Item -LiteralPath $tmpMjs -Force -ErrorAction SilentlyContinue }
+        elseif ($tsSmokeKind -eq 'node22') {
+            if ($Ve2) {
+                $tmpMjs = Join-Path ([System.IO.Path]::GetTempPath()) "kilo-ve2-smoke-$PID.mjs"
+                try {
+                    # vE2 脚本自身 import target 也要过 hook（目标可能是 .ts 入口）
+                    $ve2WithHook = "const { register } = await import(`"node:module`");`nregister(process.argv[3], import.meta.url);`n" + ($ve2SmokeMjs -replace 'const target = process\.argv\[2\];', 'const target = process.argv[2];')
+                    Set-Content -LiteralPath $tmpMjs -Value $ve2WithHook -Encoding UTF8
+                    $null = & $tsSmokeCmd $tmpMjs $FileUrl $tsSmokeHookUrl 2>&1
+                    return ($LASTEXITCODE -eq 0)
+                } finally { Remove-Item -LiteralPath $tmpMjs -Force -ErrorAction SilentlyContinue }
+            }
+            $null = & $tsSmokeCmd $tsSmokeRunMjs $tsSmokeHookUrl $FileUrl 2>&1
+            return ($LASTEXITCODE -eq 0)
         }
-        $null = & $tsSmokeCmd $tsSmokeRunMjs $tsSmokeHookUrl $FileUrl 2>&1
-        return ($LASTEXITCODE -eq 0)
+        return $null  # 无引擎
+    } finally {
+        if ($null -eq $savedXdgData) { Remove-Item Env:XDG_DATA_HOME -ErrorAction SilentlyContinue }
+        else { $env:XDG_DATA_HOME = $savedXdgData }
+        Remove-Item -LiteralPath $smokeXdg -Recurse -Force -ErrorAction SilentlyContinue
     }
-    return $null  # 无引擎
 }
 foreach ($w in $toWrite) {
     if ($w.Src -match '[\\/]plugin[\\/].*\.ts$') {

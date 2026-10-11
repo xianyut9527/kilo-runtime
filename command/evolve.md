@@ -26,6 +26,11 @@ agent: code
    高 hits/correction 条目作为升格 INSTRUCTIONS 候选（一次展示，批量确认）；矛盾条目人工裁决。
    parked 文件已一次性导入 store（历史归档，不再更新，无需处理）。
    **GLOBAL-NOTES.md 为编译产物勿手工编辑；追加走 mem_add/inbox。**
+   v3 运维口径：先看 `stats.json`（flagsOpen>0 即有人工队列待处理）与 `injection-log.jsonl`
+   （每次注入的槽位命中/剔除明细，验证探索槽是否真在曝光）；flagged 复位无工具、必须人工——
+   编辑 `notes.jsonl` 把该条 `status` 改回其 `prevStatus`（维持原判可清空 flags），裁决成立则改 archived；
+改坏可回滚：同目录 `backups/notes-YYYYMMDD.jsonl` 是 store 真源（notes.jsonl 本身）快照（跨日每日一代，
+    滚动 30 代；勿与编译产物 GLOBAL-NOTES.md 混淆），整份覆盖回 `notes.jsonl` 后再触发一次 maintain 重编译即可。
    同步审阅项目记忆 `project.md` 的 `## Open Questions`：已处置/已修复的 `review_residual_*`
    与 `review_unreviewed_*` 条目移入对应 Facts/Decisions（一行一条带 key）或删除——
    只留真正待跟进的残余项，防止残留清单单调膨胀（体检 2026-10-07）。

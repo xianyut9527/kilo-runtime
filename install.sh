@@ -393,9 +393,14 @@ smoke_ts() { # $1 = 源文件；返回 0=通过，2=无引擎（放行+告警）
 # 文件形式与 install.ps1 同款、已验证。Map 迭代解构是 [fn, name]（键=函数引用，值=名字）。
 # node22 引擎：vE2 脚本先 register hook 再 import 目标（目标 .ts 的裸相对导入也要过 hook）。
 smoke_ts_ve2() { # $1 = 源文件；返回值语义与 smoke_ts 相同
-  local f="$1" url tmpmjs rc
+  local f="$1" url tmpmjs rc smoke_xdg
   if [ -z "$TS_ENGINE" ]; then ts_smoke_unavailable "$f"; return 2; fi
   url="$(to_file_url "$f")"
+  # 红线（2026-10-11 记忆核心闭环改造实证）：vE2 冒烟以假 ctx 真实调用插件工厂，
+  # memory-bootstrap/memory-store 的工厂 init 会写 DATA_DIR（scaffold / store 落盘 /
+  # 编译产物）——XDG_DATA_HOME 必须指向一次性 tmp（子 shell 内 export，父进程环境不受影响），
+  # 绝不允许部署冒烟触碰真实 ~/.local/share/kilo。
+  smoke_xdg="$(mktemp -d /tmp/kilo-smoke-data-XXXXXX)"
   if [ "$TS_ENGINE" = "bun" ]; then
     tmpmjs="$(mktemp /tmp/kilo-ve2-smoke-XXXXXX.mjs)"
     cat > "$tmpmjs" <<'VE2JS'
@@ -424,9 +429,10 @@ for (const [fn, name] of fnByRef) {
   }
 }
 VE2JS
-    bun "$(to_native "$tmpmjs")" "$url" >/dev/null 2>&1
+    ( export XDG_DATA_HOME="$smoke_xdg"; bun "$(to_native "$tmpmjs")" "$url" >/dev/null 2>&1 )
     rc=$?
     rm -f "$tmpmjs"
+    rm -rf "$smoke_xdg"
     return $rc
   fi
   tmpmjs="$(mktemp /tmp/kilo-ve2-smoke-XXXXXX.mjs)"
@@ -458,9 +464,10 @@ for (const [fn, name] of fnByRef) {
   }
 }
 VE2JS
-  "$TS_NODE" "$(to_native "$tmpmjs")" "$url" "$(to_file_url "$TS_HOOK_MJS")" >/dev/null 2>&1
+  ( export XDG_DATA_HOME="$smoke_xdg"; "$TS_NODE" "$(to_native "$tmpmjs")" "$url" "$(to_file_url "$TS_HOOK_MJS")" >/dev/null 2>&1 )
   rc=$?
   rm -f "$tmpmjs"
+  rm -rf "$smoke_xdg"
   return $rc
 }
 

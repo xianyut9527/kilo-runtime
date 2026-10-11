@@ -10,15 +10,21 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { DATA_DIR } from "../lib/hx-client";
 import {
   FENCE_BEGIN, FENCE_END,
-  loadStore, saveStoreAtomic, renameWithRetry,
-  addOrReinforce, applyUsage, parseUsageLines, appendUsage,
+  loadStore, saveStoreAtomic, renameWithRetry, appendCorruptUnique,
+  addOrReinforce, addWithPipeline, applyUsage, parseUsageLines, appendUsage,
+  flagEntry, resolveShortId, assignSid, ensureSids,
+  parsePendingOps, applyPendingOps, rotateUsage,
   score, density, tokenize, jaccard, parseLessonLines, extractUnfenced, isLineInFence,
   buildCompiled, recalcLifecycle, ingestSources, importOnce,
-  normalizeText, hashText, makeId, redactSecrets,
+  normalizeText, hashText, makeId, redactSecrets, maskValue,
+  BASIC_TAGS, lintEntry, isQuarantineCandidate,
+  estTokens, bumpAffinity, projAffinity, effectiveScore,
+  makeInjectionLogRow, makeSearchLogRow, snapshotNotes, computeStats,
 } from "../lib/memory-store";
 
 const TAG = "[memory-store]";
@@ -47,9 +53,121 @@ function storeDir() {
   return path.join(DATA_DIR, "memory-store");
 }
 
+// ── B1 项目 key 与会话目录捕获 ───────────────────────────
+// projectKey = 去空格 basename(realpath) + "-" + sha1(realpath)[:6]：目录改名即换亲和，
+// hash 后缀防同名词目录互串；realpath 失败降级字面路径（同一口径两次 hash 保证 key 稳定）
+function projectKeyForDir(dir) {
+  const fallback = String(dir || process.cwd());
+  let rp = fallback;
+  try { rp = fs.realpathSync(fallback); } catch { /* 不存在的路径用字面值 */ }
+  return path.basename(rp).replace(/\s+/g, "") + "-" + createHash("sha1").update(rp, "utf8").digest("hex").slice(0, 6);
+}
+
+// 会话最近一次 session.created 的 cwd——工具执行期拿不到会话目录，只能事件期捕获。
+// 契约测试等无宿主上下文场景 lastDir 为空 → 亲和 key 回落 "global"（中性，不污染真实项目）。
+let lastDir = "";
+// maintain 双触发守卫时间锚（0=从未跑过）：init 与首个 session.created 同秒双发只跑一次
+let lastMaintainStart = 0;
+function currentProjectKey() {
+  return lastDir ? projectKeyForDir(lastDir) : "global";
+}
+
+// B7 限速计数（进程级、跨日重置）：mem_add/mem_flag 同计数（cite 不计）——
+// >25/日返回串附警告；>50/日 mem_add 直写熔断转存 inbox.md（由 maintain 管线同语义摄入）
+const THROTTLE_WARN = 25;
+const THROTTLE_INBOX = 50;
+let throttleDay = 0;
+let throttleCount = 0;
+function bumpThrottle(now) {
+  const day = Math.floor(now / 86_400_000);
+  if (day !== throttleDay) { throttleDay = day; throttleCount = 0; }
+  return ++throttleCount;
+}
+
 function compiledFile() {
   if (!CONFIG_ROOT) return "";
   return path.join(CONFIG_ROOT, "GLOBAL-NOTES.md");
+}
+
+// ── C 统一锁原语（裁决三 #3）────────────────────────────────
+// pid 探活：kill(pid,0) 成功或 EPERM=存活（进程在但无权限也是「在」）；其余错误按死。
+function pidAlive(pid) {
+  const p = Number(pid);
+  if (!Number.isInteger(p) || p <= 0) return false;
+  try { process.kill(p, 0); return true; } catch (e) { return e?.code === "EPERM"; }
+}
+
+// acquireLock：wx 原子创建（EEXIST=已有锁，绝不无条件覆盖他人锁——旧 writeFileSync 无 flag
+// 会把并发写者刚拿到的锁直接踩掉）→ 读锁判定 held：新鲜（<LOCK_STALE_MS）或 pid 存活
+// （排除自身 pid——同进程单线程不会真并发，自身残留即陈尸）→ held 最多 waits×400ms 退避后放弃；
+// 非 held 视为陈尸：双读比对内容一致才 rm（防误删他人刚创建的新锁），rm 后回环重试 wx，
+// 总尝试上限 6 防死循环。返回 true=已持锁（调用方 finally 负责释放）。
+function acquireLock(lockFile, now, waits = 3) {
+  const readLock = () => { try { return JSON.parse(fs.readFileSync(lockFile, "utf8")); } catch { return null; } };
+  const held = (l) => {
+    if (!l || typeof l.pid !== "number" || typeof l.ts !== "number") return false; // 结构异常按死
+    if (l.pid === process.pid) return false;
+    if (now - l.ts < LOCK_STALE_MS) return true;
+    return pidAlive(l.pid);
+  };
+  let backoffs = waits;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: now }), { flag: "wx" });
+      return true;
+    } catch (e) {
+      if (e?.code !== "EEXIST") return false; // 非 EEXIST 的 IO 错误按失败，不重试
+    }
+    const lock = readLock();
+    if (held(lock)) {
+      if (backoffs-- <= 0) return false;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+      continue;
+    }
+    const a = readLock(), b = readLock();
+    if (a && b && JSON.stringify(a) === JSON.stringify(b)) {
+      try { fs.rmSync(lockFile, { force: true }); } catch { /* 删失败回环重试 */ }
+    }
+  }
+  return false;
+}
+
+// ── B6 write-through 单写者收敛（2026-10-11 裁决 #2，最高危修复）──────────
+// 并发会话各自 mem_add：各持装载时旧快照 buildCompiled → 后写者把先写者条目整体抹出编译产物。
+// 收敛为临界区单写者：取锁（复用 maintain 陈尸接管+3×400ms 退避）→ 临界区内从盘重读 notes.jsonl
+// 合并（不信任内存快照）→ 中性编译 → 落库+产物+injection-log，全程同一临界区。
+// 返回 false = 取不到锁（调用方不落盘、转 pending 队列——旧快照落盘正是要防的覆盖）。
+function writeThroughCompile(storePath, memEntries, now) {
+  const dir = storeDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const lockFile = path.join(dir, "maintain.lock");
+  if (!acquireLock(lockFile, now)) return false; // 失败走调用方 pending 兜底路径
+  try {
+    // 从盘重读合并：盘上条目 = 并发写者已落盘的真相。同 id 冲突取 hits 大者（reinforce 竞争取 max
+    // 防双计），平局内存版赢（本进程刚做的管线意图不丢）；仅内存有的 = 本进程新条目，保留
+    const disk = loadStore(storePath).entries;
+    const byId = new Map(disk.map((e) => [e.id, e]));
+    for (const e of memEntries) {
+      const d = byId.get(e.id);
+      if (!d || (e.hits ?? 0) >= (d.hits ?? 0)) byId.set(e.id, e);
+    }
+    const merged = [...byId.values()];
+    const { markdown, stats } = buildCompiled(merged, { projectKey: null }, now); // 中性：跨项目注入物不偏向当前会话项目
+    saveStoreAtomic(storePath, merged); // 先落库：产物可由下轮 maintain 从库重造，库丢了才是真丢
+    if (markdown && markdown.includes(FENCE_BEGIN) && markdown.includes(FENCE_END)) {
+      writeCompiled(compiledFile(), markdown);
+    }
+    try {
+      fs.appendFileSync(
+        path.join(dir, "injection-log.jsonl"),
+        JSON.stringify(makeInjectionLogRow({ projectKey: null, slotIds: stats.slotIds, bytes: stats.bytes, evictions: stats.evictions }, now)) + "\n",
+        "utf8"
+      );
+    } catch { /* 观测可丢 */ }
+    return true;
+  } finally {
+    try { fs.rmSync(lockFile, { force: true }); } catch { /* 锁清理失败下轮陈尸接管 */ }
+  }
 }
 
 // 编译产物替换：写 tmp → 读回校验（非空 + 双围栏）→ 旧版拷 .prev → rename 重试。
@@ -85,24 +203,15 @@ function maintain(now = Date.now()) {
   };
   try {
     fs.mkdirSync(dir, { recursive: true });
-    // 节流：编译产物刚写过（<10s）说明本会话链路刚维护过，直接跳过
-    if (compiled) {
-      const st = fs.statSync(compiled, { throwIfNoEntry: false });
-      if (st && now - st.mtimeMs < THROTTLE_MS) return;
-    }
-    // 取锁：陈尸（>90s）直接接管；新鲜锁重试一次 500ms，仍占用 → 跳过并记录
+    // init+首事件双触发守卫（非 dirty 短路：产物新旧不构成跳过理由，10s 窗口只挡同秒双发，
+    // 跨会话照常全量跑「聚合→编译→观测」）；测试用假时钟时相邻 maintain 需间隔 >10s
+    if (now - lastMaintainStart < THROTTLE_MS) return;
+    lastMaintainStart = now;
+    // 取锁：陈尸（>90s）直接接管；新鲜锁 3×400ms 重试，仍占用 → 本轮放弃
+    //（mem_add 有 inbox/pending 兜底，内容不丢，下轮会话补上）
     const lockFile = path.join(dir, "maintain.lock");
-    const readLock = () => {
-      try { return JSON.parse(fs.readFileSync(lockFile, "utf8")); } catch { return null; }
-    };
-    const held = (l) => l && typeof l.ts === "number" && now - l.ts < LOCK_STALE_MS;
-    let lock = readLock();
-    if (held(lock)) {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
-      lock = readLock();
-      if (held(lock)) { report("lock-skip", `另一进程 pid=${lock?.pid} 持锁中`); return; }
-    }
-    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: now }), "utf8");
+    // C：统一锁原语（wx 原子创建/探活判定/陈尸双读清退，语义见 acquireLock 注释）
+    if (!acquireLock(lockFile, now)) { report("lock-skip", "另一进程持锁中（或陈尸清退未果）"); return; }
     try {
       const storePath = path.join(dir, "notes.jsonl");
       // ① legacy 一次性导入（marker 幂等）；对账失败 → 记录并跳过本会话后续（编译产物不动）
@@ -126,31 +235,68 @@ function maintain(now = Date.now()) {
         consumedFile: path.join(dir, "inbox.consumed.md"),
         skipLegacy: imp.skipped === false,
       }, now);
-      // ③ 检索回流：usage.jsonl 只消费 t:"get" 事件（search 浏览不计分，防热条目自证循环）
+      // ③ pending 队列消费（限速溢出/锁竞争的兜底通道）：与 mem_add 同管线；消费后截空（截空即确认）
+      const { entries } = loadStore(storePath);
+      const pendingFile = path.join(dir, "pending-ops.jsonl");
+      let pendingRaw = "";
+      try { pendingRaw = fs.readFileSync(pendingFile, "utf8"); } catch { pendingRaw = ""; }
+      if (pendingRaw.trim()) {
+        const { ops } = parsePendingOps(pendingRaw);
+        applyPendingOps(entries, ops, now);
+        try { fs.writeFileSync(pendingFile, "", "utf8"); } catch { /* 截空失败下轮重复消费：管线幂等 */ }
+      }
+      // ④ 检索回流：get+cite 计分；usage-cursor.json {lastTs} 保证事件恰好消费一次
+      //（裁决 #3 光标先落盘：崩溃窗口两害取其轻——先落光标后施加，崩在施加前只丢当日软指标
+      //（下次 usage 事件自愈）；反过来先施加后落光标，崩在落盘前=下轮整批重放，跨日双计持久污染评分）
       const usageFile = path.join(dir, "usage.jsonl");
+      const cursorFile = path.join(dir, "usage-cursor.json");
       let usageRaw = "";
       try { usageRaw = fs.readFileSync(usageFile, "utf8"); } catch { usageRaw = ""; }
-      const { entries } = loadStore(storePath);
-      applyUsage(entries, parseUsageLines(usageRaw), now);
-      // ④ 编译（生命周期重算在编译内原地更新 status）→ 落盘 → 轮转 usage。
-      //    落盘必须在轮转前：hits 只存在于 store，usage 行轮转后不重放（恰好一次语义）
-      const { markdown } = buildCompiled(entries, {
-        usageAggregatedAlready: true, // 兼容标记：hits 已在上方 applyUsage 预写入 entries
+      let cursor = { lastTs: 0 };
+      try { cursor = JSON.parse(fs.readFileSync(cursorFile, "utf8")) || cursor; } catch { /* 无光标=全量首跑 */ }
+      const fresh = parseUsageLines(usageRaw).filter((ev) => (ev?.ts ?? 0) > (cursor.lastTs ?? 0));
+      const maxTs = fresh.reduce((m, ev) => Math.max(m, ev?.ts ?? 0), cursor.lastTs ?? 0);
+      try { fs.writeFileSync(cursorFile, JSON.stringify({ lastTs: maxTs }) + "\n", "utf8"); } catch { /* 光标可丢 */ }
+      applyUsage(entries, fresh, now);
+      // ⑤ 编译（生命周期/sid 原地更新；projectKey=会话项目，做亲和而非污染）→ 落盘
+      const pk = currentProjectKey();
+      const { markdown, stats } = buildCompiled(entries, {
+        usageAggregatedAlready: true,
         exploreStateFile: path.join(dir, "exploreState.json"),
+        projectKey: pk, // 契约测试无 lastDir → "global" 中性；write-through 才用 null
       }, now);
       saveStoreAtomic(storePath, entries);
-      try {
-        if (fs.existsSync(usageFile)) {
-          // rename 覆盖旧 .1（libuv Windows 走 MoveFileExW+REPLACE_EXISTING，实测成立）
-          fs.renameSync(usageFile, `${usageFile}.${USAGE_ROTATE_KEEP}`);
-        }
-      } catch (e) { report("usage-rotate", e?.message ?? e); /* 轮转失败只影响体量，不影响正确性 */ }
-      // ⑤ 校验 + 原子替换编译产物
+      // 写前快照（跨日 backups/notes-YYYYMMDD.jsonl，滚动 30 代）在替换产物之前做——
+      // A（裁决三 #1）：快照拍 store（真源，编译产物可重生成），快照文件名至此名实相符；
+      // 失败经 out.error 上报可观测（不允许静默），不阻断主流程
+      const snap = snapshotNotes({ notesFile: storePath, backupDir: path.join(dir, "backups"), keep: 30 }, now);
+      if (snap?.error) report("snapshot", snap.error);
+      // ⑥ 校验 + 原子替换编译产物
       if (!markdown || !markdown.includes(FENCE_BEGIN) || !markdown.includes(FENCE_END)) {
         report("compile-invalid", "编译产物为空或缺围栏，GLOBAL-NOTES.md 保持不动");
         return;
       }
       if (compiled) writeCompiled(compiled, markdown);
+      // ⑦ 观测：injection-log 追加一行 + stats.json 全量重算（/evolve 步骤 5 审阅入口）
+      try {
+        fs.appendFileSync(
+          path.join(dir, "injection-log.jsonl"),
+          JSON.stringify(makeInjectionLogRow({ projectKey: pk, slotIds: stats.slotIds, bytes: stats.bytes, evictions: stats.evictions }, now)) + "\n",
+          "utf8"
+        );
+      } catch { /* 观测可丢 */ }
+      try {
+        const readLog = (f) => { try { return fs.readFileSync(f, "utf8"); } catch { return ""; } };
+        const injRows = parseUsageLines(readLog(path.join(dir, "injection-log.jsonl")));
+        const searchRows = parseUsageLines(readLog(path.join(dir, "search-log.jsonl")));
+        fs.writeFileSync(
+          path.join(dir, "stats.json"),
+          JSON.stringify(computeStats({ injectionRows: injRows, searchRows, entries }, now), null, 2) + "\n",
+          "utf8"
+        );
+      } catch { /* stats 可丢 */ }
+      // ⑧ usage 7 日轮转（更早行并入 .old；光标已保证消费位，轮转只管体量）
+      try { rotateUsage(usageFile, now); } catch (e) { report("usage-rotate", e?.message ?? e); }
     } finally {
       try { fs.rmSync(path.join(dir, "maintain.lock"), { force: true }); } catch { /* 锁清理失败下轮陈尸接管 */ }
     }
@@ -161,27 +307,34 @@ function maintain(now = Date.now()) {
 
 // ── agent 工具 ───────────────────────────────────────────
 const MemoryStoreImpl = async ({ directory } = {}) => {
-  // 进程启动时维护一次（有 directory 才做——契约测试等无宿主上下文的调用直接跳过）
+  // ⚠ 调用方契约（2026-10-11 实证）：工厂 init 的 maintain 有真实副作用——写 DATA_DIR
+  // （store/观测/标记）与 CONFIG_ROOT 编译产物。install.ps1/sh 的 vE2 冒烟会以假 ctx 调用
+  // 本工厂（Invoke-TsSmoke / smoke_ts_ve2 已把 XDG_DATA_HOME 指向一次性 tmp）；
+  // 改动冒烟调用方时不得移除该隔离，否则部署动作会污染真实 ~/.local/share/kilo。
+  // 进程启动时维护一次（有 directory 才做——契约测试等无宿主上下文的调用直接跳过；
+  // 顺带捕获 cwd 作项目亲和 key，事件侧同秒双发由 maintain 内 THROTTLE_MS 守卫去重）
   if (directory) {
-    try { maintain(Date.now()); } catch (e) { console.error(TAG, "init maintain failed:", e?.message ?? e); }
+    try { lastDir = String(directory); maintain(Date.now()); } catch (e) { console.error(TAG, "init maintain failed:", e?.message ?? e); }
   }
   return {
     event: async (input) => {
       try {
         const ev = input?.event;
         if (!ev || ev.type !== "session.created") return;
+        // B1：优先事件目录信息，兜底进程 cwd（工具执行期无会话上下文可取）
+        lastDir = String(ev.properties?.info?.directory || process.cwd());
         maintain(Date.now());
       } catch { /* maintain 内部已兜底，这里双保险防事件层爆炸 */ }
     },
     tool: {
       mem_add: {
         description:
-          "写入一条跨项目通用经验到全局记忆 store（自动脱敏 + 去重：hash 精确命中跳过，Jaccard≥0.85 近似命中强化计分不新增占位）。替代旧 GLOBAL-NOTES.md 手工追加。",
+          "写入一条跨项目通用经验到全局记忆 store。管线：脱敏 → lint（<12 或 >400 字符拒收；模板/词表为提示）→ hash 精确跳过 → Jaccard≥0.85 强化 → 新增（命中外联+祈使投毒规则进隔离区）。限速：>50 条/日直写熔断转存 inbox。",
         args: {
-          text: { type: "string", description: "经验正文（一行一条，建议带结论与可复现要点）" },
+          text: { type: "string", description: "经验正文（一行一条，建议模板「当<条件>，<动作>（原因）」）" },
           tags: {
             type: "array",
-            description: "标签列表（可选，如 [\"gateway\",\"correction\"]；correction/constraint 标签计分加权）",
+            description: "标签列表（可选，≤5 个小写词；correction/constraint 计分加权）",
             items: { type: "string" },
           },
         },
@@ -189,16 +342,56 @@ const MemoryStoreImpl = async ({ directory } = {}) => {
           const text = String(args?.text ?? "").trim();
           if (!text) return "mem_add: 缺少 text 参数";
           const tags = Array.isArray(args?.tags) ? args.tags.map(String).map((t) => t.trim()).filter(Boolean) : [];
+          const now = Date.now();
+          const n = bumpThrottle(now);
           const storePath = path.join(storeDir(), "notes.jsonl");
           const { entries } = loadStore(storePath);
-          const r = addOrReinforce(entries, { text, tags, date: null, source: "agent" }, Date.now());
-          saveStoreAtomic(storePath, entries); // 立即落盘（skip 分支重写同内容，无害保幂等）
-          if (r.action === "skip") return `已存在 ${r.id}（跳过）`;
+          // B7：>50/日熔断——原始行转存 inbox，maintain 用同一管线摄入（限速不丢内容，只降即时性）
+          if (n > THROTTLE_INBOX) {
+            try {
+              fs.mkdirSync(storeDir(), { recursive: true });
+              fs.appendFileSync(path.join(storeDir(), "inbox.md"), `- ${text.replace(/\s*\n\s*/g, " ")}\n`, "utf8");
+              return `已达当日直写上限（${THROTTLE_INBOX}/日），已转存 inbox.md 待 maintain 摄入`;
+            } catch (e) {
+              return `mem_add: 转存 inbox 失败：${String(e?.message ?? e).slice(0, 120)}`;
+            }
+          }
+          const pk = currentProjectKey();
+          const r = addWithPipeline(entries, { text, tags, date: null, source: "agent", ws: pk, createdIn: pk }, now);
+          if (r.action === "rejected") {
+            const msgs = r.violations.filter((v) => v.sev === "reject").map((v) => v.msg).join("；");
+            return `mem_add: 拒收——${msgs}`;
+          }
+          // B6 write-through（单写者收敛）：成功=库+产物已在临界区落盘；取不到锁/临界区失败
+          // → 不落盘（旧快照落盘会覆盖并发写者），转 pending 队列由下轮 maintain 消费兜底
+          if (CONFIG_ROOT) {
+            let ok = false;
+            try { ok = writeThroughCompile(storePath, entries, now); } catch { ok = false; }
+            if (!ok) {
+              const opLine = r.action === "reinforced"
+                ? { op: "reinforce", id: r.id, ts: now }
+                : { op: "add", text, tags, source: "agent", ws: pk, createdIn: pk };
+              try {
+                fs.mkdirSync(storeDir(), { recursive: true });
+                fs.appendFileSync(path.join(storeDir(), "pending-ops.jsonl"), JSON.stringify(opLine) + "\n", "utf8");
+              } catch { /* 队列可丢：丢的是即时性，正确性由下轮 maintain/mem_add 再兜 */ }
+              return r.action === "reinforced"
+                ? `已强化 ${r.id}（并发维护中，已排队待编译）`
+                : `已排队待编译（并发维护中）`;
+            }
+          } else {
+            saveStoreAtomic(storePath, entries); // 无 CONFIG_ROOT（降级环境）：至少保库
+          }
+          const warns = (r.violations ?? []).filter((v) => v.sev === "warn").map((v) => v.msg).join("；");
+          const suffix = (warns ? `\n提示：${warns}` : "")
+            + (n > THROTTLE_WARN ? `\n注意：当日直写已 ${n} 次（>${THROTTLE_WARN}），建议合并沉淀而非逐条追加` : "");
+          if (r.action === "skip") return `已存在 ${r.id}（跳过）${suffix}`;
           if (r.action === "reinforced") {
             const e = entries.find((x) => x.id === r.id);
-            return `已强化 ${r.id}（hits ${e?.hits ?? "?"}）`;
+            return `已强化 ${r.id}（hits ${e?.hits ?? "?"}）${suffix}`;
           }
-          return `新条目 ${r.id}（试用）`;
+          if (r.entry?.status === "quarantine") return `新条目 ${r.id}（隔离区：命中投毒规则，待人工放行）${suffix}`;
+          return `新条目 ${r.id}（试用）${suffix}`;
         },
       },
       mem_search: {
@@ -239,6 +432,16 @@ const MemoryStoreImpl = async ({ directory } = {}) => {
           }
           hits.sort((a, b) => b.s - a.s);
 
+          // ⑤ search-log 脱敏落盘（观测：q 经 makeSearchLogRow 脱敏截 60；零命中也记 n=0）
+          try {
+            fs.mkdirSync(storeDir(), { recursive: true });
+            fs.appendFileSync(
+              path.join(storeDir(), "search-log.jsonl"),
+              JSON.stringify(makeSearchLogRow(query, Math.min(hits.length, limit), now)) + "\n",
+              "utf8"
+            );
+          } catch { /* 观测可丢 */ }
+
           if (!hits.length) {
             // 零命中兜底：域目录 top8 + 计数 + 建议词（高频 tag 即库内语义地图）
             const tagCount = new Map();
@@ -259,16 +462,23 @@ const MemoryStoreImpl = async ({ directory } = {}) => {
       },
       mem_get: {
         description:
-          "取回一条全局记忆的全文（≤2400 字符）与元信息；本次读取写入 usage（t:get）计入条目反馈分（被读过的条目编译排序更靠前）。未命中返回邻近条目建议。",
+          "取回一条全局记忆的全文（≤2400 字符）与元信息；支持完整 id 或 sid 前缀/后缀短 id；本次读取写入 usage（t:get）计入条目反馈分（被读过的条目编译排序更靠前）。未命中返回邻近条目建议。",
         args: {
-          id: { type: "string", description: "条目 id（mem_search 结果行首的 mXXX）" },
+          id: { type: "string", description: "条目 id 或 sid（mem_search 结果行首 mXXX / [sid|…]）" },
         },
         async execute(args) {
           const id = String(args?.id ?? "").trim();
           const storePath = path.join(storeDir(), "notes.jsonl");
           const { entries } = loadStore(storePath);
-          const e = entries.find((x) => x.id === id);
           const now = Date.now();
+          // E（裁决三 #5）：与 mem_cite/flagEntry 同走 resolveShortId（支持 sid/前缀/后缀）；
+          // 先判模糊再判未命中——与 flagEntry 已修的同型分支序对齐
+          const r = resolveShortId(entries, id);
+          if (r && r.candidates) {
+            return `模糊命中 ${r.candidates.length} 条，请用更长的 id：\n`
+              + r.candidates.slice(0, 5).map((x) => `${x.id} ${x.sid ?? "?"} ${String(x.text ?? "").slice(0, 50)}`).join("\n");
+          }
+          const e = r?.entry;
           if (!e) {
             // 未命中：给 top-score 邻近 id 列表（而非裸报错）——检索循环不在空转处断掉
             const near = [...entries]
@@ -277,11 +487,72 @@ const MemoryStoreImpl = async ({ directory } = {}) => {
               .map((x) => `${x.id} [${(x.tags ?? []).join(",")}] ${String(x.text ?? "").slice(0, 60)}`);
             return [`未命中 ${id || "(空 id)"}`, near.length ? `邻近条目（top-score）：\n${near.join("\n")}` : "（库为空）"].join("\n");
           }
-          try { appendUsage(path.join(storeDir(), "usage.jsonl"), e.id, "get", now); } catch { /* usage 可丢 */ }
+          try { appendUsage(path.join(storeDir(), "usage.jsonl"), e.id, "get", now, currentProjectKey()); } catch { /* usage 可丢 */ }
           const text = String(e.text ?? "");
           const body = text.length > 2400 ? text.slice(0, 2400) + "…(截断)" : text;
           const meta = `── ${e.id} · [${(e.tags ?? []).join(",")}] · hits ${e.hits ?? 0} · ${e.status ?? "?"}${e.pinned ? " · pinned" : ""} · source ${e.source ?? "?"} · ${new Date(e.created ?? now).toISOString().slice(0, 10)}`;
           return [body, meta].join("\n");
+        },
+      },
+      mem_cite: {
+        description:
+          "引用一条全局记忆作为依据（t:cite 计入反馈分，与 mem_get 读回同权重；支持完整 id 或 sid 前缀/后缀短 id）。",
+        args: {
+          id: { type: "string", description: "条目 id 或 sid（mem_search 结果行首 [sid|…] 方括号内）" },
+        },
+        async execute(args) {
+          const id = String(args?.id ?? "").trim();
+          const storePath = path.join(storeDir(), "notes.jsonl");
+          const { entries } = loadStore(storePath);
+          const r = resolveShortId(entries, id);
+          // B（裁决三 #4）：先判模糊再判未命中——ambiguous 结果不带 entry，
+          // 若先走 !r.entry 分支则模糊提示永不可达（与 flagEntry 已修的同型模式对齐）
+          if (r && r.candidates) {
+            return `模糊命中 ${r.candidates.length} 条，请用更长的 id：\n`
+              + r.candidates.slice(0, 5).map((x) => `${x.id} ${x.sid ?? "?"} ${String(x.text ?? "").slice(0, 50)}`).join("\n");
+          }
+          if (!r || !r.entry) {
+            const now = Date.now();
+            const near = [...entries]
+              .sort((a, b) => score(b, now) - score(a, now))
+              .slice(0, 5)
+              .map((x) => `${x.id} ${x.sid ?? "?"} [${(x.tags ?? []).join(",")}] ${String(x.text ?? "").slice(0, 60)}`);
+            return [`未命中 ${id || "(空 id)"}（cite 未计分）`, near.length ? `邻近条目：\n${near.join("\n")}` : "（库为空）"].join("\n");
+          }
+          const e = r.entry;
+          try { appendUsage(path.join(storeDir(), "usage.jsonl"), e.id, "cite", Date.now(), currentProjectKey()); } catch { /* usage 可丢 */ }
+          const text = String(e.text ?? "");
+          return `已引用 ${e.id}（sid ${e.sid ?? "?"}）· ${text.length > 160 ? text.slice(0, 160) + "…" : text}`;
+        },
+      },
+      mem_flag: {
+        description:
+          "标记一条可疑/过期记忆进入人工复审（flagged 不再编译注入；理由 4–200 字符；单条上限 3 次，全库在审上限 10 条；复位走 /evolve 步骤 5）。",
+        args: {
+          id: { type: "string", description: "条目 id 或 sid" },
+          reason: { type: "string", description: "标记理由（4–200 字符，写清错在哪/为什么可疑）" },
+        },
+        async execute(args) {
+          bumpThrottle(Date.now()); // flag 同限速计数（防用 flag 刷配额）
+          const id = String(args?.id ?? "").trim();
+          const reason = String(args?.reason ?? "").trim();
+          if (!id || !reason) return "mem_flag: 需要 id 与 reason 参数";
+          const storePath = path.join(storeDir(), "notes.jsonl");
+          const { entries } = loadStore(storePath);
+          const r = flagEntry(entries, { id, reason }, Date.now());
+          if (!r.ok) {
+            const why = {
+              "not-found": "未命中该 id",
+              "ambiguous": "id 模糊命中多条，请用更长 id",
+              "reason-length": "理由长度需 4–200 字符",
+              "duplicate": "该条已有相同理由的 flag（幂等跳过）",
+              "flag-capped": "该条 flags 已达 3 次上限",
+              "flag-pool-full": "全库在审（flagged）已达 10 条上限，先处理存量",
+            }[r.code] ?? r.code;
+            return `mem_flag: 未执行——${why}`;
+          }
+          saveStoreAtomic(storePath, entries);
+          return `已标记 ${r.id} 进入人工复审（第 ${r.flags}/3 次 flag）`;
         },
       },
     },
@@ -304,11 +575,16 @@ export const _export = {
   FENCE_BEGIN, FENCE_END,
   resolveConfigRoot, maintain, writeCompiled,
   THROTTLE_MS, LOCK_STALE_MS, USAGE_ROTATE_KEEP,
-  // lib 纯函数直通（离线测试主入口走这里）
+  projectKeyForDir, THROTTLE_WARN, THROTTLE_INBOX,
+  pidAlive, acquireLock, // C：统一锁原语（离线测试用）
+  // lib 纯函数直通（离线测试主入口走这里；bundle 单入口把 lib+plugin 一并带出）
   tokenize, jaccard, parseLessonLines, extractUnfenced, isLineInFence,
-  normalizeText, hashText, makeId, redactSecrets,
-  loadStore, saveStoreAtomic, renameWithRetry,
-  addOrReinforce, applyUsage, parseUsageLines, appendUsage,
-  score, density, buildCompiled, recalcLifecycle,
+  normalizeText, hashText, makeId, redactSecrets, maskValue, BASIC_TAGS, lintEntry, isQuarantineCandidate,
+  loadStore, saveStoreAtomic, renameWithRetry, appendCorruptUnique,
+  addOrReinforce, addWithPipeline, flagEntry, parsePendingOps, applyPendingOps,
+  assignSid, ensureSids, resolveShortId,
+  applyUsage, parseUsageLines, appendUsage, rotateUsage,
+  score, density, estTokens, bumpAffinity, projAffinity, effectiveScore, buildCompiled, recalcLifecycle,
   ingestSources, importOnce,
+  makeInjectionLogRow, makeSearchLogRow, snapshotNotes, computeStats,
 };

@@ -102,7 +102,7 @@ macOS / Linux（bash）：
 - **启用通道三层**：① `plugin/memory-bootstrap.ts` 自动（git 项目，session.created 触发）；② `/memory-setup` 命令（非 git 目录/排查，调部署副本 `scripts/memory-enable.mjs`）；③ 官方兜底（TUI `/memory` 或 `kilo serve` + `POST /memory/enable?directory=...`）。scaffold 产物已与官方 enable 逐字节比对。
 - **生效语义**：工具表随会话启动定型——启用后**新会话**才有 `kilo_memory_*` 工具与注入（会话结束自动沉淀 turnClose、开场自动注入索引，上限 8KB）。
 - **进化回路**：会话内主动沉淀（INSTRUCTIONS.md 策略）+ `/evolve` 周期复盘（蒸馏 → correct/forget 修正 → 通用教训反哺本仓库，改动需确认）。
-- **全局经验层 `GLOBAL-NOTES.md`**（`~/.config/kilo/`，kilo.json instructions 第二入口）：跨项目教训**全自动追加**（一行一条带日期，追加前检索去重，总量 ~1KB 封顶），/evolve 定期修剪 + 成熟条目升格进 INSTRUCTIONS（需确认）。属运行时状态**不进下发清单**——install 不清理清单外文件，不会被覆盖；新机器由 memory-bootstrap 插件按模板自愈创建（已实测 instructions 引用缺失文件不报错）。追加通道用 node 单行脚本（bash `node *` allow），不用 edit 工具（会触发 external_directory 询问）。
+- **全局经验层 `GLOBAL-NOTES.md`**（`~/.config/kilo/`，kilo.json instructions 第二入口；**2026-10-11 全局记忆 v3 重写**）：已从手工追加的状态文件改为**编译产物**——真源 `<data>/memory-store/notes.jsonl`，由 `plugin/memory-store.ts` 编译生成，**勿手工编辑**（直写会被下次编译收编/覆盖）。写入通道：会话内 `mem_add` 工具（反馈闭环 `mem_cite` 计分 / `mem_flag` 标记），脚本兜底追加同目录 `inbox.md`（node 单行脚本，bash `node *` allow，不用 edit 工具防 external_directory 询问），由 maintain 管线摄入。去重（hash 跳过 + Jaccard 强化）/投毒隔离/lint 闸门/项目亲和/token 预算封顶全部自动；/evolve 周期审阅 + 成熟条目升格 INSTRUCTIONS（需确认）、运维口径（stats.json / injection-log / backups 快照回滚 / flagged 复位）见 `command/evolve.md` 步骤 5。属运行时状态**不进下发清单**——install 不清理清单外文件，不会被覆盖；新机器由 memory-bootstrap 插件按模板自愈创建（已实测 instructions 引用缺失文件不报错）。
 - **验证**：`node scripts/memory-enable.mjs`（全量状态表）；新会话调 `kilo_memory_recall mode=catalog` 应列出已入库条目。
 - **跨项目定向同步**（2026-09-26 记忆防丢专项）：项目间有关联但记忆互相隔离——在 A 会话沉淀了 B 项目专属事实（B 的构建命令/环境怪癖/故障修复/决策）时，按 INSTRUCTIONS 规则立即用部署副本 `scripts/memory-sync.mjs` 镜像到 B 的记忆根（同 key 原位更新），B 侧下次会话即可检索；两项目共用的通用教训仍走 GLOBAL-NOTES.md 全局层。
 - **全局命令目录**（二进制实证）：`~/.config/kilo/command/*.md`；`.kilo/command/` 是项目级，部署在 `~/.config/kilo/.kilo/` 下的旧资产不会被加载。
@@ -293,6 +293,9 @@ node scripts\test-memory-sync.mjs
 
 # memory-bootstrap 离线回归（改 plugin/memory-bootstrap.ts 的 GLOBAL-NOTES 修剪逻辑后必跑）
 node scripts\test-memory-bootstrap.mjs
+
+# memory-store 全局记忆 v3 离线回归（不联网、不碰真实配置目录/DATA_DIR；改 plugin/memory-store.ts 或 lib/memory-store.ts 后必跑）
+node scripts\test-memory-store.mjs
 
 # 插件加载契约回归（离线；改 plugin/*.ts 导出面或 lib/ 后必跑）
 node scripts\test-plugin-contract.mjs

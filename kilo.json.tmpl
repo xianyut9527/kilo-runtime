@@ -53,8 +53,8 @@
 
   // ── 每会话注入的策略文件（认知中心/风险分级/一次性交付/硬约束）──
   // __KILO_HOME__ 由 installer 替换为本机家目录（Kilo 不展开 ~，必须绝对路径）
-  // GLOBAL-NOTES.md 是全自动生长的全局经验层：agent 直接追加（不进下发清单，
-  // 属运行时状态非配置；install 不清理清单外文件），/evolve 定期修剪并升格成熟条目
+  // GLOBAL-NOTES.md 是全自动生长的全局经验层：由 memory-store 从 store（notes.jsonl）编译生成，
+  // agent 写入走 mem_add（勿手工直写），不进下发清单、install 不清理清单外文件；/evolve 定期修剪并升格成熟条目
   "instructions": [
     "__KILO_HOME__/.config/kilo/INSTRUCTIONS.md",
     "__KILO_HOME__/.config/kilo/GLOBAL-NOTES.md",
@@ -381,6 +381,9 @@
     "mem_add": "allow",
     "mem_search": "allow",
     "mem_get": "allow",
+    // cite/flag 反馈通道：引用计分与可疑条目标记（flagged 复位走 /evolve 步骤 5）
+    "mem_cite": "allow",
+    "mem_flag": "allow",
     // LSP 智能放行
     "lsp": "allow",
     // 技能加载放行
