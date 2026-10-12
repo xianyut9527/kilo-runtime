@@ -663,7 +663,7 @@
             "context": 200000,
             "output": 32000,
           },
-        },        
+        },
         "kimi-k3": {
           "reasoning": true,
           // K3 官方仅支持 low/high/max 三档（默认 max），无 medium——多声明会产生
@@ -739,6 +739,18 @@
             "context": 200000,
             "output": 32000,
           },
+        },
+        "gpt-6-luna": {
+          "reasoning": false,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"],
+          },
+          "limit": {
+            "context": 1050000,
+            "output": 128000,
+          },
+          "tool_call": true,
         },
       },
     },
