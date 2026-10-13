@@ -102,6 +102,7 @@ moa/dual-review 的分析
 ## 坑
 
 - 直接改 `~/.config/kilo/kilo.json` 会被 install 覆盖，白改
+- VS Code 模型选择器保存的模型/变体可能覆盖模板中的 `agent.*` 路由；改完模板后先核对新会话实际使用的模型与思考档位
 - 模板注释只写「行首 `//`」；kilo.json 加自定义键整份失效
 - `debug config` 通过 ≠ 能跑任务，改完必须真跑一次 `kilo run`
 

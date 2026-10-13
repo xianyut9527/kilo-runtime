@@ -241,7 +241,7 @@ macOS / Linux（bash）：
 - **出网链路明示**（敏感代码仓库先评估再触发）：
   - 模型主链路 + failover：对话内容发往上游网关；
   - `dual_review` / `moa`：审查素材（diff 片段、任务描述）额外发往上游参考/裁决模型（单次共 3 次调用）；
-  - `web_search` / `webfetch` 已放行；Kilo 自身遥测已关（`privacy_mode: true`）。
+  - `web_search` / `webfetch` 已放行；Kilo 自身遥测由 `experimental.openTelemetry: false` 关闭；`privacy_mode: true` 仅控制 TUI 内 PII 打码。
 - **failover 遥测口径**：`~/.local/share/kilo/failover-events.jsonl` 只记模型名/动作/HTTP 状态/错误摘要（≤200 字），**不含对话与 prompt 内容**；5MB 轮转只保一代。
 - **破坏性操作默认安全**：`cleanup.sh` 默认 dry-run 逐条打印；`db-maintain.sh` 分批短事务、VACUUM 按阈值自动（空闲占比 ≥25% 且无写者，否则降级跳过）；install 写盘前自动备份（保留 2 份）；agent 权限三道防线（permission-guard 动态拦截 → 静态规则 → deny 兜底）。
 

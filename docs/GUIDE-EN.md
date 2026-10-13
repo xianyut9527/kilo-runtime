@@ -110,6 +110,7 @@ After editing provider/hx-failover/src: `npm run build` → run `test-failover.m
 ## Gotchas
 
 - Editing `~/.config/kilo/kilo.json` directly gets overwritten by install — always edit the repo copy
+- A model or variant saved by the VS Code model selector can override the template's `agent.*` route; after editing the template, verify the model and reasoning effort used by a new session
 - Template comments: whole-line `//` at line start only; any custom key in kilo.json invalidates the whole config
 - `debug config` passing ≠ tasks actually run — always smoke-test with a real `kilo run` after changes
 

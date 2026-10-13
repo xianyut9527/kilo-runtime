@@ -34,7 +34,7 @@
   "autoupdate": true,
   // 会话分享彻底关闭（不出网）
   "share": "disabled",
-  // 隐私模式：遥测不上报
+  // 隐私模式：在 TUI 中打码余额、邮箱、团队名等 PII；遥测由 experimental.openTelemetry 控制
   "privacy_mode": true,
   // 允许模型用网络搜索
   "web_search": true,
@@ -92,15 +92,10 @@
   "agent": {
     "code": {
       "model": "hx/glm-5.3-flash",
-      // 一次输出质量杠杆：钉 max（2026-09-30 升档，2026-10-07 复核定案保留）。
-      // 2026-09-28 先钉 high 的依据是「上游默认档深思考不足 → 首过质量不稳 → 返工」；
-      // 09-30 升 max 的补充依据：① kimi@max 长输入猝死是 k2.6 分母的负数据，对 glm 族
-      // 无直接证据；② reasoningGate v2 死亡自动扩预算（×2、clamp 32768-65536）+ 降档
-      // 重试已兜住 max 档的 length 猝死；③ 95% 工作走本槽，思考深度对首过质量的传递
-      // 放大最大。代价＝思考期首字间隔变长，本机实测 max 档首字 41s（对照 low/high 6s）
-      // ——若日后确认「慢」主要来自本档，按单变量 A/B（同任务 code@high vs code@max）
-      // 复核后再回退，不要在没有对照的情况下反复改这一行。
-      "variant": "max",
+      // 常规执行钉 high：保留深推理，同时避免 max 增加的显著首字延迟。
+      // 本机 glm-5.3-flash 实测 max 首字约 41s、low/high 约 6s；复杂规划仍由 plan@max、
+      // 高风险实现由 general@high + verify/dual_review 承担。若同任务对照显示质量退化再调整。
+      "variant": "high",
     },
     "plan": {
       "model": "hx/kimi-k3",
@@ -115,8 +110,8 @@
     "general": {
       // 2026-10-03 收口审计改钉：k2.8 无渠道（404 no active channel，全天实证），
       // 深度子代理全部靠 failover 兜底跑在降级档上——执行面钉回有渠道、有安全分母的 k2.6@high
-      "model": "hx/kimi-k2.6",
-      "variant": "high",
+      "model": "hx/deepseek-v4.1-flash",
+      "variant": "max",
     },
     "explore": {
       "model": "hx/deepseek-v4.1-flash",
@@ -153,7 +148,7 @@
     "verify": {
       "mode": "subagent",
       // k2.8 无渠道（2026-10-03 404 实证）→ 同源异厂改钉 k2.6（复核位保持与 code 的 glm 族异源）
-      "model": "hx/kimi-k2.6",
+      "model": "hx/glm-5.3-flash",
       // 复核保留思考深度 → high（与 plan 同据；原「kimi@high 有 1 条失败」是把
       // 流中断计入的旧数据，95 条 length 地面真值里 high 档为零）
       "variant": "high",
@@ -741,7 +736,12 @@
           },
         },
         "gpt-6-luna": {
-          "reasoning": false,
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+          },
           "modalities": {
             "input": ["text", "image"],
             "output": ["text"],
