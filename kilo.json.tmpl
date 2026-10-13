@@ -538,11 +538,22 @@
           "aggregator": "kimi-k2.6",
         },
         // dual_review 工具配置（plugin/dual-review.ts 读这里）：三层交付检查层 3，
-        // quality-gate 在交付节点直调（正反异源并行 → 第三方裁决）；三模型均与主执行模型异源
+        // quality-gate 在交付节点由插件直调，单次审查共 3 次上游调用：
+        //   ① positive 与 negative 两路并行独立扇出（互不见对方报告）
+        //   ② aggregator 读两份报告出终审结论（通过/不通过 + 必修项清单），
+        //       裁决不通过则阻断交付 —— 正反找得到的、裁决必须闭环落地
+        // positive   正向审查者：查遗漏（验收缺口 / 未覆盖场景 / 缺失的测试与边界）
+        // negative   反向审查者（红队）：专找错（bug / 安全 / 回归 / 错误假设）
+        // aggregator 裁决模型：第三方仲裁，避免正反任一侧既当运动员又当裁判
+        // 异源设计：三模型与主执行模型（code agent 的 glm-5.3-flash）不同源，
+        // 防同一款模型自审自的产出（自评偏置）；⚠️ 若 aggregator 与主执行模型同款，
+        // 该属性即丢失 —— 换这里的模型前先想清楚裁决独立性还剩多少
+        // （三键均可被调用方 per-call 覆盖 positive_model/negative_model/aggregator；
+        //   提示词真源 = plugin/dual-review.ts 的 POSITIVE_PROMPT/NEGATIVE_PROMPT）
         "dual_review": {
           "positive": "deepseek-v4.1-flash",
           "negative": "glm-5.2",
-          "aggregator": "kimi-k2.6",
+          "aggregator": "glm-5.3-flash",
         },
       },
       // 模型注册表（catalog：能力/上下文窗口/输出上限）
