@@ -763,6 +763,23 @@
           },
           "tool_call": true,
         },
+        "claude-haiku-5-5": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"],
+          },
+          "limit": {
+            "context": 1050000,
+            "output": 128000,
+          },
+          "tool_call": true,
+        },        
       },
     },
   },
