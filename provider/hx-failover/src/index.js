@@ -1,4 +1,4 @@
-﻿// W3.6 模型失败自动降级（移植 legacy Virtual Quota Fallback 的语义）
+// W3.6 模型失败自动降级（移植 legacy Virtual Quota Fallback 的语义）
 //
 // 契约（7.6.2 实测）：
 //   - provider 工厂被调用时收到 { name, baseURL, apiKey, headers, fetch }

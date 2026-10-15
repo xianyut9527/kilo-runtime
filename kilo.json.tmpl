@@ -70,14 +70,17 @@
   //              agent → 体感全面变慢（git 49f8ed9 即"快→慢"分界，同期还开了 remote_control）。
   //              换主力模型必须单变量切换并实测对比，不得随其他改动捎带调整。
   // plan         规划模式：出方案不动手，用 kimi 换个视角思考
-  // general      深度子任务：难啃的实现/分析，用 kimi-k2.6@high（2026-10-03 审计改钉：
-  //              原 k2.8 无可用渠道——failover-events 404 "no active channel" 实证；
-  //              原注释 glm-5.2 早已 stale。high 档 228 样本零失败分母，max 档有
-  //              ≥150k 输入 2.56% 猝死分母且近 7 天 3 例 glm-5.2@max 子代理被 503 秒杀）
+  // general      深度子任务：难啃的实现/分析，deepseek-v4.1-flash@max（2026-10-13 改钉，
+  //              对齐 INSTRUCTIONS.md「高风险实现升级执行档」口径；前任 kimi-k2.6@high
+  //              是 2026-10-03 审计改钉——原 k2.8 无可用渠道，failover-events 404 实证；
+  //              再前任注释 glm-5.2 早已 stale。k2.6 时代分母数据：high 档 228 样本零失败，
+  //              max 档 ≥150k 输入 2.56% 猝死且近 7 天 3 例 glm-5.2@max 子代理被 503 秒杀）
   // explore      探索代理（subagent）：只读侦察，用最便宜模型扫代码
-  // compaction   上下文压缩：钉 glm-5.3-flash + variant low（2026-09-22 空响应专项：
-  //              max 档推理吃光输出预算 → 摘要为空 → "empty response"；schema 规定
-  //              variant 仅对 agent 自己配置的 model 生效，model+variant 必须同设）
+    // compaction   上下文压缩：钉 deepseek-v4.1-flash + variant low（2026-10-07 换岗，
+    //              kimi-k3 压缩位实测空响应；2026-09-22 空响应专项确立：max 档推理
+    //              吃光输出预算 → 摘要为空 → "empty response"；schema 规定
+    //              variant 仅对 agent 自己配置的 model 生效，model+variant 必须同设，
+    //              详见 agent.compaction 处注释）
   // orchestrator 多代理编排：拆解任务分派子代理
   // verify       自定义复核代理（subagent）：异源模型 kimi 复核 glm 的产出
   //              —— 不同厂商交叉验证，只读不许改（edit/bash写通道均 deny）
@@ -94,7 +97,7 @@
       "model": "hx/glm-5.3-flash",
       // 常规执行钉 high：保留深推理，同时避免 max 增加的显著首字延迟。
       // 本机 glm-5.3-flash 实测 max 首字约 41s、low/high 约 6s；复杂规划仍由 plan@max、
-      // 高风险实现由 general@high + verify/dual_review 承担。若同任务对照显示质量退化再调整。
+      // 高风险实现由 general@max + 异源 verify/dual_review 承担。若同任务对照显示质量退化再调整。
       "variant": "high",
     },
     "plan": {
@@ -108,8 +111,13 @@
       "variant": "max",
     },
     "general": {
-      // 2026-10-03 收口审计改钉：k2.8 无渠道（404 no active channel，全天实证），
-      // 深度子代理全部靠 failover 兜底跑在降级档上——执行面钉回有渠道、有安全分母的 k2.6@high
+      // 2026-10-13 改钉 deepseek-v4.1-flash@max（高风险实现升级执行档，INSTRUCTIONS.md 口径）；
+      // 前任 kimi-k2.6@high（2026-10-03：k2.8 无渠道 404 no active channel 全天实证，
+      // 深度子代理全靠 failover 兜底跑降级档，故钉回有渠道、有安全分母的 k2.6）
+      // 残余风险登记（2026-10-15 三模型审查 + kilo.db 补证）：同模型大输入高档曾有
+      // 0.48%/call 死亡实证（见 explore 位），general 大输入场景同暴露；14 天分母补证
+      // ≥85k 输入 22 例 0 length 猝死，reasoningGate 扩预算重试兜底在位。若 length
+      // 猝死复发，先降 high 再议换模型。
       "model": "hx/deepseek-v4.1-flash",
       "variant": "max",
     },
@@ -147,10 +155,12 @@
     },
     "verify": {
       "mode": "subagent",
-      // k2.8 无渠道（2026-10-03 404 实证）→ 同源异厂改钉 k2.6（复核位保持与 code 的 glm 族异源）
-      "model": "hx/glm-5.3-flash",
-      // 复核保留思考深度 → high（与 plan 同据；原「kimi@high 有 1 条失败」是把
-      // 流中断计入的旧数据，95 条 length 地面真值里 high 档为零）
+      // verify 必须与 code 的 glm 族异源；恢复已在 failover/MoA 使用的 Kimi K2.6，避免同模型自审。
+      // 退化路径登记（2026-10-15 审查）：kimi-k2.6 失败时按全局 failover 链切换，落点可能
+      // 含 glm-5.3-flash（被审模型同款）→ 异源性静默丢失（仅流首 ⚠️ 提示）；配置层无
+      // per-agent 链可钉，复核结论应声明实际执行模型。
+      "model": "hx/kimi-k2.6",
+      // 高风险复核保留思考深度 → high（k2.6@high 的 95 条 length 地面真值里零失败）。
       "variant": "high",
       "description": "独立验证视角（异源模型复核高风险改动，只读不改动）。仅在认证/权限/支付/数据迁移/公共契约等高风险改动时按需调用。",
       "permission": {
@@ -304,6 +314,19 @@
       "Test-Path *": "allow",
       "Measure-Object *": "allow",
       "Get-Process *": "allow",
+      // 管道只读段放行（2026-10-15 慢专项）：管道命令被权限系统拆段独立评估，
+      // Select-Object/Sort-Object 等属性选择器此前落到 * 兜底 → ask，导致纯只读
+      // 命令也逐条弹窗（本机单会话 20+ 次 asking 实证）。Format-Table/List 为纯格式化。
+      // ForEach-Object/Where-Object 已于 2026-10-15 经用户裁定放行（见下两条）：
+      // 接受任意 scriptblock 执行面换取减少弹窗；高危内容由 permission-guard 动态拦截。
+      "Select-Object *": "allow",
+      "Sort-Object *": "allow",
+      "Format-Table *": "allow",
+      "Format-List *": "allow",
+      // 脚本块管道放行（2026-10-15 用户裁定：接受任意脚本块执行面，换取减少弹窗；
+      // 高危内容仍由 permission-guard 插件动态拦截）
+      "ForEach-Object *": "allow",
+      "Where-Object *": "allow",
       // node 任意脚本放行（构建/测试需要；危险操作由插件动态拦）
       "node *": "allow",
       "rg *": "allow",
@@ -516,11 +539,12 @@
         // failover.noticeCooldownMs 可单独调通知去重窗口（缺省 = cooldownMs）。
         // ※ 模型切换的唯一真源就是本配置文件——provider/moa/dual-review 代码均无内置默认链/兜底模型，
         //   换模型只改这里（agent 路由 / failover / moa / dual_review 都在本文件内）
-        // 链序（2026-09-25 多模型审查优化）：同族优先——首跳 glm-5.2 而非 kimi。
-        // 理由：failover 是质量敏感场景的高发路径（主模型失败常伴随长任务），首跳即切异构
-        // 厂商模型会造成风格/能力断裂，同一批文件被异构模型交替编辑；同族补位保连续性，
-        // glm-5.2@max 能力足以承接执行（MoA 双路一致认定）。代价是跳到较慢大杯——
-        // 质量优先场景下可接受；末跳仍保留异构兜底。
+        // 链序（2026-10-15 三模型审查核实并修正注释）：现行实链 = glm-5.3-flash →
+        // deepseek-v4.1-flash → glm-5.2 → kimi-k2.6。首个备位 deepseek-v4.1-flash 为
+        // 异构厂商（速度优先，实测次快档），glm-5.2 退居第 2 备位承接长任务质量，
+        // 末跳 kimi-k2.6 异构兜底。历史：2026-09-25 曾按「同族优先」排 glm-5.2 首跳，
+        // 后链序调整时该注释未同步（2026-10-15 审查 catch）。异构第 2 跳是刻意取舍；
+        // 若要恢复同族优先，把 deepseek-v4.1-flash 与 glm-5.2 换位即可。
         "failover": {
           "chain": {
             "models": [
@@ -545,15 +569,17 @@
         // positive   正向审查者：查遗漏（验收缺口 / 未覆盖场景 / 缺失的测试与边界）
         // negative   反向审查者（红队）：专找错（bug / 安全 / 回归 / 错误假设）
         // aggregator 裁决模型：第三方仲裁，避免正反任一侧既当运动员又当裁判
-        // 异源设计：三模型与主执行模型（code agent 的 glm-5.3-flash）不同源，
-        // 防同一款模型自审自的产出（自评偏置）；⚠️ 若 aggregator 与主执行模型同款，
-        // 该属性即丢失 —— 换这里的模型前先想清楚裁决独立性还剩多少
+        // 异源设计（2026-10-15 三模型审查修正口径）：positive=deepseek-v4.1-flash、
+        // aggregator=kimi-k2.6 与主执行模型（code agent 的 glm-5.3-flash）异源；
+        // ⚠️ negative=glm-5.2 与主模型同族，红队路保留 GLM 家族级共同盲区——属刻意取舍
+        // （glm-5.2 红队有历史分母，qwen 系注册未用无本机分母）；若 aggregator 或 negative
+        // 换成与主执行模型同款，防自评偏置属性即丢失 —— 换这里任何模型前先想清楚裁决独立性还剩多少
         // （三键均可被调用方 per-call 覆盖 positive_model/negative_model/aggregator；
         //   提示词真源 = plugin/dual-review.ts 的 POSITIVE_PROMPT/NEGATIVE_PROMPT）
         "dual_review": {
           "positive": "deepseek-v4.1-flash",
           "negative": "glm-5.2",
-          "aggregator": "glm-5.3-flash",
+          "aggregator": "kimi-k2.6",
         },
       },
       // 模型注册表（catalog：能力/上下文窗口/输出上限）
@@ -608,6 +634,8 @@
         },
         "glm-5.3": {
           "reasoning": true,
+          // ⚠️ 无路由引用（选择器备用）；modalities 未声明（text-only 口径）。若日后启用
+          // 并需图像输入，先对上游实测再补 modalities（勿照抄 flash 的 text+image）。
           "variants": {
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
@@ -653,23 +681,6 @@
             "output": 32000,
           },
         },
-        "kimi-k2.8": {
-          "reasoning": true,
-          "variants": {
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" },
-          },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"],
-          },
-          "limit": {
-            "context": 200000,
-            "output": 32000,
-          },
-        },
         "kimi-k3": {
           "reasoning": true,
           // K3 官方仅支持 low/high/max 三档（默认 max），无 medium——多声明会产生
@@ -691,23 +702,6 @@
             // agent.compaction 注释）。registry 里的 context 会参与上下文占用计算，
             // 一个未经验证的大窗数字会让「何时该压缩」的判断失真。回到与上游实际
             // 一致的 200k；K3 若日后确有更大窗可用，按实测再放宽。
-            "context": 200000,
-            "output": 32000,
-          },
-        },
-        "minimax-m3": {
-          "reasoning": true,
-          "variants": {
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" },
-          },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"],
-          },
-          "limit": {
             "context": 200000,
             "output": 32000,
           },
@@ -779,7 +773,7 @@
             "output": 128000,
           },
           "tool_call": true,
-        },        
+        },
       },
     },
   },

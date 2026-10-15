@@ -36,7 +36,7 @@ try {
 }
 
 // 工具函数经 _export 命名空间暴露（非顶层导出——Kilo vE2 会把每个导出函数当工厂调用）
-const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf, moduleBasenamesOf, hasTestRefFor, eslintConfigIn, reviewRetryAllowed, todoAnchorLines, unreviewedMarkerLine, driftCheckDue, diagRunFailureOf, isDelegateCall, reviewFailPrefix, todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText,
+const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf, moduleBasenamesOf, hasTestRefFor, eslintConfigIn, reviewRetryAllowed, todoAnchorLines, unreviewedMarkerLine, driftCheckDue, diagRunFailureOf, isDelegateCall, reviewFailPrefix, todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText, extractUserAsks,
     pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel,
     setFileCheck, addHighRisk, rememberCommand, MAX_FILE_CHECKS, MAX_HIGH_RISK, SLEEP_CMD_RE } = mod._export ?? mod;
 let pass = 0, fail = 0;
@@ -77,7 +77,13 @@ t("必须修复项段在 <details> 前截止", parseReviewVerdict("## 裁决\n�
 t("npm test 命中", VERIFY_CMD_RE.test("npm test"));
 t("npm run build 命中", VERIFY_CMD_RE.test("npm run build"));
 t("npx tsc --noEmit 命中", VERIFY_CMD_RE.test("npx tsc --noEmit"));
-t("node scripts/test-x.mjs 命中", VERIFY_CMD_RE.test("node scripts/test-x.mjs"));
+  t("node scripts/test-x.mjs 命中", VERIFY_CMD_RE.test("node scripts/test-x.mjs"));
+  t("node --experimental-strip-types scripts/test-x.mjs 命中（本仓 .ts 插件既定跑法）",
+    VERIFY_CMD_RE.test("node --experimental-strip-types scripts/test-quality-gate.mjs"));
+  t("node --import=./l.mjs scripts/test-x.mjs 命中（路径形 flag）",
+    VERIFY_CMD_RE.test("node --import=./l.mjs scripts/test-x.mjs"));
+  t("node --test 命中（无脚本路径的全目录跑法）", VERIFY_CMD_RE.test("node --test"));
+  t("node flag 串不误放行非 test 脚本", !VERIFY_CMD_RE.test("node --experimental-strip-types scripts/deploy.mjs"));
 t("git tag v1.0-test 不命中", !VERIFY_CMD_RE.test("git tag v1.0-test"));
 t("echo verify-skipped 不算验证", !VERIFY_CMD_RE.test('echo "verify-skipped: 理由"'));
 t("管道后半段 pytest 命中", VERIFY_CMD_RE.test("cd x && pytest tests/"));
@@ -199,6 +205,23 @@ t("hasAcceptMarker：无关命令不误报", hasAcceptMarker(mk([{ cmd: "npm tes
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// ── reviewSubject：层0 需求真源锚点（2026-10-13 需求覆盖专项 P1a） ──
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qg-rsj-ask-"));
+  const f = path.join(tmp, "a.ts");
+  fs.writeFileSync(f, "const a = 1;\n");
+  const s = { commands: [], edited: new Set([f]), lastTodos: [{ content: "实现甲", status: "completed" }] };
+  const withAsk = await reviewSubject(tmp, s, f, ["用户要求实现甲和乙"]);
+  t("用户原始请求并入审查素材（需求真源段 + 遗漏按必须修复口径）",
+    withAsk.includes("用户原始请求") && withAsk.includes("实现甲和乙") && withAsk.includes("必须修复"));
+  t("需求真源段先于验收清单（审查者先读需求再对照清单）",
+    withAsk.indexOf("用户原始请求") < withAsk.indexOf("验收清单"));
+  const noAsk = await reviewSubject(tmp, s, f);
+  t("无原话入参（拉取失败 fail-open）→ 无需求真源段，清单锚点不受影响",
+    !noAsk.includes("用户原始请求") && noAsk.includes("验收清单"));
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 // ── reviewSubject（git 仓库 → diff 范围限定本会话编辑文件） ──
 // 多会话共享工作区场景：HEAD 不动，工作区堆着多个会话的改动 + tmp 脚本。
 // reviewSubject 必须只取本会话编辑过的文件，不能把别会话的改动/tmp 脚本算进审查素材。
@@ -222,6 +245,22 @@ t("hasAcceptMarker：无关命令不误报", hasAcceptMarker(mk([{ cmd: "npm tes
   t("git 仓库：本会话编辑文件的 diff 入素材", subject.includes("export const m = 1;"));
   t("git 仓库：别会话改动不进审查素材（other.ts 的改动不出现）", !subject.includes("const o = 99"));
   t("git 仓库：未编辑的 tmp 脚本不进审查素材", !subject.includes("tmp-debug.cjs"));
+  // r3（层3 r2 复审必修①）：仓库外 edited 路径（Temp 调试脚本）必须被过滤——
+  // 混进 pathspec 会让 git diff 整体 fatal（outside repository），diff 段全缺。
+  const outside = path.join(os.tmpdir(), `qg-outside-${process.pid}.mjs`);
+  fs.writeFileSync(outside, "debug\n");
+  const sOut = { commands: [], edited: new Set([mine, outside]) };
+  const subjectOut = await reviewSubject(tmp, sOut, [mine, outside].join("\n"));
+  t("r3：仓库外 edited 路径不进 diff/unseen，diff 段仍产出不 fatal",
+    subjectOut.includes("export const m = 1;") && !subjectOut.includes("debug"));
+  // r2② diff 段独立预算：超大 diff 截断到 12K 并显式标注——防单文件吃光素材总预算
+  fs.writeFileSync(path.join(tmp, "big.ts"), Array.from({ length: 400 },
+    (_, i) => `export const big${i} = "${"x".repeat(40)}"; // ${"pad".repeat(10)}\n`).join(""));
+  git(["add", "big.ts"]); // untracked 文件不进 `git diff HEAD`，先 stage
+  const sBig = { commands: [], edited: new Set([mine, path.join(tmp, "big.ts")]) };
+  const subjectBig = await reviewSubject(tmp, sBig, "mine.ts\nbig.ts");
+  t("r2②：超 12K diff 截断标注可见（其余段落不被吃光）", subjectBig.includes("超 12000 字符已截断"));
+  fs.rmSync(outside, { force: true });
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
@@ -723,6 +762,60 @@ t("reviewFailPrefix：负数/NaN 非法值走判空分支", reviewFailPrefix({ r
     await runHook(caHooks, out, "t-merge4");
     t("合并：全完成清单零注入（不产生噪音锚点）", !out.context.some((l) => String(l).includes("验收清单（quality-gate 注入）")));
   }
+  // 场景 5（P3 + 层3 r2 必修①，2026-10-13 需求覆盖专项）：用户原话全量锚定——结构化过滤 + 首条必留 + 折叠摘要
+  {
+    const mkMsg = (role, text, id) => ({ info: { role, id }, parts: [{ type: "text", text }] });
+    const fakeMsgs = {
+      "t-asks": [
+        mkMsg("user", "初始需求：实现甲、乙、丙"),
+        mkMsg("user", "<system-reminder>噪音块</system-reminder>"),
+        mkMsg("user", "[quality-gate 回合出口门禁 #1/2] 注入", "msg_quality_gate_exit_t_1"),
+        ...Array.from({ length: 10 }, (_, i) => mkMsg("user", `追加${i}`)),
+        mkMsg("user", "<div>最后一条：还要丁</div>"),
+        mkMsg("user", "a".repeat(159) + "😀😀"), // 代理对边界：159+emoji → 160 码点截断不碎代理对
+        mkMsg("user", "再看一下 src/测试文件.ts 的处理"), // CJK 文件名入关键文件锚点
+      ],
+    };
+    const caHooks2 = await caFactory({
+      directory: ROOT,
+      client: { session: { messages: async ({ path }) => ({ data: fakeMsgs[path.id] ?? [] }) } },
+      $: null,
+    });
+    const out = { context: [] };
+    await runHook(caHooks2, out, "t-asks");
+    const joined = out.context.join("\n");
+    t("P3：首条原话必留（任务起源不因超限折叠丢失）", joined.includes("实现甲、乙、丙"));
+    t("P3：最近原话保留（<div> 输入不误杀）+ 中段折叠摘要可见", joined.includes("还要丁") && joined.includes("中段") && joined.includes("追加0"));
+    t("P3：注入块（reminder 标签段 / quality-gate 注入）不入原话锚点", !joined.includes("噪音块") && !joined.includes("回合出口门禁"));
+    t("P3：折叠时标题标注节选（总数 > 实列行数）", joined.includes("节选"));
+    t("P3：截断不碎代理对（emoji 未被切半）",
+      !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(joined));
+    t("P3：中文文件名入关键文件锚点（extractFiles 并入 CJK 字符集）", joined.includes("测试文件.ts"));
+
+    const revOut = { context: [] };
+    const revMsgs = ["AAA", "BBB"].map((tail) => mkMsg("user", "Q".repeat(160) + tail));
+    const caRev = await caFactory({
+      directory: ROOT,
+      client: { session: { messages: async () => ({ data: revMsgs }) } },
+      $: null,
+    });
+    await runHook(caRev, revOut, "t-ask-revisions");
+    const revJoined = revOut.context.join("\n");
+    t("P3：压缩锚点按完整原话去重（同前缀、不同修订尾部均保留）",
+      revJoined.includes("用户原话 2 条") && revJoined.includes("AAA") && revJoined.includes("BBB"));
+
+    const longMsgs = Array.from({ length: 15 }, (_, i) => mkMsg("user", `需求${i}：${"长".repeat(50)}`));
+    const caLong = await caFactory({
+      directory: ROOT,
+      client: { session: { messages: async () => ({ data: longMsgs }) } },
+      $: null,
+    });
+    const longOut = { context: [] };
+    await runHook(caLong, longOut, "t-ask-long-summary");
+    const folded = longOut.context.join("\n").split("\n").find((line) => line.includes("中段 8 条省略")) ?? "";
+    t("P3：中段折叠摘要完整落入 200 码点行预算（含溢出标记和闭合括号）",
+      Array.from(folded).length <= 200 && folded.endsWith("）") && folded.includes("…）"));
+  }
 }
 
 // ── 查漏补缺（2026-09-26 复审）：钩子副作用回归 ──
@@ -901,6 +994,70 @@ t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/todo
   })());
   t("nudgeText v2：>5 子会话时含补报提示", exitNudgeText(null, 1, "child-unsettled", 0,
     Array.from({ length: 7 }, (_, i) => ({ id: "k" + i, items: ["x"], at: 1 }))).includes("另有 2 个子会话未列出"));
+  // ── 层0 需求覆盖（2026-10-13 专项）：extractUserAsks 纯函数 + verdict v3 + nudgeText v3 ──
+  t("extractUserAsks：结构化过滤（reminder 剥段/注入 messageID），不误杀 <div>/[P1] 输入", (() => {
+    const list = [
+      { info: { role: "assistant" }, parts: [{ type: "text", text: "答复" }] },
+      { info: { role: "user", id: "msg_quality_gate_exit_x_1" }, parts: [{ type: "text", text: "续跑指令" }] },
+      { info: { role: "user" }, parts: [{ type: "text", text: "先看 <system-reminder>x</system-reminder> 然后改 A" }] },
+      { info: { role: "user" }, parts: [{ type: "text", text: "<system-reminder>整条注入</system-reminder>" }] },
+      { info: { role: "user" }, parts: [{ type: "text", text: "<div>登录页有问题</div>" }] },
+      { info: { role: "user" }, parts: [{ type: "text", text: "[P1] 再加导出" }] },
+      { info: { role: "user" }, parts: [{ type: "text", text: "[P1] 再加导出" }] },
+      { info: { role: "user", id: "msg_other" }, parts: [{ type: "text", text: "正常需求" }] },
+    ];
+    const r = extractUserAsks(list);
+    // 空白归一化比较：reminder 剥段后的空格折叠不做字面量锚定（CJK 空格歧义）
+    const n = (x) => String(x).replace(/\s+/g, "");
+    return r.length === 4 && n(r[0]) === "先看然后改A" && r[1] === "<div>登录页有问题</div>"
+      && r[2] === "[P1] 再加导出" && r[3] === "正常需求";
+  })());
+  t("extractUserAsks：跨段重复全局去重（占额只一次）", (() => {
+    const list = ["a", "b", "a", "c"].map((x) => ({ info: { role: "user" }, parts: [{ type: "text", text: x }] }));
+    const r = extractUserAsks(list);
+    return r.length === 3 && r.join("") === "abc";
+  })());
+  t("extractUserAsks：展示截断前按完整原话去重（不同修订尾部不可合并）", (() => {
+    const list = ["AAA", "BBB"].map((tail) => ({
+      info: { role: "user" }, parts: [{ type: "text", text: "Q".repeat(250) + tail }],
+    }));
+    const r = extractUserAsks(list);
+    return r.length === 2 && r.every((x) => x.length === 241 && x.endsWith("…"));
+  })());
+  t("extractUserAsks：{data:[...]} 包裹形态 + 12 条窗口（首 4+尾 8 保最新追加）+ 240 字截断", (() => {
+    const many = Array.from({ length: 20 }, (_, i) => ({ info: { role: "user" }, parts: [{ type: "text", text: `需求${i}` }] }));
+    const r = extractUserAsks({ data: many });
+    // 窗口语义（层0 查漏补缺）：最早 4 条（任务起源）+ 最新 8 条（追加需求不丢）
+    if (r.length !== 12 || r[0] !== "需求0" || r[3] !== "需求3" || r[4] !== "需求12" || r[11] !== "需求19") return false;
+    const long = extractUserAsks([{ info: { role: "user" }, parts: [{ type: "text", text: "长".repeat(300) }] }]);
+    return long[0].length === 241 && long[0].endsWith("…");
+  })());
+  t("verdict v3：无清单+有工作痕迹 → no-checklist；烧过 noListNudged → all-settled", (() => {
+    const a = exitGateVerdict(mkS({}), { ...base, undone: null, children: [], noList: true });
+    const b = exitGateVerdict(mkS({ noListNudged: true }), { ...base, undone: null, children: [], noList: true });
+    return a.act === true && a.reason === "no-checklist" && b.reason === "all-settled";
+  })());
+  t("verdict v3：有清单会话不触发兜底（noList 仅限从未立清单）",
+    exitGateVerdict(mkS({ exitNudgeFp: base.fingerprint }), { ...base, noList: true }).reason === "todos-pending");
+  t("verdict v3：无清单兜底不占常规 cap 额度（烧满 2 次后仍可注入）", (() => {
+    const y = mkS({ exitNudges: 2, exitNudgeFp: "fp-x", exitNudgeAt: 0 });
+    const r = exitGateVerdict(y, { ...base, undone: null, children: [], fingerprint: "fp-x", noList: true });
+    return r.act === true && r.reason === "no-checklist";
+  })());
+  t("verdict v3：无清单兜底照常让位中止/请示豁免", (() => {
+    const x1 = exitGateVerdict(mkS({}), { ...base, undone: null, children: [], noList: true, aborted: true }).reason === "user-aborted";
+    const x2 = exitGateVerdict(mkS({}), { ...base, undone: null, children: [], noList: true, askingUser: true }).reason === "awaiting-user";
+    return x1 && x2;
+  })());
+  t("nudgeText v3：no-checklist 分支含原话与补立清单指引", (() => {
+    const x = exitNudgeText(null, 1, "no-checklist", 0, [], Date.now(), ["修 A", "加 B"]);
+    return x.includes("层0兜底") && x.includes("修 A") && x.includes("验收清单") && x.includes("仅一次");
+  })());
+  t("nudgeText v3：todos-pending 附原话对照段（P1b），无原话时不增段", (() => {
+    const x = exitNudgeText([{ status: "pending", content: "验证" }], 1, "todos-pending", 3, [], Date.now(), ["原始请求甲"]);
+    const y = exitNudgeText([{ status: "pending", content: "验证" }], 1, "todos-pending", 3);
+    return x.includes("原始请求甲") && x.includes("层0 需求覆盖") && !y.includes("层0 需求覆盖");
+  })());
   t("v2 修复：容量满优先淘汰已上报项腾位", (() => {
     const p = mod._export.bucketOf({ sessionID: "t-v2-cap" });
     p.childUnsettled.clear();
@@ -1127,6 +1284,28 @@ t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/todo
   await pIdle;
   fakeClient.session.messages = gateMsgs;
   t("v2 修复：等待窗内子补完撤销 → 父不注入陈旧清单", injected.length === 10);
+
+  // 层0 兜底（P2，2026-10-13 需求覆盖专项）：有工作痕迹但从未立清单 → 一次性注入
+  const sidN = "t-exit-nolist";
+  const sN = mod._export.bucketOf({ sessionID: sidN });
+  sN.edited.add("src/n.ts");
+  msgs.set(sidN, [
+    { info: { role: "user" }, parts: [{ type: "text", text: "改 A 并补文档" }] },
+    { info: { role: "assistant" }, parts: [{ type: "text", text: "已改完" }] },
+  ]);
+  await idle(sidN);
+  t("层0 兜底：无清单+有编辑痕迹 → 注入一次性自查（含用户原话）",
+    injected.length === 11 && /层0兜底/.test(injected[10].body.parts[0].text)
+      && injected[10].body.parts[0].text.includes("改 A 并补文档") && sN.noListNudged === true);
+  await idle(sidN);
+  t("层0 兜底：一次性（noListNudged 烧过不再注入）", injected.length === 11);
+  const sidQ = "t-exit-nolist-qa";
+  const sQ = mod._export.bucketOf({ sessionID: sidQ });
+  sQ.commands.push({ cmd: "Get-ChildItem", exit: 0, editV: 0 }); // 只跑命令：纯调研不触发兜底
+  msgs.set(sidQ, plainAssistant("调研结论如上"));
+  await idle(sidQ);
+  t("层0 兜底：纯调研（无编辑无委派）不触发（低风险口径改完即交付）",
+    injected.length === 11 && sQ.noListNudged !== true);
 
   const hooksY = await qgExit({ directory: ROOT });
   let threw = false;

@@ -26,6 +26,12 @@
 //   闭环硬约束（W3.11）：裁决存在「必须修复项」→ 阻断交付（before 钩子，修复须有新编辑，
 //   重标记即自动复审，直到裁决通过）；自动审查上限 2 轮，超限放行并回注残余项升级人工确认；
 //   接受残余风险须显式 echo "review-accepted: 原因"（可审计），防死循环烧钱。
+// 层 0 需求覆盖（2026-10-13 一次性完成率专项）：门禁链此前全在「清单→执行→交付→出口」
+//   四段，对「需求→清单」段零校验——清单立项时漏解析一项 = 全链绿灯 + 交付缺项。
+//   三补丁：①层 3 审查素材并入用户原始请求（需求真源锚点，「请求有清单无」按遗漏审）；
+//   ②出口注入附用户原话摘录 + 无清单会话一次性兜底自查（no-checklist，cap 1/会话，
+//   此类会话对既有门禁全盲）；③compaction-anchor 用户原话全量封顶锚定（防压缩丢中途
+//   追加需求，见该插件）。extractUserAsks 为共享提取纯函数。
 // ⑤⑥⑦⑧ 审计闭环（2026-09-24）：⑤ 残余必须修复项自动沉淀进项目记忆 Open Questions
 //   （review_residual_<date>_<sha8> 行，与 kilo_memory_recall token 检索兼容）；
 //   ⑥ 部署≠生效检测——插件代码部署更新后，运行中的旧进程仍执行内存里的旧逻辑
@@ -151,7 +157,7 @@ function bucketOf(input) {
     sessions.set(id, s);
     return s;
   }
-  s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, dualReviewedAtCodeEditV: 0, planReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, exitContractWarned: false, sleepWarned: false, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null, reviewFailedAtCodeEditV: 0, reviewFailedAtRound: 0, reviewFailedCount: 0, driftChecked: false, highRiskDelegated: false, delegated: [], degradations: [], lastStaleCheck: 0, exitNudges: 0, exitNudgeAt: 0, exitNudgeFp: "", exitGateCapped: false, exitGateInFlight: false, lastStatus: "", exitCheckTimer: null, childUnsettled: new Map(), childReg: "", parentIDCache: undefined };
+  s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, dualReviewedAtCodeEditV: 0, planReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, exitContractWarned: false, sleepWarned: false, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null, reviewFailedAtCodeEditV: 0, reviewFailedAtRound: 0, reviewFailedCount: 0, driftChecked: false, highRiskDelegated: false, delegated: [], degradations: [], lastStaleCheck: 0, exitNudges: 0, exitNudgeAt: 0, exitNudgeFp: "", exitGateCapped: false, exitGateInFlight: false, noListNudged: false, lastStatus: "", exitCheckTimer: null, childUnsettled: new Map(), childReg: "", parentIDCache: undefined };
   sessions.set(id, s);
   if (sessions.size > MAX_SESSIONS) {
     // LRU 驱逐前清理挂起的定时器：否则回调会在已脱离 Map 的会话对象上空跑 tsc / 空注入门禁
@@ -227,8 +233,13 @@ function rememberCommand(s, cmd, exit, editV) {
 // （`git tag v0.1-test` 这类含 test 字样的普通命令不能算已验证）。
 // 口径与 INSTRUCTIONS「测试或构建」对齐：build/type-check 计入；make/dotnet/phpunit
 // 与直跑 test 前缀脚本（bun test-x.mjs——本仓离线测试的既定形态）也计入。
+// node/bun/deno 动词后容忍 --flag 串（2026-10-13 层0 专项顺带修复）：本仓既定跑法
+// `node --experimental-strip-types scripts/test-x.mjs`（.ts 插件导入必需）此前不被识别，
+// 真跑过的测试被层 2 误判「未验证」——flag 串只放宽动词位与脚本路径之间的间隙
+// （含 --import=./x.mjs 类路径形 flag 与 --test 全目录跑法），仍要求路径段命中
+// test 前缀脚本，无误放行面。
 const VERIFY_CMD_RE =
-  /(?:^|[;|]|&&|\|\|)\s*(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test|lint|check|typecheck|type-check|build)\b|(?:npx|bunx)\s+(?:jest|vitest|tsc|eslint|ruff)\b|(?:jest|vitest|mypy|pytest|eslint|ruff|tsc)\s|go\s+(?:test|vet)\b|cargo\s+(?:test|check|clippy)\b|python[0-9.]*\s+-m\s+(?:pytest|unittest)\b|(?:mvn|gradlew?)\b[^;&|\n]*\btest\b|make\s+(?:test|check|lint)\b|dotnet\s+test\b|phpunit\b|(?:node|bun|deno|python[0-9.]*)\s+(?:[\w\/\\.-]*[\/\\])?tests?[\w\/\\.-]*\.(?:mjs|cjs|js|ts|tsx|py)\b)/i;
+  /(?:^|[;|]|&&|\|\|)\s*(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test|lint|check|typecheck|type-check|build)\b|(?:npx|bunx)\s+(?:jest|vitest|tsc|eslint|ruff)\b|(?:jest|vitest|mypy|pytest|eslint|ruff|tsc)\s|go\s+(?:test|vet)\b|cargo\s+(?:test|check|clippy)\b|python[0-9.]*\s+-m\s+(?:pytest|unittest)\b|(?:mvn|gradlew?)\b[^;&|\n]*\btest\b|make\s+(?:test|check|lint)\b|dotnet\s+test\b|phpunit\b|(?:node|bun|deno|python[0-9.]*)\s+(?:--[\w=./-]+\s+)*(?:(?:[\w\/\\.-]*[\/\\])?tests?[\w\/\\.-]*\.(?:mjs|cjs|js|ts|tsx|py)\b|--test\b))/i;
 
 // 裸 Start-Sleep 识别（行为纪律记账用，非门禁）：命令动词位锚定——行首或 ; | & 分隔符
 // 之后才算命令位；`echo "Start-Sleep -Seconds 5"` 类文本字样不误报（引号非分隔符）。
@@ -1259,8 +1270,20 @@ function extractTool(input) {
 // [...s.edited] 以 s=undefined 求值 → "failed to load plugin"(s.edited) →
 // 钩子数组污染 → "plugin config hook failed"(N.config) → provider 全挂（模型选择器空）。
 // 绝不得恢复 export；测试经文件末尾 _export 命名空间访问。
-async function reviewSubject(root, s, editedList) {
+async function reviewSubject(root, s, editedList, userAsks = []) {
   const parts = [`本次会话编辑了以下文件：\n${editedList}`];
+  // 层0 需求真源锚点（2026-10-13 需求覆盖专项 P1a）：先给用户原始请求、再给验收清单——
+  // 原话才是需求真源，清单是模型对需求的解析（可能漏项）。审查口径明确升级：
+  // 「请求中有、清单/改动未覆盖」的项 = 遗漏（必须修复），不得以「清单外」为由放过。
+  // 拉取失败 fail-open 退回纯清单锚点（与既有意图锚点同构，不阻断审查）。
+  const asks = (Array.isArray(userAsks) ? userAsks : []).filter(Boolean).slice(0, 12);
+  if (asks.length > 0) {
+    parts.push(
+      `本次任务的用户原始请求（按时间序，需求真源）：\n${asks.map((a) => `- ${a}`).join("\n")}\n` +
+        `（审查口径：除对照下方验收清单外，必须逐条核对原始请求是否全部被本次改动覆盖——` +
+        `「请求中有、清单/改动未覆盖」的项按遗漏（必须修复）处理。）`
+    );
+  }
   // 意图锚点（2026-09-25 多模型审查采纳项）：验收清单并入审查素材——审查者从
   // 「只见 diff」升级为「diff + 任务目标/验收标准」，按「改动是否达成验收」审，
   // 降误报（把既有策略当缺陷）与漏报（改动偏离验收却无人对照）。s.lastTodos 由
@@ -1288,7 +1311,20 @@ async function reviewSubject(root, s, editedList) {
   // pathspec 数量设上限：edited 可达 MAX_EDITED(500)，全列进命令行会超 Windows 32767 字符上限
   // 导致 git 进程启动失败（ENAMETOOLONG）。审查素材本就截断到 24000 字符，前 100 个代码文件的
   // diff 已足够覆盖视野，其余靠文件名清单可见。超出 100 个的情况 = 超大改动，单轮审查也看不完。
-  const editedCodeFiles = [...s.edited].filter(isCodeFile).slice(0, 100);
+  // r3（层3 r2 复审必修①）：仓库外路径（Temp 调试脚本等）混入 edited 会让
+  // `git diff HEAD -- <pathspec>` 整体 fatal（outside repository），diff 段全缺——
+  // 审查者「素材不可审即验收不可判」。先按 root 包含关系过滤；单文件异常不拖垮整段。
+  const inRepo = (f) => {
+    try {
+      const rel = path.relative(root, path.resolve(root, f));
+      return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+    } catch { return false; }
+  };
+  const editedCodeFiles = [...s.edited].filter((f) => isCodeFile(f) && inRepo(f)).slice(0, 100);
+  // diff 段独立预算（层3 r2 必修②）：超大文件（如本插件自身）diff 会吃光素材 24000 总预算，
+  // 排在其后的段落（测试用例/命令证据）整段不可见——审查者「素材不可审即验收不可判」。
+  // 子预算 + 显式截断标注：截断处之后的改动不入素材，复审可本地 git diff 对照。
+  const MAX_REVIEW_DIFF = 12000;
   let diffText = "";
   if (editedCodeFiles.length > 0) {
     try {
@@ -1302,7 +1338,10 @@ async function reviewSubject(root, s, editedList) {
       diffText = String(out ?? "");
     } catch { /* 非 git 环境：走降级 */ }
   }
-  if (diffText.trim().length > 50) parts.push(`对应 git diff：\n${diffText}`);
+  if (diffText.trim().length > 50) {
+    const clippedDiff = diffText.length > MAX_REVIEW_DIFF;
+    parts.push(`对应 git diff${clippedDiff ? `（超 ${MAX_REVIEW_DIFF} 字符已截断——截断处之后的改动未入本素材，复核请本地 git diff HEAD -- <文件> 对照）` : ""}：\n${diffText.slice(0, MAX_REVIEW_DIFF)}`);
+  }
   const unseen = editedCodeFiles.filter((f) => !diffText.includes(path.basename(f))).slice(0, 8);
   for (const f of unseen) {
     try {
@@ -1365,6 +1404,45 @@ function asksUser(text) {
 // 落定 → 放弃本次复检（真 idle 时另有即时路径接管）；状态未知（""）偏向检查。
 function errorSettleDue(lastStatus) {
   return !(lastStatus === "busy" || lastStatus === "retry");
+}
+
+// 层0 需求覆盖专项（2026-10-13）：从会话消息提取用户原话（需求真源）。纯函数，经 _export 离线回归。
+// 用途：①层3 审查素材意图锚点升级——此前意图锚点=验收清单本身，清单漏项则审查者同盲
+// （「清单没收录的需求」是全链路绿灯 + 交付缺项的最大残余源）；②出口注入文本附原话摘录，
+// 续跑方不依赖（可能已压缩的）上下文即可对照原始请求。
+// 过滤口径（层3 r2 必修①：文本前缀猜测会误杀 <div>…/[P1]… 类合法输入，改为结构优先）：
+//   ①system-reminder 段按标签结构剥除——剥后有余文则保留余文，整条皆注入才丢弃；
+//   ②quality-gate promptAsync 注入按 messageID（msg_quality_gate_*）结构性排除，
+//     叠加高精度窄前缀 `[quality-gate ` 兜底（messageID 契约漂移时仍可排障，
+//     用户逐字输入该前缀属病态场景，接受）；③全局精确去重保首现（跨段重复不占额）。
+//   240 字/条 + 12 条封顶窗口（首 4 + 尾 8，见下）。已知残余：role=user 的合成
+//   （工具结果/恢复重放）消息无结构标记，仍会入池——宁多勿漏方向。
+function extractUserAsks(list) {
+  const arr = Array.isArray(list) ? list : Array.isArray(list?.data) ? list.data : [];
+  const asks = [];
+  const seen = new Set();
+  for (const m of arr) {
+    if (String(m?.info?.role ?? "") !== "user") continue;
+    const mid = String(m?.info?.id ?? m?.info?.messageID ?? m?.messageID ?? "");
+    if (mid.startsWith("msg_quality_gate_")) continue; // 插件注入（结构标记，非文本猜测）
+    const parts = Array.isArray(m?.parts) ? m.parts : [];
+    const text = parts
+      .filter((p) => p?.type === "text" && typeof p.text === "string")
+      .map((p) => p.text)
+      .join(" ");
+    const t = String(text).replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, " ").replace(/\s+/g, " ").trim();
+    if (!t || t.startsWith("[quality-gate ")) continue;
+    // 去重必须基于完整归一化原话；先展示截断再去重会把仅尾部不同的修订请求合并。
+    if (seen.has(t)) continue;
+    seen.add(t);
+    const cp = Array.from(t);
+    asks.push(cp.length > 240 ? cp.slice(0, 240).join("") + "…" : t);
+  }
+  // 封顶窗口（层0 查漏补缺 2026-10-13）：超 12 条时保 首 4（任务起源簇）+ 尾 8（新近追加簇）。
+  // 此前 slice(0,12) 只保最早 12 条——「中途追加需求」恰在最新消息里，与 P1b askLines 取尾 3
+  // 的语义相悖（摘到的是陈旧条目）。首簇保证任务本体可考，尾簇保证最新请求不丢。
+  if (asks.length > 12) return [...asks.slice(0, 4), ...asks.slice(-8)];
+  return asks;
 }
 
 // ── v2 子代理终局聚合（2026-10-03 按建议优化）───────────────────
@@ -1465,34 +1543,58 @@ function exitNudgeFingerprint(todos, children) {
 // v2：undone（父自身未落定项）与 children（子聚合项）任一存在即可能注入；
 // 自身落定但 children 非空 → reason=child-unsettled。isChild 分支在接线层已提前返回，
 // 此处保留作纵深防御（豁免优先级不变）。
-function exitGateVerdict(s, { now, hasWork, isChild, aborted, errored, askingUser, undone, children, fingerprint }) {
+// v3 层0 兜底（2026-10-13 需求覆盖专项 P2）：noList（有文件改动/委派痕迹但从未立清单）
+// → reason=no-checklist 一次性注入。此类会话对既有门禁全盲（层1/2/出口全挂在 todowrite 上），
+// 是「小任务随手做完但漏一项」的最大入口。独立 cap（noListNudged，1 次/会话），
+// 不占 hasOwn/kids 的指纹/封顶矩阵（互不烧额度）；豁免链（no-work/child/aborted/askingUser）
+// 照常生效——顺序上置于 cap/cooldown 之后、与 child-unsettled 同级的末端分派。
+function exitGateVerdict(s, { now, hasWork, isChild, aborted, errored, askingUser, undone, children, fingerprint, noList }) {
   const hasOwn = !!undone && undone.length > 0;
   const hasKids = Array.isArray(children) && children.length > 0;
-  if (!hasOwn && !hasKids) return { act: false, reason: "all-settled" };
-  if (s.exitNudgeFp !== fingerprint) {
-    s.exitNudges = 0;
-    s.exitNudgeFp = fingerprint;
-    // 查漏修复 A（2026-10-03 二轮）：capped 标记同样跟快照走——否则旧清单烧过 cap 后，
-    // 新清单再烧 cap 的升级人工事件被永久拦截、账本静默缺失（recordDegradation 去重
-    // 按 detail 文本区分，事件本身必须能再入一次）。
-    s.exitGateCapped = false;
+  const p2 = !!noList && !s.noListNudged && !hasOwn && !hasKids;
+  if (!hasOwn && !hasKids && !p2) return { act: false, reason: "all-settled" };
+  if (hasOwn || hasKids) {
+    if (s.exitNudgeFp !== fingerprint) {
+      s.exitNudges = 0;
+      s.exitNudgeFp = fingerprint;
+      // 查漏修复 A（2026-10-03 二轮）：capped 标记同样跟快照走——否则旧清单烧过 cap 后，
+      // 新清单再烧 cap 的升级人工事件被永久拦截、账本静默缺失（recordDegradation 去重
+      // 按 detail 文本区分，事件本身必须能再入一次）。
+      s.exitGateCapped = false;
+    }
+    if ((s.exitNudges ?? 0) >= MAX_EXIT_NUDGES) return { act: false, reason: "nudge-cap" };
+    if (now - (s.exitNudgeAt ?? 0) < EXIT_NUDGE_COOLDOWN_MS) return { act: false, reason: "cooldown" };
   }
-  if ((s.exitNudges ?? 0) >= MAX_EXIT_NUDGES) return { act: false, reason: "nudge-cap" };
-  if (now - (s.exitNudgeAt ?? 0) < EXIT_NUDGE_COOLDOWN_MS) return { act: false, reason: "cooldown" };
   if (!hasWork) return { act: false, reason: "no-work" };
   if (isChild) return { act: false, reason: "child-session" };
   if (aborted) return { act: false, reason: "user-aborted" };
   if (askingUser) return { act: false, reason: "awaiting-user" };
-  if (!hasOwn) return { act: true, reason: "child-unsettled" };
+  if (!hasOwn) return hasKids ? { act: true, reason: "child-unsettled" } : { act: true, reason: "no-checklist" };
   return { act: true, reason: errored ? "auto-resume-error" : "todos-pending" };
 }
 
 // 注入文本：自解释（来源/计数/收口三选一/上限语义），三种正确行为对应三种病
 // （继续干 / 全部落定并注明 / 显式声明等待），杜绝「无声半收口」形态。
 // v2：children 子聚合块并入文本；undone 与 children 都可能有（混合场景两段都给）。
-function exitNudgeText(undone, n, reason, total, children, now = Date.now()) {
+// v3 层0（2026-10-13 需求覆盖专项）：①no-checklist 分支（P2 兜底文案）；②todos-pending /
+// auto-resume-error 附用户原话摘录（P1b）——清单可能未覆盖全部需求，续跑方对照原话查缺项，
+// 不依赖可能已压缩的上下文。asks 为第 7 参（now 之后），既有调用点位置兼容。
+function exitNudgeText(undone, n, reason, total, children, now = Date.now(), asks = []) {
   const und = Array.isArray(undone) ? undone : [];
   const kids = Array.isArray(children) ? children : [];
+  const askLines = (Array.isArray(asks) ? asks : []).filter(Boolean).slice(-3).map((a) => {
+    const cp = Array.from(String(a)); // 码点安全截断：UTF-16 slice 会把代理对（emoji）切碎
+    return `  - ${cp.length > 160 ? cp.slice(0, 160).join("") + "…" : cp.join("")}`;
+  });
+  if (reason === "no-checklist") {
+    return (
+      `[quality-gate 层0兜底] 本回合有文件改动/委派执行痕迹，但从未建立验收清单——遗漏最常见的入口就是「没立清单直接干」。\n` +
+      `请立即重读本回合用户的原始请求，逐项核对每项是否已交付：\n` +
+      (askLines.length > 0 ? `用户原话（最近 ${askLines.length} 条）：\n${askLines.join("\n")}\n` : "") +
+      `有漏项 → 补做并在收口前补立验收清单；确认全覆盖 → 在交付说明中逐条列出「请求项 → 交付证据」对照；确在等用户决策 → 明确回「等待用户：<所问事项>」，不得无声收口。\n` +
+      `（本提醒每会话仅一次，不重复注入。）`
+    );
+  }
   const head = und.length > 0
     ? `[quality-gate 回合出口门禁 #${n}/${MAX_EXIT_NUDGES}] 本回合已结束，但验收清单未落定（${(Number(total) || 0) - und.length}/${total} 完成）：\n${und.slice(0, 5).map((t) => `  - [${String(t?.status ?? "pending")}] ${String(t?.content ?? "").slice(0, 80)}`).join("\n")}\n\n`
     : `[quality-gate 回合出口门禁 #${n}/${MAX_EXIT_NUDGES}] 本回合已结束，但子任务侧仍有未落定事项：\n`;
@@ -1506,7 +1608,10 @@ function exitNudgeText(undone, n, reason, total, children, now = Date.now()) {
       ? "上一回合因 API 错误终止，请从首个未落定项继续执行（先核对文件与 todo 实际状态，勿重复已完成工作）。\n"
       : "任务确实未完 → 立即从未落定项继续，todo 随做随更新；交付确已完成 → 把剩余条目全部置 completed 或 cancelled（cancel 在交付说明给理由）；确在等用户决策 → 明确回一句「等待用户：<所问事项>」，不得无声收口。\n";
   const kidBody = "子任务确已完成 → 核对其实际产物后在交付说明注明；未完成 → 重新派发补完（有 task_id 的同会话续跑，勿盲目重派）；确在等用户决策 → 明确回一句「等待用户：<所问事项>」，不得无声收口。\n";
-  return `${head}${kidBlock}${und.length > 0 ? ownBody : ""}${kids.length > 0 ? kidBody : ""}（同一清单状态下提醒达 ${MAX_EXIT_NUDGES} 次后门禁不再注入，记入降级账本升级人工。）`;
+  const askBlock = (reason === "todos-pending" || reason === "auto-resume-error") && askLines.length > 0
+    ? `\n另（层0 需求覆盖）：续跑前重读用户原始请求，逐项核对清单是否覆盖全部需求——清单未收录的缺项先补 todo 再继续：\n${askLines.join("\n")}\n`
+    : "";
+  return `${head}${kidBlock}${und.length > 0 ? ownBody : ""}${kids.length > 0 ? kidBody : ""}${askBlock}（同一清单状态下提醒达 ${MAX_EXIT_NUDGES} 次后门禁不再注入，记入降级账本升级人工。）`;
 }
 
 const QualityGateImpl = async ({ directory, client } = {}) => {
@@ -1551,7 +1656,10 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
         s.childReg = "";
       }
       const kids = pendingChildrenOf(s);
-      if (!undone && kids.length === 0) return; // 自身落定且无未上报子聚合项（含无清单且从未被登记）
+      // 层0 兜底触发条件（P2，2026-10-13）：从未立清单（own 为空）+ 有文件改动/委派痕迹
+      // + 未注入过。纯调研/问答会话（只跑命令未改文件、未委派）不触发——低风险口径改完即交付。
+      const noList = own.length === 0 && ((s.edited?.size ?? 0) > 0 || (s.delegated?.length ?? 0) > 0) && !s.noListNudged;
+      if (!undone && kids.length === 0 && !noList) return; // 自身落定且无未上报子聚合项（含无清单且从未被登记）
       const hasWork = (s.edited?.size ?? 0) > 0 || (s.commands?.length ?? 0) > 0 || (s.delegated?.length ?? 0) > 0;
       // 本地预检早退（按建议优化②）：已知父会话（parentIDCache === ""，首次检查时定案缓存）
       // 的判定矩阵前段（cap/冷却/no-work；all-settled 已在上方早退）纯本地可定案——命中即
@@ -1559,7 +1667,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
       // awaiting-user）在矩阵中均位于这些检查之后，不会改变本地结论；子会话（cache 非空）
       // 与未知会话照走完整路径（aborted 判定必须取远端）。
       if (s.parentIDCache === "") {
-        const vLocal = exitGateVerdict(s, { now: Date.now(), hasWork, isChild: false, aborted: false, errored: false, askingUser: false, undone, children: kids, fingerprint: exitNudgeFingerprint(own, kids) });
+        const vLocal = exitGateVerdict(s, { now: Date.now(), hasWork, isChild: false, aborted: false, errored: false, askingUser: false, undone, children: kids, fingerprint: exitNudgeFingerprint(own, kids), noList });
         if (!vLocal.act) {
           if (vLocal.reason === "nudge-cap") recordExitCap(s, undone, kids);
           return;
@@ -1568,6 +1676,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
       let aborted = false;
       let errored = false;
       let askingUser = false;
+      let asks = [];
       try {
         const res = await client.session.messages({ path: { id: sid } });
         const list = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
@@ -1580,6 +1689,9 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
         askingUser =
           parts.some((p) => p?.type === "tool" && /question/i.test(String(p.tool ?? ""))) ||
           asksUser(parts.filter((p) => p?.type === "text" && typeof p.text === "string").map((p) => p.text).join("\n"));
+        // 层0（P1b）：同一次消息读取顺带提取用户原话——注入文本附摘录，续跑方不依赖
+        // 已压缩的上下文即可对照原始请求查缺项。零额外 HTTP。
+        asks = extractUserAsks(list);
       } catch (e) {
         // 末条消息不可得：保守不注入，但必须可见——契约漂移时这里会持续报错而非静默停摆
         console.error(TAG, "出口门禁：读取会话消息失败，跳过：", e?.message ?? e);
@@ -1612,18 +1724,19 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
       }
       // 本地预检以实际输入即可定案的路径不变（isChild 已在上方提前返回，此处恒 false 为纵深防御）
       const fingerprint = exitNudgeFingerprint(own, kids);
-      const v = exitGateVerdict(s, { now: Date.now(), hasWork, isChild: false, aborted, errored, askingUser, undone, children: kids, fingerprint });
+      const v = exitGateVerdict(s, { now: Date.now(), hasWork, isChild: false, aborted, errored, askingUser, undone, children: kids, fingerprint, noList });
       if (!v.act) {
         if (v.reason === "nudge-cap") recordExitCap(s, undone, kids);
         return;
       }
       // 陈旧撤销竞态防护（审查修复）：kids 快照取自两次 await 之前，等待窗内子代理可能
       // 已补完并撤销父侧登记——发送前重查 pending，全撤且父自身也落定则放弃本次注入
-      // （宁漏一次提醒，不拿陈旧清单烧额度）
+      // （宁漏一次提醒，不拿陈旧清单烧额度）。no-checklist（P2 兜底）无 kids 快照问题，
+      // 不受此早退影响。
       const pendingNow = pendingChildrenOf(s);
       const kidsSend = kids.filter((k) => pendingNow.some((n) => n.id === k.id));
-      if (!undone && kidsSend.length === 0) return;
-      const promptText = exitNudgeText(undone, (s.exitNudges ?? 0) + 1, v.reason, own.length, kidsSend);
+      if (!undone && kidsSend.length === 0 && v.reason !== "no-checklist") return;
+      const promptText = exitNudgeText(undone, (s.exitNudges ?? 0) + 1, v.reason, own.length, kidsSend, Date.now(), asks);
       // 发送成功才计数：失败不烧上限额度（审查 r1#8）
       await client.session.promptAsync({
         path: { id: sid },
@@ -1634,6 +1747,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
       });
       s.exitNudges = (s.exitNudges ?? 0) + 1;
       s.exitNudgeAt = Date.now();
+      if (v.reason === "no-checklist") s.noListNudged = true; // 层0 兜底独立 cap：1 次/会话，烧过不再来
       // v2：仅标记本次注入文本实际覆盖（前 5 条）的子聚合项 reported——审查修复：
       // 标记范围大于送达范围会让未列出的子项被静默抑制（指纹变化 → 后续事件补报）；
       // 发送失败路径不到达此处，保持 unreported 等待下次事件重试
@@ -1946,7 +2060,17 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
           const dualReviewedFresh = s.dualReviewed && (s.codeEditV ?? 0) === (s.dualReviewedAtCodeEditV ?? 0);
           if (allDone && complex && !hasAcceptMarker(s) && (!dualReviewedFresh || reviewRetryAllowed(s))) {
             const editedList = [...s.edited].slice(0, 30).join("\n");
-            const subject = await reviewSubject(projectRoot, s, editedList);
+            // 层0 需求真源（P1a，2026-10-13）：审查素材并入用户原始请求——意图锚点从「模型解析过
+            // 的清单」升级为「原始请求 + 清单」双锚点，审查者可发现「清单没收录的需求」。
+            // 拉取失败 fail-open 退回纯清单锚点（不阻断审查）。
+            let userAsks = [];
+            try {
+              if (client && typeof client.session?.messages === "function" && input?.sessionID) {
+                const res = await client.session.messages({ path: { id: String(input.sessionID) } });
+                userAsks = extractUserAsks(res);
+              }
+            } catch { /* fail-open：退回纯清单锚点 */ }
+            const subject = await reviewSubject(projectRoot, s, editedList, userAsks);
             // ⑦ 补口：git 失败降级为会话证据池——审查视野缩水必须可见
             if (subject.includes("会话内执行过的命令")) {
               recordDegradation(s, "审查素材降级（git diff 不可得）", "退化为会话证据池，审查视野受限——建议人工核对 diff");
@@ -2170,7 +2294,7 @@ export const _export = {
   staleDeployOf, moduleBasenamesOf, hasTestRefFor,
   eslintConfigIn, reviewRetryAllowed, todoAnchorLines, unreviewedMarkerLine, driftCheckDue,
   diagRunFailureOf, isDelegateCall, reviewFailPrefix,
-  todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText,
+  todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText, extractUserAsks,
   pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel,
   bucketOf, // 离线回归测试缝：断言钩子对会话桶的登记副作用（如 s.highRisk/s.delegated），只读使用
   setFileCheck, addHighRisk, // 有界化辅助（体检 2026-10-07）：上限驱逐语义离线回归
