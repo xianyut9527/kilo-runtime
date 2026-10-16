@@ -96,6 +96,26 @@ t("仅前缀相似目录不命中 reorder", !HIGH_RISK_RE.test("src/reorder/util
 t("仅前缀相似目录不命中 order-system", !HIGH_RISK_RE.test("src/order-system/utils.ts"));
 t("普通文件不命中", !HIGH_RISK_RE.test("src/components/button.vue"));
 t("README.md 不命中", !HIGH_RISK_RE.test("README.md"));
+// 2026-10-16 收窄回归（kimi-k3 审查采纳项）
+t("纯文档目录不命中 docs/auth/README.md（旧版误触发付费审查）", !HIGH_RISK_RE.test("docs/auth/README.md"));
+t("纯文档目录不命中 docs/public/x.md", !HIGH_RISK_RE.test("docs/public/x.md"));
+t("前缀延续文件名不命中 payload.ts（pay+load）", !HIGH_RISK_RE.test("src/utils/payload.ts"));
+t("前缀延续文件名不命中 tokenizer.ts（token+izer）", !HIGH_RISK_RE.test("token" + "" + "izer.ts"));
+t("完整复合词仍命中 authentication.ts（多关键词交替覆盖）", HIGH_RISK_RE.test("authentication.ts"));
+t("分隔符复合文件名仍命中 order-query.py", HIGH_RISK_RE.test("order-query.py"));
+t("分隔符复合文件名仍命中 auth.service.js", HIGH_RISK_RE.test("auth.service.js"));
+t("已知取舍：camelCase 复合不再命中 authMiddleware.ts", !HIGH_RISK_RE.test("authMiddleware.ts"));
+// 2026-10-16 dual_review 必修项③：复数词干 + 分隔符前缀复合（漏报面回收）
+t("复数词干命中 tokens.ts", HIGH_RISK_RE.test("src/auth/tokens.ts") || HIGH_RISK_RE.test("tokens.ts"));
+t("复数词干命中 sessions.ts", HIGH_RISK_RE.test("sessions.ts"));
+t("复数词干命中 payments.ts", HIGH_RISK_RE.test("payments.ts"));
+t("复数目录命中 migrations/x.ts（旧版收窄后漏报）", HIGH_RISK_RE.test("db/migrations/x.ts"));
+t("分隔符前缀复合命中 my-authentication.ts（business 前缀）", HIGH_RISK_RE.test("src/core/my-authentication.ts"));
+t("分隔符前缀复合命中 api_v2-payments.js", HIGH_RISK_RE.test("lib/api_v2-payments.js"));
+t("字母前接复合不命中 border.ts（前接字母非分隔符）", !HIGH_RISK_RE.test("border.ts"));
+t("字母前接复合不命中 borderline.ts", !HIGH_RISK_RE.test("borderline.ts"));
+t("auth-utils.ts 混合分隔符复合仍命中", HIGH_RISK_RE.test("auth-utils.ts"));
+t("multi-seg 复合仍命中 auth-service-impl.ts", HIGH_RISK_RE.test("auth-service-impl.ts"));
 
 // ── exitCodeOf：退出码三段契约防御 ──
 t("exitCodeOf：output.exitCode 显式字段", exitCodeOf({ exitCode: 1 }) === 1);
@@ -146,6 +166,31 @@ t("成功验证在后、遮蔽命令更后 → 仍算跑赢（遮蔽非可信负
 t("遮蔽成功不算跑赢：npm test || true", hasVerified(mk([{ cmd: "npm test || true", exit: 0, editV: 1 }], 1)) === false);
 t("exit 未知：不算跑赢（降级旧口径由 hasRanVerify 兜底）", hasVerified(mk([{ cmd: "npm test", exit: undefined, editV: 1 }], 1)) === false);
 t("exit 未知：不算失败（不误杀）", verifyFailureOf(mk([{ cmd: "npm test", exit: undefined, editV: 1 }], 1)) === null);
+// 2026-10-16 层 2 绕过修复：遮蔽形态的 exit 0 不得作为降级放行依据（失败套件沿
+// fail-open 分支交付的真漏洞）——hasRanVerify 现在跳过「exit 已知且遮蔽」的验证命令
+t("hasRanVerify 对象形态导出存在并可调（API 契约）", typeof mod._export.hasRanVerify === "function");
+t("遮蔽验证（exit 0 已知）不再降级放行：hasRanVerify=false", (() => {
+  const { hasRanVerify } = mod._export;
+  return hasRanVerify(mk([{ cmd: "npm test || true", exit: 0, editV: 1 }], 1)) === false;
+})());
+t("exit 未知且未遮蔽：仍降级放行（hasRanVerify=true，不误杀）", (() => {
+  const { hasRanVerify } = mod._export;
+  return hasRanVerify(mk([{ cmd: "npm test", exit: undefined, editV: 1 }], 1)) === true;
+})());
+t("遮蔽在前、正常验证在后：以正常验证为准放行", (() => {
+  const { hasRanVerify } = mod._export;
+  return hasRanVerify(mk([{ cmd: "npm test || true", exit: 0, editV: 1 }, { cmd: "npm test", exit: 0, editV: 1 }], 1)) === true;
+})());
+// 查漏补缺二轮（2026-10-16）：遮蔽判定不问记录形态/exit——原实现只挡「对象+exit 已知+遮蔽」，
+// 遮蔽命令以 exit 未知（契约落空）或旧字符串形态记录时仍作为降级放行依据
+t("遮蔽+exit 未知（契约落空）不再降级放行", (() => {
+  const { hasRanVerify } = mod._export;
+  return hasRanVerify(mk([{ cmd: "npm test || true", exit: undefined, editV: 1 }], 1)) === false;
+})());
+t("遮蔽+旧字符串形态不再降级放行", (() => {
+  const { hasRanVerify } = mod._export;
+  return hasRanVerify(mk(["npm test || true"], 1)) === false;
+})());
 t("旧形态纯字符串（升级前记录）：不算跑赢不算失败", (() => {
   const s = mk(["npm test"], 1);
   return hasVerified(s) === false && verifyFailureOf(s) === null;
@@ -160,9 +205,98 @@ t("编辑后只改文档不作废验证", (() => {
 t("hasSkipMarker：对象形态命令命中 verify-skipped", hasSkipMarker(mk([{ cmd: 'echo "verify-skipped: 无测试环境"' }])) === true);
 t("hasSkipMarker：旧形态纯字符串仍兼容", hasSkipMarker(mk(["echo verify-skipped: x"])) === true);
 t("hasSkipMarker：无关命令不误报", hasSkipMarker(mk([{ cmd: "npm test" }])) === false);
+t("hasSkipMarker：2026-10-16 收紧——非 echo 动词位查字面量不获跳过", hasSkipMarker(mk([{ cmd: "grep verify-skipped: plugin/" }])) === false);
+t("hasSkipMarker：管道后段 echo 标记仍命中", hasSkipMarker(mk([{ cmd: 'cat log | echo verify-skipped: x' }])) === true);
 t("hasAcceptMarker：对象形态命令命中 review-accepted", hasAcceptMarker(mk([{ cmd: 'echo "review-accepted: 残余风险可接受"' }])) === true);
 t("hasAcceptMarker：旧形态纯字符串仍兼容", hasAcceptMarker(mk(["echo review-accepted: x"])) === true);
 t("hasAcceptMarker：无关命令不误报", hasAcceptMarker(mk([{ cmd: "npm test" }])) === false);
+t("hasAcceptMarker：2026-10-16 收紧——rg 查字面量不获接受语义", hasAcceptMarker(mk([{ cmd: "rg review-accepted" }])) === false);
+
+// ── 层 3 异步化结算（2026-10-16）：settleReviewOutcome / settleReviewError ──
+// 后台结算路径（output=null）必须不抛（console.error 兜底）；状态迁移与同步路径同构。
+{
+  const { settleReviewOutcome, settleReviewError } = mod._export;
+  const sfail = mk([], 1);
+  sfail.reviewPending = null; sfail.reviewCache = null; sfail.reviewRounds = 0;
+  await settleReviewOutcome(sfail, "## 裁决\n不通过\n\n## 必须修复项\n- X 缺测试", "key-fail", null);
+  t("settleReviewOutcome：fail 裁决 → reviewPending+轮次+1（缓存不写入：防失败固化+阶梯计数被吞）",
+    sfail.reviewPending?.fixSection === "- X 缺测试" && sfail.reviewRounds === 1 && sfail.reviewCache === null);
+  const spass = mk([], 2);
+  spass.reviewPending = { editVersion: 1, verdictLine: "x", fixSection: "y" };
+  spass.dualReviewed = false; spass.reviewFailedCount = 3;
+  await settleReviewOutcome(spass, "## 裁决\n通过\n\n## 必须修复项\n无", "key-pass", null);
+  t("settleReviewOutcome：pass 裁决 → dualReviewed+计数清零+缓存写入（仅 pass 写）",
+    spass.dualReviewed === true && spass.dualReviewedAtCodeEditV === 2 && spass.reviewPending === null && spass.reviewFailedCount === 0 && spass.reviewCache?.key === "key-pass");
+  const sinc = mk([], 1);
+  sinc.reviewPending = null; sinc.reviewRounds = 0; sinc.reviewCache = null;
+  await settleReviewOutcome(sinc, "裁决不可解析", "key-inc", null);
+  t("settleReviewOutcome：inconclusive → fail-open 放行+失败记账（缓存不写入）",
+    sinc.dualReviewed === true && sinc.reviewPending === null && sinc.reviewFailedCount === 1 && sinc.reviewCache === null);
+  const serr = mk([], 1);
+  serr.reviewPending = null; serr.reviewFailedCount = 0;
+  await settleReviewError(serr, new Error("boom"), null);
+  t("settleReviewError：无前轮残余 → 记账放行不抛",
+    serr.dualReviewed === true && serr.reviewFailedCount === 1);
+}
+
+// ── 查漏补缺二轮（2026-10-16）：settle 版本绑定启动时刻 + 上限放行清阻断 + FAIL 消费重启判定 ──
+// 离线环境 projectRoot 未初始化 → memoryRootFor 返回空 → persist 系列走「记忆根定位失败」
+// 跳过分支，max 路径测试不会写真实项目记忆（此前因该顾虑跳过的路径现已安全覆盖）。
+{
+  const { settleReviewOutcome, settleReviewError, consumedFailNeedsRerun } = mod._export;
+  const vPass = "## 裁决\n通过\n\n## 必须修复项\n无";
+  const vFail = "## 裁决\n不通过\n\n## 必须修复项\n- X 缺测试";
+  const sbind = mk([], 5);
+  await settleReviewOutcome(sbind, vPass, "kb", null, 3);
+  t("settle 绑定启动版本：pass 豁免绑 bindCodeEditV 而非结算时刻（审查期间新编辑不豁免）",
+    sbind.dualReviewedAtCodeEditV === 3);
+  const sbind2 = mk([], 5);
+  await settleReviewError(sbind2, new Error("x"), null, 3);
+  t("settle 绑定启动版本：error 失败记账绑 bindCodeEditV（审查期间新编辑保留重试窗口）",
+    sbind2.reviewFailedAtCodeEditV === 3);
+  const smax = mk([], 2);
+  smax.reviewRounds = 1; smax.reviewPending = { editVersion: 1, verdictLine: "旧", fixSection: "旧" }; smax.reviewCache = null;
+  await settleReviewOutcome(smax, vFail, "kmax", null, 2);
+  t("上限放行清 reviewPending：放行后 before 不再按旧裁决阻断（残余已沉淀路径）",
+    smax.reviewPending === null && smax.dualReviewed === true && smax.reviewRounds === 2);
+  t("consumedFailNeedsRerun：已结算 FAIL 裁决需重启下一轮", consumedFailNeedsRerun({ ok: true, v: vFail }) === true);
+  t("consumedFailNeedsRerun：PASS 裁决不重启", consumedFailNeedsRerun({ ok: true, v: vPass }) === false);
+  t("consumedFailNeedsRerun：执行异常不重启（fail-open 一次为限）", consumedFailNeedsRerun({ ok: false, e: new Error("x") }) === false);
+  t("consumedFailNeedsRerun：inconclusive 不重启", consumedFailNeedsRerun({ ok: true, v: "裁决不可解析" }) === false);
+  t("consumedFailNeedsRerun：空输入防御性 false", consumedFailNeedsRerun(null) === false && consumedFailNeedsRerun(undefined) === false);
+}
+{
+  // 必修①②（2026-10-16 二轮审查裁决）：重启显式轮次守卫 + 在途硬死线看门狗
+  const { shouldRestartAfterConsume, reapStaleInflight } = mod._export;
+  const vFail = "## 裁决\n不通过\n\n## 必须修复项\n- X 缺测试";
+  const s1 = mk([], 1); s1.reviewRounds = 0;
+  t("shouldRestartAfterConsume：同 key FAIL 且轮次未达上限 → 重启",
+    shouldRestartAfterConsume(s1, "k1", "k1", { ok: true, v: vFail }) === true);
+  const s2 = mk([], 1); s2.reviewRounds = 2;
+  t("shouldRestartAfterConsume：轮次已达 MAX_REVIEW_ROUNDS → 不重启（显式守卫，杜绝绕上限循环）",
+    shouldRestartAfterConsume(s2, "k1", "k1", { ok: true, v: vFail }) === false);
+  t("shouldRestartAfterConsume：key 不匹配 → 不重启",
+    shouldRestartAfterConsume(s1, "k1", "k2", { ok: true, v: vFail }) === false);
+  t("shouldRestartAfterConsume：PASS 裁决 → 不重启",
+    shouldRestartAfterConsume(s1, "k1", "k1", { ok: true, v: "## 裁决\n通过\n\n## 必须修复项\n无" }) === false);
+  const sNaN = mk([], 1); sNaN.reviewRounds = NaN;
+  t("shouldRestartAfterConsume：reviewRounds 非有限数（NaN）→ 保守不重启",
+    shouldRestartAfterConsume(sNaN, "k1", "k1", { ok: true, v: vFail }) === false);
+  const sStale = mk([], 1); sStale.reviewGen = 4;
+  sStale.reviewInFlight = { key: "kx", gen: 4, promise: Promise.resolve({ ok: true, v: "x" }), startedAt: Date.now() - 1000000 };
+  t("reapStaleInflight：超硬死线在途 → 强收指针+世代作废+账本留痕",
+    reapStaleInflight(sStale) === true && sStale.reviewInFlight === null && sStale.reviewGen === 5 && sStale.degradations.length > 0);
+  const sFresh = mk([], 1); sFresh.reviewGen = 4;
+  sFresh.reviewInFlight = { key: "kx", gen: 4, promise: new Promise(() => {}), startedAt: Date.now() - 1000 };
+  t("reapStaleInflight：死线内在途 → 不收割",
+    reapStaleInflight(sFresh) === false && sFresh.reviewInFlight !== null && sFresh.reviewGen === 4);
+  const sNone = mk([], 1);
+  t("reapStaleInflight：无在途 → false 防御", reapStaleInflight(sNone) === false);
+  const sCorrupt = mk([], 1); sCorrupt.reviewGen = 2;
+  sCorrupt.reviewInFlight = { key: "kx", gen: 2, promise: new Promise(() => {}) };
+  t("reapStaleInflight：startedAt 缺失（损坏指针）→ 立即强收（二轮复审必修③）",
+    reapStaleInflight(sCorrupt) === true && sCorrupt.reviewInFlight === null && sCorrupt.reviewGen === 3);
+}
 
 // ── reviewSubject（无 git 目录 → 降级路径） ──
 {

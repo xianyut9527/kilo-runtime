@@ -23,6 +23,9 @@ yarn.lock
 # plugin/memory-bootstrap.ts 时，ensureGlobalNotes() 会按 import.meta.dir 在仓库根
 # 自愈创建它——属测试副产物，非仓库内容；真实运行时文件在 ~/.config/kilo/ 下
 /GLOBAL-NOTES.md
+# 编译管线轮转出的备份同名 .prev（同为离线测试副产物，2026-10-16 补漏：
+# 与兄弟文件同规则——此前误进 git 跟踪）
+/GLOBAL-NOTES.md.prev
 
 # IDE / MCP 运行时产物
 .playwright-mcp/
