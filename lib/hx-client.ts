@@ -1,5 +1,6 @@
 // hx 上游客户端共享层（W3.8）：moa.ts 与 dual-review.ts 的公共依赖。
-// 集中：配置目录/数据目录定位、kilo.json options + auth.json hx.key 读取（60s 缓存）、
+// 集中：配置目录/数据目录定位、kilo.json options + auth.json openllamas.key 读取（60s 缓存，
+// 兼容迁移窗口内的旧 hx 结构）、
 // OpenAI-compatible SSE 流式请求（首字节超时 + 空闲看门狗 + 总超时、指数退避重试）。
 // ⚠️ 改动凭证布局或 baseURL 规则时只改这里；两处调用方不再各自维护副本。
 //
@@ -303,11 +304,12 @@ function stripTrailingCommas(text) {
 export async function loadCfg() {
   if (cfgCache && Date.now() - cfgCacheAt < CFG_TTL_MS) return cfgCache;
   const kilo = parseJsonTolerant(await readFile(join(CONFIG_DIR, "kilo.json"), "utf8"));
-  const opts = kilo?.provider?.hx?.options ?? {};
+  // 2026-10-16 provider 改名 hx → openllamas：优先读新结构，旧结构兜底（迁移窗口内两者并存）
+  const opts = kilo?.provider?.openllamas?.options ?? kilo?.provider?.hx?.options ?? {};
   const auth = JSON.parse(await readFile(join(DATA_DIR, "auth.json"), "utf8"));
-  const key = auth?.hx?.key;
-  if (!opts.baseURL) throw new Error("hx-client: provider.hx.options.baseURL 未配置");
-  if (!key) throw new Error("hx-client: auth.json 缺少 hx.key（请先登录/配置 hx provider）");
+  const key = auth?.openllamas?.key ?? auth?.hx?.key;
+  if (!opts.baseURL) throw new Error("hx-client: provider.openllamas.options.baseURL 未配置");
+  if (!key) throw new Error("hx-client: auth.json 缺少 openllamas.key（请先登录/配置 openllamas provider）");
   cfgCache = { baseURL: String(opts.baseURL).replace(/\/+$/, ""), key, options: opts };
   cfgCacheAt = Date.now();
   return cfgCache;

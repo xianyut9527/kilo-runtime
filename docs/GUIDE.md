@@ -7,7 +7,7 @@
 </div>
 
 **改配置**：编辑 `kilo.json.tmpl` → `.\install.ps1` → 重载 VS Code 窗口。
-**换 API Key**：改 `~/.local/share/kilo/auth.json` 的 `hx.key`（不用 install，即时生效）。
+**换 API Key**：改 `~/.local/share/kilo/auth.json` 的 `openllamas.key`（2026-10-16 起 provider 改名 openllamas；旧 `hx.key` 仍被 moa/dual-review 兜底识别，但主链路凭证需要 `openllamas` 条目——从 `hx` 条目原样复制一份即可。不用 install，即时生效）。
 
 ## 架构
 
@@ -38,7 +38,7 @@
                               ~/.local/share/kilo/（数据目录：会话库 / 记忆 / 凭证 auth.json）
 ```
 
-数据流：Kilo 会话 → provider（网关客户端）→ 上游模型网关（OpenAI 兼容 API）；
+数据流：Kilo 会话 → provider（网关客户端）→ OpenLlamas 模型网关（OpenAI 兼容 API，<https://openllamas.com>）；
 主模型故障时按 `failover.chain.models` 依次自动降级（切换时流首注入 ⚠️ [failover]
 可见提示，同一「主模型→备用」在冷却窗口内只提示一次；主模型自身也进冷却——
 持续故障期后续调用直接从可用备用起跑，全链冷却时快速失败、到期自动恢复）；
@@ -82,12 +82,30 @@ moa/dual-review 的分析
 
 | 要改什么 | 位置 |
 |---------|------|
-| 主模型 | 顶部 `"model": "hx/glm-5.3-flash"` |
+| 主模型 | 顶部 `"model": "openllamas/glm-5.3-flash"` |
 | 角色模型 | `agent.code / agent.plan / ...` 的 `model` |
-| 网关地址 | `provider.hx.options.baseURL` |
-| 降级链 / 审查模型 | `provider.hx.options.failover / moa / dual_review` |
+| 网关地址 | `provider.openllamas.options.baseURL` |
+| 降级链 / 审查模型 | `provider.openllamas.options.failover / moa / dual_review` |
 
-新模型需在 `provider.hx.models` 登记后才能被引用。
+新模型需在 `provider.openllamas.models` 登记后才能被引用。
+
+## 模型与分工
+
+上游：OpenLlamas（OpenAI 兼容 API，官网 <https://openllamas.com>，模型列表 <https://openllamas.com/v1/models>）
+
+| 岗位 | 模型 | 职责 |
+|------|------|------|
+| 主力执行 | glm-5.3-flash@high | 日常写码/跑命令 |
+| 规划 | kimi-k3@max | 方案设计 |
+| 深实现 | deepseek-v4.1-flash@max | 高风险/跨文件改动 |
+| 侦察 | qwen3.8-flash@low | 只读粗扫 |
+| 编排 | minimax-m3.1-flash-preview@low | 拆解任务、分派子代理 |
+| 压缩 | deepseek-v4.1-flash@low | 会话摘要 |
+| 轻任务 | deepseek-v4.1-flash | 标题/摘要 |
+| 复核 | kimi-k3@high | 异源只读复核 |
+
+审查：dual_review = deepseek-v4.1-flash（正向）+ minimax-m3.1-flash-preview（红队）+ kimi-k2.6（裁决）；moa = deepseek-v4.1-flash + minimax-m3.1-flash-preview 参考，kimi-k2.6 聚合
+兜底链：`glm-5.3-flash → deepseek-v4.1-flash → minimax-m3.1-flash-preview → glm-5.2 → kimi-k2.6`
 
 ## 常用命令
 

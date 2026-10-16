@@ -7,7 +7,7 @@
 </div>
 
 > **Change config**: edit `kilo.json.tmpl` → `.\install.ps1` → reload the VS Code window.
-> **Change API key**: edit `hx.key` in `~/.local/share/kilo/auth.json` (no install needed, takes effect immediately).
+> **Change API key**: edit `openllamas.key` in `~/.local/share/kilo/auth.json` (provider renamed to openllamas on 2026-10-16; legacy `hx.key` is still recognized as a fallback by moa/dual-review, but the main chain needs the `openllamas` entry — copy the `hx` entry as-is. No install needed, takes effect immediately).
 
 ## Architecture
 
@@ -38,7 +38,7 @@ This repo (source of truth) ─install→ ~/.config/kilo/ (runtime copy — neve
                            ~/.local/share/kilo/ (data dir: sessions / memory / credentials auth.json)
 ```
 
-Data flow: Kilo session → provider (gateway client) → upstream model gateway (OpenAI-compatible API).
+Data flow: Kilo session → provider (gateway client) → OpenLlamas model gateway (OpenAI-compatible API, <https://openllamas.com>).
 On main-model failure it fails over through `failover.chain.models` (each hop injects a visible
 "⚠️ [failover]" notice; the same main→standby notice is emitted once per cooldown window. The
 main model itself also cools down: during sustained outages later calls start directly from an
@@ -88,12 +88,30 @@ Quality control is fully automated by the plugins.
 
 | What to change | Where |
 |---------------|-------|
-| Main model | Top: `"model": "hx/glm-5.3-flash"` |
+| Main model | Top: `"model": "openllamas/glm-5.3-flash"` |
 | Per-role models | `agent.code / agent.plan / ...` → `model` |
-| Gateway URL | `provider.hx.options.baseURL` |
-| Failover chain / review models | `provider.hx.options.failover / moa / dual_review` |
+| Gateway URL | `provider.openllamas.options.baseURL` |
+| Failover chain / review models | `provider.openllamas.options.failover / moa / dual_review` |
 
-New models must be registered in `provider.hx.models` before they can be referenced.
+New models must be registered in `provider.openllamas.models` before they can be referenced.
+
+## Models & division of labor
+
+Upstream: OpenLlamas (OpenAI-compatible API, website <https://openllamas.com>, model list <https://openllamas.com/v1/models>)
+
+| Role | Model | Duty |
+|------|-------|------|
+| Main executor | glm-5.3-flash@high | everyday coding / commands |
+| Planning | kimi-k3@max | solution design |
+| Heavy implementation | deepseek-v4.1-flash@max | high-risk / cross-file changes |
+| Recon | qwen3.8-flash@low | read-only coarse scanning |
+| Dispatch | minimax-m3.1-flash-preview@low | task breakdown, subagent dispatch |
+| Compaction | deepseek-v4.1-flash@low | session summaries |
+| Light tasks | deepseek-v4.1-flash | titles / summaries |
+| Review | kimi-k3@high | hetero read-only review |
+
+Review: dual_review = deepseek-v4.1-flash (positive) + minimax-m3.1-flash-preview (red team) + kimi-k2.6 (verdict); moa = deepseek-v4.1-flash + minimax-m3.1-flash-preview references, kimi-k2.6 aggregator
+Failover: `glm-5.3-flash → deepseek-v4.1-flash → minimax-m3.1-flash-preview → glm-5.2 → kimi-k2.6`
 
 ## Common commands
 
