@@ -59,6 +59,11 @@ temp_*
 kilo.backup-*.tar
 kilo.json.bak.*
 
+# 根目录一次性运行日志/进度文件（d9abe02 误入库，2026-10-16 untrack：
+# 部署/测试过程的证据产物，不属 SSOT 内容）
+/*.log
+/.v3-progress.md
+
 # LLM 排查/调试脚手架产物（曾误提交，此模式覆盖防回归）
 *.rec
 render.tmp.json

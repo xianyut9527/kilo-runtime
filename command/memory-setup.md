@@ -24,3 +24,17 @@ git 仓库项目通常已被 `plugin/memory-bootstrap.ts` 自动启用（首次 
 
 - 绝不删除/改写已有记忆目录内容；只允许 create-if-missing 的 scaffold。
 - 不改 `state.json` 的其他字段（limits/stats 由 Kilo 自管）。
+
+## 命令模板（自 INSTRUCTIONS.md 外迁，2026-10-16）
+
+跨项目定向同步与 mem_add 兜底的完整命令模板在此维护；INSTRUCTIONS.md 只保留判据与指针。
+
+- **跨项目定向同步**（A 项目会话沉淀了 B 项目专属事实后镜像到 B）：
+  `node "$HOME/.config/kilo/scripts/memory-sync.mjs" <B 的项目根> <facts|decisions|constraints|open-questions|corrections|commands|paths|tooling> <key> <text>`
+  （同 key 原位更新、幂等、原子写；kind 对应 project.md 四段 + corrections.md 段 + environment.md
+  的 Commands/Paths/Tooling 三段——「B 的构建命令/路径/工具链怪癖」走 environment 类 kind；
+  B 记忆未启用时报错——先在 B 跑 `/memory-setup`，或免切项目直接
+  `node "$HOME/.config/kilo/scripts/memory-enable.mjs" <B 的项目根>` 启用再同步）
+- **mem_add 脚本兜底**（mem_add 工具不可用时直写 inbox）：
+  `node -e "fs.appendFileSync('C:/Users/Administrator/.local/share/kilo/memory-store/inbox.md', ...)"`
+  （路径按本机 DATA_DIR）
