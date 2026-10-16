@@ -13,7 +13,7 @@ agent: code
 1. **取材**：`kilo_local_recall`（mode=search）检索本项目近期会话，关键词建议：
    `报错/失败/修复/correction/不对/重新/rollback/慢/超时`。限定近 1-2 天的高信号会话，别全量扫。
 2. **遥测**（可选，本机配置项目才做）：读 `~/.local/share/kilo/failover-events.jsonl` 统计
-   各模型 retry/fallback 频次与时间分布；热点模型考虑调整 `hx.failover.chain` 次序。
+   各模型 retry/fallback 频次与时间分布；热点模型考虑调整 `provider.openllamas.options.failover.chain` 次序。
 3. **蒸馏入库**（`kilo_memory_save`）：
    - 用户纠正过的做法 → action=`correct`（会写 corrections.md，优先级最高）；
    - 非显然事实（构建命令、隐藏依赖、路径约定、环境怪癖）→ action=`remember`，key 用短横线小写英文；

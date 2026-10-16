@@ -1,7 +1,7 @@
 // W3.5 MoA（Mixture-of-Agents）按需工具
 // 定位：主 agent 仅在需要多视角/高风险判断时调用；绝不每轮自动 fanout（红线 R4/R9）。
 // 依赖：lib/hx-client.ts（与 dual-review.ts 共享的配置读取与请求层，改凭证/baseURL 规则只改那边）。
-// 配置：kilo.json -> provider.hx.options.moa.{references,aggregator}；凭证：auth.json 的 hx.key。
+// 配置：kilo.json -> provider.openllamas.options.moa.{references,aggregator}；凭证：auth.json 的 openllamas.key。
 //
 // 2026-09-22 终裁：插件工具无 UI 进度通道——ctx.metadata（server 7.7.6 不存在）、
 // preliminary/asyncIterator 流式卡、stderr（落 server 进程调试日志，视图不可见）
@@ -47,7 +47,7 @@ const MoaImpl = async () => {
           // 输入上限：超长任务截断并内联标注（截断事实随 prompt 可见，聚合模型知道输入是残件）
           task = clipText(task, MAX_TASK_CHARS);
 
-          // 模型唯一真源 = kilo.json provider.hx.options.moa（改模型只改配置文件，代码不留兜底默认值）
+          // 模型唯一真源 = kilo.json provider.openllamas.options.moa（改模型只改配置文件，代码不留兜底默认值）
           const cfgMoa = cfg.options?.moa ?? {};
           // 去重后再截断：["m","m","m"] 这类重复配置/参数不得绕过 MAX_REFS 成本红线（审查必须项）
           const refs = [...new Set(
@@ -62,10 +62,10 @@ const MoaImpl = async () => {
             : (typeof cfgMoa.aggregator === "string" ? cfgMoa.aggregator : "");
 
           if (refs.length === 0 || !aggregator) {
-            return "moa: 参考模型/聚合模型未配置——请在 kilo.json 的 provider.hx.options.moa 配置 references 与 aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
+            return "moa: 参考模型/聚合模型未配置——请在 kilo.json 的 provider.openllamas.options.moa 配置 references 与 aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
           }
 
-          // 超时/空闲看门狗：timeoutsOf 单点解析（kilo.json provider.hx.options，缺省回退共享兜底）
+          // 超时/空闲看门狗：timeoutsOf 单点解析（kilo.json provider.openllamas.options，缺省回退共享兜底）
           const { timeoutMs: totalMs, idleMs } = timeoutsOf(cfg.options);
 
           // 断路器预检（2026-09-22 网关过载专项）：网关 open 态时 2-3 路并行 = 对过载网关的

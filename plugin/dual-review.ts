@@ -3,7 +3,7 @@
 // 定位：对一次改动/一份结论做正反两路独立审查——
 //   正向（证成为主）：找「为什么这个方案/改动是对的、完备的」，漏检点、边界遗漏；
 //   反向（证伪为主）：专门找错——逻辑缺陷、边界条件、安全漏洞、遗漏需求、过度设计。
-// 两路并行、不同参考模型分别承担（默认值见 kilo.json provider.hx.options.dual_review，
+// 两路并行、不同参考模型分别承担（默认值见 kilo.json provider.openllamas.options.dual_review，
 // 与主执行模型异源），最后由异源聚合模型综合出裁决：通过 / 有条件通过（列出必须修复项）/ 不通过。
 // 与 moa 工具的区别：moa 是通用多视角聚合；本工具是改动审查专用协议，正反视角由 prompt 明确分工。
 //
@@ -19,7 +19,7 @@
 import { loadCfg, ask, cbShouldFailFast, timeoutsOf, clipText } from "../lib/hx-client";
 import { randomUUID } from "node:crypto";
 
-// 超时统一走配置：kilo.json provider.hx.options.timeout / chunkTimeout（timeoutsOf 单点解析，
+// 超时统一走配置：kilo.json provider.openllamas.options.timeout / chunkTimeout（timeoutsOf 单点解析，
 // 与 moa 同口径；空闲看门狗与主链路 chunkTimeout 同源，流式中无 chunk 判死快速失败进重试）。
 
 const AGG_SUBJECT_LIMIT = 8_000;   // 聚合 prompt 中审查对象截断
@@ -116,13 +116,13 @@ async function runDualReview(subject, overrides = {}) {
 
   const { timeoutMs, idleMs } = timeoutsOf(cfg.options);
 
-  // 模型唯一真源 = kilo.json provider.hx.options.dual_review（改模型只改配置文件，代码不留兜底默认值）
+  // 模型唯一真源 = kilo.json provider.openllamas.options.dual_review（改模型只改配置文件，代码不留兜底默认值）
   const dr = cfg.options?.dual_review ?? {};
   const posModel = typeof overrides?.positive_model === "string" && overrides.positive_model ? overrides.positive_model : dr.positive;
   const negModel = typeof overrides?.negative_model === "string" && overrides.negative_model ? overrides.negative_model : dr.negative;
   const aggModel = typeof overrides?.aggregator === "string" && overrides.aggregator ? overrides.aggregator : dr.aggregator;
   if (!posModel || !negModel || !aggModel) {
-    return "dual_review: 审查模型未配置——请在 kilo.json 的 provider.hx.options.dual_review 配置 positive/negative/aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
+    return "dual_review: 审查模型未配置——请在 kilo.json 的 provider.openllamas.options.dual_review 配置 positive/negative/aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
   }
 
   // 断路器预检（2026-09-22 网关过载专项，与 moa 同语义）：网关 open 态时两路并行 = 集体施压 + 空烧。

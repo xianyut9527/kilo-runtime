@@ -2,6 +2,9 @@
 // v6 新增：跨代迟到成功/失败不污染 half-open、open 态迟到过载不刷新冷却。
 // v7 新增（2026-09-28 查漏补缺）：404 NO_ROUTE_CANDIDATE 与 503 "no active channel
 // candidate" 变体均为确定性渠道故障——单次即抛、不重试、不进退避、不 trip（42 断言全绿为过）。
+// v8 新增（2026-10-16 查漏补缺）：loadCfg 结构回归——provider 改名 hx→openllamas 后
+//   新旧结构优先级无常驻覆盖（22 处 ask 全部显式传参绕过 loadCfg，顶部夹具仅 legacy 形态），
+//   锁死 openllamas 优先 + 两侧独立兜底 + 错误文案点名。
 // 运行：node --experimental-strip-types scripts/test-circuit-breaker.mjs
 // （直接动态 import lib/hx-client.ts，靠 ?r= 查询串击穿 ESM 缓存取得全新断路器状态；
 //   网络层打桩，不联网、不起 Kilo）
@@ -20,12 +23,13 @@ if (typeof Bun !== "undefined") {
 const PLUGIN_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "lib");
 const TMP = path.join(tmpdir(), "cb-test-" + Date.now());
 mkdirSync(TMP, { recursive: true });
+mkdirSync(path.join(TMP, "kilo"), { recursive: true }); // DATA_DIR = XDG_DATA_HOME/kilo
 process.env.KILO_CONFIG_DIR = TMP;
 process.env.XDG_DATA_HOME = TMP;
 writeFileSync(path.join(TMP, "kilo.json"), JSON.stringify({
   provider: { hx: { options: { baseURL: "http://stub.local/v1", timeout: 5000, chunkTimeout: 2000 } } },
 }));
-writeFileSync(path.join(TMP, "auth.json"), JSON.stringify({ hx: { key: "test-key" } }));
+writeFileSync(path.join(TMP, "kilo", "auth.json"), JSON.stringify({ hx: { key: "test-key" } }));
 
 const results = [];
 const assert = (name, cond) => { results.push(`${cond ? "✅" : "❌"} ${name}`); if (!cond) process.exitCode = 1; };
@@ -394,6 +398,59 @@ const tripCircuit = async (ask) => {
   assert("404 notexist 不 trip 断路器（保持 closed）", circuitState() === "closed");
   assert("404 notexist 快速失败（真实墙钟 <1s）", (realNow() - t0) < 1000);
   assert("404 notexist 错误透传完整（status+body 报文，供 provider 侧签名判定）", String(err16?.message ?? "").includes("Model not exist") && String(err16?.message ?? "").includes("model_not_found"));
+}
+
+// 17. loadCfg 结构回归（2026-10-16 provider 改名 hx→openllamas）：
+//     moa/dual_review 的配置入口。迁移窗口内新旧结构并存，优先级必须锁死：
+//     options 与 key 是两条独立的 ?? 回退链（一侧新一侧旧也要能读）。
+{
+  const cfgPath = path.join(TMP, "kilo.json");
+  const authPath = path.join(TMP, "kilo", "auth.json");
+  const writeCfg = (kilo, auth) => { writeFileSync(cfgPath, JSON.stringify(kilo)); writeFileSync(authPath, JSON.stringify(auth)); };
+
+  // a. 仅旧结构（迁移兜底不回归）
+  writeCfg({ provider: { hx: { options: { baseURL: "http://legacy.local/v1", timeout: 1111 } } } }, { hx: { key: "legacy-key" } });
+  {
+    const { loadCfg } = await freshLoad(18);
+    const cfg = await loadCfg();
+    assert("loadCfg 旧结构兜底（options+key）", cfg?.baseURL === "http://legacy.local/v1" && cfg?.key === "legacy-key" && cfg?.options?.timeout === 1111);
+  }
+
+  // b. 仅新结构（改名后主路径）
+  writeCfg({ provider: { openllamas: { options: { baseURL: "http://new.local/v1", timeout: 2222 } } } }, { openllamas: { key: "new-key" } });
+  {
+    const { loadCfg } = await freshLoad(19);
+    const cfg = await loadCfg();
+    assert("loadCfg 新结构直读（options+key）", cfg?.baseURL === "http://new.local/v1" && cfg?.key === "new-key" && cfg?.options?.timeout === 2222);
+  }
+
+  // c. 新旧并存 → openllamas 优先
+  writeCfg(
+    { provider: { openllamas: { options: { baseURL: "http://new.local/v1" } }, hx: { options: { baseURL: "http://legacy.local/v1" } } } },
+    { openllamas: { key: "new-key" }, hx: { key: "legacy-key" } }
+  );
+  {
+    const { loadCfg } = await freshLoad(20);
+    const cfg = await loadCfg();
+    assert("loadCfg 并存时 openllamas 优先（options+key）", cfg?.baseURL === "http://new.local/v1" && cfg?.key === "new-key");
+  }
+
+  // d. 混合形态：新结构 options + 旧 auth key → 两侧独立兜底
+  writeCfg({ provider: { openllamas: { options: { baseURL: "http://new.local/v1" } } } }, { hx: { key: "legacy-key" } });
+  {
+    const { loadCfg } = await freshLoad(21);
+    const cfg = await loadCfg();
+    assert("loadCfg 混合形态（openllamas options + hx key 兜底）", cfg?.baseURL === "http://new.local/v1" && cfg?.key === "legacy-key");
+  }
+
+  // e. 空配置 → 报错点名 openllamas 路径（提示语与 SSOT 配置键一致）
+  writeCfg({}, {});
+  {
+    const { loadCfg } = await freshLoad(22);
+    let err17 = null;
+    try { await loadCfg(); } catch (e) { err17 = e; }
+    assert("loadCfg 缺 baseURL 报错点名 openllamas 路径", /provider\.openllamas\.options\.baseURL/.test(String(err17?.message ?? "")));
+  }
 }
 
 Date.now = realNow;

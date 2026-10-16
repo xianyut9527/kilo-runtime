@@ -7,7 +7,7 @@
 </div>
 
 > **Change config**: edit `kilo.json.tmpl` → `.\install.ps1` → reload the VS Code window.
-> **Change API key**: edit `openllamas.key` in `~/.local/share/kilo/auth.json` (provider renamed to openllamas on 2026-10-16; legacy `hx.key` is still recognized as a fallback by moa/dual-review, but the main chain needs the `openllamas` entry — copy the `hx` entry as-is. No install needed, takes effect immediately).
+> **Change API key**: edit `openllamas.key` in `~/.local/share/kilo/auth.json` (no install needed, takes effect immediately).
 
 ## Architecture
 
@@ -27,8 +27,9 @@ This repo (source of truth) ─install→ ~/.config/kilo/ (runtime copy — neve
 │   ├─ dual-review                        │← dual cross review: omission check × red team + verdict
 │   ├─ moa                                │← multi-model cross analysis (high-risk decisions)
 │   ├─ permission-guard                   │← blocks dangerous commands, secret paths, lock-file write bypasses
-│   ├─ compaction-anchor                  │← keeps task anchors after long-session compaction
-│   └─ memory-bootstrap                   │← auto-enables native memory for git projects
+│   ├─ compaction-anchor                   │← keeps task anchors after long-session compaction
+│   ├─ memory-store                        │← global experience memory store: mem_* tools / retrieval / compiled injection
+│   └─ memory-bootstrap                    │← auto-enables native memory for git projects
 ├─ agent/verify.md                        │← cross-source review subagent (read-only, high-risk changes)
 ├─ lib/hx-client.ts                       │← shared request layer for moa/dual-review: SSE streaming,
 │                                         │   3-tier timeouts, overload circuit breaker, failure telemetry
@@ -38,7 +39,7 @@ This repo (source of truth) ─install→ ~/.config/kilo/ (runtime copy — neve
                            ~/.local/share/kilo/ (data dir: sessions / memory / credentials auth.json)
 ```
 
-Data flow: Kilo session → provider (gateway client) → OpenLlamas model gateway (OpenAI-compatible API, <https://openllamas.com>).
+Data flow: Kilo session → provider (gateway client) → OpenLlamas model gateway.
 On main-model failure it fails over through `failover.chain.models` (each hop injects a visible
 "⚠️ [failover]" notice; the same main→standby notice is emitted once per cooldown window. The
 main model itself also cools down: during sustained outages later calls start directly from an
@@ -67,10 +68,10 @@ You submit a task
    |                       backlog flushed back at the delivery node
    v
 ② Delivery node (when all todos are marked completed)
-   |  · High-risk files (auth / payments / migrations) hit, or code changes plus 3+ files
-   |    edited in total (docs count) -> quality-gate auto-triggers dual-review: omission
-   |    check × red team in parallel + third-party model verdict (2-4 minutes;
-   |    doc-only sessions skip)
+   |  · High-risk files (auth / payments / migrations) hit, or generic changes
+   |    spanning 3+ code files (docs excluded, codeEdits rule since 2026-10-07) ->
+   |    quality-gate auto-triggers dual-review: omission check × red team
+   |    in parallel + third-party model verdict (2-4 minutes; doc-only sessions skip)
    |  · Verdict "fail" -> delivery blocked, model must fix and re-review (max 2 rounds;
    |    accepting residual risk requires explicit "review-accepted" echo registration)
    |  · Pass -> delivered; on cap-release / explicit acceptance / upstream failure,
@@ -97,7 +98,7 @@ New models must be registered in `provider.openllamas.models` before they can be
 
 ## Models & division of labor
 
-Upstream: OpenLlamas (OpenAI-compatible API, website <https://openllamas.com>, model list <https://openllamas.com/v1/models>)
+Upstream: OpenLlamas (website <https://openllamas.com>, model list <https://openllamas.com/v1/models>)
 
 | Role | Model | Duty |
 |------|-------|------|
@@ -108,6 +109,7 @@ Upstream: OpenLlamas (OpenAI-compatible API, website <https://openllamas.com>, m
 | Dispatch | minimax-m3.1-flash-preview@low | task breakdown, subagent dispatch |
 | Compaction | deepseek-v4.1-flash@low | session summaries |
 | Light tasks | deepseek-v4.1-flash | titles / summaries |
+| Subagent default | glm-5.3-flash | default model for task subagents |
 | Review | kimi-k3@high | hetero read-only review |
 
 Review: dual_review = deepseek-v4.1-flash (positive) + minimax-m3.1-flash-preview (red team) + kimi-k2.6 (verdict); moa = deepseek-v4.1-flash + minimax-m3.1-flash-preview references, kimi-k2.6 aggregator

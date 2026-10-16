@@ -49,7 +49,8 @@ export const DATA_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".loca
 const CFG_TTL_MS = 60_000; // 配置缓存 TTL（模块私有，无外部消费方）
 // 超时兜底（总时长）：配置缺失/非法时回退。流式后总时长放宽到 300s（生成中持续有 chunk 证明活着）。
 export const FALLBACK_TIMEOUT_MS = 300_000;
-// 首字节/空闲兜底：kilo.json provider.hx.options.chunkTimeout 同源（当前 60s）。
+// 首字节/空闲兜底：仅在 kilo.json provider.openllamas.options.chunkTimeout 缺失/非法时兜底
+// （缺省 60s；配置侧现为 180s，故两者不等值——配置生效时本常量不参与）。
 export const FALLBACK_CHUNK_TIMEOUT_MS = 60_000;
 const MAX_ATTEMPTS = 3; // 1 次 + 2 次重试
 const BACKOFF_MS = [400, 1200];
