@@ -35,16 +35,28 @@ const AGG_MIN_BUDGET_MS = 90_000;
 // 口径变更时必须递增——版本一变缓存全失效，旧裁决不再被复用。
 // dr-2026-09-22.2：clipText 增加代理对边界防护（截断点落在 emoji/生僻字中间时回退一位）。
 // dr-2026-09-24.1：hx-client loadCfg 尾随逗号容错（工具全挂修复）——指纹变，旧缓存全失效。
-const REVIEWER_VERSION = "dr-2026-09-24.1";
+// dr-2026-10-18.1：正/反/裁决席加入 fallback 路由（首选失败续试），指纹含 fallback。
+const REVIEWER_VERSION = "dr-2026-10-18.1";
 
-// 审查器指纹：审查器版本 + 配置的模型三元组。quality-gate 把它掺进审查素材缓存键：
-// 改 prompt（版本变）或换模型（三元组变）→ 指纹变 → 缓存失效，绝不为同一份 diff
-// 复用异构模型的旧裁决（2026-09-22 三模型裁决必须项）。cfg 可注入（离线测试用），
+// 模型路由列表：首选 + 配置的 fallback（去重、去空）。fallback 只在首选失败时启用，
+// 用于兜住单模型 400/404/503/超时导致的「一路阵亡」或「裁决缺失」。
+function modelRoutes(primary, fallbacks) {
+  const list = [primary, ...(Array.isArray(fallbacks) ? fallbacks : [])]
+    .filter((m) => typeof m === "string" && m.trim())
+    .map((m) => m.trim());
+  return [...new Set(list)];
+}
+
+// 审查器指纹：审查器版本 + 配置的模型路由（含 fallback）。quality-gate 把它掺进审查
+// 素材缓存键：改 prompt（版本变）或换模型/兜底路由 → 指纹变 → 缓存失效，绝不为同一份
+// diff 复用异构模型的旧裁决（2026-09-22 三模型裁决必须项）。cfg 可注入（离线测试用），
 // 缺省读真实配置；配置读失败由调用方决定降级方向（quality-gate 选择不命中缓存）。
 async function reviewerFingerprint(cfg) {
   const c = cfg ?? await loadCfg();
   const dr = c.options?.dual_review ?? {};
-  return `v=${REVIEWER_VERSION}|p=${dr.positive ?? ""}|n=${dr.negative ?? ""}|a=${dr.aggregator ?? ""}`;
+  const one = (v) => (typeof v === "string" ? v.trim() : "");
+  const fb = (v) => (Array.isArray(v) ? v.map(one).filter(Boolean).join(",") : "");
+  return `v=${REVIEWER_VERSION}|p=${one(dr.positive)}|pf=${fb(dr.positive_fallbacks)}|n=${one(dr.negative)}|nf=${fb(dr.negative_fallbacks)}|a=${one(dr.aggregator)}|af=${fb(dr.aggregator_fallbacks)}`;
 }
 
 const TAG = "[dual-review] ";
@@ -121,6 +133,10 @@ async function runDualReview(subject, overrides = {}) {
   const posModel = typeof overrides?.positive_model === "string" && overrides.positive_model ? overrides.positive_model : dr.positive;
   const negModel = typeof overrides?.negative_model === "string" && overrides.negative_model ? overrides.negative_model : dr.negative;
   const aggModel = typeof overrides?.aggregator === "string" && overrides.aggregator ? overrides.aggregator : dr.aggregator;
+  // per-call 覆盖视为精确指定，不再套配置 fallback；自动审查走配置路由，启用兜底。
+  const posModels = modelRoutes(posModel, typeof overrides?.positive_model === "string" && overrides.positive_model ? [] : dr.positive_fallbacks);
+  const negModels = modelRoutes(negModel, typeof overrides?.negative_model === "string" && overrides.negative_model ? [] : dr.negative_fallbacks);
+  const aggModels = modelRoutes(aggModel, typeof overrides?.aggregator === "string" && overrides.aggregator ? [] : dr.aggregator_fallbacks);
   if (!posModel || !negModel || !aggModel) {
     return "dual_review: 审查模型未配置——请在 kilo.json 的 provider.hx.options.dual_review 配置 positive/negative/aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
   }
@@ -152,6 +168,30 @@ async function runDualReview(subject, overrides = {}) {
     ]).finally(() => clearTimeout(timer));
   };
 
+  // 路由兜底执行器：按 models 顺序尝试，共享同一墙钟；快速失败（400/404/503/连接错误）
+  // 会立即落到下一候选，首选成功时不产生额外调用。若首选耗尽全部预算，后续候选无预算
+  // 可试——这是「兜底不无限延长单次审查」的有界成本取舍。
+  const askRoute = async (label, models, prompt, deadlineMs) => {
+    const failed = [];
+    for (const model of models) {
+      const remaining = deadlineMs - Date.now();
+      if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
+      try {
+        const text = await withDeadline(
+          ask({ baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs, idleMs }),
+          Math.max(1, remaining),
+          `${label}(${model})`,
+        );
+        return { model, text, failed };
+      } catch (e) {
+        failed.push(`${model}: ${e?.message ?? e}`);
+      }
+    }
+    const err = new Error(failed.join("; "));
+    err.attempts = failed;
+    throw err;
+  };
+
   // 输入上限（审查必须项）：正反两路 prompt 注入截断版 subject，防超大 diff 撑爆两次上游调用；
   // clipText 内联标注截断事实——审查者明确知道自己在看残件，不在残缺输入上假装全量结论
   const subjectIn = clipText(subject, AGG_SUBJECT_LIMIT);
@@ -162,67 +202,66 @@ async function runDualReview(subject, overrides = {}) {
   const nonce = () => randomUUID().slice(0, 8);
   const tag = { s: `subject-${nonce()}`, p: `review-pos-${nonce()}`, n: `review-neg-${nonce()}` };
 
-  // 正反两路并行，共享扇出窗口（墙钟）；超时路按普通失败处理，单路失败不废全局（与 moa 同语义）
+  // 正反两路并行，共享扇出窗口（墙钟）；单路失败/超时按普通失败处理，由 fallback 续试
   const [posRes, negRes] = await Promise.allSettled([
-    withDeadline(ask({ baseURL: cfg.baseURL, key: cfg.key, model: posModel, prompt: POSITIVE_PROMPT(subjectIn, tag.s), timeoutMs, idleMs }), Math.max(1, wallDeadline - Date.now()), "dual_review 扇出"),
-    withDeadline(ask({ baseURL: cfg.baseURL, key: cfg.key, model: negModel, prompt: NEGATIVE_PROMPT(subjectIn, tag.s), timeoutMs, idleMs }), Math.max(1, wallDeadline - Date.now()), "dual_review 扇出"),
+    askRoute("正向", posModels, POSITIVE_PROMPT(subjectIn, tag.s), wallDeadline),
+    askRoute("反向", negModels, NEGATIVE_PROMPT(subjectIn, tag.s), wallDeadline),
   ]);
 
-  const posText = posRes.status === "fulfilled" ? posRes.value : null;
-  const negText = negRes.status === "fulfilled" ? negRes.value : null;
+  const pos = posRes.status === "fulfilled" ? posRes.value : null;
+  const neg = negRes.status === "fulfilled" ? negRes.value : null;
   const failures = [];
-  if (posRes.status === "rejected") failures.push(`正向(${posModel}): ${posRes.reason?.message ?? posRes.reason}`);
-  if (negRes.status === "rejected") failures.push(`反向(${negModel}): ${negRes.reason?.message ?? negRes.reason}`);
+  if (posRes.status === "rejected") failures.push(`正向(${posModels.join(" → ")}): ${posRes.reason?.message ?? posRes.reason}`);
+  if (negRes.status === "rejected") failures.push(`反向(${negModels.join(" → ")}): ${negRes.reason?.message ?? negRes.reason}`);
+  const fallbackNotes = [];
+  if (pos?.failed?.length) fallbackNotes.push(...pos.failed.map((x) => `正向 ${x}`));
+  if (neg?.failed?.length) fallbackNotes.push(...neg.failed.map((x) => `反向 ${x}`));
 
-  if (!posText && !negText) {
+  if (!pos && !neg) {
     return `dual_review: 两路审查均失败\n${failures.join("\n")}`;
   }
 
   // 两路至少一路失败时：不做单路裁决（正反缺一裁决会失真），返回幸存方原始结论
-  if (!posText || !negText) {
+  if (!pos || !neg) {
     return [
       `dual_review: 一路审查失败，无法裁决。幸存方原始结论：`,
       failures.join("\n"),
+      fallbackNotes.length ? `> 路由兜底：${fallbackNotes.join("；")}` : "",
       "",
-      posText ? `### 正向审查（${posModel}）\n${posText}` : "",
-      negText ? `### 反向审查（${negModel}）\n${negText}` : "",
+      pos ? `### 正向审查（${pos.model}）\n${pos.text}` : "",
+      neg ? `### 反向审查（${neg.model}）\n${neg.text}` : "",
     ].filter(Boolean).join("\n");
   }
 
   // 聚合阶段：截断超长输入（正/反各 AGG_REVIEW_LIMIT，clipText 内联标注），防聚合 prompt 爆上下文二次长等待
-  const posC = clipText(posText, AGG_REVIEW_LIMIT);
-  const negC = clipText(negText, AGG_REVIEW_LIMIT);
+  const posC = clipText(pos.text, AGG_REVIEW_LIMIT);
+  const negC = clipText(neg.text, AGG_REVIEW_LIMIT);
 
-  let verdict;
+  let agg;
   try {
-    // 裁决阶段拿剩余墙钟（保底 AGG_MIN_BUDGET_MS，封顶 timeoutMs）
-    const aggBudget = Math.max(AGG_MIN_BUDGET_MS, Math.min(timeoutMs, wallDeadline - Date.now()));
-    verdict = await withDeadline(ask({
-      baseURL: cfg.baseURL,
-      key: cfg.key,
-      model: aggModel,
-      prompt: AGGREGATE_PROMPT(subjectIn, posC, negC, tag),
-      timeoutMs,
-      idleMs,
-    }), aggBudget, "dual_review 裁决");
+    // 裁决阶段拿剩余墙钟（保底 AGG_MIN_BUDGET_MS，可能略超 timeoutMs）；fallback 共享该预算
+    const aggDeadline = Math.max(wallDeadline, Date.now() + AGG_MIN_BUDGET_MS);
+    agg = await askRoute("裁决", aggModels, AGGREGATE_PROMPT(subjectIn, posC, negC, tag), aggDeadline);
   } catch (e) {
     return [
-      `dual_review: 裁决模型（${aggModel}）失败：${e.message}`,
+      `dual_review: 裁决模型（${aggModels.join(" → ")}）失败：${e.message}`,
       "",
-      `### 正向审查（${posModel}）\n${posText}`,
+      `### 正向审查（${pos.model}）\n${pos.text}`,
       "",
-      `### 反向审查（${negModel}）\n${negText}`,
+      `### 反向审查（${neg.model}）\n${neg.text}`,
     ].join("\n");
   }
+  if (agg.failed?.length) fallbackNotes.push(...agg.failed.map((x) => `裁决 ${x}`));
 
   return [
-    `## 双向审查裁决（${posModel} 正向 × ${negModel} 反向 → ${aggModel} 裁决）`,
-    verdict,
+    `## 双向审查裁决（${pos.model} 正向 × ${neg.model} 反向 → ${agg.model} 裁决）`,
+    fallbackNotes.length ? `> 路由兜底：${fallbackNotes.join("；")}` : "",
+    agg.text,
     "",
     `<details><summary>原始结论</summary>`,
     "",
-    `### 正向\n${posText}`,
-    `### 反向\n${negText}`,
+    `### 正向\n${pos.text}`,
+    `### 反向\n${neg.text}`,
     "",
     `</details>`,
   ].join("\n");
@@ -268,6 +307,6 @@ export const DualReview = async (ctx = {}) => {
 // Kilo vE2 契约：模块唯一函数导出 = 工厂（DualReview/default 同引用被 Set 去重）。
 // 工具函数经此命名空间对象暴露（对象无 server 属性 → kE2 跳过，绝不会被当工厂调用）。
 // quality-gate 经 `(await import("./dual-review"))._export.runDualReview` 取用。
-export const _export = { runDualReview, reviewerFingerprint };
+export const _export = { runDualReview, reviewerFingerprint, modelRoutes };
 
 export default DualReview;

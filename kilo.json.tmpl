@@ -65,6 +65,15 @@
   },
 
   // ── 智能体路由（前 6 个是内置 agent 的模型覆盖，verify 是自定义）──
+  // ── 生效模型口径（定案：被引用的模型 ≤5 = 3 性价比档 + 2 旗舰档）──────────
+  // 模型随上游持续迭代，因此本文件是模型名的**唯一出现处**：下方各 agent 字段、
+  // provider.options.failover / moa / dual_review 写具体模型，文档与注释只讲岗位与
+  // 档位口径、不复制模型名——换模型只改这些字段，不会留下第二处需要同步的陈旧副本。
+  // 两档分工：性价比档（glm / deepseek / minimax 三席）承担高频与轻量岗位，要快与便宜；
+  // 旗舰档（kimi 规划席 + 大窗旗舰审查席）低频但要质量与大窗口。
+  // 分配原则：按模型最强项定岗位，异源只用在有交叉验证价值的岗位（编码/规划/复核/
+  // 深实现/审查面板）；跑腿型轻岗不为了族别多样换模型。注册表条目可多于 5（保留回退口），
+  // 但凡被 agent 路由 / failover / moa / dual_review 引用的，合计必须 ≤5。
   // code         默认执行者：写代码/跑命令，glm-5.3-flash（实测最快档）。
   //              ⚠️ 性能红线：49f8ed9 曾把 code 换成 deepseek-v4.1-flash，日常 95% 任务走 code
   //              agent → 体感全面变慢（git 49f8ed9 即"快→慢"分界，同期还开了 remote_control）。
@@ -75,16 +84,17 @@
   //              是 2026-10-03 审计改钉——原 k2.8 无可用渠道，failover-events 404 实证；
   //              再前任注释 glm-5.2 早已 stale。k2.6 时代分母数据：high 档 228 样本零失败，
   //              max 档 ≥150k 输入 2.56% 猝死且近 7 天 3 例 glm-5.2@max 子代理被 503 秒杀）
-  // explore      探索代理（subagent）：只读侦察，qwen3.8-flash@low（2026-10-16 角色异模定案，
-  //              粗扫最低风险岗位换异族模型，deepseek 不再四角色挤同款）
+  // explore      探索代理（subagent）：只读侦察，deepseek-v4.1-flash@low（2026-10-17 角色路由
+  //              收敛为 3 厂商：粗扫与压缩同属低风险轻档岗位，换厂商无独立盲区收益）
     // compaction   上下文压缩：钉 deepseek-v4.1-flash + variant low（2026-10-07 换岗，
     //              kimi-k3 压缩位实测空响应；2026-09-22 空响应专项确立：max 档推理
     //              吃光输出预算 → 摘要为空 → "empty response"；schema 规定
     //              variant 仅对 agent 自己配置的 model 生效，model+variant 必须同设，
     //              详见 agent.compaction 处注释）
-  // orchestrator 多代理编排：拆解任务分派子代理，minimax-m3.1-flash-preview@low（2026-10-16 用户点名启用）
-  // verify       自定义复核代理（subagent）：异源模型 kimi 复核 glm 的产出
-  //              —— 不同厂商交叉验证，只读不许改（edit/bash写通道均 deny）
+  // orchestrator 多代理编排：拆解任务分派子代理，minimax-m3.1-flash-preview@low（轻决策岗位，
+  //              零分母风险由该位的低失败影响面兜住；K3 只留给 plan）
+  // verify       自定义复核代理（subagent）：异源模型 deepseek 复核 glm 的产出
+  //              —— 不同厂商交叉验证，只读不许改（edit/bash写通道均 deny）；K3 只留 plan 位
   // variant 策略（2026-09-24 二轮修正，证伪了「low/medium 零失败」的旧论述）：
   // kilo.db finish=length 95 条实证（reasoning 吃光输出预算 → "output limit while
   // reasoning"，正常流结束不触发 failover/重试）按档位分桶：kimi@max 全库 7/964
@@ -123,11 +133,13 @@
       "variant": "max",
     },
     "explore": {
-      // 2026-10-16 角色异模定案：qwen3.8-flash（此前注册未用、零分母）——只读粗扫侦察
-      // 是最低风险岗位，让它先拿实际分母；deepseek-v4.1-flash 大输入高档死亡实证
-      // （85k+ @max 0.48%/call）→ 沿用 low 档规避（粗扫会话输入天然偏大）；
-      // 异常由全局 failover 链兜底，若实跑失败再单变量回退
-      "model": "openllamas/qwen3.8-flash",
+      // 2026-10-17 角色路由收敛：qwen3.8-flash → deepseek-v4.1-flash@low。2026-10-16 曾以
+      // 「粗扫最低风险岗位换异族模型」为由改钉 qwen（注册后零分母），本次按「异源只保留在
+      // 有交叉验证价值的岗位」收敛：编码/规划/检查/深度实现/审查面板已覆盖异源需求，只读粗扫
+      // 与压缩同属低风险轻档岗位，厂商切换不产生独立盲区收益，只多担一份零分母风险。
+      // 实证支撑：deepseek@low 已在 compaction 位以 400KB 负载稳定产出（11 跑 0 空响应、
+      // 压缩墙钟最快），大输入低档有地面真值；异常仍由全局 failover 链兜底。
+      "model": "openllamas/deepseek-v4.1-flash",
       "variant": "low",
     },
     "compaction": {
@@ -152,23 +164,27 @@
       "variant": "low",
     },
     "orchestrator": {
-      // 2026-10-16 用户点名启用 minimax-m3.1-flash-preview——flash 预览档配轻决策
-      // 岗位（拆解任务分派子代理）最合适，同时给零分母新模型一个真实路由位攒实证；
-      // kimi@max 7 条 length 失败实证确立本位不钉高档；实跑不稳单变量回退 glm-5.3@low
+      // 2026-10-17 用户定案：K3 只用于 plan（规划）位，编排位不占用 K3 —— 本行保持
+      // 2026-10-16 用户点名启用的 minimax-m3.1-flash-preview@low（当日一度改钉
+      // kimi-k3@low，当日按「K3 只留 plan」回退）。轻决策岗位（拆解任务+分派子代理）
+      // 的失败影响面小且有 INSTRUCTIONS 降级路径兜住，零分母可接受；沿用点名时的 low 档
+      // （此前「不钉高档」的 kimi@max 7 条 length 失败实证，对 minimax 只作同档位风险提示）。
       "model": "openllamas/minimax-m3.1-flash-preview",
       "variant": "low",
     },
     "verify": {
       "mode": "subagent",
-      // verify 必须与被审的 glm 族异源；2026-10-16 换新代：kimi-k3@high 替代
-      // kimi-k2.6@high（同厂新世代推理更强；异源硬约束不受影响）。分母口径：
-      // k2.6@high 的 95 条零失败地面真值对 K3 不直接适用，K3 分母由 plan@max 与
-      // 本位实跑积累，reasoningGate 扩预算 + 全局 failover 兜底；k2.6 退居链尾。
-      // 退化路径登记（2026-10-15 审查）：kimi-k3 失败时按全局 failover 链切换，
-      // 落点可能含 glm-5.3-flash（被审模型同款）→ 异源性静默丢失（仅流首 ⚠️ 提示）；
+      // verify 必须与被审的 glm 族异源；2026-10-17 用户定案：kimi-k3@high → deepseek-v4.1-flash@high
+      // （K3 只留 plan 位；复核改用 deepseek）。异源硬约束仍满足（被审=GLM，复核=DeepSeek）。
+      // 选 deepseek 的好处：general@max 与 verify@high 同厂同代，复核口径与实现档位可对照。
+      // 档位分母口径：deepseek max 档有 85k+ 大输入 length 猝死实证（0.48%/call），
+      // high 档只有 14 天补证 22 例 0 猝死（分母小，不等于零失败保证）；reasoningGate
+      // 扩预算重试 + 全局 failover 兜底在位。复核位输入天然偏大（大 diff + 会话上下文）。
+      // 退化路径登记（2026-10-15 审查，2026-10-17 复认）：本模型失败时按全局 failover 链切换，
+      // 首跳即 glm-5.3-flash（被审模型同款）→ 异源性静默丢失（仅流首 ⚠️ 提示）；
       // 配置层无 per-agent 链可钉，复核结论应声明实际执行模型。
-      "model": "openllamas/kimi-k3",
-      // 高风险复核保留思考深度 → high（K3 官方三档 low/high/max 中的中间档）。
+      "model": "openllamas/deepseek-v4.1-flash",
+      // 高风险复核保留思考深度 → high（不钉 max：max 档大输入 length 猝死实证在位）。
       "variant": "high",
       "description": "独立验证视角（异源模型复核高风险改动，只读不改动）。仅在认证/权限/支付/数据迁移/公共契约等高风险改动时按需调用。",
       "permission": {
@@ -547,56 +563,59 @@
         // failover.noticeCooldownMs 可单独调通知去重窗口（缺省 = cooldownMs）。
         // ※ 模型切换的唯一真源就是本配置文件——provider/moa/dual-review 代码均无内置默认链/兜底模型，
         //   换模型只改这里（agent 路由 / failover / moa / dual_review 都在本文件内）
-        // 链序（2026-10-16 更新，并入 minimax-m3.1-flash-preview）：现行实链 =
-        // glm-5.3-flash → deepseek-v4.1-flash → minimax-m3.1-flash-preview →
-        // glm-5.2 → kimi-k2.6。首个备位 deepseek-v4.1-flash 为异构厂商（速度优先，
-        // 实测次快档）；minimax-m3.1-flash-preview（用户点名新模型，零分母）落在
-        // 第 3 跳前哨位——刻意避开故障期被消费最多的第 1/2 备位，先在低压力跳次
-        // 攒分母，失败再由 glm-5.2 承接长任务质量，末跳 kimi-k2.6 异构兜底。
-        // 历史：2026-09-25 曾按「同族优先」排 glm-5.2 首跳，后链序调整时该注释未
-        // 同步（2026-10-15 审查 catch）。若 minimax 实跑不稳，单变量撤跳回四跳链。
+        // 链序口径 = 当前可用档在前（具体顺序见下方 models 数组）：首跳最稳、次跳主力、
+        // 三跳重活、末跳轻量，共 4 跳。旗舰大窗档因额度/渠道不可用未入链，注册保留，
+        // 恢复后可单变量加回末跳（长任务/超大上下文兜底）。
+        // 撤出路由的旧代（注册表保留、单变量可加回）：网关级过载时同网关多跳无意义——
+        // lib/hx-client 实证单网关 CPU 过载即全模型 503，多跳只是叠加退避与等待。
         "failover": {
           "chain": {
             "models": [
+              "deepseek-v4.1-flash-1017",
               "glm-5.3-flash",
               "deepseek-v4.1-flash",
-              "minimax-m3.1-flash-preview",
-              "glm-5.2",
-              "kimi-k2.6",
+              "minimax-m3.1-flash-preview"
             ],
           },
         },
-        // moa 工具配置（plugin/moa.ts 读这里）：高风险判断时
-        // 2 个参考模型独立分析 → kimi 聚合交叉结论
-        // 2026-10-16 最大化异源口径：参考席剔除 glm-5.2（与主执行模型同族，交叉
-        // 验证价值打折），换入 minimax-m3.1-flash-preview——面板变成
-        // 主模型(GLM) + 分析(DeepSeek/MiniMax) + 聚合(Kimi) 四厂商全覆盖；
-        // minimax 零分母风险由聚合位兜底（单路参考失真不会直传结论）
+        // moa 工具配置（plugin/moa.ts 读这里）：2 个参考席独立分析 → 聚合席出交叉结论
+        // 聚合席需要吃两份长报告并输出结构化结论，按可用的最大上下文/输出上限选型
+        // （当前首选档额度不足，1017 兜底；额度恢复后自动优先原首选）。
+        // 参考席维持「一强推理 + 一轻档快」的互补组合，与被审主体、聚合席尽量异族。
+        // 注：moa/dual_review 走 lib/hx-client 直连，不透传 reasoning_effort，聚合档位取网关默认。
+        // 2026-10-18：首选聚合档额度不足（HTTP 400 insufficient credits）——聚合席加 1017
+        // 兜底，首选成功时不额外调用；额度恢复后自动优先原首选。
         "moa": {
           "references": ["deepseek-v4.1-flash", "minimax-m3.1-flash-preview"],
-          "aggregator": "kimi-k2.6",
+          "aggregator": "glm-5.3-flash",
+          "aggregator_fallbacks": ["deepseek-v4.1-flash-1017"],
         },
         // dual_review 工具配置（plugin/dual-review.ts 读这里）：三层交付检查层 3，
-        // quality-gate 在交付节点由插件直调，单次审查共 3 次上游调用：
+        // quality-gate 在交付节点由插件直调，正常单次审查共 3 次上游调用：
         //   ① positive 与 negative 两路并行独立扇出（互不见对方报告）
         //   ② aggregator 读两份报告出终审结论（通过/不通过 + 必修项清单），
         //       裁决不通过则阻断交付 —— 正反找得到的、裁决必须闭环落地
         // positive   正向审查者：查遗漏（验收缺口 / 未覆盖场景 / 缺失的测试与边界）
         // negative   反向审查者（红队）：专找错（bug / 安全 / 回归 / 错误假设）
         // aggregator 裁决模型：第三方仲裁，避免正反任一侧既当运动员又当裁判
-        // 异源设计（2026-10-16 最大化异源口径）：单次审查 4 厂商全覆盖——
-        // 被审主体=glm-5.3-flash(GLM)、positive=deepseek-v4.1-flash(DeepSeek)、
-        // negative=minimax-m3.1-flash-preview(MiniMax)、aggregator=kimi-k2.6(Kimi)。
-        // glm-5.2 退出红队位（与主模型同族，家族级盲区会漏同样的错——2026-10-15
-        // 曾登记为刻意取舍，本次按用户定案改为异源优先）；minimax 红队位零分母的
-        // 风险由裁决闭环吸收（红队失真不会直传终审结论），实跑不稳单变量切回 glm-5.2。
-        // 若日后 aggregator 或 negative 换成与主执行模型同款，防自评偏置属性即丢失。
+        // 异源设计：正向/红队两席与被审主体异族；裁决席优先异族旗舰，但当前首选档
+        // 额度不足、与主执行同族（自评偏置取舍），fallback 1017 提供异族兜底；
+        // 若改回异族旗舰（gpt/kimi）则恢复四族，前提是额度/渠道可用。
+        // 裁决席选大窗而非纯性价比档的理由：终审要同时吃下两份长报告 + 全部 diff 上下文并
+        // 输出结构化清单，大窗 + 大输出上限是最优落点；若日后裁决席换成与主执行模型同款，
+        // 防自评偏置属性即丢失（当前即为该取舍的临时状态）。
+        // fallback 仅在首选失败（400/404/503/超时）时续试，首选成功不增加调用；
+        // 2026-10-18 因 glm-5.3-flash 额度不足与 minimax 503 实测导致一路阵亡/裁决缺失，
+        // 三个席位统一以 1017 兜底，先保证「审查必出结论」，额度/通道恢复后自动优先原席。
         // （三键均可被调用方 per-call 覆盖 positive_model/negative_model/aggregator；
-        //   提示词真源 = plugin/dual-review.ts 的 POSITIVE_PROMPT/NEGATIVE_PROMPT）
+        //   per-call 覆盖时不套配置 fallback；提示词真源 = plugin/dual-review.ts 的 POSITIVE_PROMPT/NEGATIVE_PROMPT）
         "dual_review": {
           "positive": "deepseek-v4.1-flash",
+          "positive_fallbacks": ["deepseek-v4.1-flash-1017"],
           "negative": "minimax-m3.1-flash-preview",
-          "aggregator": "kimi-k2.6",
+          "negative_fallbacks": ["deepseek-v4.1-flash-1017"],
+          "aggregator": "glm-5.3-flash",
+          "aggregator_fallbacks": ["deepseek-v4.1-flash-1017"],
         },
       },
       // 模型注册表（catalog：能力/上下文窗口/输出上限）
@@ -636,8 +655,27 @@
             "output": 32000,
           },
         },
+        "deepseek-v4.1-flash-1017": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" },
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"],
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32000,
+          },
+        },        
         "glm-5.2": {
           "reasoning": true,
+          // 无路由引用（选择器备用/回退口）：不在 agent 路由 / failover / 审查面板中，
+          // 注册保留供手动选用与单变量回退。模型换代后本行可直接删除。
           "variants": {
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
@@ -683,6 +721,8 @@
         },
         "kimi-k2.6": {
           "reasoning": true,
+          // 无路由引用（选择器备用/回退口）：不在 agent 路由 / failover / 审查面板中，
+          // 注册保留供手动选用与单变量回退。模型换代后本行可直接删除。
           "variants": {
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
@@ -700,7 +740,8 @@
         },
         "kimi-k3": {
           "reasoning": true,
-          // K3 官方仅支持 low/high/max 三档（默认 max），无 medium——多声明会产生
+          // 路由引用仅规划席一处（用户定案「K3 只用于规划」）。官方仅支持 low/high/max
+          // 三档（默认 max），无 medium——多声明会产生
           // 无效选择项，且 reasoningGate 死亡重试降档链（high→medium）会向 K3 发出
           // 非法 reasoning_effort → 重试 400，救活路径落空。故只声明三档，降档链
           // 对 K3 的落点为 high（合法值中比 max 低一档的最近值）。
@@ -742,6 +783,7 @@
         },
         "qwen3.8-flash": {
           "reasoning": true,
+          // 无路由引用（选择器备用）：注册保留供手动选用，模型换代后本行可直接删除。
           "variants": {
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
@@ -776,6 +818,10 @@
         },
         "gpt-6-luna": {
           "reasoning": true,
+          // 无路由引用（额度/渠道不可用：400 insufficient credits / 404 no active channel）：
+          // 注册保留供额度恢复后单变量加回（曾作聚合/审查席与 failover 末跳候选），
+          // 当前 moa/dual_review 聚合首选与 failover 链均不含本档。定位=旗舰档，
+          // 规格见下方 limit；无 max 档，最高档为 high。
           "variants": {
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },

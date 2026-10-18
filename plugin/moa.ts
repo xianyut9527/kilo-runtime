@@ -22,6 +22,15 @@ const MAX_TASK_CHARS = 50_000; // 任务输入上限：防无界文本多次灌�
 //（返回原始视角清单），扇出全灭走既有「所有参考模型失败」路径。行为不新增依赖。
 const AGG_MIN_BUDGET_MS = 90_000; // 聚合阶段保底：扇出烧完预算时聚合仍有机会出结论
 
+// 聚合模型路由：首选 + 配置 fallback（去重、去空）。首选失败（400/404/503/超时）时续试，
+// 首选成功不产生额外调用。参考席不做 fallback（多路允许部分失败，聚合仍需至少一路）。
+function modelRoutes(primary, fallbacks) {
+  const list = [primary, ...(Array.isArray(fallbacks) ? fallbacks : [])]
+    .filter((m) => typeof m === "string" && m.trim())
+    .map((m) => m.trim());
+  return [...new Set(list)];
+}
+
 const MoaImpl = async () => {
   return {
     tool: {
@@ -60,6 +69,11 @@ const MoaImpl = async () => {
           const aggregator = typeof args?.aggregator === "string" && args.aggregator
             ? args.aggregator
             : (typeof cfgMoa.aggregator === "string" ? cfgMoa.aggregator : "");
+          // per-call 覆盖视为精确指定，不再套配置 fallback。
+          const aggModels = modelRoutes(
+            aggregator,
+            typeof args?.aggregator === "string" && args.aggregator ? [] : cfgMoa.aggregator_fallbacks,
+          );
 
           if (refs.length === 0 || !aggregator) {
             return "moa: 参考模型/聚合模型未配置——请在 kilo.json 的 provider.hx.options.moa 配置 references 与 aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
@@ -94,6 +108,26 @@ const MoaImpl = async () => {
                 timer.unref?.(); // 不阻进程退出
               }),
             ]).finally(() => clearTimeout(timer));
+          };
+
+          // 聚合路由兜底：按 aggModels 顺序尝试，共享聚合墙钟；快速失败立即续试。
+          const askAggregator = async (prompt, deadlineMs) => {
+            const failed = [];
+            for (const model of aggModels) {
+              const remaining = deadlineMs - Date.now();
+              if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
+              try {
+                const text = await withDeadline(
+                  ask({ baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs: totalMs, idleMs }),
+                  Math.max(1, remaining),
+                  `moa 聚合(${model})`,
+                );
+                return { model, text, failed };
+              } catch (e) {
+                failed.push(`${model}: ${e?.message ?? e}`);
+              }
+            }
+            throw new Error(failed.join("; "));
           };
 
           // 分路计时账本：结果报告的「产出规模」行用（每路在各自 promise 落定时记时，
@@ -144,22 +178,15 @@ const MoaImpl = async () => {
               ...clipped.map((v) => `## 参考模型 ${v.model}\n${v.text}`),
             ].join("\n");
 
-            let conclusion;
+            let agg;
             try {
-              // 聚合阶段拿剩余墙钟（保底 AGG_MIN_BUDGET_MS，封顶 timeoutMs）
-              const aggBudget = Math.max(AGG_MIN_BUDGET_MS, Math.min(totalMs, wallDeadline - Date.now()));
-              conclusion = await withDeadline(ask({
-                baseURL: cfg.baseURL,
-                key: cfg.key,
-                model: aggregator,
-                prompt: aggregatePrompt,
-                timeoutMs: totalMs,
-                idleMs,
-              }), aggBudget, "moa 聚合");
+              // 聚合阶段拿剩余墙钟（保底 AGG_MIN_BUDGET_MS，封顶 timeoutMs）；fallback 共享该预算
+              const aggDeadline = Math.max(wallDeadline, Date.now() + AGG_MIN_BUDGET_MS);
+              agg = await askAggregator(aggregatePrompt, aggDeadline);
             } catch (e) {
               // 聚合失败也要返回可用结果（不丢参考视角）
               return [
-                `moa: 聚合模型（${aggregator}）失败：${e.message}`,
+                `moa: 聚合模型（${aggModels.join(" → ")}）失败：${e.message}`,
                 "",
                 "以下为各参考模型原始结论：",
                 ...views.map((v) => `### ${v.model}\n${v.text}`),
@@ -169,8 +196,9 @@ const MoaImpl = async () => {
 
             const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
             return [
-              `## MoA 结论（聚合模型：${aggregator}，总耗时 ${elapsed}s）`,
-              conclusion,
+              `## MoA 结论（聚合模型：${agg.model}，总耗时 ${elapsed}s）`,
+              agg.failed.length ? `> 路由兜底：${agg.failed.join("；")}` : "",
+              agg.text,
               "",
               `## 参与参考模型（${views.map((v) => v.model).join(", ")}）`,
               perf.length ? `产出规模：${perf.join("，")}` : "",

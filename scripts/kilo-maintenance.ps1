@@ -16,7 +16,7 @@
     .\kilo-maintenance.ps1 -RunOnce       立即执行一次（清理 + 数据目录回收 + DB 瘦身）
     .\kilo-maintenance.ps1 -CleanupOnly   只清理，不碰 DB
     .\kilo-maintenance.ps1 -DbStatus      只打印 kilo.db 体检（只读）
-    .\kilo-maintenance.ps1 -AutoIfDue     按到期规则执行（登录自启用；清理 >1 天、DB >7 天）
+    .\kilo-maintenance.ps1 -AutoIfDue     按到期规则执行（登录自启用；清理 >1 天、DB >1 天）
     .\kilo-maintenance.ps1 -InstallStartup    安装登录自启（免管理员）
     .\kilo-maintenance.ps1 -UninstallStartup  移除登录自启
     .\kilo-maintenance.ps1 -Register      注册系统计划任务（登录时清理 / 登录时清理+DB，需管理员）
@@ -62,7 +62,9 @@ $TaskDaily   = 'kilo-maintenance-daily'
 $TaskWeekly  = 'kilo-maintenance-weekly'
 $TaskDesc    = 'Kilo 维护：临时文件/配置备份/数据目录(session_diff/log/snapshot)清理 + kilo.db 瘦身（VACUUM 按阈值自动）'
 $CleanupEveryDays = 1
-$DbEveryDays      = 7
+# 2026-10-18：event 表约 1.3GB/天（message.updated 单类 3.35GB/3 天），7 天间隔会让事件表
+# 涨到 ~9GB。改为每日清事件（DELETE 分批短锁，Kilo 运行中也安全；VACUUM 仍按阈值+无写者门槛）。
+$DbEveryDays      = 1
 
 # 全局兜底：登录自启是 -WindowStyle Hidden 的隐藏进程，任何未捕获异常都会**静默消失**。
 # trap 把错误落盘到 error.log，保证自动化可观测（下次 -Status / 人工都能看到失败原因）。
@@ -301,13 +303,12 @@ if ($Register) {
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew
 
-    # 触发器（2026-10-07 修正）：原用「每日 04:00 / 周日 04:30」。实测本机并非常开——
-    # 开机 10-07 01:14、连续运行最久 23h，04:00 常落在关机时段：日志只有 09-27/10-01/10-07
-    # 三天有记录，而 kilo 会话每天都有，说明计划任务基本没跑过。改为与自启同语义的
-    # 「登录时触发」，并开启 StartWhenAvailable（错过则在下次可用时补跑）。
-    # 注意：任务与自启会各跑一次，靠 state.json 的到期判断（清理>1天/DB>7天）天然幂等。
-    $tDaily  = New-ScheduledTaskTrigger -AtLogOn
-    $tWeekly = New-ScheduledTaskTrigger -AtLogOn
+    # 触发器（2026-10-18 修正）：仅 AtLogOn 在常开机上会漏跑——10-15 05:04 开机后连续运行
+    # 3 天未登录，DB 从 4.46GB 涨到 7.29GB。改为 AtLogOn + 每日 12:30/12:45 双触发：
+    # 12:30 清理文件、12:45 清理 + DB 瘦身；StartWhenAvailable 负责关机/休眠错过补跑，
+    # 两者靠 state.json 的到期判断保持幂等。12:30 选在常用工作时段，避开 04:00 关机窗口。
+    $tDaily  = @((New-ScheduledTaskTrigger -AtLogOn), (New-ScheduledTaskTrigger -Daily -At '12:30'))
+    $tWeekly = @((New-ScheduledTaskTrigger -AtLogOn), (New-ScheduledTaskTrigger -Daily -At '12:45'))
 
     try {
         Register-ScheduledTask -TaskName $TaskDaily -Action $actionClean -Trigger $tDaily -Principal $principal -Settings $settings -Description $TaskDesc -Force | Out-Null
@@ -320,8 +321,8 @@ if ($Register) {
         Write-Warning "[TASK] 免管理员替代方案：以管理员身份重开 PowerShell 后重跑本命令，或改用 -InstallStartup（登录自启 + 到期判断）。"
         exit 2
     }
-    Write-Host "[TASK] 已注册：$TaskDaily（登录时清理）、$TaskWeekly（登录时清理 + DB 瘦身）"
-    Write-Host "[TASK] 触发器=登录时 + StartWhenAvailable（错过补跑）；两者靠 state.json 到期判断保持幂等"
+    Write-Host "[TASK] 已注册：$TaskDaily（登录时 + 每日 12:30 清理）、$TaskWeekly（登录时 + 每日 12:45 清理 + DB 瘦身）"
+    Write-Host "[TASK] 触发器=登录时 + 每日 12:30/12:45；StartWhenAvailable 补跑；state.json 到期判断保持幂等"
     Write-Host "[TASK] bash: $bash  node: $node"
     Write-Host "[TASK] VACUUM 已按阈值自动化（空闲页 ≥25% 且无 kilo 写者才跑；否则跳过）"
     exit 0

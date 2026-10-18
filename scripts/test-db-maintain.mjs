@@ -13,6 +13,22 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DBMT = path.join(here, "..", "db-maintain.sh");
 
+// Windows PATH 的 bash 常指向 WSL（未装发行版时只会打印乱码），优先解析 Git Bash；
+// 与 scripts/kilo-maintenance.ps1 的 Resolve-Bash 同口径，KILO_BASH 可显式覆盖。
+function resolveBash() {
+  if (process.env.KILO_BASH) return process.env.KILO_BASH;
+  if (process.platform === "win32") {
+    const candidates = [
+      path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "bin", "bash.exe"),
+      path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Git", "bin", "bash.exe"),
+      path.join(process.env.LOCALAPPDATA || "", "Programs", "Git", "bin", "bash.exe"),
+    ];
+    for (const c of candidates) if (c && fs.existsSync(c)) return c;
+  }
+  return "bash";
+}
+const BASH = resolveBash();
+
 let pass = 0, fail = 0;
 const failed = [];
 const t = (name, cond, extra = "") => {
@@ -73,7 +89,7 @@ const s3log = () => (fs.existsSync(S3LOG) ? fs.readFileSync(S3LOG, "utf8").trim(
 function run(args, env = {}) {
   fs.rmSync(LOG, { force: true });
   fs.rmSync(S3LOG, { force: true });
-  const r = spawnSync("bash", [DBMT, ...args], {
+  const r = spawnSync(BASH, [DBMT, ...args], {
     encoding: "utf8",
     cwd: sand,
     // KSQLITE3 缺省指向 sqlite3 桩（覆盖 command -v sqlite3 探测）；要模拟「sqlite3
@@ -173,7 +189,7 @@ function run(args, env = {}) {
   t("死锁态(auto_vacuum=0 + 空闲 50%)报「引导死锁」", /引导死锁/.test(r.out), firstLine(/引导死锁[^\n]*/, r.out));
   const healthy = run(["--status"], { STUB_PC: "2000", STUB_FC: "1000", STUB_AV: "2" });
   t("健康态(auto_vacuum=2)不误报死锁", !/引导死锁/.test(healthy.out) && /auto_vacuum: 2/.test(healthy.out), firstLine(/auto_vacuum[^\n]*/, healthy.out));
-  const live = spawnSync("bash", [DBMT, "--status"], { encoding: "utf8", cwd: sand });
+  const live = spawnSync(BASH, [DBMT, "--status"], { encoding: "utf8", cwd: sand });
   t("真实库路径打印维护建议行（--status 只读，安全）",
     /维护建议:/.test((live.stdout || "") + (live.stderr || "")), firstLine(/维护建议[^\n]*/, live.stdout || ""));
 }

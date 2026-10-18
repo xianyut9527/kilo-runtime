@@ -450,15 +450,19 @@ t("diagCovers：文档编辑不数（editVersion 变但 codeEditV 不变）→ �
   fs.rmSync(drBundle, { force: true });
   const drT = dr._export ?? dr;
 
-  // 缓存键 = 指纹 + 素材 sha1：改 prompt（版本变）或换模型（三元组变）→ 指纹变 →
+  // 缓存键 = 指纹 + 素材 sha1：改 prompt（版本变）或换模型/兜底路由 → 指纹变 →
   // 缓存失效，绝不复用异构模型旧裁决。cfg 注入，不依赖真实配置。
   const fpCfg = (dual_review) => ({ options: { dual_review } });
   const fpA = await drT.reviewerFingerprint(fpCfg({ positive: "m-a", negative: "m-b", aggregator: "m-c" }));
-  t("指纹含版本与模型三元组", /^v=\S+\|p=m-a\|n=m-b\|a=m-c$/.test(fpA));
+  t("指纹含版本与模型路由（含 fallback 空位）", /^v=\S+\|p=m-a\|pf=\|n=m-b\|nf=\|a=m-c\|af=$/.test(fpA));
   t("换任一模型 → 指纹变（缓存即失效）",
     fpA !== (await drT.reviewerFingerprint(fpCfg({ positive: "m-x", negative: "m-b", aggregator: "m-c" }))));
-  t("配置缺 dual_review → 指纹稳定（空三元组，不抛错）",
-    /^v=\S+\|p=\|n=\|a=$/.test(await drT.reviewerFingerprint(fpCfg(undefined))));
+  t("换 fallback → 指纹变（兜底路由同样参与缓存键）",
+    fpA !== (await drT.reviewerFingerprint(fpCfg({ positive: "m-a", positive_fallbacks: ["m-f"], negative: "m-b", aggregator: "m-c" }))));
+  t("配置缺 dual_review → 指纹稳定（空路由，不抛错）",
+    /^v=\S+\|p=\|pf=\|n=\|nf=\|a=\|af=$/.test(await drT.reviewerFingerprint(fpCfg(undefined))));
+  t("modelRoutes：去空/trim/去重/保留顺序",
+    JSON.stringify(drT.modelRoutes(" m-a ", ["m-b", "m-a", "", null, " m-c "])) === JSON.stringify(["m-a", "m-b", "m-c"]));
 }
 
 // ── providerEditsOf / distStaleOf（层 2 dist 新鲜度）──

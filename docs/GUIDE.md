@@ -78,34 +78,44 @@ moa/dual-review 的分析
 ```
 
 你全程只需要做两件事：**描述任务**、**确认权限询问**。质量把关由插件自动执行。
-## 改模型（都在 kilo.json.tmpl）
+
+## 改模型（都在 kilo.json.tmpl）
 
 | 要改什么 | 位置 |
 |---------|------|
-| 主模型 | 顶部 `"model": "openllamas/glm-5.3-flash"` |
+| 主模型 | 顶部 `"model"` |
 | 角色模型 | `agent.code / agent.plan / ...` 的 `model` |
 | 网关地址 | `provider.openllamas.options.baseURL` |
 | 降级链 / 审查模型 | `provider.openllamas.options.failover / moa / dual_review` |
 
-新模型需在 `provider.openllamas.models` 登记后才能被引用。
+新模型需在 `provider.openllamas.models` 登记后才能被引用。换模型只改这些字段——文档
+不复制模型名；配置注释只解释当前取舍，模型绑定仍以字段为准，不存在第二处副本。
 
 ## 模型与分工
 
-上游：OpenLlamas（OpenAI 兼容 API，官网 <https://openllamas.com>，模型列表 <https://openllamas.com/v1/models>）
+上游：OpenLlamas（<https://openllamas.com>）
 
-| 岗位 | 模型 | 职责 |
+模型随上游持续迭代，所以**文档不复制模型名**：岗位绑定、兜底链、审查三席全部只写在
+`kilo.json`（唯一真源），换模型只改那一个文件，下面的分工口径不会随之过期。
+
+| 岗位 | 档位 | 职责 |
 |------|------|------|
-| 主力执行 | glm-5.3-flash@high | 日常写码/跑命令 |
-| 规划 | kimi-k3@max | 方案设计 |
-| 深实现 | deepseek-v4.1-flash@max | 高风险/跨文件改动 |
-| 侦察 | qwen3.8-flash@low | 只读粗扫 |
-| 编排 | minimax-m3.1-flash-preview@low | 拆解任务、分派子代理 |
-| 压缩 | deepseek-v4.1-flash@low | 会话摘要 |
-| 轻任务 | deepseek-v4.1-flash | 标题/摘要 |
-| 复核 | kimi-k3@high | 异源只读复核 |
+| 主力执行 | 性价比·主力 | 日常写码/跑命令 |
+| 规划 | 旗舰·规划 | 方案设计（与主力执行异族） |
+| 深实现 | 性价比·重活 | 高风险/跨文件改动 |
+| 侦察 | 性价比·轻档 | 只读粗扫 |
+| 编排 | 性价比·轻档 | 拆解任务、分派子代理 |
+| 压缩 | 性价比·轻档 | 会话摘要 |
+| 轻任务 | 性价比·轻档 | 标题/摘要 |
+| 子代理缺省 | 同主力执行 | task 子代理默认模型 |
+| 复核 | 性价比·重活（异族） | 异源只读复核 |
 
-审查：dual_review = deepseek-v4.1-flash（正向）+ minimax-m3.1-flash-preview（红队）+ kimi-k2.6（裁决）；moa = deepseek-v4.1-flash + minimax-m3.1-flash-preview 参考，kimi-k2.6 聚合
-兜底链：`glm-5.3-flash → deepseek-v4.1-flash → minimax-m3.1-flash-preview → glm-5.2 → kimi-k2.6`
+口径：路由模型 ≤5（当前 4 性价比档 + 1 旗舰规划档；gpt 旗舰仅注册未路由）；按模型最强项定岗位，
+异源只用在有交叉验证价值的岗位（编码/规划/复核/深实现/审查面板），跑腿型轻岗不为了族别多样换模型。
+审查面板：正向（查遗漏）+ 红队（找错）+ 第三方裁决；正向/红队与被审主体异族，裁决席优先
+异族旗舰，首选不可用时由配置的兜底路由承接（见配置注释）。
+兜底链 4 跳，当前均为可用档；旗舰档注册保留、未入链（额度/渠道恢复后可单变量加回）。
+具体顺序见配置 `failover.chain.models`。
 
 ## 常用命令
 

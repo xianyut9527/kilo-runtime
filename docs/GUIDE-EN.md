@@ -88,30 +88,44 @@ Quality control is fully automated by the plugins.
 
 | What to change | Where |
 |---------------|-------|
-| Main model | Top: `"model": "openllamas/glm-5.3-flash"` |
+| Main model | Top-level `"model"` |
 | Per-role models | `agent.code / agent.plan / ...` → `model` |
 | Gateway URL | `provider.openllamas.options.baseURL` |
 | Failover chain / review models | `provider.openllamas.options.failover / moa / dual_review` |
 
 New models must be registered in `provider.openllamas.models` before they can be referenced.
+Swapping a model touches only those fields — the docs never copy model names; config
+comments only explain current tradeoffs, and the routing fields stay authoritative.
 
 ## Models & division of labor
 
-Upstream: OpenLlamas (OpenAI-compatible API, website <https://openllamas.com>, model list <https://openllamas.com/v1/models>)
+Upstream: OpenLlamas (<https://openllamas.com>)
 
-| Role | Model | Duty |
+Models iterate upstream continuously, so **the docs never copy model names**: role
+bindings, the failover chain and the review seats live only in `kilo.json` (single
+source of truth) — swapping a model touches that one file and nothing below goes stale.
+
+| Role | Tier | Duty |
 |------|-------|------|
-| Main executor | glm-5.3-flash@high | everyday coding / commands |
-| Planning | kimi-k3@max | solution design |
-| Heavy implementation | deepseek-v4.1-flash@max | high-risk / cross-file changes |
-| Recon | qwen3.8-flash@low | read-only coarse scanning |
-| Dispatch | minimax-m3.1-flash-preview@low | task breakdown, subagent dispatch |
-| Compaction | deepseek-v4.1-flash@low | session summaries |
-| Light tasks | deepseek-v4.1-flash | titles / summaries |
-| Review | kimi-k3@high | hetero read-only review |
+| Main executor | value·primary | everyday coding / commands |
+| Planning | flagship·planning | solution design (other family than the executor) |
+| Heavy implementation | value·heavy | high-risk / cross-file changes |
+| Recon | value·light | read-only coarse scanning |
+| Dispatch | value·light | task breakdown, subagent dispatch |
+| Compaction | value·light | session summaries |
+| Light tasks | value·light | titles / summaries |
+| Subagent default | same as executor | default model for task subagents |
+| Review | value·heavy (other family) | hetero read-only review |
 
-Review: dual_review = deepseek-v4.1-flash (positive) + minimax-m3.1-flash-preview (red team) + kimi-k2.6 (verdict); moa = deepseek-v4.1-flash + minimax-m3.1-flash-preview references, kimi-k2.6 aggregator
-Failover: `glm-5.3-flash → deepseek-v4.1-flash → minimax-m3.1-flash-preview → glm-5.2 → kimi-k2.6`
+Rule: at most 5 routed models (currently 4 value + 1 flagship planner; the flagship gpt is
+registered but unrouted). Each role gets the model it is strongest at, and family diversity
+is spent only where cross-validation actually pays (coding / planning / review / heavy
+implementation / review panel).
+Review panel: positive (gaps) + red team (bugs) + third-party verdict; positive/red team are
+cross-family from the audited subject, and the verdict seat prefers a cross-family flagship,
+falling back to the configured fallback route when unavailable (see config comments).
+Failover chain has 4 hops, all currently serviceable; the flagship stays registered and can
+be re-added after credits/channel recover (order in `failover.chain.models`).
 
 ## Common commands
 
