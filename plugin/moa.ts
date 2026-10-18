@@ -1,7 +1,7 @@
 // W3.5 MoA（Mixture-of-Agents）按需工具
 // 定位：主 agent 仅在需要多视角/高风险判断时调用；绝不每轮自动 fanout（红线 R4/R9）。
 // 依赖：lib/hx-client.ts（与 dual-review.ts 共享的配置读取与请求层，改凭证/baseURL 规则只改那边）。
-// 配置：kilo.json -> provider.hx.options.moa.{references,aggregator}；凭证：auth.json 的 hx.key。
+// 配置：kilo.json -> provider.openllamas.options.moa.{references,aggregator}；凭证：auth.json 的 openllamas.key。
 //
 // 2026-09-22 终裁：插件工具无 UI 进度通道——ctx.metadata（server 7.7.6 不存在）、
 // preliminary/asyncIterator 流式卡、stderr（落 server 进程调试日志，视图不可见）
@@ -56,7 +56,7 @@ const MoaImpl = async () => {
           // 输入上限：超长任务截断并内联标注（截断事实随 prompt 可见，聚合模型知道输入是残件）
           task = clipText(task, MAX_TASK_CHARS);
 
-          // 模型唯一真源 = kilo.json provider.hx.options.moa（改模型只改配置文件，代码不留兜底默认值）
+          // 模型唯一真源 = kilo.json provider.openllamas.options.moa（改模型只改配置文件，代码不留兜底默认值）
           const cfgMoa = cfg.options?.moa ?? {};
           // 去重后再截断：["m","m","m"] 这类重复配置/参数不得绕过 MAX_REFS 成本红线（审查必须项）
           const refs = [...new Set(
@@ -76,10 +76,10 @@ const MoaImpl = async () => {
           );
 
           if (refs.length === 0 || !aggregator) {
-            return "moa: 参考模型/聚合模型未配置——请在 kilo.json 的 provider.hx.options.moa 配置 references 与 aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
+            return "moa: 参考模型/聚合模型未配置——请在 kilo.json 的 provider.openllamas.options.moa 配置 references 与 aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
           }
 
-          // 超时/空闲看门狗：timeoutsOf 单点解析（kilo.json provider.hx.options，缺省回退共享兜底）
+          // 超时/空闲看门狗：timeoutsOf 单点解析（kilo.json provider.openllamas.options，缺省回退共享兜底）
           const { timeoutMs: totalMs, idleMs } = timeoutsOf(cfg.options);
 
           // 断路器预检（2026-09-22 网关过载专项）：网关 open 态时 2-3 路并行 = 对过载网关的
@@ -113,6 +113,7 @@ const MoaImpl = async () => {
           // 聚合路由兜底：按 aggModels 顺序尝试，共享聚合墙钟；快速失败立即续试。
           const askAggregator = async (prompt, deadlineMs) => {
             const failed = [];
+            let lastErr = null;
             for (const model of aggModels) {
               const remaining = deadlineMs - Date.now();
               if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
@@ -124,10 +125,15 @@ const MoaImpl = async () => {
                 );
                 return { model, text, failed };
               } catch (e) {
+                lastErr = e;
                 failed.push(`${model}: ${e?.message ?? e}`);
               }
             }
-            throw new Error(failed.join("; "));
+            // 全部候选失败：只报最后一条网关错误为主体（同 dual-review 口径：
+            // 模型可省略只报计数，错误必须醒目）
+            throw new Error(lastErr
+              ? `聚合失败（已试 ${aggModels.length} 个模型）：${String(lastErr?.message ?? lastErr)}`
+              : (failed[failed.length - 1] ?? "无可用候选模型"));
           };
 
           // 分路计时账本：结果报告的「产出规模」行用（每路在各自 promise 落定时记时，
@@ -150,62 +156,64 @@ const MoaImpl = async () => {
             promises.map((p) => withDeadline(p, Math.max(1, wallDeadline - Date.now()), "moa 扇出"))
           );
 
-            const views = [];
-            const failures = [];
-            const perf = [];
-            settled.forEach((r, i) => {
-              if (r.status === "fulfilled") {
-                views.push({ model: refs[i], text: r.value });
-                perf.push(`${refs[i]}：${r.value.length} 字 / ${(durations[i] / 1000).toFixed(1)}s`);
-              } else {
-                failures.push(`${refs[i]}: ${r.reason?.message ?? r.reason}（${(durations[i] / 1000).toFixed(1)}s）`);
-              }
-            });
-
-            if (views.length === 0) {
-              return `moa: 所有参考模型失败\n${failures.join("\n")}`;
+          const views = [];
+          const failures = [];
+          const perf = [];
+          settled.forEach((r, i) => {
+            if (r.status === "fulfilled") {
+              views.push({ model: refs[i], text: r.value });
+              perf.push(`${refs[i]}：${r.value.length} 字 / ${(durations[i] / 1000).toFixed(1)}s`);
+            } else {
+              failures.push({ model: refs[i], reason: r.reason, durS: (durations[i] / 1000).toFixed(1) });
             }
+          });
 
-            // 聚合阶段：截断超长参考（clipText 内联标注残件事实），防聚合 prompt 爆上下文
-            const clipped = views.map((v) => ({ ...v, text: clipText(v.text, AGG_VIEW_LIMIT) }));
+          if (views.length === 0) {
+            // 全部参考失败：只报最后一条网关错误为主体（模型可省略只报计数，2026-10-18 用户二次裁定）
+            const lastReason = failures.length ? failures[failures.length - 1].reason : null;
+            return `moa: ${refs.length} 个参考模型重试均失败——${lastReason?.message ?? lastReason ?? "无上游错误"}`;
+          }
 
-            const aggregatePrompt = [
-              "你是聚合器。下面是同一任务由多个模型给出的独立分析。",
-              "综合它们，输出一份更可靠的结论：保留有共识的部分，指出分歧并给出你的取舍与理由；不要简单罗列各家观点。",
-              "",
-              `## 任务\n${task}`,
-              "",
-              ...clipped.map((v) => `## 参考模型 ${v.model}\n${v.text}`),
-            ].join("\n");
+          // 聚合阶段：截断超长参考（clipText 内联标注残件事实），防聚合 prompt 爆上下文
+          const clipped = views.map((v) => ({ ...v, text: clipText(v.text, AGG_VIEW_LIMIT) }));
 
-            let agg;
-            try {
-              // 聚合阶段拿剩余墙钟（保底 AGG_MIN_BUDGET_MS，封顶 timeoutMs）；fallback 共享该预算
-              const aggDeadline = Math.max(wallDeadline, Date.now() + AGG_MIN_BUDGET_MS);
-              agg = await askAggregator(aggregatePrompt, aggDeadline);
-            } catch (e) {
-              // 聚合失败也要返回可用结果（不丢参考视角）
-              return [
-                `moa: 聚合模型（${aggModels.join(" → ")}）失败：${e.message}`,
-                "",
-                "以下为各参考模型原始结论：",
-                ...views.map((v) => `### ${v.model}\n${v.text}`),
-                failures.length ? `\n（未参与模型）${failures.join("; ")}` : "",
-              ].join("\n");
-            }
+          const aggregatePrompt = [
+            "你是聚合器。下面是同一任务由多个模型给出的独立分析。",
+            "综合它们，输出一份更可靠的结论：保留有共识的部分，指出分歧并给出你的取舍与理由；不要简单罗列各家观点。",
+            "",
+            `## 任务\n${task}`,
+            "",
+            ...clipped.map((v) => `## 参考模型 ${v.model}\n${v.text}`),
+          ].join("\n");
 
-            const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+          let agg;
+          try {
+            // 聚合阶段拿剩余墙钟（保底 AGG_MIN_BUDGET_MS，封顶 timeoutMs）；fallback 共享该预算
+            const aggDeadline = Math.max(wallDeadline, Date.now() + AGG_MIN_BUDGET_MS);
+            agg = await askAggregator(aggregatePrompt, aggDeadline);
+          } catch (e) {
+            // 聚合失败也要返回可用结果（不丢参考视角）
             return [
-              `## MoA 结论（聚合模型：${agg.model}，总耗时 ${elapsed}s）`,
-              agg.failed.length ? `> 路由兜底：${agg.failed.join("；")}` : "",
-              agg.text,
+              `moa: ${e.message}`,
               "",
-              `## 参与参考模型（${views.map((v) => v.model).join(", ")}）`,
-              perf.length ? `产出规模：${perf.join("，")}` : "",
-              failures.length ? `## 失败/未参与：${failures.join("; ")}` : "",
-            ]
-              .filter(Boolean)
-              .join("\n");
+              "以下为各参考模型原始结论：",
+              ...views.map((v) => `### ${v.model}\n${v.text}`),
+              failures.length ? `\n（未参与模型）${failures.map((f) => `${f.model}: ${f.reason?.message ?? f.reason}`).join("; ")}` : "",
+            ].join("\n");
+          }
+
+          const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+          return [
+            `## MoA 结论（聚合模型：${agg.model}，总耗时 ${elapsed}s）`,
+            agg.failed.length ? `> 路由兜底：${agg.failed.join("；")}` : "",
+            agg.text,
+            "",
+            `## 参与参考模型（${views.map((v) => v.model).join(", ")}）`,
+            perf.length ? `产出规模：${perf.join("，")}` : "",
+            failures.length ? `## 失败/未参与：${failures.map((f) => `${f.model}: ${f.reason?.message ?? f.reason}（${f.durS}s）`).join("; ")}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n");
         },
       },
     },

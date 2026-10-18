@@ -1,4 +1,4 @@
-// kilo-build: src-sha256=8a6f96f735f6e904f2be7e5ac5424c406f452f866e157a548f3b6feb0242c111
+// kilo-build: src-sha256=0a7634e165907b4e936f4a2941fd54c9cabc834393804759e3f4d3288c94df90
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)
@@ -29191,7 +29191,7 @@ function createHxFailover(options) {
   const rawF = options?.failover;
   const explicitF = rawF !== void 0 && rawF !== null && !(typeof rawF === "object" && Object.keys(rawF).length === 0);
   if (!explicitF) {
-    console.error("hx-failover: \u672A\u914D\u7F6E\u964D\u7EA7\u94FE\uFF08kilo.json provider.hx.options.failover.chain.models\uFF09\u2014\u2014\u4EC5\u7528\u5F53\u524D\u6A21\u578B\uFF0C\u65E0\u81EA\u52A8\u964D\u7EA7");
+    console.error("hx-failover: \u672A\u914D\u7F6E\u964D\u7EA7\u94FE\uFF08kilo.json provider.openllamas.options.failover.chain.models\uFF09\u2014\u2014\u4EC5\u7528\u5F53\u524D\u6A21\u578B\uFF0C\u65E0\u81EA\u52A8\u964D\u7EA7");
   }
   if (failoverOpts?.nested === true || Array.isArray(failoverOpts?.nested)) {
     throw new Error("hx-failover: \u7981\u6B62\u5D4C\u5957 failover \u914D\u7F6E\uFF08legacy \u8BED\u4E49\uFF0C\u9632\u5FAA\u73AF\u4F9D\u8D56\uFF09");
@@ -29299,10 +29299,14 @@ function createHxFailover(options) {
       for (const m of chain.slice(1)) maxUntil = Math.max(maxUntil, cooldown.get(m) ?? 0);
       const remainS = Math.max(1, Math.ceil((maxUntil - Date.now()) / 1e3));
       const lastFails = [];
+      let recentFail = null;
       for (const m of chain) {
         if ((cooldown.get(m) ?? 0) <= Date.now()) continue;
         const f = lastFailure.get(m);
-        if (f) lastFails.push({ model: m, status: f.status, message: f.message });
+        if (f) {
+          lastFails.push({ model: m, status: f.status, message: f.message });
+          if (!recentFail || f.at > recentFail.at) recentFail = f;
+        }
       }
       await logFailover({
         from: modelId,
@@ -29312,7 +29316,7 @@ function createHxFailover(options) {
       });
       const retryHeaders = { "retry-after": String(remainS) };
       throw new APICallError({
-        message: lastFails.length ? lastFails.map((f) => `[${f.model}${f.status === void 0 || f.status === null ? "" : ` HTTP ${f.status}`}] ${f.message}`).join("\n") : `hx-failover: \u4E3B\u6A21\u578B\u4E0E\u5168\u90E8\u5907\u7528\u5747\u5728\u51B7\u5374\u4E2D\uFF08\u4E0A\u4E00\u8F6E\u5DF2\u5B9E\u6D4B\u5931\u8D25\uFF09\uFF0C\u7EA6 ${remainS}s \u540E\u81EA\u52A8\u6062\u590D \u2014\u2014 \u8DF3\u8FC7\u91CD\u8BD5\u907F\u514D\u7A7A\u8F6C`,
+        message: recentFail ? `hx-failover: \u5168\u94FE ${chain.length} \u4E2A\u6A21\u578B\u91CD\u8BD5\u5747\u5931\u8D25 \u2014\u2014 ${String(recentFail.message ?? "")}` : `hx-failover: \u4E3B\u6A21\u578B\u4E0E\u5168\u90E8\u5907\u7528\u5747\u5728\u51B7\u5374\u4E2D\uFF08\u4E0A\u4E00\u8F6E\u5DF2\u5B9E\u6D4B\u5931\u8D25\uFF09\uFF0C\u7EA6 ${remainS}s \u540E\u81EA\u52A8\u6062\u590D \u2014\u2014 \u8DF3\u8FC7\u91CD\u8BD5\u907F\u514D\u7A7A\u8F6C`,
         url: void 0,
         statusCode: 503,
         responseHeaders: retryHeaders,

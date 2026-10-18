@@ -1,6 +1,6 @@
 // 全局记忆 store 插件壳：把 lib/memory-store.ts 的纯逻辑装配成 Kilo 插件——
 // maintain 自动维护（legacy 一次性导入 → inbox 摄入 → usage 回流 → 评分编译 → 原子替换
-// GLOBAL-NOTES.md）+ 三个 agent 工具（mem_add / mem_search / mem_get）。
+// GLOBAL-NOTES.md）+ 五个 agent 工具（mem_add / mem_search / mem_get / mem_cite / mem_flag）。
 // 分层理由：lib 层无宿主依赖可离线全测；本壳只做路径解析/锁/报告/工具返回串，绝不实现算法。
 // 全局层由本插件编译管理后，memory-bootstrap 的 4KB 封顶/模板自愈已移除（双写会打架）。
 //
@@ -137,25 +137,56 @@ function acquireLock(lockFile, now, waits = 3) {
 // 收敛为临界区单写者：取锁（复用 maintain 陈尸接管+3×400ms 退避）→ 临界区内从盘重读 notes.jsonl
 // 合并（不信任内存快照）→ 中性编译 → 落库+产物+injection-log，全程同一临界区。
 // 返回 false = 取不到锁（调用方不落盘、转 pending 队列——旧快照落盘正是要防的覆盖）。
-function writeThroughCompile(storePath, memEntries, now) {
+
+// 同 id 合并（2026-10-18 查漏）：旧快照不得抹掉盘上并发写入的 flag/hits/pinned。
+// 合并策略：hits/lastUsed 取 max（reinforce 竞争防双计）；flags 取并集（历史不丢）；
+// status 只要任一侧为 flagged 就保持 flagged——若盘上已被人工复位（status 非 flagged，
+// 仅保留 flags 历史），两侧均非 flagged 时保留复位结果，不因 flags 并集重新置态；
+// 其余字段（text/tags/aff/createdIn…）取 hits 较大的版本，平局内存版赢（保留本进程刚做的管线意图）。
+function mergeEntries(diskEntries, memEntries) {
+  const byId = new Map(diskEntries.map((e) => [e.id, e]));
+  for (const e of memEntries) {
+    const d = byId.get(e.id);
+    if (!d) { byId.set(e.id, e); continue; }
+    const base = (e.hits ?? 0) >= (d.hits ?? 0) ? e : d;
+    const flags = [];
+    const seen = new Set();
+    for (const f of [...(d.flags ?? []), ...(e.flags ?? [])]) {
+      const k = `${f?.reason ?? ""}\u0000${f?.ts ?? ""}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      flags.push(f);
+    }
+    base.hits = Math.max(e.hits ?? 0, d.hits ?? 0);
+    base.lastUsed = Math.max(e.lastUsed ?? 0, d.lastUsed ?? 0);
+    if (flags.length) base.flags = flags.sort((a, b) => (a?.ts ?? 0) - (b?.ts ?? 0));
+    if (e.status === "flagged" || d.status === "flagged") {
+      base.status = "flagged";
+      base.prevStatus = base.prevStatus ?? (d.status === "flagged" ? d.prevStatus : e.prevStatus);
+    }
+    if (e.pinned || d.pinned) base.pinned = true;
+    byId.set(e.id, base);
+  }
+  return [...byId.values()];
+}
+
+// 临界区单写者模板：取锁 → 从盘重读 → update(disk) 返回待落盘条目 → 落库+中性编译+观测。
+// 锁竞争时不落盘（旧快照覆盖是真丢数据），由调用方转 pending 队列；锁内异常向上抛，finally 释锁。
+function lockedStoreUpdate(storePath, now, update) {
   const dir = storeDir();
   fs.mkdirSync(dir, { recursive: true });
   const lockFile = path.join(dir, "maintain.lock");
-  if (!acquireLock(lockFile, now)) return false; // 失败走调用方 pending 兜底路径
+  if (!acquireLock(lockFile, now)) return { ok: false };
   try {
-    // 从盘重读合并：盘上条目 = 并发写者已落盘的真相。同 id 冲突取 hits 大者（reinforce 竞争取 max
-    // 防双计），平局内存版赢（本进程刚做的管线意图不丢）；仅内存有的 = 本进程新条目，保留
     const disk = loadStore(storePath).entries;
-    const byId = new Map(disk.map((e) => [e.id, e]));
-    for (const e of memEntries) {
-      const d = byId.get(e.id);
-      if (!d || (e.hits ?? 0) >= (d.hits ?? 0)) byId.set(e.id, e);
-    }
-    const merged = [...byId.values()];
-    const { markdown, stats } = buildCompiled(merged, { projectKey: null }, now); // 中性：跨项目注入物不偏向当前会话项目
-    saveStoreAtomic(storePath, merged); // 先落库：产物可由下轮 maintain 从库重造，库丢了才是真丢
-    if (markdown && markdown.includes(FENCE_BEGIN) && markdown.includes(FENCE_END)) {
-      writeCompiled(compiledFile(), markdown);
+    const updated = update(disk);
+    if (updated === false) return { ok: true, skipped: true }; // 校验失败：不落盘（避免无意义重写）
+    const entries = updated ?? disk;
+    saveStoreAtomic(storePath, entries); // 先落库：产物可由下轮 maintain 从库重造，库丢了才是真丢
+    const { markdown, stats } = buildCompiled(entries, { projectKey: null }, now); // 中性：跨项目注入物不偏向当前会话项目
+    const compiled = compiledFile();
+    if (compiled && markdown && markdown.includes(FENCE_BEGIN) && markdown.includes(FENCE_END)) {
+      writeCompiled(compiled, markdown);
     }
     try {
       fs.appendFileSync(
@@ -164,9 +195,17 @@ function writeThroughCompile(storePath, memEntries, now) {
         "utf8"
       );
     } catch { /* 观测可丢 */ }
-    return true;
+    return { ok: true, entries, stats };
   } finally {
     try { fs.rmSync(lockFile, { force: true }); } catch { /* 锁清理失败下轮陈尸接管 */ }
+  }
+}
+
+function writeThroughCompile(storePath, memEntries, now) {
+  try {
+    return lockedStoreUpdate(storePath, now, (disk) => mergeEntries(disk, memEntries)).ok;
+  } catch {
+    return false;
   }
 }
 
@@ -350,7 +389,7 @@ const MemoryStoreImpl = async ({ directory } = {}) => {
           if (n > THROTTLE_INBOX) {
             try {
               fs.mkdirSync(storeDir(), { recursive: true });
-              fs.appendFileSync(path.join(storeDir(), "inbox.md"), `- ${text.replace(/\s*\n\s*/g, " ")}\n`, "utf8");
+              fs.appendFileSync(path.join(storeDir(), "inbox.md"), `- ${redactSecrets(text).replace(/\s*\n\s*/g, " ")}\n`, "utf8");
               return `已达当日直写上限（${THROTTLE_INBOX}/日），已转存 inbox.md 待 maintain 摄入`;
             } catch (e) {
               return `mem_add: 转存 inbox 失败：${String(e?.message ?? e).slice(0, 120)}`;
@@ -370,7 +409,7 @@ const MemoryStoreImpl = async ({ directory } = {}) => {
             if (!ok) {
               const opLine = r.action === "reinforced"
                 ? { op: "reinforce", id: r.id, ts: now }
-                : { op: "add", text, tags, source: "agent", ws: pk, createdIn: pk };
+                : { op: "add", text: redactSecrets(text), tags, source: "agent", ws: pk, createdIn: pk };
               try {
                 fs.mkdirSync(storeDir(), { recursive: true });
                 fs.appendFileSync(path.join(storeDir(), "pending-ops.jsonl"), JSON.stringify(opLine) + "\n", "utf8");
@@ -535,12 +574,39 @@ const MemoryStoreImpl = async ({ directory } = {}) => {
         async execute(args) {
           bumpThrottle(Date.now()); // flag 同限速计数（防用 flag 刷配额）
           const id = String(args?.id ?? "").trim();
-          const reason = String(args?.reason ?? "").trim();
+          // 理由可能引用含密钥的原文，先脱敏再校验长度/落盘
+          const reason = redactSecrets(String(args?.reason ?? "")).trim();
           if (!id || !reason) return "mem_flag: 需要 id 与 reason 参数";
+          const now = Date.now();
           const storePath = path.join(storeDir(), "notes.jsonl");
-          const { entries } = loadStore(storePath);
-          const r = flagEntry(entries, { id, reason }, Date.now());
-          if (!r.ok) {
+          let r = null;
+          if (CONFIG_ROOT) {
+            // 与 mem_add 同一临界区：取锁→盘上重读→flag→落库+重编译（flagged 立即从注入物消失）。
+            // 不持锁裸写会被 maintain/mem_add 的旧快照回写抹掉；取不到锁转 pending 队列（同 flag 语义）。
+            let locked;
+            try {
+              locked = lockedStoreUpdate(storePath, now, (disk) => {
+                r = flagEntry(disk, { id, reason }, now);
+                return r.ok ? disk : false;
+              });
+            } catch {
+              locked = { ok: false };
+            }
+            if (!locked.ok) {
+              try {
+                fs.mkdirSync(storeDir(), { recursive: true });
+                fs.appendFileSync(path.join(storeDir(), "pending-ops.jsonl"), JSON.stringify({ op: "flag", id, reason }) + "\n", "utf8");
+                return `mem_flag: 并发维护中，已排队待处理（${id}）`;
+              } catch (e) {
+                return `mem_flag: 排队失败：${String(e?.message ?? e).slice(0, 120)}`;
+              }
+            }
+          } else {
+            const { entries } = loadStore(storePath);
+            r = flagEntry(entries, { id, reason }, now);
+            if (r.ok) saveStoreAtomic(storePath, entries);
+          }
+          if (!r?.ok) {
             const why = {
               "not-found": "未命中该 id",
               "ambiguous": "id 模糊命中多条，请用更长 id",
@@ -548,10 +614,9 @@ const MemoryStoreImpl = async ({ directory } = {}) => {
               "duplicate": "该条已有相同理由的 flag（幂等跳过）",
               "flag-capped": "该条 flags 已达 3 次上限",
               "flag-pool-full": "全库在审（flagged）已达 10 条上限，先处理存量",
-            }[r.code] ?? r.code;
+            }[r?.code] ?? r?.code;
             return `mem_flag: 未执行——${why}`;
           }
-          saveStoreAtomic(storePath, entries);
           return `已标记 ${r.id} 进入人工复审（第 ${r.flags}/3 次 flag）`;
         },
       },
@@ -577,6 +642,7 @@ export const _export = {
   THROTTLE_MS, LOCK_STALE_MS, USAGE_ROTATE_KEEP,
   projectKeyForDir, THROTTLE_WARN, THROTTLE_INBOX,
   pidAlive, acquireLock, // C：统一锁原语（离线测试用）
+  mergeEntries, lockedStoreUpdate, // B6：单写者合并策略（离线测试用）
   // lib 纯函数直通（离线测试主入口走这里；bundle 单入口把 lib+plugin 一并带出）
   tokenize, jaccard, parseLessonLines, extractUnfenced, isLineInFence,
   normalizeText, hashText, makeId, redactSecrets, maskValue, BASIC_TAGS, lintEntry, isQuarantineCandidate,

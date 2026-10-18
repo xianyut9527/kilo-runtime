@@ -4,7 +4,7 @@
 //   - provider 工厂被调用时收到 { name, baseURL, apiKey, headers, fetch }
 //   - 工厂须返回 provider 对象：可调用 + languageModel/chatModel/embeddingModel/... 方法
 //   - languageModel(id) 返回 LanguageModelV3：{ specificationVersion:"v3", provider, modelId, supportedUrls, doStream, doGenerate }
-//   - kilo.json 的 `provider.hx.options.failover` 原样透传到 options（schema 未封死 additionalProperties）
+//   - kilo.json 的 `provider.openllamas.options.failover` 原样透传到 options（schema 未封死 additionalProperties）
 //
 // ⚠️ spec 版本必须是 v3（Kilo 7.6.2 运行时 spec）：
 // 声明 v2 会让 Kilo 走兼容桥（日志 "Using v2 specification compatibility mode"），
@@ -42,7 +42,7 @@ const BACKOFF_MS = [500, 1500];
 const OVERLOAD_BACKOFF_MS = [2000, 6000];
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 
-// 降级链唯一真源 = kilo.json 的 provider.hx.options.failover.chain.models（改模型只改配置文件）。
+// 降级链唯一真源 = kilo.json 的 provider.openllamas.options.failover.chain.models（改模型只改配置文件）。
 // 代码不内置默认链：未配置时链 = 仅当前模型（等于无降级，与 Kilo 原生单模型行为一致），
 // 工厂初始化时打一条 stderr 告警提示补配置。
 
@@ -856,8 +856,9 @@ function isCoolingFactory(cooldown) {
 function markFailedFactory(cooldown, lastFailure) {
   return function markFailed(id, cooldownMs, err) {
     cooldown.set(id, Date.now() + cooldownMs);
-    // 冷却原因留存（2026-10-04 用户指示）：原样记下触发冷却的上游失败，
-    // 全链冷却快速失败时逐条返回上游原文——不截断、不包装自有文案。
+    // 冷却原因留存（2026-10-04 用户指示）：原样记下触发冷却的上游失败；
+    // 全链冷却快速失败时上报最近一次的上游原文（2026-10-18 起不再逐条罗列，
+    // 模型只报计数）——不截断、不包装自有文案。
     if (lastFailure && err !== undefined) {
       lastFailure.set(id, {
         at: Date.now(),
@@ -1092,12 +1093,12 @@ function rewrapStreamBreak(err) {
 export function createHxFailover(options) {
   const { name = "hx", apiKey, headers, fetch: customFetch, failover: failoverOpts, ...rest } = options ?? {};
 
-  // 降级链缺失告警（每工厂一次）：真源在 kilo.json provider.hx.options.failover.chain.models。
+  // 降级链缺失告警（每工厂一次）：真源在 kilo.json provider.openllamas.options.failover.chain.models。
   // 显式配置空链（failover:{chain:{models:[]}}，测试隔离用）是刻意行为，不告警。
   const rawF = options?.failover;
   const explicitF = rawF !== undefined && rawF !== null && !(typeof rawF === "object" && Object.keys(rawF).length === 0);
   if (!explicitF) {
-    console.error("hx-failover: 未配置降级链（kilo.json provider.hx.options.failover.chain.models）——仅用当前模型，无自动降级");
+    console.error("hx-failover: 未配置降级链（kilo.json provider.openllamas.options.failover.chain.models）——仅用当前模型，无自动降级");
   }
 
   if (failoverOpts?.nested === true || Array.isArray(failoverOpts?.nested)) {
@@ -1263,15 +1264,20 @@ export function createHxFailover(options) {
       let maxUntil = cooldown.get(modelId) ?? 0;
       for (const m of chain.slice(1)) maxUntil = Math.max(maxUntil, cooldown.get(m) ?? 0);
       const remainS = Math.max(1, Math.ceil((maxUntil - Date.now()) / 1000));
-      // 错误正文 = 上游原文（2026-10-04 用户指示：全部显示上游返回的错误，
-      // 不包装自有文案）：汇集链上仍在冷却窗口内各模型的最近一次失败，按链序
-      // 逐行附模型/状态归属；无留存记录时回退通用文案。503+retry-after 快速
-      // 失败语义不变（对外错误正文不再含自有话术）。
+      // 错误正文以上游原文为主体（2026-10-04 用户指示），2026-10-18 二次裁定：
+      // 不逐条罗列链上模型（模型可省略），但错误本身必须醒目可读——加一个简短的
+      // 计数前缀标明「全链重试均失败」，正文仍是最近一次失败（at 最大）的网关原始
+      // message。多模型明细留在遥测 lastFails 里。无留存记录时回退通用文案。
+      // 503+retry-after 快速失败语义不变。
       const lastFails = [];
+      let recentFail = null;
       for (const m of chain) {
         if ((cooldown.get(m) ?? 0) <= Date.now()) continue;
         const f = lastFailure.get(m);
-        if (f) lastFails.push({ model: m, status: f.status, message: f.message });
+        if (f) {
+          lastFails.push({ model: m, status: f.status, message: f.message });
+          if (!recentFail || f.at > recentFail.at) recentFail = f;
+        }
       }
       await logFailover({
         from: modelId,
@@ -1284,10 +1290,8 @@ export function createHxFailover(options) {
       // headers["retry-after"] 属性访问会静默取到 undefined（r2 红队实证）。
       const retryHeaders = { "retry-after": String(remainS) };
       throw new APICallError({
-        message: lastFails.length
-          ? lastFails
-              .map((f) => `[${f.model}${f.status === undefined || f.status === null ? "" : ` HTTP ${f.status}`}] ${f.message}`)
-              .join("\n")
+        message: recentFail
+          ? `hx-failover: 全链 ${chain.length} 个模型重试均失败 —— ${String(recentFail.message ?? "")}`
           : `hx-failover: 主模型与全部备用均在冷却中（上一轮已实测失败），约 ${remainS}s 后自动恢复 —— 跳过重试避免空转`,
         url: undefined,
         statusCode: 503,

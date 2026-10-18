@@ -1055,10 +1055,7 @@ const raVal = err9n?.responseHeaders?.["retry-after"]; // SDK 契约：responseH
 console.log("");
 console.log("9n fail-fast:", err9n?.statusCode, "| retry-after:", raVal, "| message:", JSON.stringify(String(err9n?.message ?? "")));
 console.log("PASS cooldown503-retry-after  :", err9n?.statusCode === 503 && Number(raVal) >= 1 && Number(raVal) <= 30 && err9n?.isRetryable === true);
-console.log("PASS cooldown503-upstream-only:", err9n?.message === [
-  "[glm-5.3-flash HTTP 500] primary channel exploded",
-  "[kimi-k2.6 HTTP 500] backup tunnel down",
-].join("\n"));
+console.log("PASS cooldown503-upstream-only:", err9n?.message === "hx-failover: 全链 2 个模型重试均失败 —— backup tunnel down"); // 2026-10-18：模型可省略（只报计数），错误正文必须是网关原文
 
 // 9o：退避期可被 abortSignal 立即打断（2026-09-29 dual_review 必修项⑤）——
 // 旧行为：sleep(500/1500ms) 不感知 signal，用户取消后仍睡满全程才返回（迟滞+浪费）。

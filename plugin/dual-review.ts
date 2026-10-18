@@ -3,7 +3,7 @@
 // 定位：对一次改动/一份结论做正反两路独立审查——
 //   正向（证成为主）：找「为什么这个方案/改动是对的、完备的」，漏检点、边界遗漏；
 //   反向（证伪为主）：专门找错——逻辑缺陷、边界条件、安全漏洞、遗漏需求、过度设计。
-// 两路并行、不同参考模型分别承担（默认值见 kilo.json provider.hx.options.dual_review，
+// 两路并行、不同参考模型分别承担（默认值见 kilo.json provider.openllamas.options.dual_review，
 // 与主执行模型异源），最后由异源聚合模型综合出裁决：通过 / 有条件通过（列出必须修复项）/ 不通过。
 // 与 moa 工具的区别：moa 是通用多视角聚合；本工具是改动审查专用协议，正反视角由 prompt 明确分工。
 //
@@ -19,7 +19,7 @@
 import { loadCfg, ask, cbShouldFailFast, timeoutsOf, clipText } from "../lib/hx-client";
 import { randomUUID } from "node:crypto";
 
-// 超时统一走配置：kilo.json provider.hx.options.timeout / chunkTimeout（timeoutsOf 单点解析，
+// 超时统一走配置：kilo.json provider.openllamas.options.timeout / chunkTimeout（timeoutsOf 单点解析，
 // 与 moa 同口径；空闲看门狗与主链路 chunkTimeout 同源，流式中无 chunk 判死快速失败进重试）。
 
 const AGG_SUBJECT_LIMIT = 8_000;   // 聚合 prompt 中审查对象截断
@@ -128,7 +128,7 @@ async function runDualReview(subject, overrides = {}) {
 
   const { timeoutMs, idleMs } = timeoutsOf(cfg.options);
 
-  // 模型唯一真源 = kilo.json provider.hx.options.dual_review（改模型只改配置文件，代码不留兜底默认值）
+  // 模型唯一真源 = kilo.json provider.openllamas.options.dual_review（改模型只改配置文件，代码不留兜底默认值）
   const dr = cfg.options?.dual_review ?? {};
   const posModel = typeof overrides?.positive_model === "string" && overrides.positive_model ? overrides.positive_model : dr.positive;
   const negModel = typeof overrides?.negative_model === "string" && overrides.negative_model ? overrides.negative_model : dr.negative;
@@ -138,7 +138,7 @@ async function runDualReview(subject, overrides = {}) {
   const negModels = modelRoutes(negModel, typeof overrides?.negative_model === "string" && overrides.negative_model ? [] : dr.negative_fallbacks);
   const aggModels = modelRoutes(aggModel, typeof overrides?.aggregator === "string" && overrides.aggregator ? [] : dr.aggregator_fallbacks);
   if (!posModel || !negModel || !aggModel) {
-    return "dual_review: 审查模型未配置——请在 kilo.json 的 provider.hx.options.dual_review 配置 positive/negative/aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
+    return "dual_review: 审查模型未配置——请在 kilo.json 的 provider.openllamas.options.dual_review 配置 positive/negative/aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
   }
 
   // 断路器预检（2026-09-22 网关过载专项，与 moa 同语义）：网关 open 态时两路并行 = 集体施压 + 空烧。
@@ -173,6 +173,7 @@ async function runDualReview(subject, overrides = {}) {
   // 可试——这是「兜底不无限延长单次审查」的有界成本取舍。
   const askRoute = async (label, models, prompt, deadlineMs) => {
     const failed = [];
+    let lastErr = null;
     for (const model of models) {
       const remaining = deadlineMs - Date.now();
       if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
@@ -184,10 +185,16 @@ async function runDualReview(subject, overrides = {}) {
         );
         return { model, text, failed };
       } catch (e) {
+        lastErr = e;
         failed.push(`${model}: ${e?.message ?? e}`);
       }
     }
-    const err = new Error(failed.join("; "));
+    // 全部候选失败：只报最后一条网关错误为主体（2026-10-18 用户二次裁定：模型可省略
+    // 不逐个列出，但错误本身必须醒目）——加简短计数前缀标明尝试规模；
+    // 逐模型明细保留在 attempts 里供日志诊断。
+    const err = new Error(lastErr
+      ? `${label}失败（已试 ${models.length} 个模型）：${String(lastErr?.message ?? lastErr)}`
+      : (failed[failed.length - 1] ?? "无可用候选模型"));
     err.attempts = failed;
     throw err;
   };
@@ -211,8 +218,9 @@ async function runDualReview(subject, overrides = {}) {
   const pos = posRes.status === "fulfilled" ? posRes.value : null;
   const neg = negRes.status === "fulfilled" ? negRes.value : null;
   const failures = [];
-  if (posRes.status === "rejected") failures.push(`正向(${posModels.join(" → ")}): ${posRes.reason?.message ?? posRes.reason}`);
-  if (negRes.status === "rejected") failures.push(`反向(${negModels.join(" → ")}): ${negRes.reason?.message ?? negRes.reason}`);
+  // askRoute 抛出的错误已含「正/反向失败（已试 N 个模型）：网关错误」主体，直接透传不重复加前缀
+  if (posRes.status === "rejected") failures.push(String(posRes.reason?.message ?? posRes.reason));
+  if (negRes.status === "rejected") failures.push(String(negRes.reason?.message ?? negRes.reason));
   const fallbackNotes = [];
   if (pos?.failed?.length) fallbackNotes.push(...pos.failed.map((x) => `正向 ${x}`));
   if (neg?.failed?.length) fallbackNotes.push(...neg.failed.map((x) => `反向 ${x}`));
@@ -244,7 +252,7 @@ async function runDualReview(subject, overrides = {}) {
     agg = await askRoute("裁决", aggModels, AGGREGATE_PROMPT(subjectIn, posC, negC, tag), aggDeadline);
   } catch (e) {
     return [
-      `dual_review: 裁决模型（${aggModels.join(" → ")}）失败：${e.message}`,
+      `dual_review: ${e.message}`,
       "",
       `### 正向审查（${pos.model}）\n${pos.text}`,
       "",

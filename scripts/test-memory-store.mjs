@@ -587,6 +587,9 @@ function section(md, name) {
   t("n>50 → 返回转存提示", spilled.includes("转存 inbox") && spilled.includes("50"), spilled.slice(0, 80));
   const inboxPath = path.join(XDG_TMP, "kilo", "memory-store", "inbox.md");
   t("inbox.md 落盘且含原文（maintain 同管线摄入）", fs.existsSync(inboxPath) && fs.readFileSync(inboxPath, "utf8").includes("限速第 51 条"));
+  const spilledSecret = await plugin.tool.mem_add.execute({ text: "熔断转存脱敏检查 sk-abcdefghijklmnopqrstuvwx" });
+  const inboxRaw = fs.readFileSync(inboxPath, "utf8");
+  t("inbox 转存前已脱敏（明文 sk- 不落盘）", spilledSecret.includes("转存 inbox") && inboxRaw.includes("sk-***") && !inboxRaw.includes("abcdefghijklmnop"));
   t("n=50 直写已入库（write-through 落盘）", X.loadStore(path.join(XDG_TMP, "kilo", "memory-store", "notes.jsonl")).entries.some((e) => e.text.includes("限速第 50 条")));
   t("write-through 编译产物落在 tmp 配置根且带围栏", (() => {
     const md = fs.readFileSync(path.join(XDG_TMP, "GLOBAL-NOTES.md"), "utf8");
@@ -656,6 +659,22 @@ function section(md, name) {
 
   const { markdown: fmd } = X.buildCompiled([...fl], {}, NOW);
   t("flagged 不进编译产物", !fmd.includes("flag flow target"));
+
+  // 2026-10-18 查漏：write-through 同 id 合并不得让旧快照抹掉盘上并发写入
+  const diskE = { ...ent("mm1", "merge probe entry one body text", { created: NOW }), hits: 1, flags: [{ reason: "disk flag reason", ts: NOW }], status: "flagged", prevStatus: "trial" };
+  const memE = { ...ent("mm1", "merge probe entry one body text", { created: NOW }), hits: 1, flags: [], status: "trial" };
+  const merged1 = X.mergeEntries([diskE], [memE]);
+  t("同 id 合并：旧快照不抹掉盘上 flag（status/flags/prevStatus 保留）",
+    merged1.length === 1 && merged1[0].status === "flagged" && merged1[0].flags.length === 1 && merged1[0].prevStatus === "trial");
+  const diskReset = { ...ent("mm2", "merge probe entry two body text", { created: NOW }), hits: 2, flags: [{ reason: "historical flag", ts: NOW }], status: "active", prevStatus: "trial" };
+  const mem2 = { ...ent("mm2", "merge probe entry two body text", { created: NOW }), hits: 2, flags: [], status: "active" };
+  const merged2 = X.mergeEntries([diskReset], [mem2]);
+  t("同 id 合并：人工复位（两侧均非 flagged）不被历史 flags 重新置态",
+    merged2.length === 1 && merged2[0].status === "active" && merged2[0].flags.length === 1);
+  const memHits = { ...ent("mm3", "merge probe entry three body text", { created: NOW }), hits: 5, lastUsed: NOW, flags: [], status: "active", pinned: true };
+  const diskHits = { ...ent("mm3", "merge probe entry three body text", { created: NOW }), hits: 2, lastUsed: NOW - DAY, flags: [], status: "active" };
+  const merged3 = X.mergeEntries([diskHits], [memHits]);
+  t("同 id 合并：hits/lastUsed 取 max、pinned 取并集", merged3[0].hits === 5 && merged3[0].lastUsed === NOW && merged3[0].pinned === true);
 }
 
 // ── ⑱ v3 亲和乘子 + projAffinity 上限 ────────────────────────
@@ -1013,7 +1032,8 @@ function section(md, name) {
   // c) 子进程 mem_add 锁竞争：⑯ 已把本进程限速打到熔断（此后 mem_add 一律转 inbox 不到
   //    write-through），write-through 分支必须一次性子进程覆盖（新进程计数从 0 起；
   //    XDG_DATA_HOME 已在文件头指向 XDG_TMP，execFileSync 默认继承）
-  const UNIQ = "锁竞争兜底链端到端唯一标记文本 xyzzy plugh qqq";
+  const UNIQ_CORE = "锁竞争兜底链端到端唯一标记文本 xyzzy plugh qqq";
+  const UNIQ = UNIQ_CORE + " sk-abcdefghijklmnop";
   const childPath = path.join(XDG_TMP, "contend.mjs");
   fs.writeFileSync(childPath, [
     `const MOD = await import(${JSON.stringify(pathToFileURL(bundle).href)});`,
@@ -1029,15 +1049,38 @@ function section(md, name) {
   t("子进程 mem_add 取锁失败 → 返回「已排队待编译」", childOut.includes("已排队待编译"), childOut.split("\n")[0]);
   const pendRows = fs.readFileSync(path.join(storeDir28, "pending-ops.jsonl"), "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
   const pendLast = pendRows[pendRows.length - 1] ?? null;
-  t("pending-ops 入队：末行 {op:add, text=UNIQ}", pendRows.length >= 1 && pendLast?.op === "add" && String(pendLast?.text ?? "").includes(UNIQ), JSON.stringify(pendLast)?.slice(0, 80));
+  t("pending-ops 入队：末行 {op:add, text=UNIQ（已脱敏）}",
+    pendRows.length >= 1 && pendLast?.op === "add" && String(pendLast?.text ?? "").includes(UNIQ_CORE)
+    && String(pendLast?.text ?? "").includes("sk-***") && !String(pendLast?.text ?? "").includes("abcdefghijklmnop"),
+    JSON.stringify(pendLast)?.slice(0, 80));
   t("失败不落盘：store 字节仍与竞争前一致", fs.statSync(storePath28).size === bytesBefore);
   t("锁未被偷：锁文件内容原样（wx 不覆盖/held 不清退）", fs.readFileSync(lockFile28, "utf8") === lockPayload);
 
-  // e) maintain 消费不丢：摘锁后下轮 maintain 消费 pending → UNIQ 入库
+  // e) 2026-10-18 查漏：mem_flag 同样不得持锁外裸写（旧快照回写会抹掉 flag）→ 转 pending 队列
+  const flagTarget = X.loadStore(storePath28).entries.find((e) => e.status !== "flagged");
+  const flagReason = "锁竞争期间并发标记（查漏回归用）";
+  const flagOut = await (await MOD.MemoryStore({})).tool.mem_flag.execute({ id: flagTarget.id, reason: flagReason });
+  t("mem_flag 取锁失败 → 排队待处理", String(flagOut).includes("已排队待处理"), String(flagOut).slice(0, 80));
+  const pendFlags = fs.readFileSync(path.join(storeDir28, "pending-ops.jsonl"), "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l)).filter((o) => o.op === "flag");
+  t("pending-ops 入队 {op:flag,id,reason}", pendFlags.some((o) => o.id === flagTarget.id && o.reason === flagReason));
+
+  // f) maintain 消费不丢：摘锁后下轮 maintain 消费 pending → UNIQ 入库 + flag 生效
   fs.rmSync(lockFile28, { force: true });
   X.maintain(T28 + 30_000); // 距上轮 T28 间隔 30s >10s 守卫
-  t("maintain 消费 pending → UNIQ 入库（兜底链不丢内容）", X.loadStore(storePath28).entries.some((e) => String(e.text ?? "").includes(UNIQ)));
+  const after28 = X.loadStore(storePath28).entries;
+  t("maintain 消费 pending → UNIQ 入库（兜底链不丢内容；脱敏后入库）",
+    after28.some((e) => String(e.text ?? "").includes(UNIQ_CORE) && String(e.text ?? "").includes("sk-***")));
+  t("maintain 消费 pending flag → 目标条置 flagged",
+    after28.find((e) => e.id === flagTarget.id)?.status === "flagged");
   t("消费轮 injection-log 恰 +1 行（lock-skip 轮与子进程轮均未产编译行）", injRows28() === rowsBefore + 1, `rows=${injRows28()} before=${rowsBefore}`);
+
+  // g) 正常路径（无锁竞争）：锁内重读→flag→落库→重编译，且释放锁
+  const flagOkTarget = after28.find((e) => String(e.text ?? "").includes(UNIQ_CORE));
+  const flagOkOut = await (await MOD.MemoryStore({})).tool.mem_flag.execute({ id: flagOkTarget.id, reason: "正常路径锁内标记回归用" });
+  const afterFlag = X.loadStore(storePath28).entries.find((e) => e.id === flagOkTarget.id);
+  t("mem_flag 正常路径：锁内落库并立即置 flagged、锁已释放",
+    String(flagOkOut).includes("已标记") && afterFlag?.status === "flagged" && afterFlag?.flags?.length === 1
+    && !fs.existsSync(lockFile28));
 }
 
 // 清理临时目录
