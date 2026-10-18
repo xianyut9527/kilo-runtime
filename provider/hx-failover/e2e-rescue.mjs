@@ -4,7 +4,10 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const KEY = JSON.parse(readFileSync(join(homedir(), '.local', 'share', 'kilo', 'auth.json'), 'utf8')).hx.key;
+const auth = JSON.parse(readFileSync(join(homedir(), '.local', 'share', 'kilo', 'auth.json'), 'utf8'));
+// provider 改名后凭证键为 openllamas.key；旧 hx.key 作迁移窗口兜底
+const KEY = auth?.openllamas?.key ?? auth?.hx?.key;
+if (!KEY) throw new Error('auth.json 缺少 openllamas.key（旧 hx.key 兜底亦未命中）');
 
 const { createHxFailover } = await import(new URL('./dist/index.js', import.meta.url).href);
 

@@ -498,10 +498,15 @@
       "name": "openllamas",
       "npm": "file:///__KILO_CONFIG__/provider/hx-failover",
       "options": {
-        // 上游 OpenAI 兼容端点（SSOT 唯一真源）。
-        // 2026-10-17 provider 更名 openllamas 时统一切到 openllamas.com；改名后实测 key 有效
-        // （本配置即当前会话的实际路由）。任何端点改动前必须先 curl 探针：401 说明 key 不匹配，
-        // 端点失效会让每个 hop 先吃一次 401/超时再 failover，单步墙钟成倍拉长。
+        // 上游端点（SSOT 唯一真源）。
+        // ⚠️ 改动前必须先用当前 key curl 探针验证：endpoint 失效是「极慢」的直接放大器——
+        // 每个 hop 先吃一个 401/超时，failover 再退避重试下一个模型，单步墙钟成倍拉长。
+        // 端点史（均为实测探针结论，勿凭印象改）：
+        //   xianyu1.natapp4.cc → 401 Invalid token；
+        //   llamas.nat100.top   → 2026-10-07 实测 200 可用；
+        //   openllamas.com     → 同日实测对当时 key 401 INVALID_API_KEY；现为本值且已下发，
+        //                         在线实证（2026-10-16）：failover-events.jsonl 近 400 条事件零
+        //                         401 且持续实时落盘。要回退 nat100 之前先探针当前 key。
         "baseURL": "https://openllamas.com/v1",
         // MoA/dual_review 分析调用总时长上限（kilo.json options.timeout 唯一消费方 = 这两个工具）。
         // ⚠️ 主模型循环不消费本键（provider/hx-failover 不读它，2026-09-21 DB 实证：

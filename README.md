@@ -7,7 +7,7 @@
 </div>
 
 > **改配置**：编辑 `kilo.json.tmpl` → `.\install.ps1` → 重载 VS Code 窗口。
-> **换 API Key**：改 `~/.local/share/kilo/auth.json` 的 `openllamas.key`（2026-10-16 起 provider 改名 openllamas；旧 `hx.key` 仍被 moa/dual-review 兜底识别，但主链路凭证需要 `openllamas` 条目——从 `hx` 条目原样复制一份即可。不用 install，即时生效）。
+> **换 API Key**：改 `~/.local/share/kilo/auth.json` 的 `openllamas.key`（不用 install，即时生效）。
 
 ## 架构
 
@@ -28,6 +28,7 @@
 │   ├─ moa                                 │← 多模型交叉分析（高风险决策）
 │   ├─ permission-guard                    │← 动态拦截危险命令、密钥路径、锁文件写通道绕过
 │   ├─ compaction-anchor                   │← 长会话压缩后保留任务锚点
+│   ├─ memory-store                        │← 全局经验记忆 store：mem_* 工具/检索/编译注入
 │   └─ memory-bootstrap                    │← git 项目自动启用原生记忆
 ├─ agent/verify.md                         │← 异源复核子代理（高风险改动只读复核）
 ├─ lib/hx-client.ts                        │← moa/dual-review 共享请求层：SSE 流式、三级超时、
@@ -38,7 +39,7 @@
                               ~/.local/share/kilo/（数据目录：会话库 / 记忆 / 凭证 auth.json）
 ```
 
-数据流：Kilo 会话 → provider（网关客户端）→ OpenLlamas 模型网关（OpenAI 兼容 API，<https://openllamas.com>）；
+数据流：Kilo 会话 → provider（网关客户端）→ OpenLlamas 模型网关；
 主模型故障时按 `failover.chain.models` 依次自动降级（切换时流首注入 ⚠️ [failover]
 可见提示，同一「主模型→备用」在冷却窗口内只提示一次；主模型自身也进冷却——
 持续故障期后续调用直接从可用备用起跑，全链冷却时快速失败、到期自动恢复）；
@@ -66,7 +67,8 @@ moa/dual-review 的分析
    │                       诊断积压在交付节点冲刷回注
    ▼
 ② 交付节点（全部 todo 标记完成时）
-   │  · 高风险文件（认证/支付/迁移等）命中，或含代码改动且编辑 ≥3 文件（含文档）
+   │  · 高风险文件（认证/支付/迁移等）命中，或普通改动 ≥3 个代码文件
+   │    （文档不计，2026-10-07 codeEdits 口径）
    │    → quality-gate 自动发起 dual-review：正向查遗漏 × 反向红队
    │      并行审查 + 第三方模型裁决（2~4 分钟；纯文档会话不烧审查费）
    │  · 裁决「不通过」→ 阻断交付，模型必须修复后重审（最多 2 轮；
