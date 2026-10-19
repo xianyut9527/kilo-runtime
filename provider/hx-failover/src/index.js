@@ -18,6 +18,8 @@
 //                  ② 失败 profile 临时停用+冷却（2026-09-26 起：冷却对全链生效，含主模型）
 //                  ③ 切换注入可见通知（同 from→to 在 noticeCooldownMs 窗口内去重）
 //                  ④ 禁止嵌套 ⑤ 全链失败抛原始最后一个错误
+// ⑥ 对外错误 message 一律不带 hx-failover 前缀/自有包裹（2026-10-19 用户指示，
+//    正文=上游原文直传；自有诊断话术只进 stderr 与遥测，不进抛给用户的错误）
 //
 // thinking 协议兜底（2026-09-21 reasoning_content 400 专项）：
 // DeepSeek V4 / Kimi K2.6 / GLM-5.x / MiniMax 在 thinking 模式下要求历史 assistant 消息
@@ -136,30 +138,32 @@ function looksLikeQueuedAck(response) {
     .clone()
     .text()
     .then((text) => {
-      if (text.length > 4096) return false;
+      if (text.length > 4096) return null;
       const trimmed = text.trim();
-      if (!trimmed.startsWith("{")) return false;
+      if (!trimmed.startsWith("{")) return null;
       try {
         const parsed = JSON.parse(trimmed);
         // 只认网关排队回执的签名字段：choices/error 都不该有，phase 必须是 queued/pending 类
-        if (parsed.choices !== undefined || parsed.error !== undefined) return false;
+        if (parsed.choices !== undefined || parsed.error !== undefined) return null;
         const phase = String(parsed.phase ?? "");
-        return phase === "queued" || phase === "pending";
+        return phase === "queued" || phase === "pending" ? trimmed : null;
       } catch {
-        return false;
+        return null;
       }
     })
-    .catch(() => false);
+    .catch(() => null);
 }
 
-function queuedAckResponse(original) {
+function queuedAckResponse(receiptText, original) {
   const headers = new Headers();
   headers.set("content-type", "application/json");
   headers.set("retry-after", "2");
   return new Response(
     JSON.stringify({
       error: {
-        message: "hx-failover: 上游网关返回排队回执（phase=queued，未开始推理），已转义为可重试 503 —— 原始回执见 error.cause_fields",
+        // 错误正文 = 上游排队回执原文直传（2026-10-19 用户指示：不包装自有文案）；
+        // 503 + retry-after 只是可重试语义的载体，正文不加自有话术。
+        message: String(receiptText ?? "").trim().slice(0, 1024) || "上游网关返回排队回执（未开始推理）",
         type: "upstream_queued",
         cause_fields: { intercepted_from_status: 200, content_type: original.headers?.get?.("content-type") },
       },
@@ -173,7 +177,8 @@ function withQueuedAckGuard(baseFetch) {
   return async function queuedAckFetch(input, init) {
     const response = await call(input, init);
     try {
-      if (await looksLikeQueuedAck(response)) return queuedAckResponse(response);
+      const receiptText = await looksLikeQueuedAck(response);
+      if (receiptText) return queuedAckResponse(receiptText, response);
     } catch { /* 拦截器永不阻断正常响应 */ }
     return response;
   };
@@ -440,7 +445,7 @@ function gateStreamRelay(res, reader, seedChunks, model, opts) {
             telemetry("relay_hold_break_release", { holdKind, relayed: delivered, contentDelivered }, model);
             if (holdKind === "tool") {
               // 半截参数不可交付 → 可重试错误（对齐 rejectToolHold 形态，会话级重试）
-              const e = new Error(`hx-failover: reasoning-gate relay toolHold 断流且${contentDelivered ? "正文已透传不可整流重试" : "续试失败"}，半截工具参数未透传，按可重试错误上抛`);
+              const e = new Error(`reasoning-gate relay toolHold 断流且${contentDelivered ? "正文已透传不可整流重试" : "续试失败"}，半截工具参数未透传`);
               e.statusCode = 200; e.gateToolHoldReject = "hold_break";
               fail(e);
             } else {
@@ -513,7 +518,7 @@ function gateStreamRelay(res, reader, seedChunks, model, opts) {
             if (out) { cancelCurrent(); resetStreamState(); upstream = out.body.getReader(); telemetry("reasoning_gate_retry", { via: `relay_${lim}`, relayed: delivered }, model); continue; }
             telemetry("stream_break_release", { via: `relay_${lim}`, relayed: delivered, contentDelivered }, model);
             // 续试失败 → 可重试错误上抛（retryLeft 共享递减已耗尽；会话级重试兜底）
-            const e = new Error(`hx-failover: reasoning-gate relay toolHold ${lim}，续试失败，半截工具参数未透传，按可重试错误上抛`);
+            const e = new Error(`reasoning-gate relay toolHold ${lim}，续试失败，半截工具参数未透传`);
             e.statusCode = 200; e.gateToolHoldReject = lim;
             fail(e);
             return;
@@ -670,7 +675,7 @@ async function gateConsume(res, mkRetry, mkRetryRaw, retryLeft, holdMs, bufferLi
   const rejectToolHold = (reason) => {
     gateTelemetry(`toolhold_reject_${reason}`, (toolHolding ? { toolHolding: true } : {}), model);
     cancelReader().catch(() => {}); // 幂等，无效时静默（异常已在 cancelReader 内处理）
-    const err = new Error(`hx-failover: reasoning-gate toolHold ${reason}，半截工具参数未交付，弃流按可重试错误上抛`);
+    const err = new Error(`reasoning-gate toolHold ${reason}，半截工具参数未交付`);
     err.statusCode = 200;
     err.gateToolHoldReject = reason; // isRetryable 显式消费；withReasoningGate 调用点据此记遥测
     throw err;
@@ -795,7 +800,7 @@ function withReasoningGate(baseFetch, cfg) {
     // 重试；无 reason 时遥测与日志行为与 v1 完全一致。
     const mkRetry = async (reason) => {
       const patched = gatePatchRetryBody(bodyText, minTokens, maxTokens);
-      if (patched === null) throw new Error("hx-failover: reasoning-gate retry body patch failed");
+      if (patched === null) throw new Error("reasoning-gate retry body patch failed");
       attempt++;
       await logFailover({ action: "reasoning_gate_retry", from: model, attempt, ...(reason ? { reason } : {}) });
       if (reason) {
@@ -857,8 +862,8 @@ function markFailedFactory(cooldown, lastFailure) {
   return function markFailed(id, cooldownMs, err) {
     cooldown.set(id, Date.now() + cooldownMs);
     // 冷却原因留存（2026-10-04 用户指示）：原样记下触发冷却的上游失败；
-    // 全链冷却快速失败时上报最近一次的上游原文（2026-10-18 起不再逐条罗列，
-    // 模型只报计数）——不截断、不包装自有文案。
+    // 全链冷却快速失败时逐字节透传最近一次的上游原文（2026-10-19：不加载任何
+    // 自有前缀/包裹文案）。
     if (lastFailure && err !== undefined) {
       lastFailure.set(id, {
         at: Date.now(),
@@ -1078,8 +1083,11 @@ function isNoFinishReasonError(err) {
 
 function rewrapStreamBreak(err) {
   if (APICallError.isInstance(err) && err.isRetryable === true) return err;
+  // 错误正文 = 上游原文直传（2026-10-19 用户指示：不加载 hx-failover 前缀与自有
+  // 包裹文案）；上游 message 缺失时才回退简短说明。
+  const upstreamMessage = String(err?.message ?? err).trim();
   return new APICallError({
-    message: `hx-failover: 上游流中断（流已开始后断开），已标记可自动重试 —— ${String(err?.message ?? err).slice(0, 300)}`,
+    message: upstreamMessage.slice(0, 300) || "上游流中断，已标记可自动重试",
     url: err?.url,
     requestBodyValues: err?.requestBodyValues,
     statusCode: err?.statusCode,
@@ -1102,7 +1110,7 @@ export function createHxFailover(options) {
   }
 
   if (failoverOpts?.nested === true || Array.isArray(failoverOpts?.nested)) {
-    throw new Error("hx-failover: 禁止嵌套 failover 配置（legacy 语义，防循环依赖）");
+    throw new Error("禁止嵌套 failover 配置（legacy 语义，防循环依赖）");
   }
 
   // Kilo/自研扩展键不可透传给 @ai-sdk/openai-compatible（SDK 只读已知键，未知键静默丢弃——
@@ -1264,10 +1272,10 @@ export function createHxFailover(options) {
       let maxUntil = cooldown.get(modelId) ?? 0;
       for (const m of chain.slice(1)) maxUntil = Math.max(maxUntil, cooldown.get(m) ?? 0);
       const remainS = Math.max(1, Math.ceil((maxUntil - Date.now()) / 1000));
-      // 错误正文以上游原文为主体（2026-10-04 用户指示），2026-10-18 二次裁定：
-      // 不逐条罗列链上模型（模型可省略），但错误本身必须醒目可读——加一个简短的
-      // 计数前缀标明「全链重试均失败」，正文仍是最近一次失败（at 最大）的网关原始
-      // message。多模型明细留在遥测 lastFails 里。无留存记录时回退通用文案。
+      // 错误正文 = 上游原文，不包装自有文案（2026-10-04 用户指示；2026-10-19
+      // 撤回 2026-10-18 的「计数前缀」改动：用户明确要求直接显示上游错误信息）。
+      // 取最近一次失败（at 最大）的网关原始 message，逐字节透传；多模型明细
+      // 留在遥测 lastFails 里。无留存记录时回退通用文案（上游原文缺失，无法透传）。
       // 503+retry-after 快速失败语义不变。
       const lastFails = [];
       let recentFail = null;
@@ -1289,10 +1297,10 @@ export function createHxFailover(options) {
       // Object.fromEntries（dist:24130），传 Headers 实例时守约下游按
       // headers["retry-after"] 属性访问会静默取到 undefined（r2 红队实证）。
       const retryHeaders = { "retry-after": String(remainS) };
+      const upstreamMessage = recentFail ? String(recentFail.message ?? "").trim() : "";
       throw new APICallError({
-        message: recentFail
-          ? `hx-failover: 全链 ${chain.length} 个模型重试均失败 —— ${String(recentFail.message ?? "")}`
-          : `hx-failover: 主模型与全部备用均在冷却中（上一轮已实测失败），约 ${remainS}s 后自动恢复 —— 跳过重试避免空转`,
+        message: upstreamMessage
+          || `主模型与全部备用均在冷却中，约 ${remainS}s 后自动恢复`,
         url: undefined,
         statusCode: 503,
         responseHeaders: retryHeaders,
@@ -1303,7 +1311,7 @@ export function createHxFailover(options) {
       await logFailover({ from: modelId, action: "stream_break_rewrap", error: String(lastError?.message ?? lastError).slice(0, 200) });
       throw rewrapStreamBreak(lastError);
     }
-    throw lastError ?? new Error("hx-failover: 降级链全部失败");
+    throw lastError ?? new Error("降级链全部失败");
   }
 
   // 流消费期错误重包装：doStream 建流成功后，body 读取/解析阶段的错误由读取方
@@ -1429,7 +1437,7 @@ export function createHxFailover(options) {
           return;
         }
         try {
-          controller.error(new Error(`hx-failover: ${modelId} 流式响应超过 ${ms}ms 无新数据（chunkTimeout 看门狗），主动中断`));
+          controller.error(new Error(`${modelId} 流式响应超过 ${ms}ms 无新数据（chunkTimeout 看门狗），已中断`));
         } catch (e) {
           // 流已关闭时 controller.error 抛 InvalidStateError——预期路径，吞掉
           if (e?.name !== "InvalidStateError") throw e;

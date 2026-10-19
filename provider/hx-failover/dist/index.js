@@ -1,4 +1,4 @@
-// kilo-build: src-sha256=0a7634e165907b4e936f4a2941fd54c9cabc834393804759e3f4d3288c94df90
+// kilo-build: src-sha256=b8938bf7f15e03b7ecfefefbd9b2108b3b82dbb207bd1234c2979c16168efb71
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)
@@ -28491,27 +28491,29 @@ function looksLikeQueuedAck(response) {
   const ct = String(response.headers?.get?.("content-type") ?? "");
   if (!/json/i.test(ct)) return false;
   return response.clone().text().then((text) => {
-    if (text.length > 4096) return false;
+    if (text.length > 4096) return null;
     const trimmed = text.trim();
-    if (!trimmed.startsWith("{")) return false;
+    if (!trimmed.startsWith("{")) return null;
     try {
       const parsed = JSON.parse(trimmed);
-      if (parsed.choices !== void 0 || parsed.error !== void 0) return false;
+      if (parsed.choices !== void 0 || parsed.error !== void 0) return null;
       const phase = String(parsed.phase ?? "");
-      return phase === "queued" || phase === "pending";
+      return phase === "queued" || phase === "pending" ? trimmed : null;
     } catch {
-      return false;
+      return null;
     }
-  }).catch(() => false);
+  }).catch(() => null);
 }
-function queuedAckResponse(original) {
+function queuedAckResponse(receiptText, original) {
   const headers = new Headers();
   headers.set("content-type", "application/json");
   headers.set("retry-after", "2");
   return new Response(
     JSON.stringify({
       error: {
-        message: "hx-failover: \u4E0A\u6E38\u7F51\u5173\u8FD4\u56DE\u6392\u961F\u56DE\u6267\uFF08phase=queued\uFF0C\u672A\u5F00\u59CB\u63A8\u7406\uFF09\uFF0C\u5DF2\u8F6C\u4E49\u4E3A\u53EF\u91CD\u8BD5 503 \u2014\u2014 \u539F\u59CB\u56DE\u6267\u89C1 error.cause_fields",
+        // 错误正文 = 上游排队回执原文直传（2026-10-19 用户指示：不包装自有文案）；
+        // 503 + retry-after 只是可重试语义的载体，正文不加自有话术。
+        message: String(receiptText ?? "").trim().slice(0, 1024) || "\u4E0A\u6E38\u7F51\u5173\u8FD4\u56DE\u6392\u961F\u56DE\u6267\uFF08\u672A\u5F00\u59CB\u63A8\u7406\uFF09",
         type: "upstream_queued",
         cause_fields: { intercepted_from_status: 200, content_type: original.headers?.get?.("content-type") }
       }
@@ -28524,7 +28526,8 @@ function withQueuedAckGuard(baseFetch) {
   return async function queuedAckFetch(input2, init) {
     const response = await call(input2, init);
     try {
-      if (await looksLikeQueuedAck(response)) return queuedAckResponse(response);
+      const receiptText = await looksLikeQueuedAck(response);
+      if (receiptText) return queuedAckResponse(receiptText, response);
     } catch {
     }
     return response;
@@ -28715,7 +28718,7 @@ function gateStreamRelay(res, reader, seedChunks, model, opts) {
             }
             telemetry("relay_hold_break_release", { holdKind, relayed: delivered, contentDelivered }, model);
             if (holdKind === "tool") {
-              const e = new Error(`hx-failover: reasoning-gate relay toolHold \u65AD\u6D41\u4E14${contentDelivered ? "\u6B63\u6587\u5DF2\u900F\u4F20\u4E0D\u53EF\u6574\u6D41\u91CD\u8BD5" : "\u7EED\u8BD5\u5931\u8D25"}\uFF0C\u534A\u622A\u5DE5\u5177\u53C2\u6570\u672A\u900F\u4F20\uFF0C\u6309\u53EF\u91CD\u8BD5\u9519\u8BEF\u4E0A\u629B`);
+              const e = new Error(`reasoning-gate relay toolHold \u65AD\u6D41\u4E14${contentDelivered ? "\u6B63\u6587\u5DF2\u900F\u4F20\u4E0D\u53EF\u6574\u6D41\u91CD\u8BD5" : "\u7EED\u8BD5\u5931\u8D25"}\uFF0C\u534A\u622A\u5DE5\u5177\u53C2\u6570\u672A\u900F\u4F20`);
               e.statusCode = 200;
               e.gateToolHoldReject = "hold_break";
               fail(e);
@@ -28790,7 +28793,7 @@ function gateStreamRelay(res, reader, seedChunks, model, opts) {
               continue;
             }
             telemetry("stream_break_release", { via: `relay_${lim}`, relayed: delivered, contentDelivered }, model);
-            const e = new Error(`hx-failover: reasoning-gate relay toolHold ${lim}\uFF0C\u7EED\u8BD5\u5931\u8D25\uFF0C\u534A\u622A\u5DE5\u5177\u53C2\u6570\u672A\u900F\u4F20\uFF0C\u6309\u53EF\u91CD\u8BD5\u9519\u8BEF\u4E0A\u629B`);
+            const e = new Error(`reasoning-gate relay toolHold ${lim}\uFF0C\u7EED\u8BD5\u5931\u8D25\uFF0C\u534A\u622A\u5DE5\u5177\u53C2\u6570\u672A\u900F\u4F20`);
             e.statusCode = 200;
             e.gateToolHoldReject = lim;
             fail(e);
@@ -28889,7 +28892,7 @@ async function gateConsume(res, mkRetry, mkRetryRaw, retryLeft, holdMs, bufferLi
     gateTelemetry(`toolhold_reject_${reason}`, toolHolding ? { toolHolding: true } : {}, model);
     cancelReader().catch(() => {
     });
-    const err = new Error(`hx-failover: reasoning-gate toolHold ${reason}\uFF0C\u534A\u622A\u5DE5\u5177\u53C2\u6570\u672A\u4EA4\u4ED8\uFF0C\u5F03\u6D41\u6309\u53EF\u91CD\u8BD5\u9519\u8BEF\u4E0A\u629B`);
+    const err = new Error(`reasoning-gate toolHold ${reason}\uFF0C\u534A\u622A\u5DE5\u5177\u53C2\u6570\u672A\u4EA4\u4ED8`);
     err.statusCode = 200;
     err.gateToolHoldReject = reason;
     throw err;
@@ -29002,7 +29005,7 @@ function withReasoningGate(baseFetch, cfg) {
     let attempt = 0;
     const mkRetry = async (reason) => {
       const patched = gatePatchRetryBody(bodyText, minTokens, maxTokens);
-      if (patched === null) throw new Error("hx-failover: reasoning-gate retry body patch failed");
+      if (patched === null) throw new Error("reasoning-gate retry body patch failed");
       attempt++;
       await logFailover({ action: "reasoning_gate_retry", from: model, attempt, ...reason ? { reason } : {} });
       if (reason) {
@@ -29175,8 +29178,9 @@ function isNoFinishReasonError(err) {
 }
 function rewrapStreamBreak(err) {
   if (APICallError.isInstance(err) && err.isRetryable === true) return err;
+  const upstreamMessage = String(err?.message ?? err).trim();
   return new APICallError({
-    message: `hx-failover: \u4E0A\u6E38\u6D41\u4E2D\u65AD\uFF08\u6D41\u5DF2\u5F00\u59CB\u540E\u65AD\u5F00\uFF09\uFF0C\u5DF2\u6807\u8BB0\u53EF\u81EA\u52A8\u91CD\u8BD5 \u2014\u2014 ${String(err?.message ?? err).slice(0, 300)}`,
+    message: upstreamMessage.slice(0, 300) || "\u4E0A\u6E38\u6D41\u4E2D\u65AD\uFF0C\u5DF2\u6807\u8BB0\u53EF\u81EA\u52A8\u91CD\u8BD5",
     url: err?.url,
     requestBodyValues: err?.requestBodyValues,
     statusCode: err?.statusCode,
@@ -29194,7 +29198,7 @@ function createHxFailover(options) {
     console.error("hx-failover: \u672A\u914D\u7F6E\u964D\u7EA7\u94FE\uFF08kilo.json provider.openllamas.options.failover.chain.models\uFF09\u2014\u2014\u4EC5\u7528\u5F53\u524D\u6A21\u578B\uFF0C\u65E0\u81EA\u52A8\u964D\u7EA7");
   }
   if (failoverOpts?.nested === true || Array.isArray(failoverOpts?.nested)) {
-    throw new Error("hx-failover: \u7981\u6B62\u5D4C\u5957 failover \u914D\u7F6E\uFF08legacy \u8BED\u4E49\uFF0C\u9632\u5FAA\u73AF\u4F9D\u8D56\uFF09");
+    throw new Error("\u7981\u6B62\u5D4C\u5957 failover \u914D\u7F6E\uFF08legacy \u8BED\u4E49\uFF0C\u9632\u5FAA\u73AF\u4F9D\u8D56\uFF09");
   }
   const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "reasoningGate", "timeout", "dual_review"];
   const reasoningEcho = options?.reasoningEcho === true;
@@ -29315,8 +29319,9 @@ function createHxFailover(options) {
         ...lastFails.length ? { lastFails } : {}
       });
       const retryHeaders = { "retry-after": String(remainS) };
+      const upstreamMessage = recentFail ? String(recentFail.message ?? "").trim() : "";
       throw new APICallError({
-        message: recentFail ? `hx-failover: \u5168\u94FE ${chain.length} \u4E2A\u6A21\u578B\u91CD\u8BD5\u5747\u5931\u8D25 \u2014\u2014 ${String(recentFail.message ?? "")}` : `hx-failover: \u4E3B\u6A21\u578B\u4E0E\u5168\u90E8\u5907\u7528\u5747\u5728\u51B7\u5374\u4E2D\uFF08\u4E0A\u4E00\u8F6E\u5DF2\u5B9E\u6D4B\u5931\u8D25\uFF09\uFF0C\u7EA6 ${remainS}s \u540E\u81EA\u52A8\u6062\u590D \u2014\u2014 \u8DF3\u8FC7\u91CD\u8BD5\u907F\u514D\u7A7A\u8F6C`,
+        message: upstreamMessage || `\u4E3B\u6A21\u578B\u4E0E\u5168\u90E8\u5907\u7528\u5747\u5728\u51B7\u5374\u4E2D\uFF0C\u7EA6 ${remainS}s \u540E\u81EA\u52A8\u6062\u590D`,
         url: void 0,
         statusCode: 503,
         responseHeaders: retryHeaders,
@@ -29327,7 +29332,7 @@ function createHxFailover(options) {
       await logFailover({ from: modelId, action: "stream_break_rewrap", error: String(lastError?.message ?? lastError).slice(0, 200) });
       throw rewrapStreamBreak(lastError);
     }
-    throw lastError ?? new Error("hx-failover: \u964D\u7EA7\u94FE\u5168\u90E8\u5931\u8D25");
+    throw lastError ?? new Error("\u964D\u7EA7\u94FE\u5168\u90E8\u5931\u8D25");
   }
   function withStreamBreakRewrap(stream, modelId) {
     const reader = stream.getReader();
@@ -29426,7 +29431,7 @@ function createHxFailover(options) {
           return;
         }
         try {
-          controller.error(new Error(`hx-failover: ${modelId} \u6D41\u5F0F\u54CD\u5E94\u8D85\u8FC7 ${ms}ms \u65E0\u65B0\u6570\u636E\uFF08chunkTimeout \u770B\u95E8\u72D7\uFF09\uFF0C\u4E3B\u52A8\u4E2D\u65AD`));
+          controller.error(new Error(`${modelId} \u6D41\u5F0F\u54CD\u5E94\u8D85\u8FC7 ${ms}ms \u65E0\u65B0\u6570\u636E\uFF08chunkTimeout \u770B\u95E8\u72D7\uFF09\uFF0C\u5DF2\u4E2D\u65AD`));
         } catch (e) {
           if (e?.name !== "InvalidStateError") throw e;
         }
