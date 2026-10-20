@@ -767,15 +767,19 @@
         },
         "minimax-m3.1-flash-preview": {
           "reasoning": true,
-          // 2026-10-16 入链注册（用户点名新模型）：上游 /v1/models 在册，本机零分母，
-          // 能力（reasoning_effort 是否被网关接受、是否支持图像输入/真实窗口）未实测——
-          // modalities 未声明（text-only 口径），limit 按注册表惯例口径登记；
-          // failover 落在第 3 跳前哨位，实跑异常由后续 glm-5.2/kimi-k2.6 继续兜底
+          // 2026-10-16 入链注册（用户点名新模型）：上游 /v1/models 在册。
+          // 2026-10-20 用户确认支持图像输入 → 补 modalities text+image（此前 text-only 口径作废）；
+          // limit 仍按注册表惯例口径登记（上游 /v1/models 不返回窗口元数据，未经独立实测）。
+          // failover 链第 2 跳；explore/orchestrator/small_model 亦用本档。
           "variants": {
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
             "high": { "reasoningEffort": "high" },
             "max": { "reasoningEffort": "max" },
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"],
           },
           "limit": {
             "context": 200000,
