@@ -11,11 +11,11 @@
 
   // ── 模型总开关 ──────────────────────────────────────────────────
   // 主力执行模型（default_agent=code 绑定它）。glm-5.3-flash：实测最快档，支持图像输入
-  "model": "openllamas/glm-5.3-flash",
+  "model": "openllamas/deepseek-v4.1-flash-1017",
   // 轻任务模型：起会话标题/摘要等后台活，用 deepseek 轻量 flash 档（978fac2 由 minimax-m3 切换）
-  "small_model": "openllamas/deepseek-v4.1-flash",
+  "small_model": "openllamas/minimax-m3.1-flash-preview",
   // 子代理（task 工具派活）默认模型，深度任务时会按 INSTRUCTIONS 升级到 general
-  "subagent_model": "openllamas/glm-5.3-flash",
+  "subagent_model": "openllamas/deepseek-v4.1-flash-1017",
   // 子代理最大嵌套深度（防递归失控）：子→孙 两层封顶
   "subagent_depth": 2,
   // 无显式指定 agent 时的默认入口
@@ -74,10 +74,10 @@
   // 分配原则：按模型最强项定岗位，异源只用在有交叉验证价值的岗位（编码/规划/复核/
   // 深实现/审查面板）；跑腿型轻岗不为了族别多样换模型。注册表条目可多于 5（保留回退口），
   // 但凡被 agent 路由 / failover / moa / dual_review 引用的，合计必须 ≤5。
-  // code         默认执行者：写代码/跑命令，glm-5.3-flash（实测最快档）。
-  //              ⚠️ 性能红线：49f8ed9 曾把 code 换成 deepseek-v4.1-flash，日常 95% 任务走 code
-  //              agent → 体感全面变慢（git 49f8ed9 即"快→慢"分界，同期还开了 remote_control）。
-  //              换主力模型必须单变量切换并实测对比，不得随其他改动捎带调整。
+  // code         默认执行者：写代码/跑命令，deepseek-v4.1-flash-1017（2026-10-20 实测最快档，主力换 deepseek）。
+  //              ⚠️ 性能红线：主力换型须单变量实测对比（历史 49f8ed9 换型后日常变慢的教训）。
+
+
   // plan         规划模式：出方案不动手，用 kimi 换个视角思考
   // general      深度子任务：难啃的实现/分析，deepseek-v4.1-flash@max（2026-10-13 改钉，
   //              对齐 INSTRUCTIONS.md「高风险实现升级执行档」口径；前任 kimi-k2.6@high
@@ -91,8 +91,8 @@
     //              吃光输出预算 → 摘要为空 → "empty response"；schema 规定
     //              variant 仅对 agent 自己配置的 model 生效，model+variant 必须同设，
     //              详见 agent.compaction 处注释）
-  // orchestrator 多代理编排：拆解任务分派子代理，minimax-m3.1-flash-preview@low（轻决策岗位，
-  //              零分母风险由该位的低失败影响面兜住；K3 只留给 plan）
+  // orchestrator 多代理编排：拆解任务分派子代理，deepseek-v4.1-flash-1017@low（2026-10-20 实测
+  //              1017 为最快档，编排岗位对延迟最敏感；K3 只留给 plan）
   // verify       自定义复核代理（subagent）：异源模型 deepseek 复核 glm 的产出
   //              —— 不同厂商交叉验证，只读不许改（edit/bash写通道均 deny）；K3 只留 plan 位
   // variant 策略（2026-09-24 二轮修正，证伪了「low/medium 零失败」的旧论述）：
@@ -105,9 +105,9 @@
   // reasoningGate（扣留检测 + 死亡自动扩预算重试，见 provider.openllamas.options 注释）。
   "agent": {
     "code": {
-      "model": "openllamas/glm-5.3-flash",
+      "model": "openllamas/deepseek-v4.1-flash-1017",
       // 常规执行钉 high：保留深推理，同时避免 max 增加的显著首字延迟。
-      // 本机 glm-5.3-flash 实测 max 首字约 41s、low/high 约 6s；复杂规划仍由 plan@max、
+      // 本机实测 max 档首字延迟显著高于 high，复杂规划仍由 plan@max、
       // 高风险实现由 general@max + 异源 verify/dual_review 承担。若同任务对照显示质量退化再调整。
       "variant": "high",
     },
@@ -133,13 +133,14 @@
       "variant": "max",
     },
     "explore": {
+      // 2026-10-20 角色去重：轻岗位改钉 minimax@low，与主力 deepseek 分族，避免单点。
       // 2026-10-17 角色路由收敛：qwen3.8-flash → deepseek-v4.1-flash@low。2026-10-16 曾以
       // 「粗扫最低风险岗位换异族模型」为由改钉 qwen（注册后零分母），本次按「异源只保留在
       // 有交叉验证价值的岗位」收敛：编码/规划/检查/深度实现/审查面板已覆盖异源需求，只读粗扫
       // 与压缩同属低风险轻档岗位，厂商切换不产生独立盲区收益，只多担一份零分母风险。
       // 实证支撑：deepseek@low 已在 compaction 位以 400KB 负载稳定产出（11 跑 0 空响应、
       // 压缩墙钟最快），大输入低档有地面真值；异常仍由全局 failover 链兜底。
-      "model": "openllamas/deepseek-v4.1-flash",
+      "model": "openllamas/minimax-m3.1-flash-preview",
       "variant": "low",
     },
     "compaction": {
@@ -174,7 +175,7 @@
     },
     "verify": {
       "mode": "subagent",
-      // verify 必须与被审的 glm 族异源；2026-10-17 用户定案：kimi-k3@high → deepseek-v4.1-flash@high
+      // verify 必须与主力 deepseek 族异源（2026-10-20 主力改为 deepseek，复核改钉 glm@high）；此前 2026-10-17 用户定案 kimi-k3@high → deepseek-v4.1-flash@high 已作废
       // （K3 只留 plan 位；复核改用 deepseek）。异源硬约束仍满足（被审=GLM，复核=DeepSeek）。
       // 选 deepseek 的好处：general@max 与 verify@high 同厂同代，复核口径与实现档位可对照。
       // 档位分母口径：deepseek max 档有 85k+ 大输入 length 猝死实证（0.48%/call），
@@ -183,7 +184,7 @@
       // 退化路径登记（2026-10-15 审查，2026-10-17 复认）：本模型失败时按全局 failover 链切换，
       // 首跳即 glm-5.3-flash（被审模型同款）→ 异源性静默丢失（仅流首 ⚠️ 提示）；
       // 配置层无 per-agent 链可钉，复核结论应声明实际执行模型。
-      "model": "openllamas/deepseek-v4.1-flash",
+      "model": "openllamas/glm-5.3-flash",
       // 高风险复核保留思考深度 → high（不钉 max：max 档大输入 length 猝死实证在位）。
       "variant": "high",
       "description": "独立验证视角（异源模型复核高风险改动，只读不改动）。仅在认证/权限/支付/数据迁移/公共契约等高风险改动时按需调用。",
@@ -563,18 +564,18 @@
         // failover.noticeCooldownMs 可单独调通知去重窗口（缺省 = cooldownMs）。
         // ※ 模型切换的唯一真源就是本配置文件——provider/moa/dual-review 代码均无内置默认链/兜底模型，
         //   换模型只改这里（agent 路由 / failover / moa / dual_review 都在本文件内）
-        // 链序口径 = 当前可用档在前（具体顺序见下方 models 数组）：首跳最稳、次跳主力、
-        // 三跳重活、末跳轻量，共 4 跳。旗舰大窗档因额度/渠道不可用未入链，注册保留，
-        // 恢复后可单变量加回末跳（长任务/超大上下文兜底）。
+        // 链序口径（2026-10-20 按实测速度重排）：1017 最快居首，minimax 次之，deepseek 第三，
+        // glm-5.3-flash 实测偏慢，降到末跳仅作兜底。共 4 跳。旗舰大窗档因额度/渠道不可用未入链，
+        // 注册保留，恢复后可单变量加回末跳（长任务/超大上下文兜底）。
         // 撤出路由的旧代（注册表保留、单变量可加回）：网关级过载时同网关多跳无意义——
         // lib/hx-client 实证单网关 CPU 过载即全模型 503，多跳只是叠加退避与等待。
         "failover": {
           "chain": {
             "models": [
               "deepseek-v4.1-flash-1017",
-              "glm-5.3-flash",
+              "minimax-m3.1-flash-preview",
               "deepseek-v4.1-flash",
-              "minimax-m3.1-flash-preview"
+              "glm-5.3-flash"
             ],
           },
         },
@@ -586,7 +587,7 @@
         // 2026-10-18：首选聚合档额度不足（HTTP 400 insufficient credits）——聚合席加 1017
         // 兜底，首选成功时不额外调用；额度恢复后自动优先原首选。
         "moa": {
-          "references": ["deepseek-v4.1-flash", "minimax-m3.1-flash-preview"],
+          "references": ["minimax-m3.1-flash-preview", "glm-5.3-flash"],
           "aggregator": "glm-5.3-flash",
           "aggregator_fallbacks": ["deepseek-v4.1-flash-1017"],
         },
@@ -610,9 +611,9 @@
         // （三键均可被调用方 per-call 覆盖 positive_model/negative_model/aggregator；
         //   per-call 覆盖时不套配置 fallback；提示词真源 = plugin/dual-review.ts 的 POSITIVE_PROMPT/NEGATIVE_PROMPT）
         "dual_review": {
-          "positive": "deepseek-v4.1-flash",
+          "positive": "minimax-m3.1-flash-preview",
           "positive_fallbacks": ["deepseek-v4.1-flash-1017"],
-          "negative": "minimax-m3.1-flash-preview",
+          "negative": "glm-5.3-flash",
           "negative_fallbacks": ["deepseek-v4.1-flash-1017"],
           "aggregator": "glm-5.3-flash",
           "aggregator_fallbacks": ["deepseek-v4.1-flash-1017"],
