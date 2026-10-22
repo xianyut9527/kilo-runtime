@@ -765,7 +765,7 @@
             "output": 32000,
           },
         },
-        "minimax-m3.1-flash-preview": {
+        "minimax-m3.1-flash": {
           "reasoning": true,
           // 2026-10-16 入链注册（用户点名新模型）：上游 /v1/models 在册。
           // 2026-10-20 用户确认支持图像输入 → 补 modalities text+image（此前 text-only 口径作废）；
@@ -858,6 +858,22 @@
             "output": 128000,
           },
           "tool_call": true,
+        },
+        "doubao-seed-2-1-pro": {
+          "reasoning": true,
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "medium": { "reasoningEffort": "medium" },
+            "high": { "reasoningEffort": "high" }
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"],
+          },
+          "limit": {
+            "context": 200000,
+            "output": 128000,
+          },
         },
       },
     },
