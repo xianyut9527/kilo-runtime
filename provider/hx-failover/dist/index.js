@@ -1,4 +1,4 @@
-// kilo-build: src-sha256=b8938bf7f15e03b7ecfefefbd9b2108b3b82dbb207bd1234c2979c16168efb71
+// kilo-build: src-sha256=5beea142cd81f697b047497ae7937cd73c7d56b01ec8739f0a8b50d3ada5a11e
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)
@@ -29152,10 +29152,199 @@ function isOverloadErr(err) {
   if (ra !== void 0 && ra !== null) return true;
   return /cpu overloaded|system overloaded/i.test(String(err?.message ?? ""));
 }
+var MODEL_POLICY_UNAVAILABLE_RE = /requires global regions/i;
+var MODEL_QUOTA_UNAVAILABLE_RE = /insufficient personal balance/i;
 function isChannelUnavailable(err) {
   const status = err?.statusCode ?? err?.status;
+  if (status === 400) return MODEL_POLICY_UNAVAILABLE_RE.test(channelUnavailableText(err));
+  if (status === 402) return MODEL_QUOTA_UNAVAILABLE_RE.test(channelUnavailableText(err));
   if (status !== 503 && status !== 404 && status !== 502) return false;
   return CHANNEL_UNAVAILABLE_RE.test(channelUnavailableText(err));
+}
+var BODY_TOO_LARGE_RE = /request body (?:is )?too large|payload too large|request entity too large|entity too large|body exceeds/i;
+var MAX_BODY_SHRINK_LEVEL = 3;
+function isBodyTooLarge(err) {
+  const status = err?.statusCode ?? err?.status ?? err?.response?.status;
+  if (status === 413) return true;
+  return BODY_TOO_LARGE_RE.test(channelUnavailableText(err));
+}
+function promptBytes(prompt) {
+  try {
+    const s = JSON.stringify(prompt, (_k, v) => v instanceof Uint8Array ? `<bin:${v.byteLength}>` : v);
+    return typeof s === "string" ? Buffer.byteLength(s) : 0;
+  } catch {
+    return 0;
+  }
+}
+function truncateText(text, cap, label) {
+  if (typeof text !== "string" || text.length <= cap) return text;
+  return `${text.slice(0, cap)}
+\u2026[\u5DF2\u622A\u65AD ${text.length - cap} \u5B57\u7B26\uFF1A\u8BF7\u6C42\u4F53\u79EF\u8D85\u9650${label ? ` \xB7 ${label}` : ""}]`;
+}
+function shrinkToolResultOutput(output2, cap) {
+  if (!output2 || typeof output2 !== "object") return null;
+  if (output2.type === "text" || output2.type === "error-text") {
+    const next = truncateText(output2.value, cap);
+    return next === output2.value ? null : { ...output2, value: next };
+  }
+  if (output2.type === "json" || output2.type === "error-json") {
+    let s;
+    try {
+      s = JSON.stringify(output2.value);
+    } catch {
+      return null;
+    }
+    if (typeof s !== "string" || s.length <= cap) return null;
+    return { type: "text", value: truncateText(s, cap) };
+  }
+  if (output2.type === "content") {
+    return { type: "text", value: "[\u5DE5\u5177\u7ED3\u679C\u4E2D\u7684\u9644\u4EF6/\u5BCC\u5185\u5BB9\u5DF2\u7701\u7565\uFF1A\u8BF7\u6C42\u4F53\u79EF\u8D85\u9650]" };
+  }
+  return null;
+}
+function shrinkToolCallInput(input2, cap) {
+  if (input2?._kilo_truncated === true && typeof input2.preview === "string") {
+    const preview = truncateText(input2.preview, cap, "tool-call input");
+    return preview === input2.preview ? null : { ...input2, preview };
+  }
+  let s;
+  try {
+    s = JSON.stringify(input2);
+  } catch {
+    return null;
+  }
+  if (typeof s !== "string" || s.length <= cap) return null;
+  if (typeof input2 === "string") {
+    const next = truncateText(input2, cap, "tool-call input");
+    return next === input2 ? null : next;
+  }
+  return { _kilo_truncated: true, preview: truncateText(s, cap, "tool-call input") };
+}
+function shrinkPrompt(prompt, level) {
+  if (!Array.isArray(prompt) || prompt.length === 0) return null;
+  const before = promptBytes(prompt);
+  const lastUserIdx = (() => {
+    for (let i = prompt.length - 1; i >= 0; i--) if (prompt[i]?.role === "user") return i;
+    return 0;
+  })();
+  const keepRecentCount = level >= 3 ? Math.max(1, prompt.length - lastUserIdx) : level === 2 ? 12 : 16;
+  const recentFrom = Math.max(0, prompt.length - keepRecentCount);
+  const toolCap = level >= 3 ? 600 : level === 2 ? 1200 : 4e3;
+  let changed = false;
+  const out = [];
+  for (let i = 0; i < prompt.length; i++) {
+    const msg = prompt[i];
+    if (!msg || typeof msg !== "object") {
+      out.push(msg);
+      continue;
+    }
+    if (level >= 3 && i < lastUserIdx && msg.role !== "system") {
+      changed = true;
+      continue;
+    }
+    if (typeof msg.content === "string") {
+      if (level >= 3) {
+        const next = truncateText(msg.content, 2e4, msg.role);
+        if (next !== msg.content) {
+          changed = true;
+          out.push({ ...msg, content: next });
+          continue;
+        }
+      }
+      out.push(msg);
+      continue;
+    }
+    if (!Array.isArray(msg.content)) {
+      out.push(msg);
+      continue;
+    }
+    const isRecent = i >= recentFrom;
+    const parts = [];
+    for (const part of msg.content) {
+      if (!part || typeof part !== "object") {
+        parts.push(part);
+        continue;
+      }
+      if (part.type === "file") {
+        const keep = level === 1 ? isRecent && i >= prompt.length - 2 : false;
+        if (keep) {
+          parts.push(part);
+        } else {
+          changed = true;
+          parts.push({ type: "text", text: "[\u9644\u4EF6\u5DF2\u7701\u7565\uFF1A\u8BF7\u6C42\u4F53\u79EF\u8D85\u9650]" });
+        }
+        continue;
+      }
+      if (part.type === "tool-call") {
+        const next = shrinkToolCallInput(part.input, toolCap);
+        if (next !== null) {
+          changed = true;
+          parts.push({ ...part, input: next });
+        } else {
+          parts.push(part);
+        }
+        continue;
+      }
+      if (part.type === "tool-result") {
+        const next = shrinkToolResultOutput(part.output, toolCap);
+        if (next) {
+          changed = true;
+          parts.push({ ...part, output: next });
+        } else {
+          parts.push(part);
+        }
+        continue;
+      }
+      if (part.type === "reasoning") {
+        if (level >= 3) {
+          const next = truncateText(part.text, 2e3, "reasoning");
+          if (next !== part.text) {
+            changed = true;
+            parts.push({ ...part, text: next });
+            continue;
+          }
+        } else if (!isRecent) {
+          if (level >= 2) {
+            changed = true;
+            continue;
+          }
+          const next = truncateText(part.text, 400);
+          if (next !== part.text) {
+            changed = true;
+            parts.push({ ...part, text: next });
+            continue;
+          }
+        }
+        parts.push(part);
+        continue;
+      }
+      if (part.type === "text" && (level >= 3 || msg.role === "assistant" && level >= 2 && !isRecent)) {
+        const next = truncateText(part.text, level >= 3 ? 2e4 : 2e3, msg.role);
+        if (next !== part.text) {
+          changed = true;
+          parts.push({ ...part, text: next });
+          continue;
+        }
+      }
+      if (part.type === "tool-approval-response" && level >= 3 && typeof part.reason === "string") {
+        const next = truncateText(part.reason, 600, "tool-approval reason");
+        if (next !== part.reason) {
+          changed = true;
+          parts.push({ ...part, reason: next });
+          continue;
+        }
+      }
+      parts.push(part);
+    }
+    if (parts.length === 0) {
+      changed = true;
+      parts.push({ type: "text", text: "[\u5185\u5BB9\u5DF2\u7701\u7565\uFF1A\u8BF7\u6C42\u4F53\u79EF\u8D85\u9650]" });
+    }
+    out.push({ ...msg, content: parts });
+  }
+  const after = promptBytes(out);
+  if (!changed || after >= before) return null;
+  return { prompt: out, before, after };
 }
 function isStreamBreakError(err) {
   if (isCancellation(err)) return false;
@@ -29228,6 +29417,8 @@ function createHxFailover(options) {
   async function withFailover(modelId, run, callOptions) {
     const chain = chainOf(options, modelId);
     let lastError;
+    let currentOptions = callOptions;
+    let shrinkLevel = 0;
     let startHop = 0;
     if (chain.length > 1 && isCooling(modelId, cooldownMs)) {
       await logFailover({ from: modelId, action: "skip_cooldown", hop: 0 });
@@ -29242,12 +29433,35 @@ function createHxFailover(options) {
       const model = provider.chatModel(id);
       for (let attempt = 0; attempt <= MAX_RETRIES_PER_HOP; attempt++) {
         try {
-          return await run(model, id, hop);
+          return await run(model, id, hop, currentOptions);
         } catch (err) {
           lastError = err;
           if (isCancellation(err)) {
             await logFailover({ from: modelId, at: id, action: "cancelled" });
             throw err;
+          }
+          if (isBodyTooLarge(err) && shrinkLevel < MAX_BODY_SHRINK_LEVEL && currentOptions && Array.isArray(currentOptions.prompt)) {
+            let usedLevel = shrinkLevel;
+            let shrunk = null;
+            while (!shrunk && usedLevel < MAX_BODY_SHRINK_LEVEL) {
+              usedLevel += 1;
+              shrunk = shrinkPrompt(currentOptions.prompt, usedLevel);
+            }
+            if (shrunk) {
+              shrinkLevel = usedLevel;
+              await logFailover({
+                from: modelId,
+                at: id,
+                action: "body_shrink_retry",
+                level: shrinkLevel,
+                bytesBefore: shrunk.before,
+                bytesAfter: shrunk.after,
+                status: err?.statusCode ?? err?.status ?? err?.response?.status
+              });
+              currentOptions = { ...currentOptions, prompt: shrunk.prompt };
+              attempt -= 1;
+              continue;
+            }
           }
           if (!isRetryable(err)) {
             if (isChannelUnavailable(err)) {
@@ -29464,11 +29678,11 @@ function createHxFailover(options) {
       modelId,
       supportedUrls: inner.supportedUrls ?? {},
       async doGenerate(callOptions) {
-        return withFailover(modelId, (m) => m.doGenerate(callOptions), callOptions);
+        return withFailover(modelId, (m, _id, _hop, opts) => m.doGenerate(opts), callOptions);
       },
       async doStream(callOptions) {
-        return withFailover(modelId, async (m, id, hop) => {
-          const result = await m.doStream(callOptions);
+        return withFailover(modelId, async (m, id, hop, opts) => {
+          const result = await m.doStream(opts);
           let stream = result.stream;
           if (hop > 0) {
             const key = `${modelId}->${id}`;

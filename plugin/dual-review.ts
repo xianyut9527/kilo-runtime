@@ -120,7 +120,7 @@ ${neg}
 </${tag.n}>`;
 
 // 核心执行体：tool: dual_review 的 execute 与 quality-gate 交付节点直调共用。
-async function runDualReview(subject, overrides = {}) {
+async function runDualReview(subject, overrides = null) {
   const cfg = await loadCfg();
   subject = String(subject ?? "").trim();
   if (!subject) return "dual_review: 缺少 subject 参数";
@@ -179,7 +179,7 @@ async function runDualReview(subject, overrides = {}) {
       if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
       try {
         const text = await withDeadline(
-          ask({ baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs, idleMs }),
+          ask({ baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs, idleMs, attempts: undefined, signal: undefined }),
           Math.max(1, remaining),
           `${label}(${model})`,
         );
@@ -192,10 +192,16 @@ async function runDualReview(subject, overrides = {}) {
     // 全部候选失败：只报最后一条网关错误为主体（2026-10-18 用户二次裁定：模型可省略
     // 不逐个列出，但错误本身必须醒目）——加简短计数前缀标明尝试规模；
     // 逐模型明细保留在 attempts 里供日志诊断。
-    const err = new Error(lastErr
-      ? `${label}失败（已试 ${models.length} 个模型）：${String(lastErr?.message ?? lastErr)}`
-      : (failed[failed.length - 1] ?? "无可用候选模型"));
-    err.attempts = failed;
+    // 保留网关状态码与原始报文错误对象：上层（moa/降级链）可按 402/400 签名判型，
+    // 不被聚合错误壳抹掉；message 仍带 lastErr 的网关原文前 300 字。
+    const err = Object.assign(
+      new Error(lastErr
+        ? `${label}失败（已试 ${models.length} 个模型）：${String(lastErr?.message ?? lastErr)}`
+        : (failed[failed.length - 1] ?? "无可用候选模型")),
+      lastErr && lastErr.statusCode != null ? { statusCode: lastErr.statusCode } : {},
+      lastErr ? { cause: lastErr } : {},
+      { attempts: failed },
+    );
     throw err;
   };
 
@@ -276,7 +282,7 @@ async function runDualReview(subject, overrides = {}) {
 }
 
 // tool 注册：模型仍可主动发起（传入自定义 subject，如审查某个具体方案而非本次改动）
-const DualReviewImpl = async () => {
+const DualReviewImpl = async (_ctx = {}) => {
   return {
     tool: {
       dual_review: {

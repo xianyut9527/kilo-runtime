@@ -1023,10 +1023,250 @@ function isOverloadErr(err) {
 // 二者与「无可用渠道」同语义（渠道侧故障，非网关节流过载），且都会自报冷却窗口。
 // 另：502 此前直接落在状态码家族之外 —— 它同样由网关主动发出，纳入。
 // ⚠️ 本正则与 lib/hx-client.ts 的 isOverloadErr 签名集必须同源维护，改一处必改另一处。
+//
+// 2026-10-24 查漏补缺：400 + 「模型级区域/工作区策略不满足」同样按渠道不可用换 hop。
+// 生产实证（failover-events.jsonl）：2026-10-22 06:57-08:20 deepseek-v4.1-flash-1017
+// 连续 169 次 400 fatal——"Upstream request failed: This Go model requires Global
+// regions. Select Global in your workspace's Privacy settings to use it."，占同期
+// fatal 总量 79%。该类错误是**单模型渠道侧策略**问题（链上其他模型健康），此前
+// 400 不在状态码家族内 → 每轮 fatal 直通打死回合，用户被反复阻断 83 分钟。
+// 签名严格限定已实证的措辞，不泛化到普通 400 参数错误（那些必须 fatal 直通）。
+const MODEL_POLICY_UNAVAILABLE_RE = /requires global regions/i;
+// 402 同样只放行已实证的模型级余额签名（2026-10-24 04:12 kimi-k3.1-pro
+// "insufficient personal balance" fatal）；普通 Payment required 仍原样 fatal。
+const MODEL_QUOTA_UNAVAILABLE_RE = /insufficient personal balance/i;
+
 function isChannelUnavailable(err) {
   const status = err?.statusCode ?? err?.status;
+  if (status === 400) return MODEL_POLICY_UNAVAILABLE_RE.test(channelUnavailableText(err));
+  if (status === 402) return MODEL_QUOTA_UNAVAILABLE_RE.test(channelUnavailableText(err));
   if (status !== 503 && status !== 404 && status !== 502) return false;
   return CHANNEL_UNAVAILABLE_RE.test(channelUnavailableText(err));
+}
+
+// ── 请求体积超限（413）自救（2026-10-24 专项）──────────────────────────
+// 现象：会话累积大附件（图片/PDF）或超长工具输出后，单次请求 body 超过网关体积
+// 上限（openllamas 侧 NestJS+Fastify，Fastify 默认 bodyLimit=1MiB），此后该会话
+// **每个回合**都 413 fatal 直死——用户体感「执行任务老是 request body too large」。
+// 生产实证：~/.local/share/kilo/failover-events.jsonl 3 天 37 次 413，跨
+// deepseek/gpt-6-luna/glm 三条不同上游同文案 → 网关层体积上限，与模型上下文无关
+// （token 溢出是 400 context length exceeded）。
+//
+// 对策：413 且本轮尚未交付任何内容时，按级别裁减 prompt 体积后**原地重试同一模型**
+// （体积与模型无关，换 hop 只是把同样大的 body 换个上游再撞一次）。裁减只作用于
+// 本请求的 prompt 副本：Kilo 会话状态与可见历史不变；代价是模型看到的是裁剪后的
+// 旧上下文（附件省略、旧工具输出截断），远优于整轮 fatal。三级逐级加码，仍失败
+// 才按原逻辑 fatal 直通（错误原文不改写，遵循「上游原文可见」约束）。
+const BODY_TOO_LARGE_RE = /request body (?:is )?too large|payload too large|request entity too large|entity too large|body exceeds/i;
+const MAX_BODY_SHRINK_LEVEL = 3;
+
+function isBodyTooLarge(err) {
+  const status = err?.statusCode ?? err?.status ?? err?.response?.status;
+  if (status === 413) return true;
+  // 状态码可能被网关包成 400/500，报文签名兜底（同 channelUnavailableText 五路并集口径）
+  return BODY_TOO_LARGE_RE.test(channelUnavailableText(err));
+}
+
+// prompt 体积估算：Uint8Array 按字节数计（JSON.stringify 会展开成数字键对象，
+// 几十 MB 的图片会因此被严重高估），其余按 JSON 文本长度近似。
+function promptBytes(prompt) {
+  try {
+    const s = JSON.stringify(prompt, (_k, v) => (v instanceof Uint8Array ? `<bin:${v.byteLength}>` : v));
+    return typeof s === "string" ? Buffer.byteLength(s) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function truncateText(text, cap, label) {
+  if (typeof text !== "string" || text.length <= cap) return text;
+  return `${text.slice(0, cap)}\n…[已截断 ${text.length - cap} 字符：请求体积超限${label ? ` · ${label}` : ""}]`;
+}
+
+function shrinkToolResultOutput(output, cap) {
+  if (!output || typeof output !== "object") return null;
+  if (output.type === "text" || output.type === "error-text") {
+    const next = truncateText(output.value, cap);
+    return next === output.value ? null : { ...output, value: next };
+  }
+  if (output.type === "json" || output.type === "error-json") {
+    let s;
+    try {
+      s = JSON.stringify(output.value);
+    } catch {
+      return null;
+    }
+    if (typeof s !== "string" || s.length <= cap) return null;
+    return { type: "text", value: truncateText(s, cap) };
+  }
+  if (output.type === "content") {
+    // content 型结果可能内嵌图片/文件块：整块降级为纯文本说明
+    return { type: "text", value: "[工具结果中的附件/富内容已省略：请求体积超限]" };
+  }
+  return null;
+}
+
+// 工具调用参数也可能占主体（write/edit 的大段 content/newString）。必须保留
+// tool-call 节点与 toolCallId，只把 arguments 换成带截断标记的小型 JSON 预览；
+// 再次升级裁减已截断参数时只缩短 preview，避免层层套娃。
+function shrinkToolCallInput(input, cap) {
+  if (input?._kilo_truncated === true && typeof input.preview === "string") {
+    const preview = truncateText(input.preview, cap, "tool-call input");
+    return preview === input.preview ? null : { ...input, preview };
+  }
+  let s;
+  try {
+    s = JSON.stringify(input);
+  } catch {
+    return null;
+  }
+  if (typeof s !== "string" || s.length <= cap) return null;
+  if (typeof input === "string") {
+    const next = truncateText(input, cap, "tool-call input");
+    return next === input ? null : next;
+  }
+  return { _kilo_truncated: true, preview: truncateText(s, cap, "tool-call input") };
+}
+
+/**
+ * 按级别裁剪 prompt 副本；无可裁剪内容或体积未下降时返回 null（调用方据此继续升级）。
+ * level 1：略去较早消息的附件、截断工具输出/调用参数与旧推理
+ * level 2：略去全部附件、工具输出/调用参数进一步截断、旧推理丢弃、旧助手长文截断
+ * level 3：只保留 system + 最后一条 user 起的消息窗口，并截断窗口内的长文本/推理/参数
+ */
+function shrinkPrompt(prompt, level) {
+  if (!Array.isArray(prompt) || prompt.length === 0) return null;
+  const before = promptBytes(prompt);
+  const lastUserIdx = (() => {
+    for (let i = prompt.length - 1; i >= 0; i--) if (prompt[i]?.role === "user") return i;
+    return 0;
+  })();
+  const keepRecentCount = level >= 3 ? Math.max(1, prompt.length - lastUserIdx) : level === 2 ? 12 : 16;
+  const recentFrom = Math.max(0, prompt.length - keepRecentCount);
+  const toolCap = level >= 3 ? 600 : level === 2 ? 1200 : 4000;
+  let changed = false;
+  const out = [];
+
+  for (let i = 0; i < prompt.length; i++) {
+    const msg = prompt[i];
+    if (!msg || typeof msg !== "object") {
+      out.push(msg);
+      continue;
+    }
+    // level 3：丢弃早期非 system 消息（以最后一条 user 为界，保证不会切断
+    // assistant tool-call 与 tool-result 的配对——user 消息是回合天然边界）
+    if (level >= 3 && i < lastUserIdx && msg.role !== "system") {
+      changed = true;
+      continue;
+    }
+    if (typeof msg.content === "string") {
+      if (level >= 3) {
+        const next = truncateText(msg.content, 20000, msg.role);
+        if (next !== msg.content) {
+          changed = true;
+          out.push({ ...msg, content: next });
+          continue;
+        }
+      }
+      out.push(msg);
+      continue;
+    }
+    if (!Array.isArray(msg.content)) {
+      out.push(msg);
+      continue;
+    }
+    const isRecent = i >= recentFrom;
+    const parts = [];
+    for (const part of msg.content) {
+      if (!part || typeof part !== "object") {
+        parts.push(part);
+        continue;
+      }
+      if (part.type === "file") {
+        // level 1 仅保留最近两条消息的附件；level >= 2 全部省略
+        const keep = level === 1 ? isRecent && i >= prompt.length - 2 : false;
+        if (keep) {
+          parts.push(part);
+        } else {
+          changed = true;
+          parts.push({ type: "text", text: "[附件已省略：请求体积超限]" });
+        }
+        continue;
+      }
+      if (part.type === "tool-call") {
+        const next = shrinkToolCallInput(part.input, toolCap);
+        if (next !== null) {
+          changed = true;
+          parts.push({ ...part, input: next });
+        } else {
+          parts.push(part);
+        }
+        continue;
+      }
+      if (part.type === "tool-result") {
+        const next = shrinkToolResultOutput(part.output, toolCap);
+        if (next) {
+          changed = true;
+          parts.push({ ...part, output: next });
+        } else {
+          parts.push(part);
+        }
+        continue;
+      }
+      if (part.type === "reasoning") {
+        if (level >= 3) {
+          // 当前回合的 reasoning 也在最终级限长；providerOptions/签名原样保留。
+          const next = truncateText(part.text, 2000, "reasoning");
+          if (next !== part.text) {
+            changed = true;
+            parts.push({ ...part, text: next });
+            continue;
+          }
+        } else if (!isRecent) {
+          if (level >= 2) {
+            changed = true; // 旧推理整段丢弃
+            continue;
+          }
+          const next = truncateText(part.text, 400);
+          if (next !== part.text) {
+            changed = true;
+            parts.push({ ...part, text: next });
+            continue;
+          }
+        }
+        parts.push(part);
+        continue;
+      }
+      if (part.type === "text" && (level >= 3 || (msg.role === "assistant" && level >= 2 && !isRecent))) {
+        // 最终级包含当前 user/assistant：单条长消息不能再成为无解死角。
+        const next = truncateText(part.text, level >= 3 ? 20000 : 2000, msg.role);
+        if (next !== part.text) {
+          changed = true;
+          parts.push({ ...part, text: next });
+          continue;
+        }
+      }
+      if (part.type === "tool-approval-response" && level >= 3 && typeof part.reason === "string") {
+        const next = truncateText(part.reason, 600, "tool-approval reason");
+        if (next !== part.reason) {
+          changed = true;
+          parts.push({ ...part, reason: next });
+          continue;
+        }
+      }
+      parts.push(part);
+    }
+    // 协议约束：非 system 消息 content 不能为空（assistant/tool 消息留空会炸 SDK）
+    if (parts.length === 0) {
+      changed = true;
+      parts.push({ type: "text", text: "[内容已省略：请求体积超限]" });
+    }
+    out.push({ ...msg, content: parts });
+  }
+
+  const after = promptBytes(out);
+  if (!changed || after >= before) return null;
+  return { prompt: out, before, after };
 }
 
 // ── 流中断错误重包装（2026-09-15 断流专项）────────────────────────────
@@ -1166,6 +1406,9 @@ export function createHxFailover(options) {
   async function withFailover(modelId, run, callOptions) {
     const chain = chainOf(options, modelId);
     let lastError;
+    // 413 自救状态（跨 hop 共享：请求体积与模型无关，裁减级别只进不退）
+    let currentOptions = callOptions;
+    let shrinkLevel = 0;
 
     // 冷却判定对全链生效（含主模型）：主模型上一轮刚降级过 → 本轮直接跳到首个
     // 未冷却的备用，省去对已知故障模型的 3 连重试+退避（~8s 延迟与重复告警）。
@@ -1188,13 +1431,46 @@ export function createHxFailover(options) {
 
       for (let attempt = 0; attempt <= MAX_RETRIES_PER_HOP; attempt++) {
         try {
-          return await run(model, id, hop);
+          return await run(model, id, hop, currentOptions);
         } catch (err) {
           lastError = err;
           // 取消类错误：只记一条诊断日志，立即原样抛出（不进冷却，不换模型）
           if (isCancellation(err)) {
             await logFailover({ from: modelId, at: id, action: "cancelled" });
             throw err;
+          }
+          // 413 请求体积超限自救必须先于普通 retryable 分类：网关也可能把体积错误
+          // 包装成 500；若放在 !isRetryable 分支内，该形态会原体重试/换 hop，永远进不了自救。
+          // 原地重试同一模型，不占 hop 重试预算（attempt -= 1 抵消循环自增）。
+          if (
+            isBodyTooLarge(err) &&
+            shrinkLevel < MAX_BODY_SHRINK_LEVEL &&
+            currentOptions &&
+            Array.isArray(currentOptions.prompt)
+          ) {
+            // 逐级尝试：某一级无可裁剪内容或体积未下降时直接跳下一级；
+            // 全部级别都无有效裁减才按原错误分类处理。
+            let usedLevel = shrinkLevel;
+            let shrunk = null;
+            while (!shrunk && usedLevel < MAX_BODY_SHRINK_LEVEL) {
+              usedLevel += 1;
+              shrunk = shrinkPrompt(currentOptions.prompt, usedLevel);
+            }
+            if (shrunk) {
+              shrinkLevel = usedLevel;
+              await logFailover({
+                from: modelId,
+                at: id,
+                action: "body_shrink_retry",
+                level: shrinkLevel,
+                bytesBefore: shrunk.before,
+                bytesAfter: shrunk.after,
+                status: err?.statusCode ?? err?.status ?? err?.response?.status,
+              });
+              currentOptions = { ...currentOptions, prompt: shrunk.prompt };
+              attempt -= 1;
+              continue;
+            }
           }
           if (!isRetryable(err)) {
             // 2026-09-27 查漏补缺：503 渠道/模型不可用（model_not_found 类）虽然确定性失败，
@@ -1463,11 +1739,11 @@ export function createHxFailover(options) {
       modelId,
       supportedUrls: inner.supportedUrls ?? {},
       async doGenerate(callOptions) {
-        return withFailover(modelId, (m) => m.doGenerate(callOptions), callOptions);
+        return withFailover(modelId, (m, _id, _hop, opts) => m.doGenerate(opts), callOptions);
       },
       async doStream(callOptions) {
-        return withFailover(modelId, async (m, id, hop) => {
-          const result = await m.doStream(callOptions);
+        return withFailover(modelId, async (m, id, hop, opts) => {
+          const result = await m.doStream(opts);
           let stream = result.stream;
           // 通知去重：同一「主模型→备用」在窗口内只注入一次提示。
           // 判定必须在注入前：流首已入队无法撤回。

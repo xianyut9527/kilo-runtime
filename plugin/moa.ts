@@ -31,7 +31,7 @@ function modelRoutes(primary, fallbacks) {
   return [...new Set(list)];
 }
 
-const MoaImpl = async () => {
+const MoaImpl = async (_ctx = {}) => {
   return {
     tool: {
       moa: {
@@ -119,7 +119,7 @@ const MoaImpl = async () => {
               if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
               try {
                 const text = await withDeadline(
-                  ask({ baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs: totalMs, idleMs }),
+                  ask({ baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs: totalMs, idleMs, attempts: undefined, signal: undefined }),
                   Math.max(1, remaining),
                   `moa 聚合(${model})`,
                 );
@@ -131,9 +131,15 @@ const MoaImpl = async () => {
             }
             // 全部候选失败：只报最后一条网关错误为主体（同 dual-review 口径：
             // 模型可省略只报计数，错误必须醒目）
-            throw new Error(lastErr
-              ? `聚合失败（已试 ${aggModels.length} 个模型）：${String(lastErr?.message ?? lastErr)}`
-              : (failed[failed.length - 1] ?? "无可用候选模型"));
+            const err = Object.assign(
+              new Error(lastErr
+                ? `聚合失败（已试 ${aggModels.length} 个模型）：${String(lastErr?.message ?? lastErr)}`
+                : (failed[failed.length - 1] ?? "无可用候选模型")),
+              lastErr && lastErr.statusCode != null ? { statusCode: lastErr.statusCode } : {},
+              lastErr ? { cause: lastErr } : {},
+              { attempts: failed },
+            );
+            throw err;
           };
 
           // 分路计时账本：结果报告的「产出规模」行用（每路在各自 promise 落定时记时，
@@ -143,7 +149,7 @@ const MoaImpl = async () => {
             const t0m = Date.now();
             const p = ask({
               baseURL: cfg.baseURL, key: cfg.key, model: m, prompt: task,
-              timeoutMs: totalMs, idleMs,
+              timeoutMs: totalMs, idleMs, attempts: undefined, signal: undefined,
             });
             p.then(
               () => { durations[i] = Date.now() - t0m; },

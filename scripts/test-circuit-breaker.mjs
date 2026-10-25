@@ -5,10 +5,12 @@
 // v8 新增（2026-10-16 查漏补缺）：loadCfg 结构回归——provider 改名 hx→openllamas 后
 //   新旧结构优先级无常驻覆盖（22 处 ask 全部显式传参绕过 loadCfg，顶部夹具仅 legacy 形态），
 //   锁死 openllamas 优先 + 两侧独立兜底 + 错误文案点名。
+// v9 新增（2026-10-24 二轮审查）：half-open probe 遇 400/402/413 模型级错误走中性释放，
+//   不重开熔断；413 裁剪后日志记 before/after 长度。
 // 运行：node --experimental-strip-types scripts/test-circuit-breaker.mjs
 // （直接动态 import lib/hx-client.ts，靠 ?r= 查询串击穿 ESM 缓存取得全新断路器状态；
 //   网络层打桩，不联网、不起 Kilo）
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,15 +42,37 @@ Date.now = () => fakeTime;
 
 let fetchCalls = 0;
 let fetchMode = "overload";
+let lastRequestBody = "";
+let body413Calls = 0;
 
 function makeFetch() {
-  return async () => {
+  return async (_url, opts) => {
     fetchCalls++;
+    lastRequestBody = String(opts?.body ?? "");
     if (fetchMode === "overload") return { ok: false, status: 503, text: async () => "system cpu overloaded" };
     if (fetchMode === "nochan") return { ok: false, status: 503, text: async () => JSON.stringify({ error: { code: "model_not_found", message: "No available channel for model glm-5.2 under group svip (distributor)" } }) };
     if (fetchMode === "nochan503b") return { ok: false, status: 503, text: async () => JSON.stringify({ code: "NO_ROUTE_CANDIDATE", msg: "no active channel candidate for model (protocol=openai)", data: null }) };
     if (fetchMode === "nochan404") return { ok: false, status: 404, text: async () => JSON.stringify({ code: "NO_ROUTE_CANDIDATE", msg: "no active channel candidate for model (protocol=openai)", data: null }) };
     if (fetchMode === "nochan404b") return { ok: false, status: 404, text: async () => JSON.stringify({ error: { message: "Model not exist.", type: "invalid_request_error", param: "", code: "model_not_found" } }) };
+    if (fetchMode === "policy400") return { ok: false, status: 400, text: async () => "Upstream request failed: This Go model requires Global regions. Select Global in your workspace's Privacy settings to use it." };
+    if (fetchMode === "quota402") return { ok: false, status: 402, text: async () => "insufficient personal balance" };
+    if (fetchMode === "payment402") return { ok: false, status: 402, text: async () => "Payment required" };
+    if (fetchMode === "plain400") return { ok: false, status: 400, text: async () => "bad request" };
+    if (fetchMode === "plain404") return { ok: false, status: 404, text: async () => "not found" };
+    if (fetchMode === "plain422") return { ok: false, status: 422, text: async () => "invalid input" };
+    if (fetchMode === "overloaded400") return { ok: false, status: 400, text: async () => "system cpu overloaded" };
+    if (fetchMode === "overloadedNet") throw new Error("system cpu overloaded");
+    if (fetchMode === "overloaded502") return { ok: false, status: 502, text: async () => "system cpu overloaded" };
+    if (fetchMode === "bodyLimit") {
+      if (Buffer.byteLength(lastRequestBody, "utf8") > 2_000_000) {
+        return { ok: false, status: 413, text: async () => "request body too large" };
+      }
+    }
+    if (fetchMode === "body413") {
+      body413Calls++;
+      if (body413Calls === 1) return { ok: false, status: 413, text: async () => "request body too large" };
+    }
+    if (fetchMode === "body413always") return { ok: false, status: 413, text: async () => "request body too large" };
     if (fetchMode === "neterr") throw new Error("ECONNRESET");
     if (fetchMode === "throw") throw new Error("SYNC_THROW_BEFORE_PARSE");
     const enc = new TextEncoder();
@@ -59,7 +83,7 @@ function makeFetch() {
 }
 
 const freshLoad = async (n) => {
-  fetchCalls = 0; fetchMode = "overload";
+  fetchCalls = 0; fetchMode = "overload"; lastRequestBody = ""; body413Calls = 0;
   globalThis.fetch = makeFetch();
   return await import(`file://${pathToFileUrl(path.join(PLUGIN_DIR, "hx-client.ts"))}?r=${n}-${Math.random()}`);
 };
@@ -217,6 +241,144 @@ const tripCircuit = async (ask) => {
   unfreeze?.();
   await p1;
   assert("probe 完成后关断", circuitState() === "closed");
+}
+
+// 8b. 跨代隔离（4xx）：trip 前发出的旧请求迟到 400 不得关断新一代 half-open probe。
+{
+  const { ask, circuitState } = await freshLoad(9.5);
+  let releaseOld;
+  let releaseProbe;
+  let call = 0;
+  globalThis.fetch = async () => {
+    fetchCalls++;
+    call++;
+    if (call === 1) {
+      await new Promise((r) => { releaseOld = r; });
+      return { ok: false, status: 400, text: async () => "bad request" };
+    }
+    if (call === 5) {
+      await new Promise((r) => { releaseProbe = r; });
+      const enc = new TextEncoder();
+      const chunk = enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "hello" } }] })}\n\ndata: [DONE]\n\n`);
+      let sent = false;
+      return { ok: true, status: 200, body: { getReader: () => ({ read: async () => { if (sent) return { done: true }; sent = true; return { done: false, value: chunk }; } }) } };
+    }
+    return { ok: false, status: 503, text: async () => "system cpu overloaded" };
+  };
+  const pOld = ask({ baseURL: "http://x/v1", key: "k", model: "old", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }).catch((e) => e);
+  await new Promise((r) => setTimeout(r, 20)); // 旧请求已进入冻结 fetch（非 probe）
+  await tripCircuit(ask); // 旧请求在途时 3 连过载 trip
+  fakeTime += 31_000;
+  const pProbe = ask({ baseURL: "http://x/v1", key: "k", model: "probe", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }).catch((e) => e);
+  await new Promise((r) => setTimeout(r, 20)); // 新代 probe 已持锁
+  releaseOld?.();
+  await pOld;
+  assert("旧请求迟到 400 不关断 half-open", circuitState() === "half-open");
+  fetchCalls = 0;
+  let blocked = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "blocked", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); } catch (e) { blocked = e; }
+  assert("旧请求 400 后 probe 锁仍有效", blocked && /断路器/.test(blocked.message) && fetchCalls === 0);
+  releaseProbe?.();
+  await pProbe;
+  assert("新代 probe 成功后才关断", circuitState() === "closed");
+}
+
+// 8c. 跨代隔离（503 计数）：trip 前发出的旧请求迟到 503 不得污染新一代过载阈值。
+{
+  const { ask, circuitState } = await freshLoad(9.7);
+  let releaseStale;
+  let call = 0;
+  globalThis.fetch = async () => {
+    fetchCalls++;
+    call++;
+    if (call === 1) {
+      await new Promise((r) => { releaseStale = r; });
+      return { ok: false, status: 503, text: async () => "system cpu overloaded" };
+    }
+    if (call === 5) {
+      const enc = new TextEncoder();
+      const chunk = enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "hello" } }] })}\n\ndata: [DONE]\n\n`);
+      let sent = false;
+      return { ok: true, status: 200, body: { getReader: () => ({ read: async () => { if (sent) return { done: true }; sent = true; return { done: false, value: chunk }; } }) } };
+    }
+    return { ok: false, status: 503, text: async () => "system cpu overloaded" };
+  };
+  const pStale = ask({ baseURL: "http://x/v1", key: "k", model: "stale", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }).catch((e) => e);
+  await new Promise((r) => setTimeout(r, 20)); // 旧 503 已冻结
+  await tripCircuit(ask); // calls 2-4 → open
+  fakeTime += 31_000;
+  const rProbe = await ask({ baseURL: "http://x/v1", key: "k", model: "probe", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 });
+  assert("8c 探针成功关断", rProbe === "hello" && circuitState() === "closed");
+  releaseStale?.();
+  await pStale;
+  assert("8c 旧 503 不污染计数（仍 closed）", circuitState() === "closed");
+  for (let i = 0; i < 2; i++) {
+    try { await ask({ baseURL: "http://x/v1", key: "k", model: `fresh-${i}`, prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); } catch {}
+  }
+  assert("8c 两次新 503 未提前开断", circuitState() === "closed");
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "fresh-3", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); } catch {}
+  assert("8c 第三次新 503 才开断", circuitState() === "open");
+}
+
+// 8d. 跨代隔离（迟到成功）：trip 前发出的旧请求迟到 200 不得清零新一代过载计数。
+{
+  const { ask, circuitState } = await freshLoad(9.9);
+  let releaseStale;
+  let call = 0;
+  const sse = () => {
+    const enc = new TextEncoder();
+    const chunk = enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "hello" } }] })}\n\ndata: [DONE]\n\n`);
+    let sent = false;
+    return { ok: true, status: 200, body: { getReader: () => ({ read: async () => { if (sent) return { done: true }; sent = true; return { done: false, value: chunk }; } }) } };
+  };
+  globalThis.fetch = async () => {
+    fetchCalls++;
+    call++;
+    if (call === 1) {
+      await new Promise((r) => { releaseStale = r; });
+      return sse();
+    }
+    if (call === 5) return sse();
+    return { ok: false, status: 503, text: async () => "system cpu overloaded" };
+  };
+  const pStale = ask({ baseURL: "http://x/v1", key: "k", model: "stale-ok", prompt: "x", timeoutMs: 120000, idleMs: 2000, attempts: 1 });
+  await new Promise((r) => setTimeout(r, 20));
+  await tripCircuit(ask); // calls 2-4 → open
+  fakeTime += 31_000;
+  assert("8d 探针成功关断", (await ask({ baseURL: "http://x/v1", key: "k", model: "probe", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 })) === "hello" && circuitState() === "closed");
+  for (let i = 0; i < 2; i++) {
+    try { await ask({ baseURL: "http://x/v1", key: "k", model: `fresh-${i}`, prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); } catch {}
+  }
+  assert("8d 两次新 503 计数中", circuitState() === "closed");
+  releaseStale?.();
+  assert("8d 旧成功返回", (await pStale) === "hello");
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "fresh-3", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); } catch {}
+  assert("8d 旧成功未清零计数（第三次新 503 开断）", circuitState() === "open");
+}
+
+// 8e. 兜底释放钩子：当前 probe 异常退出回退 open，陈旧 probe 不释放。
+{
+  const { ask, _test, circuitState } = await freshLoad(10.1);
+  _test.forceHalfOpenProbe(7);
+  _test.releaseProbeIfStuck(7);
+  assert("8e 当前 probe 兜底释放回退 open", circuitState() === "open");
+  _test.forceHalfOpenProbe(8);
+  _test.releaseProbeIfStuck(7);
+  assert("8e 陈旧 probe 兜底不回退", circuitState() === "half-open");
+  fetchCalls = 0;
+  let blocked = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "blocked", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); }
+  catch (e) { blocked = e; }
+  assert("8e 陈旧 finally 不清当前锁", blocked && /断路器/.test(blocked.message) && fetchCalls === 0);
+}
+
+// 8f. ask() probe 快照与 finally 传参接线（静态核对：快照在获准 probe 时生成，finally 传快照而非现值）
+{
+  const src = readFileSync(path.join(PLUGIN_DIR, "hx-client.ts"), "utf8");
+  assert(
+    "8f probe 快照与 finally 传参接线",
+    src.includes("probeGeneration = cbProbeGeneration") && src.includes("cbReleaseProbeIfStuck(probeGeneration)"),
+  );
 }
 
 // 9. open 态迟到过载不刷新 openedAt：冷却自 trip 时刻起算
@@ -451,6 +613,178 @@ const tripCircuit = async (ask) => {
     try { await loadCfg(); } catch (e) { err17 = e; }
     assert("loadCfg 缺 baseURL 报错点名 openllamas 路径", /provider\.openllamas\.options\.baseURL/.test(String(err17?.message ?? "")));
   }
+}
+
+// 18. 400 模型级区域策略：与 provider 侧 MODEL_POLICY_UNAVAILABLE_RE 同口径——
+//     单次快速失败、不重试、不 trip，交上层 askRoute 换模型。
+{
+  const { ask, circuitState } = await freshLoad(23);
+  fetchMode = "policy400";
+  fetchCalls = 0;
+  const t0 = realNow();
+  let err18 = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "deepseek-v4.1-flash-1017", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 3 }); } catch (e) { err18 = e; }
+  assert("400 区域策略单次失败即抛（不重试）", err18?.statusCode === 400 && fetchCalls === 1);
+  assert("400 区域策略不 trip 断路器（保持 closed）", circuitState() === "closed");
+  assert("400 区域策略快速失败（真实墙钟 <1s）", (realNow() - t0) < 1000);
+}
+
+// 19. 402 模型级余额签名：与 provider 侧 MODEL_QUOTA_UNAVAILABLE_RE 同口径；
+//     普通 402 也属不可重试，但同样不 trip。
+{
+  const { ask, circuitState } = await freshLoad(24);
+  fetchMode = "quota402";
+  fetchCalls = 0;
+  let err19 = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "kimi-k3.1-pro", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 3 }); } catch (e) { err19 = e; }
+  assert("402 余额签名单次失败即抛（不重试）", err19?.statusCode === 402 && fetchCalls === 1);
+  assert("402 余额签名不 trip 断路器（保持 closed）", circuitState() === "closed");
+  fetchMode = "payment402";
+  fetchCalls = 0;
+  let err20 = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 3 }); } catch (e) { err20 = e; }
+  assert("普通 402 同样快速失败（不重试）", err20?.statusCode === 402 && fetchCalls === 1);
+}
+
+// 20. 413 体积超限：直连 prompt 逐级半长裁剪后原地重试；3 级仍超限才 fatal。
+{
+  const { ask } = await freshLoad(25);
+  fetchMode = "body413";
+  fetchCalls = 0; body413Calls = 0;
+  const original = "x".repeat(4000);
+  const r = await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: original, timeoutMs: 5000, idleMs: 2000, attempts: 3 });
+  const sentPrompt = JSON.parse(lastRequestBody).messages[0].content;
+  assert("413 裁剪后原地重试成功（2 次 fetch）", r === "hello" && fetchCalls === 2);
+  assert("413 重试 prompt 已裁剪且带截断标注", sentPrompt.length < original.length && sentPrompt.includes("截断"));
+}
+{
+  const { ask } = await freshLoad(26);
+  fetchMode = "body413always";
+  fetchCalls = 0; body413Calls = 0;
+  let err21 = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: "y".repeat(4000), timeoutMs: 5000, idleMs: 2000, attempts: 3 }); } catch (e) { err21 = e; }
+  assert("413 持续超限裁剪 3 级后 fatal（4 次 fetch）", err21?.statusCode === 413 && fetchCalls === 4);
+}
+
+// 21. half-open probe 遇模型级 400/402：中性释放并关断，不把单模型约束误算成
+//     网关故障重开熔断；随后健康请求必须立即可用。
+{
+  const { ask, circuitState } = await freshLoad(27);
+  await tripCircuit(ask);
+  fakeTime += 31_000;
+  fetchMode = "policy400";
+  fetchCalls = 0;
+  let err22 = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); } catch (e) { err22 = e; }
+  assert("half-open 400 策略中性释放并关断", err22?.statusCode === 400 && circuitState() === "closed" && fetchCalls === 1);
+  fetchMode = "ok";
+  fetchCalls = 0;
+  const ok22 = await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 });
+  assert("400 中性释放后健康请求立即通过", ok22 === "hello" && fetchCalls === 1 && circuitState() === "closed");
+}
+{
+  const { ask, circuitState } = await freshLoad(28);
+  await tripCircuit(ask);
+  fakeTime += 31_000;
+  fetchMode = "quota402";
+  fetchCalls = 0;
+  let err23 = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); } catch (e) { err23 = e; }
+  assert("half-open 402 余额签名中性释放并关断", err23?.statusCode === 402 && circuitState() === "closed" && fetchCalls === 1);
+}
+// 21b. plain 4xx（非区域策略/余额签名）同样确定性中性释放：400/402/404/422 不重开熔断。
+for (const [mode, status] of [["plain400", 400], ["plain404", 404], ["plain422", 422], ["payment402", 402]]) {
+  const { ask, circuitState } = await freshLoad(`28b-${status}`);
+  await tripCircuit(ask);
+  fakeTime += 31_000;
+  fetchMode = mode;
+  fetchCalls = 0;
+  let err = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); } catch (e) { err = e; }
+  assert(`half-open plain ${status} 中性释放并关断`, err?.statusCode === status && circuitState() === "closed" && fetchCalls === 1);
+}
+
+// 21c. 过载兜底不误伤 4xx/网络错：400 与无状态码网络错即使消息含 overloaded，
+//      也不得计过载、不得 trip 断路器（3 连即开断的阈值语义作对照）。
+{
+  const { ask, circuitState } = await freshLoad("21c-400");
+  fetchMode = "overloaded400";
+  for (let i = 0; i < 3; i++) {
+    try { await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); } catch {}
+  }
+  assert("400+overloaded 不 trip 断路器", circuitState() === "closed" && fetchCalls === 3);
+}
+{
+  const { ask, circuitState } = await freshLoad("21c-net");
+  fetchMode = "overloadedNet";
+  for (let i = 0; i < 3; i++) {
+    try { await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); } catch {}
+  }
+  assert("网络错+overloaded 不 trip 断路器", circuitState() === "closed" && fetchCalls === 3);
+}
+
+// 21d. 对照组：网关 502 + overloaded 仍按过载 trip——收紧只排除 4xx/网络错，不误伤真过载。
+{
+  const { ask, circuitState } = await freshLoad("21d-502");
+  fetchMode = "overloaded502";
+  for (let i = 0; i < 3; i++) {
+    try { await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: "x", timeoutMs: 5000, idleMs: 2000, attempts: 1 }); } catch {}
+  }
+  assert("502+overloaded 仍按过载 trip", circuitState() === "open" && fetchCalls === 3);
+}
+
+// 22. half-open probe 遇 413：中性释放后裁剪重试，自愈成功；持续超限也不重开熔断。
+{
+  const { ask, circuitState } = await freshLoad(29);
+  await tripCircuit(ask);
+  fakeTime += 31_000;
+  fetchMode = "body413";
+  fetchCalls = 0; body413Calls = 0;
+  const original = "x".repeat(4000);
+  const r = await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: original, timeoutMs: 5000, idleMs: 2000, attempts: 3 });
+  const sentPrompt = JSON.parse(lastRequestBody).messages[0].content;
+  assert("half-open 413 中性释放并裁剪自愈", r === "hello" && fetchCalls === 2 && circuitState() === "closed");
+  assert("half-open 413 裁剪带截断标注", sentPrompt.length < original.length && sentPrompt.includes("截断"));
+  const shrinkRows = readFileSync(path.join(TMP, "kilo", "failover-events.jsonl"), "utf8")
+    .split(/\r?\n/).filter(Boolean).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } })
+    .filter((x) => x.action === "body_shrink_retry");
+  assert("413 裁剪遥测记录前后长度", shrinkRows.some((x) => x.beforeChars === original.length && x.afterChars < x.beforeChars));
+  assert("413 裁剪遥测记录前后字节", shrinkRows.some((x) => Number.isInteger(x.bytesBefore) && Number.isInteger(x.bytesAfter) && x.bytesBefore > x.bytesAfter));
+}
+{
+  const { ask, circuitState } = await freshLoad(30);
+  await tripCircuit(ask);
+  fakeTime += 31_000;
+  fetchMode = "body413always";
+  fetchCalls = 0; body413Calls = 0;
+  let err24 = null;
+  try { await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: "y".repeat(4000), timeoutMs: 5000, idleMs: 2000, attempts: 3 }); } catch (e) { err24 = e; }
+  assert("half-open 413 持续超限裁剪 3 级后 fatal（4 次 fetch）", err24?.statusCode === 413 && fetchCalls === 4);
+  assert("half-open 413 持续超限不重开熔断", circuitState() === "closed");
+}
+
+// 22b. 12MB 生产尺寸：单次半长裁剪不够，必须逐级缩到网关阈值以下；3 级封顶。
+{
+  const { ask, circuitState } = await freshLoad(30.5);
+  fetchMode = "bodyLimit";
+  fetchCalls = 0;
+  const original = "z".repeat(12 * 1024 * 1024);
+  const r = await ask({ baseURL: "http://x/v1", key: "k", model: "m", prompt: original, timeoutMs: 5000, idleMs: 2000, attempts: 3 });
+  const sentPrompt = JSON.parse(lastRequestBody).messages[0].content;
+  assert("12MB 413 逐级裁剪 3 级后成功（4 次 fetch）", r === "hello" && fetchCalls === 4);
+  assert("12MB 裁剪后字节低于模拟网关阈值", Buffer.byteLength(sentPrompt, "utf8") < 2_000_000);
+  assert("12MB 裁剪后熔断保持 closed", circuitState() === "closed");
+}
+
+// 23. 遥测安全边界：error 只能是固定枚举/http_xxx，不能出现上游 responseBody/x-error 原文。
+{
+  const rows = readFileSync(path.join(TMP, "kilo", "failover-events.jsonl"), "utf8")
+    .split(/\r?\n/).filter(Boolean).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } })
+    .filter((x) => x.kind === "hx-client" && x.error !== undefined);
+  const allowed = new Set(["circuit_open", "request_body_too_large", "model_unavailable", "timeout_total", "timeout_idle", "empty_response", "no_body", "network_error"]);
+  const enumOnly = rows.every((x) => allowed.has(x.error) || /^http_[1-5]\d\d$/.test(x.error));
+  const noUpstreamText = !rows.some((x) => /Global regions|Upstream request failed|balance|responseBody/i.test(String(x.error)));
+  assert("遥测 error 仅固定枚举（无上游原文）", enumOnly && noUpstreamText);
 }
 
 Date.now = realNow;

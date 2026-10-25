@@ -16,6 +16,7 @@
     .\kilo-maintenance.ps1 -RunOnce       立即执行一次（清理 + 数据目录回收 + DB 瘦身）
     .\kilo-maintenance.ps1 -CleanupOnly   只清理，不碰 DB
     .\kilo-maintenance.ps1 -DbStatus      只打印 kilo.db 体检（只读）
+    .\kilo-maintenance.ps1 -VacuumNow     关闭全部 Kilo 后立即离线 VACUUM（含 auto_vacuum=2 引导）
     .\kilo-maintenance.ps1 -AutoIfDue     按到期规则执行（登录自启用；清理 >1 天、DB >1 天）
     .\kilo-maintenance.ps1 -InstallStartup    安装登录自启（免管理员）
     .\kilo-maintenance.ps1 -UninstallStartup  移除登录自启
@@ -31,6 +32,7 @@ param(
     [switch]$RunOnce,
     [switch]$CleanupOnly,
     [switch]$DbStatus,
+    [switch]$VacuumNow,
     [switch]$AutoIfDue,
     [switch]$InstallStartup,
     [switch]$UninstallStartup,
@@ -121,11 +123,20 @@ function Invoke-RepoScript {
     # 修法：native 调用期间临时把偏好降为 Continue，只用 $LASTEXITCODE 判成败——
     # 退出码才是真相，stderr 只是诊断文本；调用后立即还原，不影响后续 cmdlet。
     $prevEap = $ErrorActionPreference
+    $prevEnc = $null
     $ErrorActionPreference = 'Continue'
     try {
-        $output = & $exe $scriptNative @ScriptArgs 2>&1
+        # Git Bash / Node 输出 UTF-8；PS 5.1 默认按控制台代码页解码，中文日志会变 mojibake。
+        try { $prevEnc = [Console]::OutputEncoding; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+        # 原生 stderr 在 PS 5.1 会变成 ErrorRecord；直接 Out-File 会写入
+        # "bash.exe : ... NativeCommandError" 包装，既脏又容易被误判为失败。
+        # 只取真实消息文本，退出码仍以 $LASTEXITCODE 为准。
+        $output = & $exe $scriptNative @ScriptArgs 2>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
+        }
         $rc = $LASTEXITCODE
     } finally {
+        if ($prevEnc) { try { [Console]::OutputEncoding = $prevEnc } catch { } }
         $ErrorActionPreference = $prevEap
     }
     $output | ForEach-Object { Write-Host $_ }
@@ -133,8 +144,11 @@ function Invoke-RepoScript {
     "exit=$rc" | Out-File -LiteralPath $log -Append -Encoding utf8
     Write-Host "  -> exit=$rc  log=$log"
 
-    # 日志自身也要封顶：只留最近 N 份
+    # 日志自身也要封顶：只留最近 N 份。
+    # 只轮转 Invoke-RepoScript 生成的 yyyyMMdd-HHmmss-*.log；error.log / vacuum-boot.log
+    # 是长期故障/离线 VACUUM 证据，不能被日常轮转误删。
     Get-ChildItem -LiteralPath $LogDir -File -Filter '*.log' |
+        Where-Object { $_.Name -match '^\d{8}-\d{6}-.+\.log$' } |
         Sort-Object LastWriteTime -Descending | Select-Object -Skip $KeepLogs |
         ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
     return $rc
@@ -330,6 +344,15 @@ if ($Register) {
 
 if ($DbStatus) { exit (Invoke-DbMaintain -StatusOnly) }
 
+if ($VacuumNow) {
+    # 手动兜底：不依赖受保护的 kilo-vacuum-once 计划任务。关闭全部 Kilo 后执行，
+    # vacuum-boot.ps1 自身会拒绝在有 kilo 写者时启动，避免独占锁打断会话。
+    $vacuumScript = Join-Path $LogDir 'vacuum-boot.ps1'
+    if (-not (Test-Path -LiteralPath $vacuumScript)) { throw "FAIL: 缺少离线 VACUUM 脚本 $vacuumScript" }
+    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $vacuumScript
+    exit $LASTEXITCODE
+}
+
 if ($CleanupOnly) {
     $rc = Invoke-Cleanup
     $st = Read-MaintState
@@ -363,5 +386,5 @@ if ($AutoIfDue) {
     exit 0
 }
 
-Write-Host "未指定动作。用 -RunOnce / -CleanupOnly / -DbStatus / -AutoIfDue / -InstallStartup / -Register / -Status。"
+Write-Host "未指定动作。用 -RunOnce / -CleanupOnly / -DbStatus / -VacuumNow / -AutoIfDue / -InstallStartup / -Register / -Status。"
 exit 0

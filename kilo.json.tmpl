@@ -10,10 +10,10 @@
   "$schema": "https://app.kilo.ai/config.json",
 
   // ── 模型总开关 ──────────────────────────────────────────────────
-  // 主力执行模型（default_agent=code 绑定它）。glm-5.3-flash：实测最快档，支持图像输入
+  // 主力执行模型（default_agent=code 绑定它）。deepseek-v4.1-flash-1017：2026-10-20 实测最快档（主力换 deepseek；旧注释 glm-5.3-flash 为换型前记录）
   "model": "openllamas/deepseek-v4.1-flash-1017",
-  // 轻任务模型：起会话标题/摘要等后台活，用 deepseek 轻量 flash 档（978fac2 由 minimax-m3 切换）
-  "small_model": "openllamas/minimax-m3.1-flash-preview",
+  // 轻任务模型：起会话标题/摘要等后台活（978fac2 由 minimax-m3 切至 preview；2026-10-23 preview 生产下架，同名替换 minimax-m3.1-flash）
+    "small_model": "openllamas/minimax-m3.1-flash",
   // 子代理（task 工具派活）默认模型，深度任务时会按 INSTRUCTIONS 升级到 general
   "subagent_model": "openllamas/deepseek-v4.1-flash-1017",
   // 子代理最大嵌套深度（防递归失控）：子→孙 两层封顶
@@ -79,20 +79,23 @@
 
 
   // plan         规划模式：出方案不动手，用 kimi 换个视角思考
-  // general      深度子任务：难啃的实现/分析，deepseek-v4.1-flash@max（2026-10-13 改钉，
-  //              对齐 INSTRUCTIONS.md「高风险实现升级执行档」口径；前任 kimi-k2.6@high
+  // general      深度子任务：难啃的实现/分析，deepseek-v4.1-flash-1017@max（2026-10-13 改钉
+  //              deepseek-v4.1-flash@max 对齐 INSTRUCTIONS.md「高风险实现升级执行档」口径，
+  //              2026-10-23 旧名生产下架同名替换；前任 kimi-k2.6@high
   //              是 2026-10-03 审计改钉——原 k2.8 无可用渠道，failover-events 404 实证；
   //              再前任注释 glm-5.2 早已 stale。k2.6 时代分母数据：high 档 228 样本零失败，
   //              max 档 ≥150k 输入 2.56% 猝死且近 7 天 3 例 glm-5.2@max 子代理被 503 秒杀）
-  // explore      探索代理（subagent）：只读侦察，deepseek-v4.1-flash@low（2026-10-17 角色路由
-  //              收敛为 3 厂商：粗扫与压缩同属低风险轻档岗位，换厂商无独立盲区收益）
-    // compaction   上下文压缩：钉 deepseek-v4.1-flash + variant low（2026-10-07 换岗，
-    //              kimi-k3 压缩位实测空响应；2026-09-22 空响应专项确立：max 档推理
+  // explore      探索代理（subagent）：只读侦察，minimax-m3.1-flash@low（2026-10-23 前为
+  //              minimax-m3.1-flash-preview@low，生产下架同名替换；2026-10-17 曾收敛
+  //              deepseek@low，现值以部署配置与 git 历史为准，详见 agent.explore 处注释）
+    // compaction   上下文压缩：钉 deepseek-v4.1-flash-1017 + variant low（2026-10-07 换岗
+    //              deepseek-v4.1-flash，2026-10-23 旧名下架同名替换；kimi-k3 压缩位实测空响应；2026-09-22 空响应专项确立：max 档推理
     //              吃光输出预算 → 摘要为空 → "empty response"；schema 规定
     //              variant 仅对 agent 自己配置的 model 生效，model+variant 必须同设，
     //              详见 agent.compaction 处注释）
-  // orchestrator 多代理编排：拆解任务分派子代理，deepseek-v4.1-flash-1017@low（2026-10-20 实测
-  //              1017 为最快档，编排岗位对延迟最敏感；K3 只留给 plan）
+  // orchestrator 多代理编排：拆解任务分派子代理，minimax-m3.1-flash@low（2026-10-23 前为
+  //              minimax-m3.1-flash-preview@low 用户点名启用，生产下架同名替换；轻决策岗位
+  //              零分母可接受，见 agent.orchestrator 处注释；K3 只留给 plan）
   // verify       自定义复核代理（subagent）：异源模型 deepseek 复核 glm 的产出
   //              —— 不同厂商交叉验证，只读不许改（edit/bash写通道均 deny）；K3 只留 plan 位
   // variant 策略（2026-09-24 二轮修正，证伪了「low/medium 零失败」的旧论述）：
@@ -112,7 +115,9 @@
       "variant": "high",
     },
     "plan": {
-      "model": "openllamas/kimi-k3",
+      // 2026-10-24 用户点名换型：kimi-k3 → kimi-k3.1-pro（上游 /v1/models 实探在册）。
+      // 旧代 kimi-k3 注册表保留作回退口，路由不再引用。
+      "model": "openllamas/kimi-k3.1-pro",
       // 规划位钉 max（2026-09-30，质量顶级口径）：K3 官方 reasoning_effort 默认即
       // max（低频单发规划，延迟代价小，规划质量向实现质量传递放大）。
       // ⚠️ 分母口径：kilo.db「85k+ 长输入 183 条零失败 / max ≥150k 猝死 2.56%」
@@ -123,24 +128,26 @@
     },
     "general": {
       // 2026-10-13 改钉 deepseek-v4.1-flash@max（高风险实现升级执行档，INSTRUCTIONS.md 口径）；
+      // 2026-10-23 旧名生产下架，同名替换 deepseek-v4.1-flash-1017@max（同族，行为口径不变）；
       // 前任 kimi-k2.6@high（2026-10-03：k2.8 无渠道 404 no active channel 全天实证，
       // 深度子代理全靠 failover 兜底跑降级档，故钉回有渠道、有安全分母的 k2.6）
       // 残余风险登记（2026-10-15 三模型审查 + kilo.db 补证）：同模型大输入高档曾有
       // 0.48%/call 死亡实证（见 explore 位），general 大输入场景同暴露；14 天分母补证
       // ≥85k 输入 22 例 0 length 猝死，reasoningGate 扩预算重试兜底在位。若 length
       // 猝死复发，先降 high 再议换模型。
-      "model": "openllamas/deepseek-v4.1-flash",
+      "model": "openllamas/deepseek-v4.1-flash-1017",
       "variant": "max",
     },
     "explore": {
-      // 2026-10-20 角色去重：轻岗位改钉 minimax@low，与主力 deepseek 分族，避免单点。
+      // 2026-10-20 角色去重：轻岗位改钉 minimax@low（时值 minimax-m3.1-flash-preview；
+      // 2026-10-23 preview 生产下架，同名替换正式版 minimax-m3.1-flash），与主力 deepseek 分族，避免单点。
       // 2026-10-17 角色路由收敛：qwen3.8-flash → deepseek-v4.1-flash@low。2026-10-16 曾以
       // 「粗扫最低风险岗位换异族模型」为由改钉 qwen（注册后零分母），本次按「异源只保留在
       // 有交叉验证价值的岗位」收敛：编码/规划/检查/深度实现/审查面板已覆盖异源需求，只读粗扫
       // 与压缩同属低风险轻档岗位，厂商切换不产生独立盲区收益，只多担一份零分母风险。
       // 实证支撑：deepseek@low 已在 compaction 位以 400KB 负载稳定产出（11 跑 0 空响应、
       // 压缩墙钟最快），大输入低档有地面真值；异常仍由全局 failover 链兜底。
-      "model": "openllamas/minimax-m3.1-flash-preview",
+      "model": "openllamas/minimax-m3.1-flash",
       "variant": "low",
     },
     "compaction": {
@@ -149,7 +156,8 @@
       // schema 约束：variant 仅在 agent 用「自己配置的 model」时生效——必须同时钉死
       // model，否则 compaction 继承会话当前模型+variant，覆盖不生效）。
       // 2026-10-07 kimi-k3 → deepseek-v4.1-flash（本行当日被改过两次，此处回滚到实测
-      // 站得住的选项）：
+      // 站得住的选项；2026-10-23 旧名生产下架，同名替换 deepseek-v4.1-flash-1017，
+      // 同族同窗口登记 200k/32k，压缩位实测口径沿用）：
       //  · kimi-k3 在压缩位**实测失败**——本轮直连复现 4 次压缩尺寸（400KB 负载）
       //    全部命中 opencode.log 的 "Compaction worker returned an empty response",
       //    content_len=0 且 reasoning 打满 max_tokens=8192；而 deepseek-v4.1-flash
@@ -157,21 +165,20 @@
       //    且空输出）。压缩位空响应 = 会话不收敛 → 每步重新上传全量负载，
       //    这是「越用越卡」的直接机制。
       //  · 该模型另有全库最大分母的零空响应记录（11 跑 0 空）与最快的压缩墙钟。
-      //  · kimi-k3 仍是 plan 位模型（那一位实跑正常）——本处只动压缩位。
+      //  · kimi-k3 时为 plan 位模型（那一位实跑正常）——本处只动压缩位。
+      //    （2026-10-24 plan 位已换型 kimi-k3.1-pro，见 agent.plan）
       // 窗口口径：压缩模型窗口 = 会话负载的回收上限；deepseek-v4.1-flash 登记
       // 200k/32k（与上游实际一致，见 models 表）。越窗的极端会话由「tool_output
       // 8KB 限流 + failover 换路」兜底，不再靠改这一个数字解决。
-      "model": "openllamas/deepseek-v4.1-flash",
+      "model": "openllamas/deepseek-v4.1-flash-1017",
       "variant": "low",
     },
     "orchestrator": {
-      // 2026-10-17 用户定案：K3 只用于 plan（规划）位，编排位不占用 K3 —— 本行保持
-      // 2026-10-16 用户点名启用的 minimax-m3.1-flash-preview@low（当日一度改钉
-      // kimi-k3@low，当日按「K3 只留 plan」回退）。轻决策岗位（拆解任务+分派子代理）
-      // 的失败影响面小且有 INSTRUCTIONS 降级路径兜住，零分母可接受；沿用点名时的 low 档
-      // （此前「不钉高档」的 kimi@max 7 条 length 失败实证，对 minimax 只作同档位风险提示）。
-      "model": "openllamas/minimax-m3.1-flash-preview",
-      "variant": "low",
+      // 2026-10-25 高效率+高质量分档：minimax-m3.1-flash@low → @high。
+      // 编排负责任务拆解与分派，提高到 high；复杂规划仍由 plan@max 承担，避免重复拉满。
+      // K3 仍只用于 plan；preview 生产下架后的正式版同名替换不变。
+      "model": "openllamas/minimax-m3.1-flash",
+      "variant": "high",
     },
     "verify": {
       "mode": "subagent",
@@ -573,8 +580,7 @@
           "chain": {
             "models": [
               "deepseek-v4.1-flash-1017",
-              "minimax-m3.1-flash-preview",
-              "deepseek-v4.1-flash",
+              "minimax-m3.1-flash",
               "glm-5.3-flash"
             ],
           },
@@ -587,7 +593,7 @@
         // 2026-10-18：首选聚合档额度不足（HTTP 400 insufficient credits）——聚合席加 1017
         // 兜底，首选成功时不额外调用；额度恢复后自动优先原首选。
         "moa": {
-          "references": ["minimax-m3.1-flash-preview", "glm-5.3-flash"],
+          "references": ["minimax-m3.1-flash", "glm-5.3-flash"],
           "aggregator": "glm-5.3-flash",
           "aggregator_fallbacks": ["deepseek-v4.1-flash-1017"],
         },
@@ -611,7 +617,7 @@
         // （三键均可被调用方 per-call 覆盖 positive_model/negative_model/aggregator；
         //   per-call 覆盖时不套配置 fallback；提示词真源 = plugin/dual-review.ts 的 POSITIVE_PROMPT/NEGATIVE_PROMPT）
         "dual_review": {
-          "positive": "minimax-m3.1-flash-preview",
+          "positive": "minimax-m3.1-flash",
           "positive_fallbacks": ["deepseek-v4.1-flash-1017"],
           "negative": "glm-5.3-flash",
           "negative_fallbacks": ["deepseek-v4.1-flash-1017"],
@@ -741,7 +747,34 @@
         },
         "kimi-k3": {
           "reasoning": true,
-          // 路由引用仅规划席一处（用户定案「K3 只用于规划」）。官方仅支持 low/high/max
+          // 无路由引用（选择器备用/回退口）：2026-10-24 plan 位换型 kimi-k3.1-pro。
+          // 官方仅支持 low/high/max 三档（默认 max），无 medium——多声明会产生
+          // 无效选择项，且 reasoningGate 死亡重试降档链（high→medium）会向 K3 发出
+          // 非法 reasoning_effort → 重试 400，救活路径落空。故只声明三档，降档链
+          // 对 K3 的落点为 high（合法值中比 max 低一档的最近值）。
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" },
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"],
+          },
+          "limit": {
+            // 2026-10-07 还原 600k→200k：600k 是本机从未有渠道验证过的数字（当日
+            // 与压缩换岗一起写入，随后实测 kimi-k3 在压缩位直接空响应，见
+            // agent.compaction 注释）。registry 里的 context 会参与上下文占用计算，
+            // 一个未经验证的大窗数字会让「何时该压缩」的判断失真。回到与上游实际
+            // 一致的 200k；K3 若日后确有更大窗可用，按实测再放宽。
+            "context": 200000,
+            "output": 32000,
+          },
+        },
+        "kimi-k3.1-pro": {
+          "reasoning": true,
+          // 路由引用仅规划席一处（用户定案「K3 只用于规划」；2026-10-24 plan 位由
+          // kimi-k3 换型至本档，上游 /v1/models 实探在册）。官方仅支持 low/high/max
           // 三档（默认 max），无 medium——多声明会产生
           // 无效选择项，且 reasoningGate 死亡重试降档链（high→medium）会向 K3 发出
           // 非法 reasoning_effort → 重试 400，救活路径落空。故只声明三档，降档链

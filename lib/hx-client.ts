@@ -59,7 +59,9 @@ const OVERLOAD_BACKOFF_MS = [2000, 6000];
 // 确定性 HTTP 失败：重试无意义（key 错、模型名错、请求体非法），直接抛
 // 410 Gone（2026-09-27 补）：资源已永久移除——重试同一 URL 必然再 410；此前不在集合里，
 // 对已下线端点会白跑 2 次重试（400ms+1200ms）。语义上与 404 同类，归入确定性失败。
-const NON_RETRYABLE_STATUS = new Set([400, 401, 403, 404, 410, 422]);
+// 402（2026-10-24 补）：余额/配额类失败，重试同一 key 不会恢复（普通 Payment required 与
+// 已实证的 "insufficient personal balance" 均快速失败，交上层换模型）。
+const NON_RETRYABLE_STATUS = new Set([400, 401, 402, 403, 404, 410, 422]);
 
 // ── 断路器（2026-09-22 网关过载专项）──────────────────────────
 // 根因：单上游网关 CPU 过载时所有模型 503，provider 降级链与 moa 并行路全挂——
@@ -67,14 +69,19 @@ const NON_RETRYABLE_STATUS = new Set([400, 401, 403, 404, 410, 422]);
 // 503-overload 后进入 open 态：cooldown 内 ask() 直接抛错不发请求（fail fast，
 // 省掉每路 8-15s 空烧与对过载网关的持续施压）；cooldown 后 half-open 放单个 probe
 // （probeInFlight 锁防 moa 并发 fanout 多路同时穿透），成功关断、任何失败重开。
-// 只对 503+overload 计数；4xx/超时/网络错不触发 open（单请求问题非网关问题），
-// 但 half-open 态的 probe 遭遇任何失败都回退 open（探测失败=网关仍不可信）。
+// 只对 503+overload 计数；4xx/超时/网络错不触发 open（单请求问题非网关问题）。
+// half-open 态：仅 5xx/超时/网络错等网关级失败回退 open；4xx/模型级错误
+// （400 区域策略、402 余额、413 体积、404 渠道不存在等）证明网关可达，
+// 中性释放 probe 并关断，避免把单模型约束误算成网关故障、连累健康渠道。
 const CB_THRESHOLD = 3;
 const CB_COOLDOWN_MS = 30_000;
 let cbConsecutiveOverloads = 0;
 let cbState = "closed"; // "closed" | "open" | "half-open"
 let cbOpenedAt = 0;
 let cbProbeInFlight = false; // half-open 单 probe 锁：防并发 fanout 集体穿透
+let cbGeneration = 0; // 每次进入 half-open 递增；旧代 probe 的迟到结果无权迁移状态
+let cbProbeGeneration = 0; // 当前获准 probe 的代次
+let cbEpoch = 0; // 每次状态迁移递增；closed 态迟到 503 不得污染过载计数
 
 export function circuitState() { return cbState; }
 
@@ -110,13 +117,21 @@ export function cbShouldFailFast() {
 
 // probe 锁兜底释放：ask() 的 finally 调用（仅持锁时），防异常/取消路径泄漏
 // cbProbeInFlight 导致 half-open 永久卡死。guard 双条件确保已正常释放时无操作。
-function cbReleaseProbeIfStuck() {
-  if (cbState === "half-open" && cbProbeInFlight) {
+function cbReleaseProbeIfStuck(probeGen) {
+  if (cbState === "half-open" && cbProbeInFlight && probeGen === cbGeneration) {
     // probe 异常退出（未走 cbOnSuccess/cbOnProbeFail/cbOnOverloadFail）→ 回退 open 重试
     cbState = "open";
     cbOpenedAt = Date.now();
     cbProbeInFlight = false;
+    cbEpoch++;
   }
+}
+
+// HTTP 状态归一化：直连错误自带 statusCode；包装型上游/SDK 可能只给 status 或
+// response.status。三处判型（过载/413/模型级 4xx）必须同源，防网关包装错误漏判。
+function statusOf(err) {
+  const s = err?.statusCode ?? err?.status ?? err?.response?.status;
+  return typeof s === "number" ? s : undefined;
 }
 
 function isOverloadErr(err) {
@@ -134,54 +149,136 @@ function isOverloadErr(err) {
   // 熔断」的两套措辞（503 ALL_CHANNELS_DEGRADED / 502 UPSTREAM_UNAVAILABLE all
   // candidates failed）此前未进签名集，被当网关节流过载 → 白付 2s/6s 退避并 trip 断路器。
   // 状态码家族同步纳入 502（同样由网关主动发出，非模型侧错误）。
-  const cuStatus = err?.statusCode ?? err?.status;
+  const cuStatus = statusOf(err);
   if ((cuStatus === 503 || cuStatus === 502) && /model_not_found|no[_-]?route[_-]?candidate|no available channel|model.?not.?available|no active channel candidate|model not exist|all channels? circuit[- ]open|ALL_CHANNELS_DEGRADED|all candidates failed/i.test(String(err?.message ?? "") + String(err?.responseHeaders?.get?.("x-error") ?? ""))) {
     return false;
   }
-  if (err?.statusCode === 503) return true;
-  return /system cpu overloaded|overloaded/i.test(String(err?.message ?? ""));
+  if (cuStatus === 503) return true;
+  // 2026-10-24 查漏补缺：过载兜底正则仅对网关主动发出的 502/503 生效——
+  // 4xx（模型级策略/参数错误）与无状态码的本地网络错不得凭消息文本里的
+  // "overloaded" 字样误判过载、误开断路器（与 ask() 内「4xx/网络错走中性
+  // 释放或 probe fail、不进过载计数」的注释口径对齐）。
+  if (cuStatus === 502) return /system cpu overloaded|overloaded/i.test(String(err?.message ?? ""));
+  return false;
 }
 
-function cbOnSuccess(isProbe) {
+// 模型级策略/配额签名（与 provider/hx-failover 的 MODEL_POLICY_UNAVAILABLE_RE /
+// MODEL_QUOTA_UNAVAILABLE_RE 必须同源维护，改一处必改另一处）：
+// 400 "requires global regions" 与 402 "insufficient personal balance" 都是单模型渠道
+// 约束，换 hop/换模型可绕开；直连路径由 askRoute 捕获后试下一模型，不能在同一 body 上
+// 空转 3 次。普通 400/402 仍由 NON_RETRYABLE_STATUS 原样快速失败。
+const MODEL_POLICY_UNAVAILABLE_RE = /requires global regions/i;
+const MODEL_QUOTA_UNAVAILABLE_RE = /insufficient personal balance/i;
+// 413 体积超限签名（与 provider 同源）：状态码 413 直接判定；网关偶尔把同一错误包成
+// 400/500，报文签名兜底。直连路径 prompt 为单字符串，命中后逐级半长裁剪，最多 3 级
+// （原始 + 3 次裁剪 = 4 次请求），与 provider 的 MAX_BODY_SHRINK_LEVEL 口径一致。
+const BODY_TOO_LARGE_RE = /request body (?:is )?too large|payload too large|request entity too large|entity too large|body exceeds/i;
+const BODY_SHRINK_MIN_CHARS = 1_000;
+const MAX_BODY_SHRINK_LEVELS = 3;
+
+function errorText(err) {
+  const text = (v) => {
+    if (v == null) return null;
+    if (typeof v === "string") return v;
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    try { return JSON.stringify(v).slice(0, 500); } catch { return String(v); }
+  };
+  return [
+    err?.message,
+    err?.data?.error?.message,
+    err?.data?.error?.code,
+    err?.data?.code,
+    err?.responseBody,
+    err?.response?.data?.error?.message,
+    err?.response?.data?.error?.code,
+    err?.response?.data?.code,
+    err?.response?.data?.message,
+    err?.response?.body,
+    err?.cause?.message,
+    err?.cause?.response?.data,
+    err?.responseHeaders?.get?.("x-error"),
+  ].map(text).filter((p) => p != null).join(" | ");
+}
+
+function isModelUnavailable(err) {
+  const status = statusOf(err);
+  if (status === 400) return MODEL_POLICY_UNAVAILABLE_RE.test(errorText(err));
+  if (status === 402) return MODEL_QUOTA_UNAVAILABLE_RE.test(errorText(err));
+  return false;
+}
+
+function isBodyTooLarge(err) {
+  if (statusOf(err) === 413) return true;
+  return BODY_TOO_LARGE_RE.test(errorText(err));
+}
+
+function cbOnSuccess(isProbe, probeGen, requestEpoch) {
   // open 态的迟到成功不关断：在途旧请求（open 前发出）成功不代表网关已恢复，
   // 冷却窗口必须走完——只有 half-open probe 成功才允许关断（防绕过冷却直砸过载网关）
   if (cbState === "open") return;
-  // 跨代隔离（三轮审查实测必须项）：half-open 态只有当代 probe 的成功有权关断并释放
-  // probe 锁——trip 前发出的旧请求迟到成功不得提前关断（否则真 probe 在途时锁被释放、
+  // 跨代隔离：half-open 态只有当代 probe 的成功有权关断并释放 probe 锁；
+  // trip 前/上一代发出的旧请求迟到成功不得提前关断（否则真 probe 在途时锁被释放、
   // 并发 fanout 涌入刚过载过的网关）
-  if (cbState === "half-open" && !isProbe) return;
+  if (cbState === "half-open") {
+    if (!isProbe || probeGen !== cbGeneration) return;
+  } else if (requestEpoch !== cbEpoch) {
+    // closed 态旧 epoch 的迟到成功不得清空新一代过载计数（否则 2 次新 503 被旧成功清零）
+    return;
+  }
   cbConsecutiveOverloads = 0;
   cbProbeInFlight = false;
   cbState = "closed";
+  cbEpoch++;
 }
 
-function cbOnOverloadFail(isProbe) {
-  cbConsecutiveOverloads++;
+function cbOnOverloadFail(isProbe, probeGen, requestEpoch) {
   if (cbState === "half-open") {
-    // 跨代隔离：half-open 态只有当代 probe 的过载失败有权回退 open；旧请求迟到过载不裁决
-    if (isProbe) {
+    // 跨代隔离：half-open 态只有当代 probe 的过载失败有权计数并回退 open；
+    // 旧请求迟到过载不计数、不裁决（先验代次，再改计数/状态）。
+    if (isProbe && probeGen === cbGeneration) {
+      cbConsecutiveOverloads++;
       cbState = "open";
       cbOpenedAt = Date.now();
       cbProbeInFlight = false;
+      cbEpoch++;
     }
     return;
   }
-  // 已 open 态的迟到过载不刷新 openedAt：冷却窗口自 trip 时刻起算，防拖尾失败无限顺延停摆
-  if (cbConsecutiveOverloads >= CB_THRESHOLD && cbState !== "open") {
+  // open 态的迟到过载不计数、不刷新 openedAt：冷却自 trip 时刻起算，防拖尾失败无限顺延停摆
+  if (cbState === "open") return;
+  // closed 态只接受同一 epoch 的请求计数；trip 前发出的迟到 503 不得污染新一代阈值。
+  if (requestEpoch !== cbEpoch) return;
+  cbConsecutiveOverloads++;
+  if (cbConsecutiveOverloads >= CB_THRESHOLD) {
     cbState = "open";
     cbOpenedAt = Date.now();
     cbProbeInFlight = false;
+    cbEpoch++;
   }
 }
 
-// half-open probe 遭遇非 overload 失败（超时/网络错/4xx）：网关仍不可信，回退 open。
+// half-open probe 遭遇网关级失败（5xx/超时/网络错）：网关仍不可信，回退 open。
 // 跨代隔离：仅当代 probe 的失败有裁决权——旧请求迟到失败不得凭空延长冷却（其后的真
 // probe 成功会被 open 态忽略规则丢弃，等于白扔一次有效恢复证据、多 30s 全局停摆）
-function cbOnProbeFail(isProbe) {
-  if (cbState === "half-open" && isProbe) {
+function cbOnProbeFail(isProbe, probeGen) {
+  if (cbState === "half-open" && isProbe && probeGen === cbGeneration) {
     cbState = "open";
     cbOpenedAt = Date.now();
     cbProbeInFlight = false;
+    cbEpoch++;
+  }
+}
+
+// half-open probe 遭遇模型级 4xx（区域策略/余额/体积/渠道不存在等）：网关已经
+// 返回确定响应，说明可达且未过载——中性释放 probe 并关断，不重开熔断。
+// 若继续 open，一个模型的策略错误会让所有健康模型陪跑 30s 冷却。
+// 跨代隔离：旧代 probe 的 4xx 无权关断新一代 half-open（否则持续过载会被旧结果掩盖）。
+function cbOnProbeNeutral(isProbe, probeGen) {
+  if (cbState === "half-open" && isProbe && probeGen === cbGeneration) {
+    cbConsecutiveOverloads = 0;
+    cbProbeInFlight = false;
+    cbState = "closed";
+    cbEpoch++;
   }
 }
 
@@ -194,6 +291,8 @@ function cbAllowRequest() {
     const sinceOpen = Date.now() - cbOpenedAt;
     if (sinceOpen < 0 || sinceOpen >= CB_COOLDOWN_MS) {
       cbState = "half-open"; // 转 half-open，下面走单 probe 锁
+      cbGeneration++; // 新代次：上一代 probe 的迟到结果不得裁决本次 half-open
+      cbEpoch++;
     } else {
       return false;
     }
@@ -201,6 +300,7 @@ function cbAllowRequest() {
   // half-open：单 probe 锁——已有 probe 在途时其余请求 fail fast（防并发穿透）
   if (cbProbeInFlight) return false;
   cbProbeInFlight = true;
+  cbProbeGeneration = cbGeneration;
   return "probe"; // 调用方凭此在 finally 兜底释放（防异常路径锁泄漏）
 }
 
@@ -217,8 +317,50 @@ const ASK_LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 
 let logDirReady = null;
 
-async function logAskFailure(e, model, elapsedMs) {
+const ASK_LOG_ACTIONS = new Set(["ask_fail", "body_shrink_retry"]);
+const ASK_LOG_FIELDS = new Set(["action", "model", "status", "error", "elapsedMs", "beforeChars", "afterChars", "bytesBefore", "bytesAfter"]);
+const ASK_LOG_ERRORS = new Set([
+  "circuit_open", "request_body_too_large", "model_unavailable",
+  "timeout_total", "timeout_idle", "empty_response", "no_body", "network_error",
+]);
+
+function isAskLogError(value) {
+  return typeof value === "string" && (ASK_LOG_ERRORS.has(value) || /^http_[1-5]\d\d$/.test(value));
+}
+
+async function logAskEvent(fields) {
   try {
+    // 安全边界：只落固定字段 + 固定 error 枚举。通用展开曾把 responseBody/x-error 原文
+    // 一类上游文本带进遥测的通道重新打开（二轮必修项回归，2026-10-24 审查）。
+    // 未知键/非法 error 不整条丢弃：剥离后保留合法字段并计数上报，避免防泄漏反而灭掉
+    // 413 的 bytesBefore/bytesAfter 审计证据。
+    if (!fields || !ASK_LOG_ACTIONS.has(fields.action)) return;
+    const unknownKeys = Object.keys(fields).filter((k) => !ASK_LOG_FIELDS.has(k));
+    if (unknownKeys.length > 0) {
+      console.error(`hx-client: telemetry stripped ${unknownKeys.length} unexpected field(s): ${unknownKeys.join(",")}`);
+    }
+    const safeError = fields.error !== undefined && isAskLogError(fields.error) ? fields.error : undefined;
+    if (fields.error !== undefined && safeError === undefined) {
+      console.error("hx-client: telemetry stripped non-enum error");
+    }
+    if (typeof fields.model !== "string" || fields.model.length === 0) return;
+    const safeStatus = fields.status != null && Number.isFinite(fields.status) ? fields.status : undefined;
+    if (fields.status != null && safeStatus === undefined) {
+      console.error("hx-client: telemetry stripped non-numeric status");
+    }
+    const record = {
+      ts: new Date().toISOString(),
+      kind: "hx-client",
+      action: fields.action,
+      model: fields.model,
+      status: safeStatus,
+      error: safeError,
+      elapsedMs: Number.isFinite(fields.elapsedMs) ? fields.elapsedMs : undefined,
+      beforeChars: Number.isInteger(fields.beforeChars) ? fields.beforeChars : undefined,
+      afterChars: Number.isInteger(fields.afterChars) ? fields.afterChars : undefined,
+      bytesBefore: Number.isInteger(fields.bytesBefore) ? fields.bytesBefore : undefined,
+      bytesAfter: Number.isInteger(fields.bytesAfter) ? fields.bytesAfter : undefined,
+    };
     const p = join(DATA_DIR, "failover-events.jsonl");
     if (!logDirReady) {
       // mkdir 失败时重置为 null：下次调用重试建目录，而不是永久复用 rejected Promise
@@ -238,29 +380,48 @@ async function logAskFailure(e, model, elapsedMs) {
         console.error(`hx-client: telemetry rotate failed（日志将继续追加原文件）: ${e3?.message ?? e3}`);
       }
     }
-    // 错误字段只落固定分类枚举，不落 e.message 原文：OpenAI 兼容网关在 400/422/内容策略类
-    // 错误中常回显请求体片段，直写 message 有 prompt 泄漏面（二轮审查必须项）。
-    // 电路 open 的提示文案是我们自己构造的、无上游文本，属安全例外。
-    const cls = e?.circuitOpen ? "circuit_open"
-      : e?.statusCode != null ? `http_${e.statusCode}`
-      : /总时长超过/.test(String(e?.message ?? "")) ? "timeout_total"
-      : /空闲超过/.test(String(e?.message ?? "")) ? "timeout_idle"
-      : /空响应/.test(String(e?.message ?? "")) ? "empty_response"
-      : /响应无 body/.test(String(e?.message ?? "")) ? "no_body"
-      : "network_error";
-    await appendFile(p, JSON.stringify({
-      ts: new Date().toISOString(),
-      kind: "hx-client",
-      action: "ask_fail",
-      model,
-      status: e?.statusCode ?? null,
-      error: cls,
-      elapsedMs,
-    }) + "\n", "utf8");
+    await appendFile(p, JSON.stringify(record) + "\n", "utf8");
   } catch (e) {
     // 遥测失败不影响主流程，但必留 stderr 诊断——静默丢弃会让排障无迹可循
     console.error(`hx-client: telemetry write failed: ${e?.message ?? e}`);
   }
+}
+
+async function logAskFailure(e, model, elapsedMs) {
+  // 错误字段只落固定分类枚举，不落 e.message 原文：OpenAI 兼容网关在 400/422/内容策略类
+  // 错误中常回显请求体片段，直写 message 有 prompt 泄漏面（二轮审查必须项）。
+  // 电路 open 的提示文案是我们自己构造的、无上游文本，属安全例外。
+  const cls = e?.circuitOpen ? "circuit_open"
+    : isBodyTooLarge(e) ? "request_body_too_large"
+    : isModelUnavailable(e) ? "model_unavailable"
+    : statusOf(e) != null ? `http_${statusOf(e)}`
+    : /总时长超过/.test(String(e?.message ?? "")) ? "timeout_total"
+    : /空闲超过/.test(String(e?.message ?? "")) ? "timeout_idle"
+    : /空响应/.test(String(e?.message ?? "")) ? "empty_response"
+    : /响应无 body/.test(String(e?.message ?? "")) ? "no_body"
+    : "network_error";
+  await logAskEvent({
+    action: "ask_fail",
+    model,
+    status: statusOf(e) ?? null,
+    error: cls,
+    elapsedMs,
+  });
+}
+
+async function logAskShrink(model, beforeChars, afterChars, bytesBefore, bytesAfter, status, elapsedMs) {
+  // 413 裁剪不是静默行为：留下裁剪前后字符数与 UTF-8 字节数，便于确认残缺请求
+  // 确实被缩小后再重试（与 provider 的 bytesBefore/After 口径对齐）。
+  await logAskEvent({
+    action: "body_shrink_retry",
+    model,
+    status: status ?? null,
+    beforeChars,
+    afterChars,
+    bytesBefore,
+    bytesAfter,
+    elapsedMs,
+  });
 }
 
 // 部署副本 kilo.json 允许尾随逗号（installer 只剥行首 // 注释，Kilo 主程序 JSONC 宽松解析
@@ -343,6 +504,10 @@ export function clipText(text, limit) {
   return cut + `\n（截断：原始 ${t.length} 字符）`;
 }
 
+function utf8Bytes(text) {
+  return Buffer.byteLength(String(text ?? ""), "utf8");
+}
+
 // 单次尝试：SSE 流式拉取，直到 done。返回完整文本。
 // 超时三层：首字节（headers 后到第一个 data:）、chunk 间空闲、总时长。
 // signal：可选外部取消信号（预留通道，当前调用方暂无来源）；触发即中止底层连接。
@@ -391,8 +556,7 @@ async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, sig
   if (!res.ok) {
     cleanup();
     const body = await res.text().catch(() => "");
-    const err = new Error(`${model} HTTP ${res.status}: ${body.slice(0, 300)}`);
-    err.statusCode = res.status;
+    const err = Object.assign(new Error(`${model} HTTP ${res.status}: ${body.slice(0, 300)}`), { statusCode: res.status });
     // 401 属凭证失效（key 轮换/过期）：立即失效缓存，下次 loadCfg 重读 auth.json（2026-09-22 审查必须项）
     if (res.status === 401) cfgCache = null;
     throw err;
@@ -420,10 +584,12 @@ async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, sig
       const phaseQ = String(parsedJson.phase ?? "");
       if (phaseQ === "queued" || phaseQ === "pending") {
         cleanup();
-        const err = new Error(
-          `${model}: 网关排队回执（phase=${phaseQ}，未开始推理）—— upstream overloaded，按过载重试`,
+        const err = Object.assign(
+          new Error(
+            `${model}: 网关排队回执（phase=${phaseQ}，未开始推理）—— upstream overloaded，按过载重试`,
+          ),
+          { statusCode: 503 },
         );
-        err.statusCode = 503;
         throw err;
       }
     }
@@ -494,8 +660,11 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
   const maxAttempts = Number.isInteger(attempts) && attempts > 0 ? attempts : MAX_ATTEMPTS;
   const budgetMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : FALLBACK_TIMEOUT_MS;
   const t0 = Date.now();
+  const requestEpoch = cbEpoch; // 本次请求所属状态代次：closed 态迟到 503 不得污染新阈值
   let lastErr;
   let holdProbe = false; // 本次 ask 是否持有 half-open probe 锁（finally 兜底仅限持锁者）
+  let bodyShrinkLevel = 0; // 413 逐级裁剪层数（最多 3 级，原始 + 3 次裁剪 = 4 次请求）
+  let probeGeneration = -1; // 本次 probe 的代次（仅 holdProbe 时有效）
   try {
     for (let i = 0; i < maxAttempts; i++) {
       // 断路器检查：open → fail fast；half-open → 放单 probe（cbProbeInFlight 锁防并发穿透）
@@ -503,22 +672,54 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
       if (!gate) {
         // 时钟回拨下差值为负时不再显示负数秒数（与回拨放行口径一致）
         const cooldownLeft = Math.ceil(Math.max(CB_COOLDOWN_MS - Math.max(0, Date.now() - cbOpenedAt), 0) / 1000);
-        const e = new Error(`${model}: 断路器 open（上游网关过载），${cooldownLeft}s 后探测恢复。跳过请求。`);
-        e.circuitOpen = true;
+        const e = Object.assign(new Error(`${model}: 断路器 open（上游网关过载），${cooldownLeft}s 后探测恢复。跳过请求。`), { circuitOpen: true });
         await logAskFailure(e, model, Date.now() - t0);
         throw e;
       }
-      if (gate === "probe") holdProbe = true;
+      if (gate === "probe") { holdProbe = true; probeGeneration = cbProbeGeneration; }
       try {
         const text = await attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, signal });
-        cbOnSuccess(holdProbe);
+        cbOnSuccess(holdProbe, probeGeneration, requestEpoch);
         return text;
       } catch (e) {
         lastErr = e;
-        const status = e?.statusCode;
+        const status = statusOf(e);
+        // 413 体积超限：同一 body 重试必然再 413，换模型也无用（体积与模型无关）。
+        // 直连 prompt 是单字符串：逐级半长裁剪，最多 3 级后仍超限才按原文 fatal；
+        // 每次裁剪用 i -= 1 抵消循环自增，不占用普通重试预算，总量由层数封顶。
+        // 413 是客户端体积问题、不是网关过载：half-open probe 也中性释放后裁剪重试，
+        // 不把该错误算成网关故障（否则所有健康模型陪跑 30s 冷却）。
+        if (isBodyTooLarge(e)) {
+          cbOnProbeNeutral(holdProbe, probeGeneration);
+          holdProbe = false;
+          if (bodyShrinkLevel < MAX_BODY_SHRINK_LEVELS && typeof prompt === "string" && prompt.length > BODY_SHRINK_MIN_CHARS) {
+            const beforeChars = prompt.length;
+            const beforeBytes = utf8Bytes(prompt);
+            const nextPrompt = clipText(prompt, Math.max(BODY_SHRINK_MIN_CHARS, Math.floor(prompt.length / 2)));
+            if (nextPrompt.length < prompt.length) {
+              bodyShrinkLevel++;
+              prompt = nextPrompt;
+              await logAskShrink(model, beforeChars, prompt.length, beforeBytes, utf8Bytes(prompt), status, Date.now() - t0);
+              i -= 1;
+              continue;
+            }
+          }
+          await logAskFailure(e, model, Date.now() - t0);
+          throw e;
+        }
+        // 400 区域策略 / 402 余额签名：单模型渠道约束，快速失败交上层 askRoute 换模型，
+        // 不在同一 body/同一 key 上空转重试（与 provider 侧换 hop 同口径）。
+        // 模型级 4xx 不重开熔断：网关已返回确定响应，说明可达且未过载。
+        if (isModelUnavailable(e)) {
+          cbOnProbeNeutral(holdProbe, probeGeneration);
+          holdProbe = false;
+          await logAskFailure(e, model, Date.now() - t0);
+          throw e;
+        }
         // 确定性失败（HTTP 4xx 已知状态码）不重试；中断（AbortError 由我们主动 abort 触发）按超时算可重试
         if (NON_RETRYABLE_STATUS.has(status)) {
-          cbOnProbeFail(holdProbe); // half-open probe 遭 4xx：网关仍不可信，回退 open
+          cbOnProbeNeutral(holdProbe, probeGeneration); // half-open probe 遭 4xx：网关可达，中性释放
+          holdProbe = false;
           await logAskFailure(e, model, Date.now() - t0);
           throw e;
         }
@@ -527,21 +728,22 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
         // 反而把后续 moa/dual_review 请求挡在断路器外（实证：2026-09-27 探测-拦截循环）。
         // 不重试、不 trip、不退避，快速失败交给上层降级链换模型。
         if (status === 503 && !isOverloadErr(e)) {
-          cbOnProbeFail(holdProbe);
+          cbOnProbeNeutral(holdProbe, probeGeneration);
+          holdProbe = false;
           await logAskFailure(e, model, Date.now() - t0);
           throw e;
         }
         // 墙钟预算耗尽（总时长超时或已耗时过半途预算）：不再重试
         const totalTimeout = typeof e?.message === "string" && e.message.includes("总时长超过");
         if (totalTimeout || Date.now() - t0 >= budgetMs) {
-          if (isOverloadErr(e)) cbOnOverloadFail(holdProbe);
-          else cbOnProbeFail(holdProbe); // probe 超时/网络错：同样回退 open
+          if (isOverloadErr(e)) cbOnOverloadFail(holdProbe, probeGeneration, requestEpoch);
+          else cbOnProbeFail(holdProbe, probeGeneration); // probe 超时/网络错：同样回退 open
           await logAskFailure(e, model, Date.now() - t0);
           throw e;
         }
         // 503 过载：断路器计数 + 专用退避（2s/6s 给上游喘息，而非 400ms 火上浇油）
         if (isOverloadErr(e)) {
-          cbOnOverloadFail(holdProbe);
+          cbOnOverloadFail(holdProbe, probeGeneration, requestEpoch);
           // 断路器已翻 open（含 half-open probe 过载失败）：剩余重试不再发请求
           if (cbState === "open" && i < maxAttempts - 1) {
             continue; // 下一轮 cbAllowRequest() 判定，open 时直接 fail fast
@@ -550,20 +752,42 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
             await new Promise((r2) => setTimeout(r2, OVERLOAD_BACKOFF_MS[i] ?? 6000));
           }
         } else {
-          cbOnProbeFail(holdProbe); // 非 overload 失败：probe 态回退（closed 态无操作）
+          // 4xx（408 超时除外）是模型/请求级错误：网关可达，中性释放 probe 后照常退避重试；
+          // 只有 5xx/超时/网络错才回退 open。408 语义是网关超时，仍按探测失败处理。
+          if (typeof status === "number" && status >= 400 && status < 500 && status !== 408) {
+            cbOnProbeNeutral(holdProbe, probeGeneration);
+            holdProbe = false;
+          } else {
+            cbOnProbeFail(holdProbe, probeGeneration); // probe 超时/网络错/5xx：回退 open（closed 态无操作）
+          }
           if (i < maxAttempts - 1) {
             await new Promise((r2) => setTimeout(r2, BACKOFF_MS[i] ?? 1200));
           }
         }
       }
     }
-    cbOnProbeFail(holdProbe); // 重试耗尽的最终失败：probe 态同样回退
+    cbOnProbeFail(holdProbe, probeGeneration); // 重试耗尽的最终失败：probe 态同样回退
     await logAskFailure(lastErr, model, Date.now() - t0);
     throw lastErr;
   } finally {
     // probe 锁兜底（仅本次 ask 持锁时）：正常路径已由 cbOnSuccess/cbOnProbeFail/
-    // cbOnOverloadFail 释放；异常/取消/未分类错误路径可能跳过结局处理器——finally 确保
+    // cbOnProbeNeutral/cbOnOverloadFail 释放；异常/取消/未分类错误路径可能跳过结局处理器——finally 确保
     // 不永久卡死 half-open。未持锁的并发请求（fail fast 路径）不触发，防破坏在途 probe。
-    if (holdProbe) cbReleaseProbeIfStuck();
+    if (holdProbe) cbReleaseProbeIfStuck(probeGeneration);
   }
 }
+
+// ── 测试钩子（仅 scripts/test-circuit-breaker.mjs 消费；生产代码不得调用）──
+// cbReleaseProbeIfStuck 属防御性兜底：logAskFailure/logAskEvent 均自捕获，正常路径
+// 不可达，无法通过公开 ask() 稳定注入异常；钩子仅用于验证状态机兜底语义本身。
+export const _test = {
+  forceHalfOpenProbe(gen) {
+    cbState = "half-open";
+    cbProbeInFlight = true;
+    cbGeneration = gen;
+    cbProbeGeneration = gen;
+  },
+  releaseProbeIfStuck(gen) {
+    cbReleaseProbeIfStuck(gen);
+  },
+};

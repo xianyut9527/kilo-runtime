@@ -1221,3 +1221,358 @@ try { await gen9(p9s, "glm-5.3-flash"); } catch (e) { err9s = e; }
 const elapsed9s = Date.now() - t9s;
 console.log("9s attempts:", calls9s, "| elapsed:", elapsed9s, "ms | err:", err9s?.statusCode);
 console.log("PASS descript404-still-fatal :", calls9s === 1 && err9s?.statusCode === 404 && elapsed9s < 500);
+
+// ── 回归 10：413 request body too large 自救（2026-10-24 专项）─────────────
+// 生产形态：会话累积大附件/超长工具输出后，每个回合 body 都超过网关体积上限 →
+// 413 fatal 直死（3 天 37 次，跨三条不同上游同文案）。修复=按级别裁剪 prompt
+// 副本后原地重试**同一模型**（体积与模型无关，换 hop 只会再撞一次）。
+const shrinkRun = async (provider, model, prompt) => {
+  const { stream } = await provider.languageModel(model).doStream({ prompt, includeRawChunks: false });
+  let out = "";
+  for await (const part of stream) {
+    if (part.type === "text-delta") out += part.delta ?? part.textDelta ?? "";
+  }
+  return out;
+};
+const BODY_LIMIT = 40000;
+const bodySizes = [];
+const fakeFetch10a = async (url, init) => {
+  const bytes = Buffer.byteLength(String(init.body ?? ""));
+  bodySizes.push(bytes);
+  if (bytes > BODY_LIMIT) {
+    return new Response(JSON.stringify({ error: { message: "Request body is too large" } }), {
+      status: 413, headers: { "content-type": "application/json" },
+    });
+  }
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p10a = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch10a,
+  failover: { chain: { models: ["glm-5.3-flash", "kimi-k2.6"] }, cooldownMs: 30000 },
+});
+// 80KB 工具输出 + 一个附件 → 首包必然超限；level 1 裁剪工具输出后应降到限内
+const bigPrompt = [
+  { role: "system", content: "你是助手" },
+  { role: "user", content: [{ type: "text", text: "读一下这个大文件" }] },
+  { role: "assistant", content: [{ type: "tool-call", toolCallId: "t1", toolName: "read", input: { path: "big.txt" } }] },
+  { role: "tool", content: [{ type: "tool-result", toolCallId: "t1", toolName: "read", output: { type: "text", value: "x".repeat(80000) } }] },
+  { role: "user", content: [{ type: "text", text: "继续" }, { type: "file", mediaType: "image/png", data: "A".repeat(3000) }] },
+];
+const err10a = { value: null };
+let out10a = "";
+try { out10a = await shrinkRun(p10a, "glm-5.3-flash", bigPrompt); } catch (e) { err10a.value = e; }
+console.log("10a body sizes:", bodySizes.join(" -> "), "| served:", JSON.stringify(out10a.slice(0, 30)));
+console.log("PASS body413-shrink-retry :",
+  err10a.value === null && bodySizes.length === 2 && bodySizes[0] > BODY_LIMIT &&
+  bodySizes[1] <= BODY_LIMIT && out10a.includes("[ok glm-5.3-flash]"));
+
+// 10b：同一模型不换 hop —— calls 记录模型名，两次必须是同一模型（不是链上后继）
+const models10b = [];
+const fakeFetch10b = async (url, init) => {
+  const bytes = Buffer.byteLength(String(init.body ?? ""));
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  models10b.push(model);
+  bodySizes.push(bytes);
+  if (bytes > BODY_LIMIT) {
+    return new Response(JSON.stringify({ error: { message: "request body too large" } }), {
+      status: 413, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p10b = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch10b,
+  failover: { chain: { models: ["glm-5.3-flash", "kimi-k2.6"] }, cooldownMs: 30000 },
+});
+let err10b = null;
+try { await shrinkRun(p10b, "glm-5.3-flash", bigPrompt); } catch (e) { err10b = e; }
+console.log("10b models:", models10b.join(" -> "));
+console.log("PASS body413-no-hop-switch:", err10b === null && models10b.length === 2 && models10b[0] === models10b[1] && models10b[0] === "glm-5.3-flash");
+
+// 10c：无可裁剪内容（小请求）→ 不空转，原样 fatal 抛出 413
+let calls10c = 0;
+const fakeFetch10c = async () => {
+  calls10c++;
+  return new Response(JSON.stringify({ error: { message: "Request body is too large" } }), {
+    status: 413, headers: { "content-type": "application/json" },
+  });
+};
+const p10c = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch10c,
+  failover: { chain: { models: ["glm-5.3-flash", "kimi-k2.6"] }, cooldownMs: 30000 },
+});
+let err10c = null;
+try { await shrinkRun(p10c, "glm-5.3-flash", [{ role: "user", content: [{ type: "text", text: "hi" }] }]); } catch (e) { err10c = e; }
+console.log("10c calls:", calls10c, "| err status:", err10c?.statusCode);
+console.log("PASS body413-no-shrinkable :", calls10c === 1 && err10c?.statusCode === 413);
+
+// 10d：纯长文本入参只能靠 level 3（丢弃早期历史）救——证明逐级升级逻辑生效
+const bodySizes10d = [];
+const fakeFetch10d = async (url, init) => {
+  const bytes = Buffer.byteLength(String(init.body ?? ""));
+  bodySizes10d.push(bytes);
+  if (bytes > BODY_LIMIT) {
+    return new Response(JSON.stringify({ error: { message: "Request body is too large" } }), {
+      status: 413, headers: { "content-type": "application/json" },
+    });
+  }
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p10d = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch10d,
+  failover: { chain: { models: ["glm-5.3-flash"] }, cooldownMs: 30000 },
+});
+const longTextPrompt = [
+  { role: "system", content: "你是助手" },
+  { role: "user", content: [{ type: "text", text: "y".repeat(90000) }] },
+  { role: "assistant", content: [{ type: "text", text: "收到" }] },
+  { role: "user", content: [{ type: "text", text: "现在做别的" }] },
+];
+let err10d = null;
+try { await shrinkRun(p10d, "glm-5.3-flash", longTextPrompt); } catch (e) { err10d = e; }
+console.log("10d body sizes:", bodySizes10d.join(" -> "));
+console.log("PASS body413-escalate-l3  :",
+  err10d === null && bodySizes10d.length === 2 && bodySizes10d[0] > BODY_LIMIT && bodySizes10d[1] <= BODY_LIMIT);
+
+// 10e：遥测写入 body_shrink_retry（可观测性：事后能从 failover-events.jsonl 复盘）
+const log10e = (await readFile(join(process.env.XDG_DATA_HOME, "kilo", "failover-events.jsonl"), "utf8"))
+  .trim().split("\n").map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+const shrinkEvents = log10e.filter((e) => e.action === "body_shrink_retry");
+console.log("10e shrink events:", shrinkEvents.length, JSON.stringify(shrinkEvents[0] ?? null));
+console.log("PASS body413-telemetry    :",
+  shrinkEvents.length >= 2 && shrinkEvents.every((e) => e.bytesAfter < e.bytesBefore) && typeof shrinkEvents[0]?.level === "number");
+
+// 10f：单条当前 user 长文本也必须可救。此前 level 3 只丢早期历史，
+// system + 单条当前 user 的形态三次都无可裁剪项，直接 fatal（生产 413 零自救的对应形态）。
+const raw10f = [];
+const bodySizes10f = [];
+const fakeFetch10f = async (url, init) => {
+  const raw = String(init.body ?? "");
+  raw10f.push(raw);
+  bodySizes10f.push(Buffer.byteLength(raw));
+  if (Buffer.byteLength(raw) > BODY_LIMIT) {
+    return new Response(JSON.stringify({ error: { message: "request body too large" } }), {
+      status: 413, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk("glm-5.3-flash"), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p10f = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch10f,
+  failover: { chain: { models: ["glm-5.3-flash"] }, cooldownMs: 30000 },
+});
+const prompt10f = [
+  { role: "system", content: "你是助手" },
+  { role: "user", content: [{ type: "text", text: "u".repeat(90000) }] },
+];
+let err10f = null;
+try { await shrinkRun(p10f, "glm-5.3-flash", prompt10f); } catch (e) { err10f = e; }
+const final10f = JSON.parse(raw10f.at(-1) ?? "{}");
+console.log("10f body sizes:", bodySizes10f.join(" -> "), "| err:", err10f?.statusCode);
+console.log("PASS body413-current-user  :",
+  err10f === null && bodySizes10f.length === 2 && bodySizes10f[1] <= BODY_LIMIT &&
+  String(final10f.messages?.at(-1)?.content ?? "").includes("已截断") &&
+  prompt10f[1].content[0].text.length === 90000); // 原 prompt 不得被原地改写
+
+// 10g：最后一条 user 之后的当前回合也可能携带超大推理、助手文本和工具参数。
+// 最终级必须截断这些部分，同时保留 tool-call/tool-result 配对与原始 prompt。
+const raw10g = [];
+const bodySizes10g = [];
+const fakeFetch10g = async (url, init) => {
+  const raw = String(init.body ?? "");
+  raw10g.push(raw);
+  bodySizes10g.push(Buffer.byteLength(raw));
+  if (Buffer.byteLength(raw) > BODY_LIMIT) {
+    return new Response(JSON.stringify({ error: { message: "request body too large" } }), {
+      status: 413, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk("glm-5.3-flash"), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p10g = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch10g,
+  failover: { chain: { models: ["glm-5.3-flash"] }, cooldownMs: 30000 },
+});
+const prompt10g = [
+  { role: "system", content: "你是助手" },
+  { role: "user", content: [{ type: "text", text: "写入文件后继续" }] },
+  { role: "assistant", content: [
+    { type: "reasoning", text: "r".repeat(50000) },
+    { type: "text", text: "a".repeat(50000) },
+    { type: "tool-call", toolCallId: "t10g", toolName: "write", input: { path: "a.txt", content: "z".repeat(90000) } },
+  ] },
+  { role: "tool", content: [{ type: "tool-result", toolCallId: "t10g", toolName: "write", output: { type: "text", value: "done" } }] },
+];
+let err10g = null;
+try { await shrinkRun(p10g, "glm-5.3-flash", prompt10g); } catch (e) { err10g = e; }
+const final10g = JSON.parse(raw10g.at(-1) ?? "{}");
+const assistant10g = final10g.messages?.find((m) => m.role === "assistant" && Array.isArray(m.tool_calls));
+let args10g = null;
+try { args10g = JSON.parse(assistant10g?.tool_calls?.[0]?.function?.arguments ?? "null"); } catch {}
+console.log("10g body sizes:", bodySizes10g.join(" -> "), "| err:", err10g?.statusCode);
+console.log("PASS body413-current-tools :",
+  err10g === null && bodySizes10g.length === 4 && bodySizes10g.at(-1) <= BODY_LIMIT &&
+  args10g?._kilo_truncated === true && typeof args10g?.preview === "string" &&
+  final10g.messages?.some((m) => m.role === "tool" && m.tool_call_id === "t10g") &&
+  prompt10g[2].content[2].input.content.length === 90000);
+
+// 10h：状态码被包装成 500、报文仍是 body too large 时，也必须先裁剪自救；
+// 不得按普通 500 原体重试/换 hop（注释承诺的签名兜底此前实际进不了该分支）。
+const models10h = [];
+const bodySizes10h = [];
+const fakeFetch10h = async (url, init) => {
+  const raw = String(init.body ?? "");
+  bodySizes10h.push(Buffer.byteLength(raw));
+  let model = "?";
+  try { model = JSON.parse(raw).model; } catch {}
+  models10h.push(model);
+  if (Buffer.byteLength(raw) > BODY_LIMIT) {
+    return new Response(JSON.stringify({ error: { message: "request body too large" } }), {
+      status: 500, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p10h = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch10h,
+  failover: { chain: { models: ["glm-5.3-flash", "kimi-k2.6"] }, cooldownMs: 30000 },
+});
+let err10h = null;
+try { await shrinkRun(p10h, "glm-5.3-flash", bigPrompt); } catch (e) { err10h = e; }
+console.log("10h models:", models10h.join(" -> "), "| body sizes:", bodySizes10h.join(" -> "));
+console.log("PASS body500-shrink-retry :",
+  err10h === null && models10h.length === 2 && models10h.every((m) => m === "glm-5.3-flash") &&
+  bodySizes10h.at(-1) <= BODY_LIMIT);
+
+// 10i：持续 413 时裁剪级别有上限（3 级 + 首次原包 = 4 次），不得因 attempt -= 1 无限循环。
+const bodySizes10i = [];
+const fakeFetch10i = async (url, init) => {
+  bodySizes10i.push(Buffer.byteLength(String(init.body ?? "")));
+  return new Response(JSON.stringify({ error: { message: "request body too large" } }), {
+    status: 413, headers: { "content-type": "application/json" },
+  });
+};
+const p10i = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch10i,
+  failover: { chain: { models: ["glm-5.3-flash"] }, cooldownMs: 30000 },
+});
+let err10i = null;
+try { await shrinkRun(p10i, "glm-5.3-flash", bigPrompt); } catch (e) { err10i = e; }
+console.log("10i body sizes:", bodySizes10i.join(" -> "), "| err:", err10i?.statusCode);
+console.log("PASS body413-shrink-cap :",
+  err10i?.statusCode === 413 && bodySizes10i.length === 4);
+
+// 10j：生产实况尺寸（约 12MB）单条当前 user 文本——最终级必须降到网关限内并成功重试。
+// 对应 2026-10-24 06:05 实证：kimi-k3.1-pro 11,961,639 字节 body 413。
+const bodySizes10j = [];
+const fakeFetch10j = async (url, init) => {
+  const bytes = Buffer.byteLength(String(init.body ?? ""));
+  bodySizes10j.push(bytes);
+  if (bytes > BODY_LIMIT) {
+    return new Response(JSON.stringify({ error: { message: "request body too large" } }), {
+      status: 413, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk("glm-5.3-flash"), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p10j = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch10j,
+  failover: { chain: { models: ["glm-5.3-flash"] }, cooldownMs: 30000 },
+});
+let err10j = null;
+try {
+  await shrinkRun(p10j, "glm-5.3-flash", [
+    { role: "system", content: "你是助手" },
+    { role: "user", content: [{ type: "text", text: "x".repeat(12 * 1024 * 1024) }] },
+  ]);
+} catch (e) { err10j = e; }
+console.log("10j body sizes:", bodySizes10j.join(" -> "), "| err:", err10j?.statusCode);
+console.log("PASS body413-12mb-user :",
+  err10j === null && bodySizes10j.length === 2 &&
+  bodySizes10j[0] > 11 * 1024 * 1024 && bodySizes10j[1] <= BODY_LIMIT);
+
+// ── 回归 11：400 模型级区域策略错误按渠道不可用换 hop（2026-10-24 查漏补缺）──
+// 生产实证：2026-10-22 06:57-08:20 deepseek-v4.1-flash-1017 连续 169 次 400
+// "This Go model requires Global regions..." 全部 fatal 直通（占同期 fatal 79%），
+// 而链上其他模型健康——本应立即换 hop，而不是每轮打死回合。
+const POLICY_400 = "Upstream request failed: This Go model requires Global regions. Select Global in your workspace's Privacy settings to use it.";
+const calls11a = [];
+const fakeFetch11a = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls11a.push(model);
+  if (model === "deepseek-v4.1-flash-1017") {
+    return new Response(JSON.stringify({ error: { message: POLICY_400 } }), {
+      status: 400, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p11a = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch11a,
+  failover: { chain: { models: ["deepseek-v4.1-flash-1017", "glm-5.3-flash"] }, cooldownMs: 30000 },
+});
+const t11a = Date.now();
+let out11a = "";
+let err11a = null;
+try { out11a = await gen9(p11a, "deepseek-v4.1-flash-1017"); } catch (e) { err11a = e; }
+console.log("11a attempts:", calls11a.join(", "), "| elapsed:", Date.now() - t11a, "ms");
+console.log("PASS policy400-hop-fallback :",
+  err11a === null && JSON.stringify(calls11a) === JSON.stringify(["deepseek-v4.1-flash-1017", "glm-5.3-flash"]) &&
+  out11a.includes("[ok glm-5.3-flash]") && Date.now() - t11a < 500);
+
+// 11b：普通 400（参数/协议错误）不得被误纳入换 hop——仍 fatal 直通且只请求一次
+const calls11b = [];
+const fakeFetch11b = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls11b.push(model);
+  return new Response(JSON.stringify({ error: { message: "Invalid request: temperature must be between 0 and 2" } }), {
+    status: 400, headers: { "content-type": "application/json" },
+  });
+};
+const p11b = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch11b,
+  failover: { chain: { models: ["deepseek-v4.1-flash-1017", "glm-5.3-flash"] }, cooldownMs: 30000 },
+});
+let err11b = null;
+try { await gen9(p11b, "deepseek-v4.1-flash-1017"); } catch (e) { err11b = e; }
+console.log("11b attempts:", calls11b.join(", "), "| err status:", err11b?.statusCode);
+console.log("PASS plain400-still-fatal   :", calls11b.length === 1 && err11b?.statusCode === 400);
+
+// 11c/11d：402 只放行已实证的模型级余额签名；普通 402 不得泛化换 hop。
+// 生产证据：2026-10-24 04:12 kimi-k3.1-pro "insufficient personal balance" fatal。
+for (const [tag, message, shouldFallback] of [
+  ["quota402-hop-fallback", "insufficient personal balance", true],
+  ["plain402-still-fatal", "Payment required", false],
+]) {
+  const calls = [];
+  const fakeFetch = async (url, init) => {
+    let model = "?";
+    try { model = JSON.parse(init.body).model; } catch {}
+    calls.push(model);
+    if (model === "kimi-k3.1-pro") {
+      return new Response(JSON.stringify({ error: { message } }), {
+        status: 402, headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  const provider = createHxFailover({
+    name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch,
+    failover: { chain: { models: ["kimi-k3.1-pro", "glm-5.3-flash"] }, cooldownMs: 30000 },
+  });
+  let out = "";
+  let err = null;
+  try { out = await gen9(provider, "kimi-k3.1-pro"); } catch (e) { err = e; }
+  const passed = shouldFallback
+    ? err === null && JSON.stringify(calls) === JSON.stringify(["kimi-k3.1-pro", "glm-5.3-flash"]) && out.includes("[ok glm-5.3-flash]")
+    : calls.length === 1 && err?.statusCode === 402;
+  console.log(`${tag} attempts:`, calls.join(", "), "| err:", err?.statusCode);
+  console.log(`PASS ${tag} :`, passed);
+}

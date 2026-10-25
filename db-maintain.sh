@@ -282,10 +282,33 @@ q "DELETE FROM session WHERE time_created < $CUTOFF AND id NOT IN (SELECT DISTIN
 q "DELETE FROM todo WHERE session_id NOT IN (SELECT id FROM session)" >/dev/null || FAILED=1
 echo "    done ($([ "$FAILED" = "0" ] && echo ok || echo '有失败，见上'))"
 
+# 清理后重新采样（2026-10-25 查漏）：DELETE 释放的页只有在清理后才体现在 freelist；
+# 旧逻辑用清理前的 FREE_PCT 决定是否 VACUUM，导致「刚删掉 12.7GB 但清理前空闲 0%」
+# 的场景永远不触发 VACUUM。这里必须在 DELETE 之后重新计算，才符合阈值语义。
+PAGE_COUNT_AFTER=$(read_pragma 'PRAGMA page_count') || true
+FREE_COUNT_AFTER=$(read_pragma 'PRAGMA freelist_count') || true
+PAGE_SIZE_AFTER=$(read_pragma 'PRAGMA page_size') || true
+FREE_PCT_AFTER=${FREE_PCT:-0}
+FREE_GB_AFTER=${FREE_GB:-0}
+USED_GB_AFTER=${USED_GB:-0}
+if [ "${PAGE_COUNT_AFTER:-0}" -gt 0 ] && [ "${PAGE_SIZE_AFTER:-0}" -gt 0 ]; then
+  FREE_GB_AFTER=$(awk -v f="$FREE_COUNT_AFTER" -v s="$PAGE_SIZE_AFTER" 'BEGIN{printf "%.2f", f*s/1073741824}')
+  USED_GB_AFTER=$(awk -v c="$PAGE_COUNT_AFTER" -v f="$FREE_COUNT_AFTER" -v s="$PAGE_SIZE_AFTER" 'BEGIN{printf "%.2f", (c-f)*s/1073741824}')
+  FREE_PCT_AFTER=$(awk -v f="$FREE_COUNT_AFTER" -v c="$PAGE_COUNT_AFTER" 'BEGIN{printf "%d", (c>0?100*f/c:0)}')
+  echo "  清理后:      ${FREE_GB_AFTER} GB 空闲页 / ${USED_GB_AFTER} GB 有效页（空闲占比 ${FREE_PCT_AFTER}%）"
+fi
+
+# VACUUM 前二次写者检查：清理期间用户可能刚启动 Kilo；独占锁会打断会话。
+# 初始检查只覆盖清理前，不能代替这里的最终门禁。
+if [ "$DO_VACUUM" = "1" ] && [ "$FORCE" != "1" ] && [ "$IS_LIVE" = "1" ] && [ "$SKIP_VACUUM" = "0" ] && [ "$(writers)" -gt 0 ]; then
+  echo "  跳过 VACUUM：清理期间检测到 $(writers) 个 kilo 进程在跑（VACUUM 需独占锁）" >&2
+  SKIP_VACUUM=1
+fi
+
 VACUUM_DONE=0
-if [ "$DO_VACUUM" = "1" ] && [ "$SKIP_VACUUM" = "0" ] && [ "${FREE_PCT:-0}" -ge "$VACUUM_MIN_PCT" ]; then
+if [ "$DO_VACUUM" = "1" ] && [ "$SKIP_VACUUM" = "0" ] && [ "${FREE_PCT_AFTER:-0}" -ge "$VACUUM_MIN_PCT" ]; then
   echo ""
-  echo "== VACUUM（空闲占比 ${FREE_PCT}% ≥ ${VACUUM_MIN_PCT}%，回收磁盘空间，可能需要几分钟）=="
+  echo "== VACUUM（清理后空闲占比 ${FREE_PCT_AFTER}% ≥ ${VACUUM_MIN_PCT}%，回收磁盘空间，可能需要几分钟）=="
   # 同连接原子转换（2026-10-08）：`PRAGMA auto_vacuum=2; VACUUM;` 一次成型 —— auto_vacuum
   # 只在 VACUUM 重写文件时落地，kilo db CLI 每调用一条语句即独立连接且 PRAGMA 写不持久化
   # （实测），故必须走 sqlite3 直连；转换一次性生效后，后续 DELETE 的空闲页可被
@@ -316,7 +339,7 @@ elif [ "$DO_VACUUM" = "1" ]; then
   if [ "$SKIP_VACUUM" = "1" ]; then
     echo "== VACUUM 跳过（有 kilo 写者）=="
   else
-    echo "== VACUUM 跳过（空闲占比 ${FREE_PCT:-0}% < ${VACUUM_MIN_PCT}%，收益小于风险）=="
+    echo "== VACUUM 跳过（清理后空闲占比 ${FREE_PCT_AFTER:-0}% < ${VACUUM_MIN_PCT}%，收益小于风险）=="
   fi
 fi
 

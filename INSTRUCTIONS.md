@@ -16,6 +16,11 @@
 - **task 中止后续跑不重建**：task 工具被中止（Tool execution aborted / 用户取消）后，用返回的
   `task_id` 续跑同一子会话（保留已完成进度），禁止盲目重派新子会话——重派 = 重复工作 + 重复计费
   + 可能与新子会话产生文件竞争。
+- **`Failed to deliver background task result` = 结果投递失败，不是子任务失败**（2026-10-24 取证）：
+  后台子代理已跑完，Kilo 把结果注入父会话并起新回合时那一跳失败（kilocode task.ts notify/inject
+  把底层错误吞掉换成这句笼统文案，isRetryable:false）。常见诱因：父会话正在 compaction/agent 切换，
+  或父回合模型请求失败（413/5xx/429）。结果仍保存在子会话里——用 `task_id` 续跑取结果，勿重派；
+  先查 failover-events.jsonl 与父会话当时错误定位真实原因，不要把这句当根因。
 
 ## 性能纪律（高效率执行，2026-10-07 实测口径）
 - **步数就是成本**：每步模型往返实测 p50 6s / p90 28s，30 步任务仅往返即 5-25 分钟——
@@ -66,7 +71,7 @@
   explore 只做粗扫定位（检索质量不承载实现输入）；实现所依赖的关键文件上下文由主 agent 亲自 read，
   不拿子代理的转述当编辑依据。
 - **高风险实现强制升级执行档**：命中高风险口径（认证/权限/支付/数据迁移/公共契约/并发/事务/安全）
-  或跨 ≥3 文件的实现任务，实现主体委派 `general`（deepseek-v4.1-flash@max，与 kilo.json.tmpl
+  或跨 ≥3 文件的实现任务，实现主体委派 `general`（deepseek-v4.1-flash-1017@max，与 kilo.json.tmpl
   agent.general 同步）执行，主 agent 只做编排、集成与验收
   ——「精确图纸不能交给默认档施工」：plan 出精细方案后由低档执行模型落地，是返工的最大单一来源。
   低风险/单文件机械改动照旧主 agent 直接做，不烧大杯算力。
