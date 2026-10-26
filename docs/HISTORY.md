@@ -90,9 +90,9 @@ macOS / Linux（bash）：
 | `provider/hx-failover/e2e-rescue.mjs` | 推理门控手动 E2E（打真实网关） | `node provider/hx-failover/e2e-rescue.mjs`：真实上游死亡 → 门控自动扩预算重试 → 救活断言；单发未死输出 E2E-SKIP（死亡是概率事件，不构成失败）。日常不跑，验证根治效果时手动执行 |
 | `install.*` | 下发器 | 清单驱动 / 幂等 / 备份 / 漂移检测（含 provider dist 新鲜度检查）；备份只保留最近 2 个（`KILO_KEEP_BACKUPS` 可调，需 ≥1 整数；非法值告警后按默认 2，绝不中断下发）。`install.sh` 用 `--dry-run/--check`，`install.ps1` 用 `-DryRun/-Check`，**参数风格不同**。**备份移位（2026-09-27 二轮审查）**：此前备份在差异判定之前无条件执行——空跑 install（same-only）每次白烧一个 ~12MB tar/zip（实测「差异/写入: 0」仍产 [BACKUP]）；两端（ps1/sh 对齐）改为预检通过后、写入前、且**仅当确有差异**才 prune+打包，预检失败中止时未删任何东西。**install.ps1 自启自愈块（2026-09-27）**：Startup 里 kilo-maintenance.lnk 目标脚本不存在时自动按当前路径重建（仅已存在才修复，不替用户新增自启）；子进程调用带 PS 5.1 stderr 陷阱防护（临时降 EAP=Continue、只看 $LASTEXITCODE、失败 WARN 不中止 install——下发已完成后炸掉比半完成更糟）。**2026-10-08 补**：快捷方式完全未安装时显式 WARN 并给出一行安装命令（自愈分支只管「已存在但失效」） |
 | `.vscode/settings.json` | 仓库级编辑器体验 | 把 `kilo.json.tmpl` 关联为 `jsonc`——模板获得语法高亮 / 括号匹配 / 语法错误红线（VS Code 打开本仓库即生效）；非运行时资产，不进 `install.manifest` |
-| `db-maintain.sh` | kilo.db 在线瘦身 | 清事件溯源/过期会话（实测 14.2GB→1.1GB），不碰记忆与凭证；分批短事务 + VACUUM 阈值门控（空闲占比 ≥25% 且无写者，否则降级跳过）+ auto_vacuum=2 同连接转换 + incremental_vacuum 增量回收（`--ivac`）+ WAL checkpoint；体检含「可回收 X GB 空闲页」行（`--no-vacuum` 只 DELETE 不缩文件，2026-09-27 加；PRAGMA 读取失败静默跳过该行——体检信息不得反过来变成 --status 的单点故障） |
+| `db-maintain.sh` | kilo.db 在线瘦身 | 清事件溯源/过期会话（实测 14.2GB→1.1GB），不碰记忆与凭证；分批短事务（统一 rowid 分批）+ 显式回收孤儿子表（part/todo/session_share/session_context_epoch/session_input/session_message/kilo_board_message/kilo_board，`--batch-part`；kbm→board 顺序且 kbm 失败跳过 board）+ VACUUM 阈值门控（空闲占比 ≥25% 且无写者，否则降级跳过）+ auto_vacuum=2 同连接转换 + incremental_vacuum 增量回收（`--ivac`）+ WAL checkpoint；体检含「可回收 X GB 空闲页」行（`--no-vacuum` 只 DELETE 不缩文件，2026-09-27 加；PRAGMA 读取失败静默跳过该行——体检信息不得反过来变成 --status 的单点故障） |
 | `cleanup.sh` | 运行痕迹清理 | Kilo 托管临时目录内过期条目 + `%TEMP%` 下 `kilo*` 兄弟项 + `~/.config/kilo.backup-*` 保留上限；**默认 dry-run** |
-| `scripts/kilo-maintenance.ps1` | 维护调度入口 | 组合上面两个脚本 + 到期判断 + 登录自启/计划任务；VACUUM 按阈值自动（无需人工） |
+| `scripts/kilo-maintenance.ps1` | 维护调度入口 | 组合上面两个脚本 + 到期判断 + 登录自启/计划任务（每日 12:30 `-CleanupOnly`、12:45 `-RunOnce`，`DbEveryDays=1`）；VACUUM 按阈值自动（无需人工） |
 
 ## 记忆与进化架构（2026-09-15 专项）
 
@@ -117,9 +117,9 @@ macOS / Linux（bash）：
 - **remote_control 默认关闭**（2026-09-20）：常驻云端中继连接是会话事件转发通道，属「快→慢」同期嫌疑项；不用手机端盯任务就关，需要时 `/remote` 临时开。
 - **安全网不省**：snapshot / formatter 保持 true（曾关，撤回只剩"撤对话不撤文件"、代码风格漂移——质量换速度不值）。
 - **超时**：`options.timeout` 480s 仅作 MoA/dual_review 分析调用总上限（主模型循环**不消费**该键——DB 实证 27 例 >120s step-finish 正常完成，2026-09-21；300s→480s 2026-09-29：kimi-k2.6 聚合器 ask_fail timeout_total elapsedMs=300044 整段审查丢失，420~480s 裁决区间取上限）；主链路靠 chunkTimeout 空闲看门狗（60s→90s→180s，2026-09-23 误杀专项：thinking 模型静默思考期不发 SSE，180s 覆盖 p95+ 合法思考）。
-- **DB 膨胀**：event 表是流式 delta 逐行事件溯源，每两周跑一次 `./db-maintain.sh`（2026-09-14→15 一天即回涨 3GB）。
-- **「Failed to execute statement / UnknownError」根因**：Kilo 的 sqlite 连接固定 `PRAGMA busy_timeout = 5000`（二进制内实测），写语句 5s 拿不到锁即失败；Drizzle 把底层 `SqliteError` 包装成这句固定文案，真实 cause 被吞、UI 只显示 UnknownError。触发场景主要是**维护期间并发写**（旧版 db-maintain 在 Kilo 活着时跑单条大 DELETE + VACUUM）。当前脚本对策：删除分批（`--batch` / `--batch-msg`）+ 有写者时拒绝 VACUUM（`--force` 可越权）或 `--no-vacuum`。
-  代价口径：`kilo db` 每次调用约 2s 冷启动开销，故批次行数要按「锁时长 × 调用次数」权衡（3GB 事件量按默认 5 万行/批约 15 批、30s 左右）。
+- **DB 膨胀**：event 表是流式 delta 逐行事件溯源，现由每日自动维护跑 `./db-maintain.sh`（登录自启 + 12:30/12:45 计划任务，`DbEveryDays=1`；event 每日无条件清空，`message`/`session` 保留 30 天），不必再手工每两周跑（2026-09-14→15 一天即回涨 3GB）。
+- **「Failed to execute statement / UnknownError」根因**：Kilo 的 sqlite 连接固定 `PRAGMA busy_timeout = 5000`（二进制内实测），写语句 5s 拿不到锁即失败；Drizzle 把底层 `SqliteError` 包装成这句固定文案，真实 cause 被吞、UI 只显示 UnknownError。触发场景主要是**维护期间并发写**（旧版 db-maintain 在 Kilo 活着时跑单条大 DELETE + VACUUM）。当前脚本对策：删除分批（`--batch` / `--batch-msg` / `--batch-part`，统一 rowid 分批）+ 相关 NOT EXISTS 回收孤儿子表 + 有写者时拒绝 VACUUM（`--force` 可越权）或 `--no-vacuum`。
+   代价口径：`kilo db` 每次调用约 2s 冷启动开销，故批次行数要按「锁时长 × 调用次数」权衡（3GB 事件量按默认 2 万行/批约 38 批；5 万行/批实测单批 8-15s 已超 Kilo 5s busy_timeout，故 2026-10-26 下调为 2 万）。
 - **log 膨胀根因**：CLI 默认 INFO 级把每条 bash 权限评估写进 opencode.log（单日 291MB）。治本：启动 Kilo 的环境里设 `KILO_LOG_LEVEL=WARN`（7.6.2 实测识别；WARN 保住告警信号、滤掉 INFO 噪声）。⚠️ 两个坑：
   - 只认环境变量，`kilo.json` 的 `logLevel` 键实测**无效**（1/3~2/3 概率仍写 INFO），别改成配置方案；
   - 环境变量对**已在运行的 VS Code 进程不生效**（进程继承的是启动时的旧 env），设置后必须重启 VS Code 才看到日志降级——主机已设用户级 `KILO_LOG_LEVEL=WARN`，旧 VS Code 进程的活日志仍是 INFO 属预期。
@@ -146,13 +146,13 @@ macOS / Linux（bash）：
 自动入口（二选一）：
 
 ```powershell
-# A. 免管理员：登录自启 + 到期判断（清理 >1 天、DB 瘦身 >7 天）
+# A. 免管理员：登录自启 + 到期判断（清理 >1 天、DB 瘦身 >1 天）
 .\scripts\kilo-maintenance.ps1 -InstallStartup
 #   ⚠️ 快捷方式用绝对路径指向本仓库，脚本靠固定路径生效 —— 仓库被移动/重命名/删除后自启失效，需重新 -InstallStartup
 #   （2026-09-27 事故：仓库由 kilo_config 改名 kilo-runtime 后快捷方式仍指旧路径，自启静默失败 11 天；
 #    现 -InstallStartup 会回读校验目标存在，-Status 也会把「文件在但目标不存在」显式标为失效，install.ps1 下发后自动自愈）
 
-# B. 需管理员：系统计划任务（每日 04:00 清理；每周日 04:30 清理 + DB 瘦身）
+# B. 需管理员：系统计划任务（触发器=登录时 + 每日 12:30/12:45；12:30 -CleanupOnly、12:45 -RunOnce，StartWhenAvailable 补跑）
 .\scripts\kilo-maintenance.ps1 -Register
 
 .\scripts\kilo-maintenance.ps1 -Status      # 看到期时间/任务状态/最近日志
@@ -160,14 +160,14 @@ macOS / Linux（bash）：
 .\scripts\kilo-maintenance.ps1 -AutoIfDue   # 按到期规则执行（自启调用的就是它）
 ```
 
-**event 表是无条件清空的**：`db-maintain.sh` 对 `event`（纯事件溯源流水，`--days` 对它无效）一律 `DELETE` 全表并顺带清空 `event_sequence`；`--days` 只作用于 `message`/`session`/`todo`。这符合设计——已结束会话的内容不依赖 event 重放。
+**event 表是无条件清空的**：`db-maintain.sh` 对 `event`（纯事件溯源流水，`--days` 对它无效）一律 `DELETE` 全表并顺带清空 `event_sequence`；`--days` 只作用于 `message`/`session` 的时间窗，`part`/`todo`/`kilo_board*`/`session_*` 子表按「父记录已不存在」的孤儿判定无条件回收（它们没有独立时间语义）。这符合设计——已结束会话的内容不依赖 event 重放。2026-10-26 补：`kilo db` CLI 连接不开外键，删 `message`/`session` 不级联子表，孤儿必须显式清理；event 是唯一持续高并发写入的表，活跃使用时「删一批又来一批」属常态——待删行数不再下降时只停止本表并留待下轮，不判整轮失败（否则每日维护在活跃使用时恒 exit 1、`state.json` 不更新），查询/删除真出错仍判失败。
 
 **snapshot 目录级回收（2026-10-07 三次体检）**：`snapshot/<project-sha>/<snapshot-sha>/` 是 Kilo 为每个项目维护的影子 git 对象库，**永不自回收**（实测 423MB / 14 个项目）。`storage-maintain.mjs` 新增 `PRUNE_DIRS`：按**顶层目录 mtime** 整份删除（只删「≤2 层内出现 `objects/`/`.git/`」且目录 mtime 超保留窗的目录，不跟随 symlink、不碰活跃库）——逐文件删会在一个 git 库里制造半残对象，故必须目录级。`--keep-snapshots` 仍可整体跳过。
 
 **storage-maintain 集成（2026-10-07 二次体检，2026-10-08 补 session_share）**：`db-maintain.sh` 在 WAL checkpoint 后自动调 `node scripts/storage-maintain.mjs --run --days 30`（不带 `--keep-snapshots`——snapshot 目录级回收随此调用生效），覆盖 DB 之外的增长项——`storage/session_diff`（已删会话的孤儿 diff，实测 2,685 个/192MB）、`log`、`tsc-cache`、`storage/session_share`（60 天独立窗），外加 **tool-output 失控看门狗**（单文件 >256MB 且 mtime 闲置 >60min 才删；正被写入的文件 mtime 持续更新天然落在宽限内；删除写 `storage-maintain-audit.log` 审计；`--bigfile-bytes 0` 可禁用）。背景：2026-10-03 事故——`node -e` 死循环把单条工具输出灌到 1.35GB，内置 hourly 清理只删 7 天外文件对活跃失控文件无防线；单文件大小上限属二进制行为无法配置，看门狗是配置层唯一防线。storage-maintain 失败只告警、不影响 DB 清理退出码。
 
 安全边界：`cleanup.sh` 绝不删 `$TEMP/kilo` 本身（Kilo 运行时还在往里写），也绝不碰 `~/.local/share/kilo`（会话/记忆/凭证）与 `~/.config/kilo`（配置本体）；判定只看 mtime 且逐条打印。
-**VACUUM 已按阈值自动化（2026-10-07 改）**：`db-maintain.sh` 自带门槛——「空闲页占比 ≥ `VACUUM_MIN_PCT`（默认 25%）且当前无 kilo 写者」才执行 VACUUM，否则自动跳过；`--no-vacuum` 可显式关闭，`--force` 可强制。背景：此前自动化无条件只跑 `--no-vacuum`，**文件永不缩**——实测 7.34GB 文件里 5.4GB（74%）是历史 DELETE 留下的 freelist 空洞（扫描变慢 + 白占盘），一次阈值触发即回收为 1.49GB（约 150s）。更早还有第二层停摆：原实现在检测到写者时 `exit 1` **中止整个脚本**，而 `kilo.exe` 常驻（后台进程 runner）使 writers 恒 >0 —— DELETE 清理与 WAL checkpoint **自 2026-09-27 起从未执行过**（`state.json` 的 `lastDb` 为证）。现改为**降级跳过 VACUUM、继续做完 DELETE + checkpoint**。自动化入口：登录自启 `-AutoIfDue`（清理 >1 天、DB >7 天）已装；系统计划任务需管理员跑 `-Register`（每日 04:00 清理、周日 04:30 清理+DB）。**`--status` 会显示「可回收: X GB 空闲页 / Y GB 有效页（空闲占比 Z%）」并给出「维护建议」行**（2026-09-27 加：`--no-vacuum` 只 DELETE 不缩文件，不显示这一行会让人误以为瘦身没生效；2026-10-07 阈值化后改为有效页+占比+当前是否值得 VACUUM 的建议）。
+**VACUUM 已按阈值自动化（2026-10-07 改）**：`db-maintain.sh` 自带门槛——「空闲页占比 ≥ `VACUUM_MIN_PCT`（默认 25%）且当前无 kilo 写者」才执行 VACUUM，否则自动跳过；`--no-vacuum` 可显式关闭，`--force` 可强制。背景：此前自动化无条件只跑 `--no-vacuum`，**文件永不缩**——实测 7.34GB 文件里 5.4GB（74%）是历史 DELETE 留下的 freelist 空洞（扫描变慢 + 白占盘），一次阈值触发即回收为 1.49GB（约 150s）。更早还有第二层停摆：原实现在检测到写者时 `exit 1` **中止整个脚本**，而 `kilo.exe` 常驻（后台进程 runner）使 writers 恒 >0 —— DELETE 清理与 WAL checkpoint **自 2026-09-27 起从未执行过**（`state.json` 的 `lastDb` 为证）。现改为**降级跳过 VACUUM、继续做完 DELETE + checkpoint**。自动化入口：登录自启 `-AutoIfDue`（清理 >1 天、DB >1 天）已装；系统计划任务已由管理员 `-Register` 注册（每日 12:30 清理、12:45 清理+DB，`StartWhenAvailable` 补跑）。**`--status` 会显示「可回收: X GB 空闲页 / Y GB 有效页（空闲占比 Z%）」并给出「维护建议」行**（2026-09-27 加：`--no-vacuum` 只 DELETE 不缩文件，不显示这一行会让人误以为瘦身没生效；2026-10-07 阈值化后改为有效页+占比+当前是否值得 VACUUM 的建议）。
 维护日志落在 `~/.local/state/kilo/maintenance/*.log`，自身保留最近 14 份；到期状态记在 `state.json`（`cleanup.sh` 无状态，到期判断由包装脚本负责）。
 **失败可观测**：登录自启是隐藏进程，任何未捕获异常都会写入 `maintenance/error.log`（`-Status` 会带出最近 3 条）——自启「看起来没跑」时先看这里，常见原因：仓库被移动（快捷方式指向绝对路径）或 Git Bash 缺失。
 
@@ -190,8 +190,8 @@ macOS / Linux（bash）：
 
 1. **计划任务触发器选错了时段**：原注册为「每日 04:00 / 周日 04:30」，但本机并非常开——实测开机 10-07 01:14、连续运行最久 23h，04:00 常落在关机时段。
    证据：维护日志只有 2026-09-27 / 10-01 / 10-07 三天有记录，而 kilo 会话每天都有（`session` 表按天分组可查）。
-   已改为与自启同语义的 **`-AtLogOn` 触发器**（配合 `StartWhenAvailable` 错过补跑）；两者会各跑一次，靠 `state.json` 的到期判断（清理 >1 天 / DB >7 天）天然幂等。
-   注意：`-Register` 需管理员，本机此前注册被拒（`CimException: 拒绝访问`），故当前实际生效的自动化**只有登录自启一条**。
+   已改为与自启同语义的 **`-AtLogOn` 触发器**（配合 `StartWhenAvailable` 错过补跑）；两者会各跑一次，靠 `state.json` 的到期判断（清理 >1 天 / DB >1 天）天然幂等。
+   注意：`-Register` 需管理员；本机现已注册 `kilo-maintenance-daily`（12:30 `-CleanupOnly`）与 `kilo-maintenance-weekly`（12:45 `-RunOnce`），与登录自启三条并存、靠到期判断幂等。2026-10-26 复核：daily 上次 Result=1 是 pyright `dist` 被占用导致 `cleanup.sh` 退出 1，同日 12:45 `-RunOnce` 已 exit 0 完成清理与 DB 维护。
 2. **日志文件是「活跃单文件」，mtime 修剪抓不到**：`log/opencode.log` 首行自述峰值曾达 **291MB**（permission-eval INFO 刷屏），实测当前 6MB。
    已加 `capBigLogs()`：单日志 > 32MB 时**截尾部保留 8MB**（读尾 + 临时文件 + rename 原子替换，写入 `storage-maintain-audit.log`），绝不整删——日志是排障唯一线索。
 
@@ -216,7 +216,7 @@ macOS / Linux（bash）：
 
 - **auto_vacuum=2 转换 + incremental_vacuum 闭环**：阈值门控只解决「何时缩」，缩完仍会只增不缩。现 `db-maintain.sh` 在 VACUUM 时经 sqlite3 同连接执行 `PRAGMA auto_vacuum=2; VACUUM;` 一次成型（kilo CLI 每条语句独立连接、PRAGMA 写不持久化——实测证实），此后 DELETE 释放的页由 `PRAGMA incremental_vacuum(N)`（`--ivac`，默认 20000 页≈80MB，短锁）增量归还磁盘；sqlite3 缺失或转换失败自动降级旧 VACUUM，不中断。
 - **storage-maintain 新增 session_share 60 天回收窗**：`storage/session_share/**` 是每会话一份的纯缓存 JSON（实测 5128 个孤儿文件），保留窗 60 天、独立于 `--days`——防「暂停超过 DB 保留窗的会话恢复时断链」。
-- **离线回归补齐**：`test-db-maintain.mjs` 37 项（伪造 kilo.exe 桩离线应答每条 SQL、XDG_DATA_HOME 沙箱隔离；覆盖写者门禁降级/阈值门控/auto_vacuum 转换与降级/incremental 闭环/`--status`/参数校验/cygpath 路径转换），`test-storage-maintain.mjs` 52 项（含 session_share）。三处静默缺陷由此锁定（写者门禁 exit 1 从未清理、VACUUM 从未自动执行、路径转换失败静默不回收）。
+- **离线回归补齐**：`test-db-maintain.mjs` 69 项（伪造 kilo.exe 桩离线应答每条 SQL、XDG_DATA_HOME 沙箱隔离；2026-10-26 增加真实 SQLite 金标准组、kbm 失败注入、event 并发残留不判失败；`--status` 的 IS_LIVE 分支改用沙箱 HOME，不再每次扫真实 20GB 库做 integrity_check；覆盖写者门禁降级/阈值门控/auto_vacuum 转换与降级/incremental 闭环/孤儿 part 与子表回收/board 删序/`--status`/参数校验/cygpath 路径转换），`test-storage-maintain.mjs` 52 项（含 session_share）。三处静默缺陷由此锁定（写者门禁 exit 1 从未清理、VACUUM 从未自动执行、路径转换失败静默不回收）。
 - **manifest 修正**：`scripts/test-db-maintain.mjs` 从下发清单移除——它依赖仓库根 `db-maintain.sh`（不在清单），部署副本必然以 127 失败；测试脚本统一 repo-only 口径（与 test-storage-maintain 等同）。
 - **install.ps1 自启缺失提示**：登录自启完全未安装时显式 WARN + 一行安装命令（此前只在「已存在但失效」时警告，从未安装过则整个维护链静默缺失）。
 

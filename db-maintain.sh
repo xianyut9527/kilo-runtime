@@ -12,14 +12,16 @@
 #   ./db-maintain.sh --status      只读体检，不动数据
 #   ./db-maintain.sh --no-vacuum   只 DELETE 不做 VACUUM（短锁，适合 Kilo 仍在运行）
 #   ./db-maintain.sh --force       检测到其它 kilo 写者时仍执行 VACUUM（默认拒绝）
-#   ./db-maintain.sh --batch N     调整 event 每批删除行数（默认 50000）
+#   ./db-maintain.sh --batch N     调整 event 每批删除行数（默认 20000）
 #   ./db-maintain.sh --batch-msg N 调整 message 每批删除行数（默认 2000，级联 part 更重）
+#   ./db-maintain.sh --batch-part N 调整所有孤儿子表每批删除行数（默认 2000，part 表达式索引最重）
 #   ./db-maintain.sh --ivac N      调整 incremental_vacuum 每次回收页数（默认 20000=80MB）
 #
 # 集成（2026-10-07，2026-10-08 补 session_share/snapshot）：DB 清理完成后自动跑
 # storage-maintain（session_diff/log/tsc-cache 30 天窗 + session_share 60 天独立窗 +
 # snapshot 目录级回收 + tool-output 失控看门狗 256MB/闲置 60min），失败只告警不中断 DB 清理。
-# 本脚本不解决调度——建议空闲窗口每周跑一次（或接入 Kilo 定时任务）。
+# 调度由 kilo-maintenance.ps1 承担：每日 12:30 -CleanupOnly、12:45 -RunOnce
+# （DB 清理每天到期，state.json 到期判断保持幂等），无需人工每周跑。
 #
 # 安全性：只 DELETE 事件流/过期消息；不触碰 memory、credential、project。
 #
@@ -46,8 +48,9 @@ DAYS=30
 MODE=run
 DO_VACUUM=1
 FORCE=0
-BATCH_EVENT=50000  # 每批 DELETE 行数：控制单次写锁时长（Kilo busy_timeout 只有 5s）
+BATCH_EVENT=20000  # 每批 DELETE 行数：控制单次写锁时长（Kilo busy_timeout 只有 5s；5 万行实测单批 8-15s，已超时）
 BATCH_MSG=2000     # message 每行可能级联大量 part，批次要更小
+BATCH_PART=2000    # 所有孤儿子表每批行数：recall_part_search_idx 是大表达式索引，part 批次仍是最重约束
 IVAC_PAGES=20000   # incremental_vacuum 每次回收页数（4096B×20000≈80MB/趟）
 
 usage() { sed -n '/^# 用法：/,/^#   .\/db-maintain.sh --ivac/p' "$0" | sed 's/^# \{0,1\}//'; }
@@ -60,6 +63,7 @@ while [ $# -gt 0 ]; do
     --force) FORCE=1 ;;
     --batch)     [ $# -ge 2 ] || { echo "FAIL: --batch 需要参数（如 --batch 20000）" >&2; exit 2; }; shift; BATCH_EVENT="$1" ;;
     --batch-msg) [ $# -ge 2 ] || { echo "FAIL: --batch-msg 需要参数（如 --batch-msg 1000）" >&2; exit 2; }; shift; BATCH_MSG="$1" ;;
+    --batch-part) [ $# -ge 2 ] || { echo "FAIL: --batch-part 需要参数（如 --batch-part 1000）" >&2; exit 2; }; shift; BATCH_PART="$1" ;;
     --ivac)      [ $# -ge 2 ] || { echo "FAIL: --ivac 需要参数（如 --ivac 10000）" >&2; exit 2; }; shift; IVAC_PAGES="$1" ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -73,6 +77,7 @@ validate_int() { echo "$1" | grep -qE '^[0-9]+$' && [ "$1" -ge "$2" ]; }
 validate_int "$DAYS" 1       || { echo "FAIL: --days 必须是 ≥1 的整数（0 会删光所有消息）" >&2; exit 2; }
 validate_int "$BATCH_EVENT" 1 || { echo "FAIL: --batch 必须是 ≥1 的整数" >&2; exit 2; }
 validate_int "$BATCH_MSG" 1   || { echo "FAIL: --batch-msg 必须是 ≥1 的整数" >&2; exit 2; }
+validate_int "$BATCH_PART" 1 || { echo "FAIL: --batch-part 必须是 ≥1 的整数" >&2; exit 2; }
 validate_int "$IVAC_PAGES" 1  || { echo "FAIL: --ivac 必须是 ≥1 的整数" >&2; exit 2; }
 
 [ -x "$EXT" ] || { echo "FAIL: kilo.exe not found at $EXT" >&2; exit 1; }
@@ -105,8 +110,17 @@ q() {
 }
 
 # 标量计数（--format tsv 的第一行是列名，取最后一行为值）
-cnt() { q "SELECT COUNT(*) c FROM $1" | tail -n1 | tr -d '\r' | awk '{print $1+0}'; }
-cnt_where() { q "SELECT COUNT(*) c FROM $1 WHERE $2" | tail -n1 | tr -d '\r' | awk '{print $1+0}'; }
+# q 失败必须向上传播：delete_batched 依赖它，绝不能把「查询失败」当成「0 行」。
+cnt() {
+  local out
+  out=$(q "SELECT COUNT(*) c FROM $1") || return 1
+  printf '%s\n' "$out" | tail -n1 | tr -d '\r' | awk '{print $1+0}'
+}
+cnt_where() {
+  local out
+  out=$(q "SELECT COUNT(*) c FROM $1 WHERE $2") || return 1
+  printf '%s\n' "$out" | tail -n1 | tr -d '\r' | awk '{print $1+0}'
+}
 
 # sqlite3 直连（2026-10-08 专项）：kilo db CLI 每次调用是独立连接，且实测不持久化
 # PRAGMA 写入——`kilo db "PRAGMA auto_vacuum=2"` 后再查仍为 0。而 auto_vacuum 转换
@@ -249,38 +263,81 @@ report_batch() {
 
 # 分批删除：把长事务拆成短事务，避免长时间独占写锁
 # $1=目标表 $2=WHERE 子句 $3=每批行数 $4=标签
+# 统一按 rowid 分批（2026-10-26）：不能按 id —— todo 是复合主键，session_share /
+# session_context_epoch / kilo_board 没有 id 列；rowid 对所有普通表都成立。
 # 终止条件用「待删行数」而非全表计数 —— 过滤条件（如 age < cutoff）本身匹配 0 行时
 # 全表计数不为 0，旧写法会误判为「未下降」而报假失败。
 delete_batched() {
   local table="$1" where="$2" size="$3" label="$4" before after t0
   while :; do
-    before=$(cnt_where "$table" "$where")
+    before=$(cnt_where "$table" "$where") || { echo "    FAIL: 待删行计数失败（$table）" >&2; return 1; }
+    case "$before" in ''|*[!0-9]*) echo "    FAIL: 待删行计数无效（$table）: '$before'" >&2; return 1 ;; esac
     [ "$before" -eq 0 ] && return 0
     t0=$(date +%s%N)
-    q "DELETE FROM $table WHERE id IN (SELECT id FROM $table WHERE $where LIMIT $size)" >/dev/null || return 1
-    after=$(cnt_where "$table" "$where")
+    q "DELETE FROM $table WHERE rowid IN (SELECT rowid FROM $table WHERE $where LIMIT $size)" >/dev/null \
+      || { echo "    FAIL: 分批删除失败（$table）" >&2; return 1; }
+    after=$(cnt_where "$table" "$where") || { echo "    FAIL: 剩余行计数失败（$table）" >&2; return 1; }
+    case "$after" in ''|*[!0-9]*) echo "    FAIL: 剩余行计数无效（$table）: '$after'" >&2; return 1 ;; esac
     report_batch "$before" "$after" "$t0" "$label"
-    # 并发写入可能抵消删除；待删行数不降即退出，避免死循环
-    [ "$after" -ge "$before" ] && { echo "    stop: 待删行数未下降（并发写入中）" >&2; return 1; }
+    # 并发写入可能抵消删除；待删行数不降即退出，避免死循环。
+    # 返回 1=硬失败（查询/删除出错），2=仅并发未收敛（调用方可区分是否算失败）。
+    [ "$after" -ge "$before" ] && { echo "    stop: 待删行数未下降（并发写入中）" >&2; return 2; }
   done
 }
 
 echo ""
 echo "== 清理（保留最近 $DAYS 天） =="
 # 1) 事件溯源日志（纯审计流水，无业务价值，占大头）
+# event 是唯一持续高并发写入的表：清理途中新事件会抵消删除，待删行数不再下降是常态。
+# 该情况只停止本表并留待下轮，不算整轮失败（否则每天维护在活跃使用时恒报 exit 1，
+# state.json 不更新 → 反复重试）；真正的查询/删除错误（rc=1）仍算失败。
 echo "  DELETE event (batched $BATCH_EVENT) ..."
-delete_batched event "1=1" "$BATCH_EVENT" "event" || FAILED=1
-if [ "$FAILED" = "0" ]; then
+EVENT_RC=0
+delete_batched event "1=1" "$BATCH_EVENT" "event" || EVENT_RC=$?
+if [ "$EVENT_RC" -eq 1 ]; then
+  FAILED=1
+elif [ "$EVENT_RC" -eq 2 ]; then
+  echo "    note: event 有并发新写入，残留行下轮继续清（不计失败）" >&2
+fi
+if [ "$EVENT_RC" -ne 1 ]; then
   q "DELETE FROM event_sequence" >/dev/null || FAILED=1
   [ "$FAILED" = "0" ] && echo "    ok (event_sequence)"
 fi
 
-# 2) 过期消息：按 id 分批，避免「一条 DELETE 级联清空几十万 part」的长事务
+# 2) 过期消息：按 rowid 分批，避免「一条 DELETE 级联清空几十万 part」的长事务
 echo "  DELETE messages older than $DAYS days (batched $BATCH_MSG) ..."
 delete_batched message "time_created < $CUTOFF" "$BATCH_MSG" "message" || FAILED=1
-q "DELETE FROM session WHERE time_created < $CUTOFF AND id NOT IN (SELECT DISTINCT session_id FROM message)" >/dev/null || FAILED=1
-q "DELETE FROM todo WHERE session_id NOT IN (SELECT id FROM session)" >/dev/null || FAILED=1
+# 过期空 session：相关 NOT EXISTS（message.session_id 为 NULL 时 NOT IN 会整批不删）
+q "DELETE FROM session WHERE time_created < $CUTOFF AND NOT EXISTS (SELECT 1 FROM message m WHERE m.session_id = session.id)" >/dev/null || FAILED=1
 echo "    done ($([ "$FAILED" = "0" ] && echo ok || echo '有失败，见上'))"
+
+# 2b) 孤儿子表（2026-10-26 查漏）：kilo db CLI 的连接不开外键（实测删 message 不级联
+# part），过期 message/session 会留下永不回收的孤儿子表行（实测 part 43468、kilo_board 57，
+# 其余表当前为 0，但都要防未来泄漏）。全部用相关 NOT EXISTS（避免 NOT IN 遇 NULL 整批不删）。
+# 顺序硬约束：先 kilo_board_message 再 kilo_board —— 先删父 board 会让消息失去父引用，
+# 且无法区分「父 board 已删」与「父 board 从未存在」；kbm 未完整收敛时不得删 board。
+echo "  DELETE orphan kilo_board_message (batched $BATCH_PART) ..."
+KBM_CLEAN=1
+delete_batched kilo_board_message "NOT EXISTS (SELECT 1 FROM kilo_board b JOIN session s ON s.id = b.root_session_id WHERE b.root_session_id = kilo_board_message.board_root_session_id)" "$BATCH_PART" "orphan kilo_board_message" || KBM_CLEAN=0
+if [ "$KBM_CLEAN" = "1" ]; then
+  echo "  DELETE orphan kilo_board (batched $BATCH_PART) ..."
+  delete_batched kilo_board "NOT EXISTS (SELECT 1 FROM session s WHERE s.id = kilo_board.root_session_id)" "$BATCH_PART" "orphan kilo_board" || FAILED=1
+else
+  FAILED=1
+  echo "    skip: kilo_board_message 未完整清理（失败/计数异常/未收敛），本轮跳过 kilo_board 删除（可重跑收敛）" >&2
+fi
+
+# 其余 session 子表只依赖 session 存在性（todo 复合主键/无 id 主键的表统一走 rowid 分批）
+for table in todo session_share session_context_epoch session_input session_message; do
+  echo "  DELETE orphan $table (batched $BATCH_PART) ..."
+  delete_batched "$table" "NOT EXISTS (SELECT 1 FROM session s WHERE s.id = $table.session_id)" "$BATCH_PART" "orphan $table" || FAILED=1
+done
+
+# part 拆成两遍单条件：实测 822,597 行下 `OR NOT EXISTS` 单次约 1.4s，拆开后
+# 两遍各约 0.3s / 0.2s，且都能走 covering index（part_message_id_id_idx / part_session_idx）。
+echo "  DELETE orphan parts (batched $BATCH_PART) ..."
+delete_batched part "NOT EXISTS (SELECT 1 FROM message m WHERE m.id = part.message_id)" "$BATCH_PART" "orphan part" || FAILED=1
+delete_batched part "NOT EXISTS (SELECT 1 FROM session s WHERE s.id = part.session_id)" "$BATCH_PART" "orphan part" || FAILED=1
 
 # 清理后重新采样（2026-10-25 查漏）：DELETE 释放的页只有在清理后才体现在 freelist；
 # 旧逻辑用清理前的 FREE_PCT 决定是否 VACUUM，导致「刚删掉 12.7GB 但清理前空闲 0%」
