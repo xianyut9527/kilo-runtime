@@ -71,7 +71,7 @@ You submit a task
    |  · High-risk files (auth / payments / migrations) hit, or generic changes
    |    spanning 3+ code files (docs excluded, codeEdits rule since 2026-10-07) ->
    |    quality-gate auto-triggers dual-review: omission check × red team
-   |    in parallel + third-party model verdict (2-4 minutes; doc-only sessions skip)
+   |    in parallel + verdict-seat arbitration (2-4 minutes; doc-only sessions skip)
    |  · Verdict "fail" -> delivery blocked, model must fix and re-review (max 2 rounds;
    |    accepting residual risk requires explicit "review-accepted" echo registration)
    |  · Pass -> delivered; on cap-release / explicit acceptance / upstream failure,
@@ -96,15 +96,17 @@ Quality control is fully automated by the plugins.
 
 New models must be registered in `provider.openllamas.models` before they can be referenced.
 Swapping a model touches only those fields — the docs never copy model names; config
-comments only explain current tradeoffs, and the routing fields stay authoritative.
+comments only explain current tradeoffs, and the routing fields stay authoritative. The one
+exception is the model-usage section in `INSTRUCTIONS.md` — a policy snapshot that must be
+updated alongside a model swap.
 
 ## Models & division of labor
 
 Upstream: OpenLlamas (<https://openllamas.com>)
 
 Models iterate upstream continuously, so **the docs never copy model names**: role
-bindings, the failover chain and the review seats live only in `kilo.json` (single
-source of truth) — swapping a model touches that one file and nothing below goes stale.
+bindings, the failover chain and the review seats live only in `kilo.json.tmpl` (single
+source of truth, rendered to `kilo.json`) — swapping a model touches that one file and nothing below goes stale.
 
 | Role | Tier | Duty |
 |------|-------|------|
@@ -122,9 +124,10 @@ Rule: at most 5 routed models; currently 4 = 3 value + 1 flagship planner. Other
 models stay available as a manual-selection pool. Each role gets the model it is strongest at,
 and family diversity is spent only where cross-validation actually pays (coding / planning /
 review / heavy implementation / review panel).
-Review panel: positive (gaps) + red team (bugs) + third-party verdict; positive/red team are
-cross-family from the audited subject, and any seat that falls back to the executor's family
-must be reported as a degraded review (see config comments).
+Review panel: positive (gaps) + red team (bugs) + verdict seat; positive/red team are
+cross-family from the audited subject, the verdict seat currently shares the red team's tier,
+and any seat that falls back to the executor's family must be reported as a degraded review
+(see config comments).
 Failover chain has 3 hops, all value tier; the flagship stays registered but unrouted and can
 be re-added after credits/channel recover (order in `failover.chain.models`).
 
