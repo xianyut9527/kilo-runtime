@@ -118,14 +118,14 @@ source of truth) — swapping a model touches that one file and nothing below go
 | Subagent default | same as executor | default model for task subagents |
 | Review | value·heavy (other family) | hetero read-only review |
 
-Rule: at most 5 routed models (currently 4 value + 1 flagship planner; the flagship gpt is
-registered but unrouted). Each role gets the model it is strongest at, and family diversity
-is spent only where cross-validation actually pays (coding / planning / review / heavy
-implementation / review panel).
+Rule: at most 5 routed models; currently 4 = 3 value + 1 flagship planner. Other registered
+models stay available as a manual-selection pool. Each role gets the model it is strongest at,
+and family diversity is spent only where cross-validation actually pays (coding / planning /
+review / heavy implementation / review panel).
 Review panel: positive (gaps) + red team (bugs) + third-party verdict; positive/red team are
-cross-family from the audited subject, and the verdict seat prefers a cross-family flagship,
-falling back to the configured fallback route when unavailable (see config comments).
-Failover chain has 4 hops, all currently serviceable; the flagship stays registered and can
+cross-family from the audited subject, and any seat that falls back to the executor's family
+must be reported as a degraded review (see config comments).
+Failover chain has 3 hops, all value tier; the flagship stays registered but unrouted and can
 be re-added after credits/channel recover (order in `failover.chain.models`).
 
 ## Common commands
@@ -143,7 +143,7 @@ After editing provider/hx-failover/src: `npm run build` → run `test-failover.m
 ## Gotchas
 
 - Editing `~/.config/kilo/kilo.json` directly gets overwritten by install — always edit the repo copy
-- A model or variant saved by the VS Code model selector can override the template's `agent.*` route; after editing the template, verify the model and reasoning effort used by a new session
+- A model or variant saved by the VS Code model selector can override the template's `agent.*` route; after editing the template, verify the model and reasoning effort used by a new session. Already-open sessions are not switched back by config — change them manually
 - Template comments: whole-line `//` at line start only; any custom key in kilo.json invalidates the whole config
 - `debug config` passing ≠ tasks actually run — always smoke-test with a real `kilo run` after changes
 

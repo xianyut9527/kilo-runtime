@@ -32,6 +32,17 @@
   不为省一次路径输入烧十秒。
 - 长输出命令先落盘再摘要（`*> log` 后 Select-String），勿让超长输出整段灌进上下文。
 
+## 模型使用口径（2026-10-26 实测分工）
+- **日常执行只用 `deepseek-v4.1-flash-1017@high`**；高风险实现才由 `general@max` 升级。近 3 天 code 单步实测：
+  deepseek@high 16.6s，kimi-k3.1-pro@max 44.7s（近 24h 68.4s）。不要在 code 里换 kimi/glm 跑执行，
+  用户当场指定场景除外。
+- **kimi-k3.1-pro 只用于 plan**（规划/方案）。近 3 天 plan 0 次、kimi code 1993 次＝只付了它的慢、
+  没用上它的规划价值；需要规划时切 plan 模式，而不是给 code 换模型。
+- **复核必须异源**：verify 用配置的 glm-5.3-flash@high，不要用 task 的 model/provider/variant 覆盖成
+  与主执行同族；failover 导致同族降级时，复核结论必须标注「降级复核」，不计为独立异源票。
+- **注册表候选模型是手动选择池**：零路由引用 ≠ 冗余，不要以「清理/优化」为名删除
+  （glm-5.3、kimi-k3、qwen3.8、gpt-6-luna 等保留）；优化只动实际执行路径与使用方式。
+
 ## 自我进化（原生记忆，越用越强）
 - **检索优先，先查记忆**：项目问题（怎么跑/为什么这样设计/之前踩过什么坑）先用 `kilo_memory_recall`
   （mode=search 或 typed）检索；报错/失败/工具怪癖/环境差异或重复型任务先 `mem_search`（本地零成本，
