@@ -96,7 +96,7 @@ moa/dual-review 的分析
 
 ## 模型与分工
 
-上游：OpenLlamas
+上游：OpenLlamas 网关 <https://openllamas.com>（支持 OpenAI / Anthropic 协议）
 
 模型随上游持续迭代，所以**文档不复制模型名**：岗位绑定、兜底链、审查三席全部只写在
 `kilo.json.tmpl`（唯一真源，渲染为 `kilo.json`），换模型只改那一个文件，下面的分工口径不会随之过期。

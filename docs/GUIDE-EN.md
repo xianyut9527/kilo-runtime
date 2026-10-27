@@ -103,7 +103,7 @@ names as-is.
 
 ## Models & division of labor
 
-Upstream: OpenLlamas
+Upstream: OpenLlamas gateway <https://openllamas.com/v1> (OpenAI / Anthropic protocols)
 
 Models iterate upstream continuously, so **the docs never copy model names**: role
 bindings, the failover chain and the review seats live only in `kilo.json.tmpl` (single
