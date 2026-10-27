@@ -4,7 +4,7 @@
 //   正向（证成为主）：找「为什么这个方案/改动是对的、完备的」，漏检点、边界遗漏；
 //   反向（证伪为主）：专门找错——逻辑缺陷、边界条件、安全漏洞、遗漏需求、过度设计。
 // 两路并行、不同参考模型分别承担（默认值见 kilo.json provider.openllamas.options.dual_review，
-// 与主执行模型异源），最后由异源聚合模型综合出裁决：通过 / 有条件通过（列出必须修复项）/ 不通过。
+// 与主执行模型异源），最后由聚合模型综合出裁决（裁决席可能与红队同档，非独立第三方）：通过 / 有条件通过（列出必须修复项）/ 不通过。
 // 与 moa 工具的区别：moa 是通用多视角聚合；本工具是改动审查专用协议，正反视角由 prompt 明确分工。
 //
 // 依赖：lib/hx-client.ts（与 moa.ts 共享的配置读取与请求层，改凭证/baseURL 规则只改那边）。
@@ -16,7 +16,7 @@
 // 2026-09-22 终裁：插件工具无 UI 进度通道（ctx.metadata/preliminary/stderr 三次证伪，
 // 详见 lib/hx-client.ts 契约注释）——进度机制已整体拆除，可观测性由结果字符串自带。
 
-import { loadCfg, ask, cbShouldFailFast, timeoutsOf, clipText } from "../lib/hx-client";
+import { loadCfg, ask, cbShouldFailFast, timeoutsOf, clipText, modelRoutes, AGG_MIN_BUDGET_MS } from "../lib/hx-client";
 import { randomUUID } from "node:crypto";
 
 // 超时统一走配置：kilo.json provider.openllamas.options.timeout / chunkTimeout（timeoutsOf 单点解析，
@@ -29,7 +29,6 @@ const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
 // 整个审查钉总墙钟 ≈ timeoutMs：正反两路共享扇出窗口（超时路按失败处理，单路失败/
 // 双路失败语义不变），聚合阶段保底 AGG_MIN_BUDGET_MS；聚合超时走既有 catch 降级
 //（返回两路原始结论、无「## 裁决」段 → quality-gate 按审查失败口径处理）。
-const AGG_MIN_BUDGET_MS = 90_000;
 
 // 审查器版本（quality-gate 层 3 审查缓存键成分）：三路 prompt 协议、限长或裁决解析
 // 口径变更时必须递增——版本一变缓存全失效，旧裁决不再被复用。
@@ -38,14 +37,8 @@ const AGG_MIN_BUDGET_MS = 90_000;
 // dr-2026-10-18.1：正/反/裁决席加入 fallback 路由（首选失败续试），指纹含 fallback。
 const REVIEWER_VERSION = "dr-2026-10-18.1";
 
-// 模型路由列表：首选 + 配置的 fallback（去重、去空）。fallback 只在首选失败时启用，
+// 模型路由列表由 lib/hx-client 单点维护（与 moa 共用）；fallback 只在首选失败时启用，
 // 用于兜住单模型 400/404/503/超时导致的「一路阵亡」或「裁决缺失」。
-function modelRoutes(primary, fallbacks) {
-  const list = [primary, ...(Array.isArray(fallbacks) ? fallbacks : [])]
-    .filter((m) => typeof m === "string" && m.trim())
-    .map((m) => m.trim());
-  return [...new Set(list)];
-}
 
 // 审查器指纹：审查器版本 + 配置的模型路由（含 fallback）。quality-gate 把它掺进审查
 // 素材缓存键：改 prompt（版本变）或换模型/兜底路由 → 指纹变 → 缓存失效，绝不为同一份
@@ -287,7 +280,7 @@ const DualReviewImpl = async (_ctx = {}) => {
     tool: {
       dual_review: {
         description:
-          "双向异源审查：对指定改动/方案并行发起正向（查遗漏）与反向（红队找错）两路独立模型审查，再由第三方模型裁决。" +
+          "双向异源审查：对指定改动/方案并行发起正向（查遗漏）与反向（红队找错）两路独立模型审查，再由裁决席终审（裁决席可能与红队同档，非独立第三方）。" +
           "仅在复杂任务交付前调用（多模块改动/公共契约/核心逻辑），简单任务不要调用（成本敏感）。" +
           "复杂任务的交付节点由 quality-gate 自动执行，通常无需手动调用。",
         args: {

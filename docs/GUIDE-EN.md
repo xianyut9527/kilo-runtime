@@ -96,13 +96,14 @@ Quality control is fully automated by the plugins.
 
 New models must be registered in `provider.openllamas.models` before they can be referenced.
 Swapping a model touches only those fields — the docs never copy model names; config
-comments only explain current tradeoffs, and the routing fields stay authoritative. The one
-exception is the model-usage section in `INSTRUCTIONS.md` — a policy snapshot that must be
-updated alongside a model swap.
+comments only explain current tradeoffs, and the routing fields stay authoritative. The only
+exceptions are the model-usage section in `INSTRUCTIONS.md` — a policy snapshot updated
+alongside a model swap — and historical records in `docs/HISTORY.md`, which keep old model
+names as-is.
 
 ## Models & division of labor
 
-Upstream: OpenLlamas (<https://openllamas.com>)
+Upstream: OpenLlamas
 
 Models iterate upstream continuously, so **the docs never copy model names**: role
 bindings, the failover chain and the review seats live only in `kilo.json.tmpl` (single

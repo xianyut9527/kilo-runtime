@@ -52,12 +52,13 @@
   "remote_control": false,
 
   // ── 每会话注入的策略文件（认知中心/风险分级/一次性交付/硬约束）──
-  // __KILO_HOME__ 由 installer 替换为本机家目录（Kilo 不展开 ~，必须绝对路径）
+  // __KILO_CONFIG__ 由 installer 替换为实际部署目录（Kilo 不展开 ~，必须绝对路径）；
+  // 用部署目录而非写死 $HOME/.config/kilo，-Target 自定义目录时注入路径才不会分叉。
   // GLOBAL-NOTES.md 是全自动生长的全局经验层：由 memory-store 从 store（notes.jsonl）编译生成，
   // agent 写入走 mem_add（勿手工直写），不进下发清单、install 不清理清单外文件；/evolve 定期修剪并升格成熟条目
   "instructions": [
-    "__KILO_HOME__/.config/kilo/INSTRUCTIONS.md",
-    "__KILO_HOME__/.config/kilo/GLOBAL-NOTES.md",
+    "__KILO_CONFIG__/INSTRUCTIONS.md",
+    "__KILO_CONFIG__/GLOBAL-NOTES.md",
   ],
   // 技能目录：agent 可按需加载领域知识（技能增删无需改配置）
   "skills": {
@@ -68,8 +69,8 @@
   // ── 生效模型口径（被引用模型 ≤5；2026-10-26 实际 4 = 3 性价比档 + 1 旗舰规划档）──
   // 模型随上游持续迭代，因此本文件是模型**绑定**的唯一真源：下方各 agent 字段、
   // provider.options.failover / moa / dual_review 写具体模型；仓库文档只讲岗位与
-  // 档位口径、不复制模型名。唯一例外是 INSTRUCTIONS.md「模型使用口径」策略快照，
-  // 换模型时随本文件一并更新。
+  // 档位口径、不复制模型名。例外只有 INSTRUCTIONS.md「模型使用口径」策略快照
+  //（换模型时随本文件一并更新）与 docs/HISTORY.md 历史记录（保留旧模型名，不回写）。
   // 两档分工：性价比档（glm / deepseek / minimax 三席）承担高频与轻量岗位，要快与便宜；
   // 旗舰档仅 kimi 规划席在路由内，大窗旗舰只注册不路由（手动选择池/回退口）。
   // 分配原则：按模型最强项定岗位，异源只用在有交叉验证价值的岗位（编码/规划/复核/
@@ -99,7 +100,8 @@
   //              升档；2026-10-23 前为 preview 同名替换；轻决策岗位零分母可接受，
   //              见 agent.orchestrator 处注释；K3 只留给 plan）
   // verify       自定义复核代理（subagent）：异源模型 glm 复核 deepseek 的产出
-  //              —— 不同厂商交叉验证，只读不许改（edit/bash写通道均 deny）；K3 只留 plan 位
+  //              —— 不同厂商交叉验证；edit 与常见 bash 写/破坏通道 deny，
+  //              通用测试执行器保留，只读约束同时依赖提示词与 permission-guard；K3 只留 plan 位
   // variant 策略（2026-09-24 二轮修正，证伪了「low/medium 零失败」的旧论述）：
   // kilo.db finish=length 95 条实证（reasoning 吃光输出预算 → "output limit while
   // reasoning"，正常流结束不触发 failover/重试）按档位分桶：kimi@max 全库 7/964
@@ -201,17 +203,29 @@
       "description": "独立验证视角（异源模型复核高风险改动，只读不改动）。仅在认证/权限/支付/数据迁移/公共契约等高风险改动时按需调用。禁止用 task 的 model/provider/variant 覆盖成与主执行同族的模型；failover 造成同族降级时，结论必须标注「降级复核」，不计为独立异源票。",
       "permission": {
         "edit": "deny",
-        // 只读强制力补全：堵 bash 直接写通道（前缀式模式，与主配置同形式；
-        // 管道/重定向绕过由 permission-guard 插件按内容二次拦截）
+        // 只读强制力补全：edit 全禁，bash 堵明确的仓库/文件/磁盘写通道。
+        // node/python/npm test 等通用执行与测试通道保留给验证；这不是进程级沙箱，
+        // 其只读用途由提示词约束，高危内容由 permission-guard 按命令内容二次拦截。
         "bash": {
           "sed -i*": "deny",
           "Set-Content *": "deny",
           "Out-File *": "deny",
           "Add-Content *": "deny",
-          "tee *": "deny",
+          "Clear-Content *": "deny",
+          "Copy-Item *": "deny",
+          "Move-Item *": "deny",
+          "New-Item *": "deny",
+          "Rename-Item *": "deny",
           "Remove-Item *": "deny",
+          "tee *": "deny",
           "rm *": "deny",
           "mv *": "deny",
+          "cp *": "deny",
+          "copy *": "deny",
+          "del *": "deny",
+          "erase *": "deny",
+          "rd *": "deny",
+          "rmdir *": "deny",
           "git add*": "deny",
           "git commit*": "deny",
           "git push*": "deny",
@@ -221,9 +235,34 @@
           "git checkout*": "deny",
           "git restore*": "deny",
           "git clean*": "deny",
+          "git switch*": "deny",
+          "git revert*": "deny",
+          "git cherry-pick*": "deny",
+          "git apply*": "deny",
+          "git am*": "deny",
+          "git branch*": "deny",
+          "git tag*": "deny",
+          "git stash*": "deny",
+          "git remote*": "deny",
+          "git fetch*": "deny",
+          "git pull*": "deny",
+          "git worktree*": "deny",
+          "git update-ref*": "deny",
+          "git update-index*": "deny",
+          "git format-patch*": "deny",
           "npm install*": "deny",
           "npm ci*": "deny",
           "npm publish*": "deny",
+          "npm unpublish*": "deny",
+          "npm pack*": "deny",
+          "format *": "deny",
+          "format.com *": "deny",
+          "Format-Volume*": "deny",
+          "diskpart*": "deny",
+          "Invoke-Expression *": "deny",
+          "Invoke-Expression(*": "deny",
+          "iex *": "deny",
+          "iex(*": "deny",
         },
       },
     },
@@ -292,15 +331,15 @@
     "prompt": "根据 staged diff 生成中文 commit message。\n\n要求：\n1. 先分析 diff 内容，识别：修改了哪些文件、什么函数/逻辑、数据流如何变化\n2. type(scope): 标题 ≤50字，无句号\n3. 正文用 bullet 列出具体变更点（每点说明改了什么文件和什么逻辑）\n4. 如果修复了 bug，说明修复了什么问题；如果新增功能，说明新增了什么能力\n5. 仅输出 commit message，不要解释\n\ntype: feat/fix/refactor/perf/test/docs/chore/style\nscope: 核心模块名（如 auth, api, ui, db）",
   },
 
-  // ── 权限（安全核心，语义实测与官方文档不同，注意两条）────────────
-  // ① 最后一条匹配者生效（非文档说的 first-match）→ 兜底 "*" 必须放最前
+  // ── 权限（安全核心；规则顺序有官方文档与本机实测双重依据）────────
+  // ① 最后一条匹配者生效 → 兜底 "*" 必须放最前，具体 allow/ask/deny 例外放后
   // ② --auto 无人值守下 ask 等于 allow → 想真拦必须写 deny
   // 三道防线：permission-guard 插件(动态) → 本静态规则 → deny 兜底
   "permission": {
     // bash：* 兜底 ask 在最前；具体规则在后覆盖
     "bash": {
       "*": "ask",
-      // 只读 git 操作放行
+      // 只读 git 操作放行（branch/tag/remote/stash 的破坏性子命令在下方单独降为 ask）
       "git status*": "allow",
       "git diff*": "allow",
       "git log*": "allow",
@@ -319,6 +358,27 @@
       "git describe*": "allow",
       "git blame*": "allow",
       "git config --get*": "allow",
+      // 前缀式 allow 会连同子命令一起放行：把删除/强移/丢暂存等破坏性子命令显式降为 ask
+      // （最后匹配生效，必须排在对应 allow 之后）。branch -d 只删已合并分支（提交仍可达），
+      // 不降 ask；-D/--force 等强制形态会丢引用，必须确认。
+      "git branch -D*": "ask",
+      "git branch --delete*": "ask",
+      "git branch -f*": "ask",
+      "git branch --force*": "ask",
+      "git branch -M*": "ask",
+      "git branch -C*": "ask",
+      "git branch --move --force*": "ask",
+      "git branch --move -f*": "ask",
+      "git branch --copy --force*": "ask",
+      "git branch --copy -f*": "ask",
+      "git tag -d*": "ask",
+      "git tag --delete*": "ask",
+      "git tag -f*": "ask",
+      "git tag --force*": "ask",
+      "git remote remove*": "ask",
+      "git remote rm*": "ask",
+      "git stash drop*": "ask",
+      "git stash clear*": "ask",
       // 影响远端/历史的操作要人工确认
       "git push*": "ask",
       "git merge*": "ask",
@@ -399,7 +459,9 @@
     "task": "allow",
     // 文件编辑：* 兜底 ask 最前 → src 放行 → 锁文件全部 deny
     // （锁文件由包管理器维护，手改必炸；插件层还堵了 sed/node 绕过通道）
-    // 非后缀 .lock 的锁文件单列；一切 *.lock 由末尾兜底 deny 覆盖（最后匹配生效）
+    // 非后缀 .lock 的锁文件单列；一切 *.lock 由末尾兜底 deny 覆盖（最后匹配生效）。
+    // 根路径与 **/ 两种形式并存是刻意防御：权限 glob 引擎对「零层目录」的匹配语义
+    // 未做运行时验证，删掉根形式若引擎不把 **/ 当零层会把根锁文件变成可写。
     "edit": {
       "*": "ask",
       "src/**": "allow",
@@ -414,6 +476,7 @@
       "pnpm-lock.yml": "deny",
       "**/pnpm-lock.yml": "deny",
       "bun.lockb": "deny",
+      "**/bun.lockb": "deny",
       "*.lock": "deny",
       "**/*.lock": "deny",
     },
@@ -442,7 +505,8 @@
     "lsp": "allow",
     // 技能加载放行
     "skill": "allow",
-    // 语义搜索放行（代码索引查询）
+    // Kilo 内置语义检索工具放行（若当前版本提供该工具）；gitnexus MCP 的工具名是
+    // gitnexus_*，不受此键覆盖，未启用时无消费者，启用后按默认 ask 处理。
     "semantic_search": "allow",
     // Playwright MCP 全部工具要确认（浏览器能干的事太多）
     "playwright_*": "ask",
@@ -530,6 +594,8 @@
         "timeout": 480000,
         // 流式空闲看门狗：相邻 chunk 间隔超 180s 主动断流（provider 内实现；
         // fetch timeout 只覆盖到响应头，body 阶段挂死靠它兜底）。
+        // 同一数值还被 lib/hx-client 用作 moa/dual_review 的首字节/空闲超时（两条链路
+        // 语义不同但共用此值）：调整它会同时改变主链路断流阈值与审查直连超时。
         // 60s→90s→180s（2026-09-23 主链路误杀专项续）：thinking 模型静默思考期
         // 不发 SSE（首 chunk 前 + 流中途换相均可能），60s/120s 档分别留下
         // 62-69s / 120.6s 两个被杀簇（kilo.db + failover-events.jsonl 实证，
@@ -551,7 +617,8 @@
         // （×2、下限 32768、上限 65536）+ 降推理档」的请求体自动重发 1 次，
         // 仍死则原样透传（与关闭时字节一致）。9527 网关是无源码 new-api 二进制，
         // 服务端改不了 → 客户端兜底。可调对象：{holdMs, retries, minTokens, maxTokens,
-        // toolHoldMs, bufferLimitBytes}。
+        // toolHoldMs, bufferLimitBytes}；本键为 true 时使用全部代码默认值，需要逐项调参时
+        // 改为同名字段对象（布尔化不是死配置，但布尔形态本身不可调参）。
         // v2（2026-09-29 Tool-execution-aborted 专项）：工具调用原子化——tool_calls 起始后
         // 扣留到流尾才回放（inter-chunk 超时 toolHoldMs，默认 120s，断流重试零重复）；
         // tool_calls+finish=length 参数被输出预算截断 → 扩预算重发（遥测 reason=truncated_tool_args）。
@@ -576,8 +643,13 @@
         // ※ 模型切换的唯一真源就是本配置文件——provider/moa/dual-review 代码均无内置默认链/兜底模型，
         //   换模型只改这里（agent 路由 / failover / moa / dual_review 都在本文件内）
         // 链序口径（2026-10-20 按实测速度重排）：1017 最快居首，minimax 次之，
-        // glm-5.3-flash 实测偏慢居末，仅作兜底。共 3 跳。旗舰大窗档因额度/渠道不可用未入链，
+        // glm-5.3-flash 实测偏慢居末，仅作兜底。旗舰大窗档因额度/渠道不可用未入链，
         // 注册保留，恢复后可单变量加回末跳（长任务/超大上下文兜底）。
+        // ⚠️ chainOf 会无条件把「当前模型」置于链首再去重，models 是当前模型之后的
+        // 后备后缀，不是完整链。实际跳数随 agent 变化：code=[1017,minimax,glm] 3 跳；
+        // plan=[kimi-k3.1-pro,1017,minimax,glm] 4 跳；verify=[glm,1017,minimax] 3 跳
+        //（glm 是 verify 首跳，不是末跳）；explore/orchestrator=[minimax,1017,glm]。
+        // 首项 1017 与 code 主模型同源，chainOf 去重后不产生额外跳；保留它使链自描述完整。
         // 撤出路由的旧代（注册表保留、单变量可加回）：网关级过载时同网关多跳无意义——
         // lib/hx-client 实证单网关 CPU 过载即全模型 503，多跳只是叠加退避与等待。
         "failover": {
@@ -638,7 +710,8 @@
       // 不写则模型选择器里没有"思考强度"选项。key=reasoningEffort 会被
       // openai-compatible 映射成请求体 reasoning_effort 透传给上游网关。
       "models": {
-        // 无路由引用；保留作 test-failover.mjs 取消直通回归的桩模型
+        // 无路由引用：保留为手动选择池（历史世代名；test-failover.mjs 的同名桩是
+        // 测试内字面量，与本注册表条目无关，不要据此认为删掉会破坏该测试）。
         "deepseek-v4-flash": {
           "reasoning": true,
           "variants": {

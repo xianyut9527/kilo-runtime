@@ -9,7 +9,7 @@
 // 可观测性由结果字符串自带（总耗时/每路字数与耗时/参与模型）。
 // 同日 execute 契约钉死：必须返回 Promise<string>——async 函数原生满足。
 
-import { loadCfg, ask, cbShouldFailFast, timeoutsOf, clipText } from "../lib/hx-client";
+import { loadCfg, ask, cbShouldFailFast, timeoutsOf, clipText, modelRoutes, AGG_MIN_BUDGET_MS } from "../lib/hx-client";
 
 const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合）
 const AGG_VIEW_LIMIT = 12_000; // 聚合 prompt 单路参考截断上限（字符）
@@ -20,16 +20,6 @@ const MAX_TASK_CHARS = 50_000; // 任务输入上限：防无界文本多次灌�
 // 修法：整个工具钉总墙钟 ≈ timeoutMs——扇出阶段共享剩余预算（超时路按普通失败处理，
 // allSettled 语义不变），聚合阶段保底 AGG_MIN_BUDGET_MS；聚合超时走既有 catch 降级
 //（返回原始视角清单），扇出全灭走既有「所有参考模型失败」路径。行为不新增依赖。
-const AGG_MIN_BUDGET_MS = 90_000; // 聚合阶段保底：扇出烧完预算时聚合仍有机会出结论
-
-// 聚合模型路由：首选 + 配置 fallback（去重、去空）。首选失败（400/404/503/超时）时续试，
-// 首选成功不产生额外调用。参考席不做 fallback（多路允许部分失败，聚合仍需至少一路）。
-function modelRoutes(primary, fallbacks) {
-  const list = [primary, ...(Array.isArray(fallbacks) ? fallbacks : [])]
-    .filter((m) => typeof m === "string" && m.trim())
-    .map((m) => m.trim());
-  return [...new Set(list)];
-}
 
 const MoaImpl = async (_ctx = {}) => {
   return {

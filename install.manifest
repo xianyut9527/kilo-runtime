@@ -7,8 +7,8 @@
 # 由 install.sh / install.ps1 共同解析；改配置只改这里 + 文件本身。
 #
 # 占位符（由 install 脚本替换为本机原生路径）：
-#   __KILO_CONFIG__ = 实际部署目录（本项目为 ~/.config/kilo）→ 用于 provider.npm
-#   __KILO_HOME__   = 家目录 → 用于 instructions / skills.paths
+#   __KILO_CONFIG__ = 实际部署目录（本项目为 ~/.config/kilo）→ 用于 provider.npm / instructions
+#   __KILO_HOME__   = 家目录 → 用于 skills.paths
 
 kilo.json.tmpl -> kilo.json
 INSTRUCTIONS.md

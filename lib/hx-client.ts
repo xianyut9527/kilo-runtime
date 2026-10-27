@@ -477,6 +477,21 @@ export async function loadCfg() {
   return cfgCache;
 }
 
+// 聚合/裁决阶段保底墙钟（moa/dual_review 共用口径）：扇出烧完全局预算后仍给聚合一次
+// 出结论的机会；两个工具此前各留一份同名常量，改一处漏一处会导致预算口径漂移。
+export const AGG_MIN_BUDGET_MS = 90_000;
+
+// 模型路由列表（moa/dual_review 共用）：首选 + 配置 fallback，去空、trim、去重保序。
+// fallback 只在首选失败时启用；调用方显式覆盖模型时传空 fallback 表示精确指定。
+// 保持无类型注解的 JS 语法：test-plugin-contract 用 Node 原生 strip-types 直接加载本文件，
+// 新增 TS 专有语法会绕过该回归入口（实测 Node 22 在此处报 Unexpected token ':'）。
+export function modelRoutes(primary, fallbacks) {
+  const list = [primary, ...(Array.isArray(fallbacks) ? fallbacks : [])]
+    .filter((m) => typeof m === "string" && m.trim().length > 0)
+    .map((m) => m.trim());
+  return [...new Set(list)];
+}
+
 // 超时解析单点（moa/dual-review 共用口径）：配置值先显式 Number 转换（"1000" 字符串
 // 也接受），须为有限正数且 ≤ 2^31-1（setTimeout 超过该值会溢出立即触发），否则回退
 // 共享兜底常量（回退不抛错——病态配置最多损失长超时，绝不让调用路径崩溃）。

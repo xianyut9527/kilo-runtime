@@ -91,12 +91,12 @@ moa/dual-review 的分析
 | 降级链 / 审查模型 | `provider.openllamas.options.failover / moa / dual_review` |
 
 新模型需在 `provider.openllamas.models` 登记后才能被引用。换模型只改这些字段——文档
-不复制模型名，配置注释只解释当前取舍；唯一例外是 `INSTRUCTIONS.md` 的「模型使用口径」
-（策略快照，换型时随之一并更新）。
+不复制模型名，配置注释只解释当前取舍；例外只有两处：`INSTRUCTIONS.md` 的「模型使用口径」
+（策略快照，换型时随之一并更新）与 `docs/HISTORY.md` 的历史记录（保留旧模型名，不回写）。
 
 ## 模型与分工
 
-上游：OpenLlamas（<https://openllamas.com>）
+上游：OpenLlamas
 
 模型随上游持续迭代，所以**文档不复制模型名**：岗位绑定、兜底链、审查三席全部只写在
 `kilo.json.tmpl`（唯一真源，渲染为 `kilo.json`），换模型只改那一个文件，下面的分工口径不会随之过期。
