@@ -36,7 +36,7 @@ try {
 }
 
 // 工具函数经 _export 命名空间暴露（非顶层导出——Kilo vE2 会把每个导出函数当工厂调用）
-const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf, moduleBasenamesOf, hasTestRefFor, eslintConfigIn, reviewRetryAllowed, todoAnchorLines, unreviewedMarkerLine, driftCheckDue, diagRunFailureOf, isDelegateCall, reviewFailPrefix, todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText, extractUserAsks,
+const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf, moduleBasenamesOf, hasTestRefFor, eslintConfigIn, reviewRetryAllowed, reviewPendingBlocks, todoAnchorLines, unreviewedMarkerLine, driftCheckDue, diagRunFailureOf, isDelegateCall, reviewFailPrefix, todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText, extractUserAsks,
     pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel,
     setFileCheck, addHighRisk, rememberCommand, MAX_FILE_CHECKS, MAX_HIGH_RISK, SLEEP_CMD_RE } = mod._export ?? mod;
 let pass = 0, fail = 0;
@@ -227,6 +227,11 @@ t("hasAcceptMarker：2026-10-16 收紧——rg 查字面量不获接受语义", 
   await settleReviewOutcome(spass, "## 裁决\n通过\n\n## 必须修复项\n无", "key-pass", null);
   t("settleReviewOutcome：pass 裁决 → dualReviewed+计数清零+缓存写入（仅 pass 写）",
     spass.dualReviewed === true && spass.dualReviewedAtCodeEditV === 2 && spass.reviewPending === null && spass.reviewFailedCount === 0 && spass.reviewCache?.key === "key-pass");
+  const sdeg = mk([], 1);
+  sdeg.reviewPending = null; sdeg.reviewRounds = 0; sdeg.reviewCache = null;
+  await settleReviewOutcome(sdeg, "## 裁决\n通过\n\n> 降级复核：正向 minimax-m3.1-flash→kimi-k3.1-pro", "key-deg", null);
+  t("settleReviewOutcome：降级复核结论入账（不计完整异源）",
+    (sdeg.degradations ?? []).some((d) => d.includes("降级复核")));
   const sinc = mk([], 1);
   sinc.reviewPending = null; sinc.reviewRounds = 0; sinc.reviewCache = null;
   await settleReviewOutcome(sinc, "裁决不可解析", "key-inc", null);
@@ -237,6 +242,37 @@ t("hasAcceptMarker：2026-10-16 收紧——rg 查字面量不获接受语义", 
   await settleReviewError(serr, new Error("boom"), null);
   t("settleReviewError：无前轮残余 → 记账放行不抛",
     serr.dualReviewed === true && serr.reviewFailedCount === 1);
+}
+{
+  // 2026-10-27 fail-open 收口：连续第 2 次不可解析/执行异常不再静默放行，
+  // 必须留下 reviewPending 让 before 钩子阻断到 review-accepted/人工补审。
+  const { settleReviewOutcome, settleReviewError } = mod._export;
+  const sinc2 = mk([], 7);
+  sinc2.editVersion = 7; sinc2.reviewPending = null; sinc2.reviewRounds = 0;
+  sinc2.reviewCache = null; sinc2.reviewFailedCount = 1;
+  await settleReviewOutcome(sinc2, "裁决不可解析", "key-inc2", null);
+  t("连续第 2 次 inconclusive → 阻断性 reviewPending（要求显式接受）",
+    sinc2.reviewFailedCount === 2 && sinc2.dualReviewed === true &&
+    sinc2.reviewPending?.kind === "unreviewed" && sinc2.reviewPending?.codeEditV === 7 &&
+    /review-accepted/.test(sinc2.reviewPending?.fixSection ?? ""));
+  const serr2 = mk([], 8);
+  serr2.editVersion = 8; serr2.reviewPending = null; serr2.reviewFailedCount = 1;
+  await settleReviewError(serr2, new Error("boom"), null);
+  t("连续第 2 次执行异常 → 同样阻断到显式接受",
+    serr2.reviewFailedCount === 2 && serr2.dualReviewed === true &&
+    serr2.reviewPending?.kind === "unreviewed" && serr2.reviewPending?.codeEditV === 8 &&
+    /review-accepted/.test(serr2.reviewPending?.fixSection ?? ""));
+  const pend = { kind: "unreviewed", editVersion: 3, codeEditV: 5 };
+  t("reviewPendingBlocks：unreviewed 绑定 codeEditV（文档编辑不解除阻断）",
+    reviewPendingBlocks({ editVersion: 4, codeEditV: 5, reviewPending: pend }) === true);
+  t("reviewPendingBlocks：unreviewed 新代码编辑允许重审",
+    reviewPendingBlocks({ editVersion: 4, codeEditV: 6, reviewPending: pend }) === false);
+  t("reviewPendingBlocks：普通 FAIL 同样绑定 codeEditV（文档编辑不解除）",
+    reviewPendingBlocks({ editVersion: 4, codeEditV: 5, reviewPending: { editVersion: 3, codeEditV: 5 } }) === true);
+  t("reviewPendingBlocks：新代码编辑允许 FAIL 修复后重审",
+    reviewPendingBlocks({ editVersion: 4, codeEditV: 6, reviewPending: { editVersion: 3, codeEditV: 5 } }) === false);
+  t("reviewPendingBlocks：旧/畸形 pending 缺 codeEditV → fail-closed",
+    reviewPendingBlocks({ editVersion: 3, codeEditV: 5, reviewPending: { editVersion: 3 } }) === true);
 }
 
 // ── 查漏补缺二轮（2026-10-16）：settle 版本绑定启动时刻 + 上限放行清阻断 + FAIL 消费重启判定 ──
@@ -393,7 +429,10 @@ t("hasAcceptMarker：2026-10-16 收紧——rg 查字面量不获接受语义", 
   git(["add", "big.ts"]); // untracked 文件不进 `git diff HEAD`，先 stage
   const sBig = { commands: [], edited: new Set([mine, path.join(tmp, "big.ts")]) };
   const subjectBig = await reviewSubject(tmp, sBig, "mine.ts\nbig.ts");
-  t("r2②：超 12K diff 截断标注可见（其余段落不被吃光）", subjectBig.includes("超 12000 字符已截断"));
+  t("r2②：超 20K diff 截断标注可见（其余段落不被吃光）", subjectBig.includes("超 20000 字符已截断"));
+  const subjectHuge = await reviewSubject(tmp, { commands: ["x".repeat(30000)], edited: new Set() }, "");
+  t("r2②：总预算 24K 截断标注可见（标记不被二次砍掉）",
+    subjectHuge.length <= 24000 && subjectHuge.includes("审查素材超 24000 字符"));
   fs.rmSync(outside, { force: true });
   fs.rmSync(tmp, { recursive: true, force: true });
 }
@@ -725,19 +764,20 @@ t("insertUnderHeading：段前无空行（文件头紧贴）→ 追加不劈段"
   }
 }
 
-// ── 修复 F：reviewRetryAllowed（fail-open 后重审判定，纯函数）──
+// ── 修复 F：reviewRetryAllowed（失败后重审判定，纯函数）──
 const rrs = (over) => ({ dualReviewed: true, codeEditV: 5, reviewFailedAtCodeEditV: 4, reviewFailedCount: 1, ...over });
 t("reviewRetryAllowed：从未失败（起点 0）→ false（常规口径覆盖）", reviewRetryAllowed({ dualReviewed: false, codeEditV: 3, reviewFailedAtCodeEditV: 0, reviewFailedCount: 0 }) === false);
 t("reviewRetryAllowed：失败后有新代码编辑 → true（交付节点重审一次）", reviewRetryAllowed(rrs({})) === true);
 t("reviewRetryAllowed：失败后无新编辑（同一素材）→ false（不重烧）", reviewRetryAllowed(rrs({ codeEditV: 4, reviewFailedAtCodeEditV: 4 })) === false);
-t("reviewRetryAllowed：连续两败（count≥2）→ false（永久放行 + unreviewed 留痕）", reviewRetryAllowed(rrs({ reviewFailedCount: 2 })) === false);
+t("reviewRetryAllowed：连续两败（count≥2）→ false（停止自动重审，交付需显式接受）", reviewRetryAllowed(rrs({ reviewFailedCount: 2 })) === false);
 t("reviewRetryAllowed：count 超上限更不重审", reviewRetryAllowed(rrs({ reviewFailedCount: 5 })) === false);
 t("reviewRetryAllowed：桶字段缺失 → false（fail-open 不误触发）", reviewRetryAllowed(null) === false && reviewRetryAllowed({}) === false);
 
-// ── 修复 F：unreviewedMarkerLine（永久放行持久留痕格式）──
+// ── 修复 F：unreviewedMarkerLine（连续失败达上限的持久留痕格式）──
 t("unreviewedMarkerLine：review_unreviewed_<date> 前缀 + 补审指引", (() => {
   const line = unreviewedMarkerLine();
-  return /^- review_unreviewed_\d{4}-\d{2}-\d{2} :: .+层 3 fail-open 放行.+补审/.test(line);
+  return /^- review_unreviewed_\d{4}-\d{2}-\d{2} :: .+层 3 待显式接受\/人工补审/.test(line) &&
+    /dual_review/.test(line);
 })());
 t("unreviewedMarkerLine：同毫秒内两次调用相同（幂等沉淀前提）", unreviewedMarkerLine() === unreviewedMarkerLine());
 

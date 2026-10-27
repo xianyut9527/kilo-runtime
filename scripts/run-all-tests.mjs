@@ -52,16 +52,18 @@ const summaryLine = (s) => {
 
 let pass = 0;
 const failed = [];
+const TEST_TIMEOUT_MS = 180_000; // 单套件硬上限：防某个测试挂死拖住整轮（原无 timeout）
 console.log(`== 统一离线测试：${jobs.length} 个（node ${process.versions.node}）==`);
 for (const j of jobs) {
-  const r = spawnSync(NODE, j.args, { cwd: j.cwd, encoding: "utf8" });
+  const r = spawnSync(NODE, j.args, { cwd: j.cwd, encoding: "utf8", timeout: TEST_TIMEOUT_MS });
   const out = (r.stdout || "") + (r.stderr || "");
+  const timedOut = r.error?.code === "ETIMEDOUT" || r.signal === "SIGTERM";
   if (r.status === 0) {
     pass++;
     console.log(`  PASS  ${j.label.padEnd(40)} ${summaryLine(out).slice(0, 56)}`);
   } else {
     failed.push(j.label);
-    console.log(`  FAIL  ${j.label.padEnd(40)} (exit ${r.status})`);
+    console.log(`  FAIL  ${j.label.padEnd(40)} (${timedOut ? `timeout ${TEST_TIMEOUT_MS}ms` : `exit ${r.status}`})`);
     nonEmptyLines(out).slice(-12).forEach((l) => console.log(`        ${l}`));
   }
 }

@@ -666,12 +666,38 @@ async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, sig
   return text;
 }
 
+function cancellationReason(signal) {
+  const reason = signal?.reason;
+  return reason instanceof Error ? reason : new Error("请求已取消");
+}
+
+// 可中断退避：外部 abort 后不再等满 backoff（否则截止后仍会空转数秒）。
+function sleepWithSignal(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(cancellationReason(signal)); return; }
+    let timer;
+    const onAbort = () => {
+      if (timer) clearTimeout(timer);
+      reject(cancellationReason(signal));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    // 监听器注册与 abort 可能竞态：注册后复查一次，避免漏事件。
+    if (signal?.aborted) { onAbort(); return; }
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    timer.unref?.();
+  });
+}
+
 // 对外接口（兼容旧签名：直接 await 返回字符串）。signal 可选取消透传。
 // 重试墙钟预算（2026-09-22 审查必须项）：
 //   - 「总时长超时」类失败不重试——剩余预算已装不下一次完整尝试，重试只是再烧 timeoutMs；
 //   - 已耗时 ≥ timeoutMs 不再发起新尝试。
 //   单次 ask 最坏墙钟从 ~3×timeout 收敛到 ~2×timeout（快速失败类仍有重试保护）。
 export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, attempts, signal }) {
+  if (signal?.aborted) throw cancellationReason(signal);
   const maxAttempts = Number.isInteger(attempts) && attempts > 0 ? attempts : MAX_ATTEMPTS;
   const budgetMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : FALLBACK_TIMEOUT_MS;
   const t0 = Date.now();
@@ -682,6 +708,7 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
   let probeGeneration = -1; // 本次 probe 的代次（仅 holdProbe 时有效）
   try {
     for (let i = 0; i < maxAttempts; i++) {
+      if (signal?.aborted) throw cancellationReason(signal);
       // 断路器检查：open → fail fast；half-open → 放单 probe（cbProbeInFlight 锁防并发穿透）
       const gate = cbAllowRequest();
       if (!gate) {
@@ -694,10 +721,23 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
       if (gate === "probe") { holdProbe = true; probeGeneration = cbProbeGeneration; }
       try {
         const text = await attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, signal });
+        // 截止/取消与成功同刻到达：不返回迟到结果（调用方已按取消收口）。
+        if (signal?.aborted) {
+          cbOnProbeNeutral(holdProbe, probeGeneration);
+          holdProbe = false;
+          throw cancellationReason(signal);
+        }
         cbOnSuccess(holdProbe, probeGeneration, requestEpoch);
         return text;
       } catch (e) {
         lastErr = e;
+        // 外部取消不是网关故障：立即退出重试循环（原路径会继续 backoff/重试，截止后仍空转）。
+        if (signal?.aborted) {
+          cbOnProbeNeutral(holdProbe, probeGeneration);
+          holdProbe = false;
+          await logAskFailure(e, model, Date.now() - t0);
+          throw e;
+        }
         const status = statusOf(e);
         // 413 体积超限：同一 body 重试必然再 413，换模型也无用（体积与模型无关）。
         // 直连 prompt 是单字符串：逐级半长裁剪，最多 3 级后仍超限才按原文 fatal；
@@ -764,7 +804,7 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
             continue; // 下一轮 cbAllowRequest() 判定，open 时直接 fail fast
           }
           if (i < maxAttempts - 1) {
-            await new Promise((r2) => setTimeout(r2, OVERLOAD_BACKOFF_MS[i] ?? 6000));
+            await sleepWithSignal(OVERLOAD_BACKOFF_MS[i] ?? 6000, signal);
           }
         } else {
           // 4xx（408 超时除外）是模型/请求级错误：网关可达，中性释放 probe 后照常退避重试；
@@ -776,7 +816,7 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
             cbOnProbeFail(holdProbe, probeGeneration); // probe 超时/网络错/5xx：回退 open（closed 态无操作）
           }
           if (i < maxAttempts - 1) {
-            await new Promise((r2) => setTimeout(r2, BACKOFF_MS[i] ?? 1200));
+            await sleepWithSignal(BACKOFF_MS[i] ?? 1200, signal);
           }
         }
       }
@@ -789,6 +829,24 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
     // cbOnProbeNeutral/cbOnOverloadFail 释放；异常/取消/未分类错误路径可能跳过结局处理器——finally 确保
     // 不永久卡死 half-open。未持锁的并发请求（fail fast 路径）不触发，防破坏在途 probe。
     if (holdProbe) cbReleaseProbeIfStuck(probeGeneration);
+  }
+}
+
+// 带硬墙钟的 ask：到点 abort 底层 fetch（不再只 race 一个结果无人消费），并统一错误文案。
+// 调用方传绝对截止时间；每个候选模型独立计时，路由层仍可按剩余预算续试。
+export async function askWithDeadline(args, deadlineMs, tag) {
+  const remaining = Math.max(1, deadlineMs - Date.now());
+  const controller = new AbortController();
+  const reason = new Error(`${tag} 墙钟预算 ${Math.round(remaining / 1000)}s 到期`);
+  const timer = setTimeout(() => controller.abort(reason), remaining);
+  timer.unref?.();
+  try {
+    return await ask({ ...args, signal: controller.signal });
+  } catch (e) {
+    if (controller.signal.aborted) throw reason;
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

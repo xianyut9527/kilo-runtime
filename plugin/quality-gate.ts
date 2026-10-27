@@ -624,6 +624,29 @@ async function persistLineSafe(line) {
   }
 }
 
+// 连续审查失败（不可解析/执行异常）达到上限后的收口：不再静默放行。
+// 置 reviewPending 让 before 钩子阻断交付，直到用户显式 review-accepted 或人工补审；
+// dualReviewed 仍置位，避免同一素材继续自动重烧。
+async function requireUnreviewedAcceptance(s, fb, bv) {
+  const fixSection =
+    "审查连续失败，未能获得可解析裁决；本次改动未经审查。\n" +
+    "请人工复核本次 diff，或执行 echo \"review-accepted: <原因>\" 显式接受未审风险后重试交付。";
+  s.dualReviewed = true;
+  s.dualReviewedAtCodeEditV = bv;
+  // kind=unreviewed：与普通 FAIL 裁决一致，before 钩子按 codeEditV 判断是否仍阻断——
+  // 只改文档/配置不能绕过「连续失败未审」；新代码编辑才允许触发新一轮审查。
+  s.reviewPending = { kind: "unreviewed", editVersion: s.editVersion, codeEditV: bv, verdictLine: "审查连续失败（未审交付）", fixSection };
+  const marker = unreviewedMarkerLine();
+  const marked = await persistLineSafe(marker);
+  recordDegradation(
+    s,
+    "审查连续失败，交付需显式接受未审风险",
+    `${reviewFailPrefix(s)}review-accepted 或人工补审；unreviewed 留痕${marked ? "已沉淀项目记忆 Open Questions" : "沉淀失败（人工须记录）"}`,
+  );
+  fb(`\n${TAG} ⛔ 审查连续失败，已停止自动重试。本次交付需人工复核 diff，或执行 echo "review-accepted: <原因>" 显式接受未审风险。`);
+  if (!marked) fb(`\n${TAG} 📌 ${marker}`);
+}
+
 // ── 层 3 裁决结算（2026-10-16 异步化抽取）────────────────────
 // verdict 处理块抽为模块级共享函数：后台结算路径（runDualReview 落地后的 .then 链）
 // 与启动失败同步兜底（catch 内 settleReviewError）共用同一状态迁移，防两处漂移。
@@ -646,8 +669,11 @@ async function settleReviewOutcome(s, verdict, subjectKey, output, bindCodeEditV
   const v = parseReviewVerdict(verdict);
   const fb = (t) => reviewFeedback(TAG, output, t);
   const bv = typeof bindCodeEditV === "number" ? bindCodeEditV : (s.codeEditV ?? 0);
+  if (/^> 降级复核：/m.test(String(verdict ?? ""))) {
+    recordDegradation(s, "双审使用 fallback，按降级复核处理", "至少一席非首选模型；结论不计为完整三族独立交叉验证");
+  }
   if (v.inconclusive) {
-    // 上游失败/一路阵亡：不阻断（fail-open），但一次为限防重复烧钱。
+    // 上游失败/一路阵亡：首次不阻断（fail-open），连续达上限则阻断到显式接受。
     // ⑧：第 2 轮起 inconclusive 意味着前轮必须修复项未被确认修复——
     // 随放行丢失前先沉淀（轮次上限放行路径同构，只是触发者不同）
     if (s.reviewRounds > 0 && s.reviewPending?.fixSection) {
@@ -657,18 +683,14 @@ async function settleReviewOutcome(s, verdict, subjectKey, output, bindCodeEditV
     s.reviewPending = null; // 无条件清（空 fixSection 防御性清理，防 before 钩子按旧裁决误拦）
     s.dualReviewed = true;
     s.dualReviewedAtCodeEditV = bv; // C1 修复：inconclusive 放行绑定审查启动时版本
-    // F 修复：inconclusive 放行同执行异常记账——新编辑后重审一次，连续两败永久放行
+    // F 修复：inconclusive 放行同执行异常记账——新编辑后重审一次，连续两败阻断到显式接受
     s.reviewFailedAtCodeEditV = bv;
     s.reviewFailedAtRound = s.reviewRounds;
     s.reviewFailedCount = (s.reviewFailedCount ?? 0) + 1;
-    if (s.reviewFailedCount >= MAX_REVIEW_FAILURES) {
-      const marker = unreviewedMarkerLine();
-      const marked = await persistLineSafe(marker);
-      recordDegradation(s, "审查重试连续失败，本次会话永久放行未审交付", `${reviewFailPrefix(s)}unreviewed 留痕${marked ? "已沉淀项目记忆 Open Questions" : "沉淀失败（人工须记录）"}`);
-      if (!marked) fb(`\n${TAG} 📌 ${marker}`);
-    }
-    recordDegradation(s, "审查上游失败（按未审查交付）", (v.verdictLine || "裁决不可解析").slice(0, 120));
-    fb(`\n${TAG} ⚠️ 审查结果无法解析（上游失败），本次按未审查交付，请人工留意。`);
+    const blocked = s.reviewFailedCount >= MAX_REVIEW_FAILURES;
+    if (blocked) await requireUnreviewedAcceptance(s, fb, bv);
+    recordDegradation(s, "审查上游失败（未获可解析裁决）", (v.verdictLine || "裁决不可解析").slice(0, 120));
+    if (!blocked) fb(`\n${TAG} ⚠️ 审查结果无法解析（上游失败），本次按未审查交付，请人工留意。`);
   } else if (v.fail) {
     s.reviewRounds += 1;
     if (s.reviewRounds >= MAX_REVIEW_ROUNDS) {
@@ -682,14 +704,14 @@ async function settleReviewOutcome(s, verdict, subjectKey, output, bindCodeEditV
       const persisted = await persistResidualSafe(v.fixSection);
       recordDegradation(s, `审查 ${s.reviewRounds} 轮未过按上限放行${persisted ? "（残余项已沉淀项目记忆 Open Questions）" : "（残余项沉淀失败，人工须记录）"}`, v.fixSection);
       // F 修复：轮次上限放行也是「有未闭环残余的放行」——记失败版本，新编辑后可再试；
-      // 连续 MAX_REVIEW_FAILURES 次 → 永久放行 + unreviewed 留痕持久可见
+      // 连续 MAX_REVIEW_FAILURES 次 → 达上限放行 + unreviewed 留痕持久可见
       s.reviewFailedAtCodeEditV = bv;
       s.reviewFailedAtRound = s.reviewRounds;
       s.reviewFailedCount = (s.reviewFailedCount ?? 0) + 1;
       if (s.reviewFailedCount >= MAX_REVIEW_FAILURES) {
         const marker = unreviewedMarkerLine();
         const marked = await persistLineSafe(marker);
-        recordDegradation(s, "审查重试连续失败，本次会话永久放行未审交付", `${reviewFailPrefix(s)}unreviewed 留痕${marked ? "已沉淀项目记忆 Open Questions" : "沉淀失败（人工须记录）"}`);
+        recordDegradation(s, "审查重试连续失败，已达上限放行（残余项留痕）", `${reviewFailPrefix(s)}unreviewed 留痕${marked ? "已沉淀项目记忆 Open Questions" : "沉淀失败（人工须记录）"}`);
         if (!marked) fb(`\n${TAG} 📌 ${marker}`);
       }
       fb(
@@ -697,10 +719,10 @@ async function settleReviewOutcome(s, verdict, subjectKey, output, bindCodeEditV
           `残余必须修复项（交付前请人工确认${persisted ? "，已沉淀进项目记忆 Open Questions 待后续会话跟进" : ""}）：\n${v.fixSection}`
       );
     } else {
-      s.reviewPending = { editVersion: s.editVersion, verdictLine: v.verdictLine, fixSection: v.fixSection };
+      s.reviewPending = { editVersion: s.editVersion, codeEditV: bv, verdictLine: v.verdictLine, fixSection: v.fixSection };
       fb(
-        `\n${TAG} ❌ 审查未通过，交付已阻断：必须修复项未处理。修复后重新标记全部完成将自动再审（第 ${s.reviewRounds + 1}/${MAX_REVIEW_ROUNDS} 轮）；` +
-          `确认接受残余风险则 echo "review-accepted: <原因>"。`
+        `\n${TAG} ❌ 审查未通过，交付已阻断：必须修复项未处理。修改代码后重新标记全部完成将自动再审（第 ${s.reviewRounds + 1}/${MAX_REVIEW_ROUNDS} 轮）；` +
+          `只改文档/配置不会解除阻断；确认接受残余风险则 echo "review-accepted: <原因>"。`
       );
     }
   } else {
@@ -732,18 +754,15 @@ async function settleReviewError(s, e, output, bindCodeEditV) {
   // 终审建议项：与 inconclusive 路径同构「一次为限」——执行异常也置 dualReviewed，
   // 防同会话后续交付节点对同一素材反复重烧审查（隧道抖动重试的期望收益低于重复成本）。
   // F 修复：置位同时记失败版本，失败后有新代码编辑时交付节点可重审一次；
-  // 连续 MAX_REVIEW_FAILURES 次 → 永久放行 + unreviewed 留痕（与 inconclusive 同口径）。
+  // 连续 MAX_REVIEW_FAILURES 次 → 阻断到显式接受/人工补审（与 inconclusive 同口径）。
   s.dualReviewed = true;
   s.dualReviewedAtCodeEditV = bv; // C1 修复：fail-open 放行绑定审查启动时版本（语义一致）
   s.reviewFailedAtCodeEditV = bv;
   s.reviewFailedAtRound = s.reviewRounds;
   s.reviewFailedCount = (s.reviewFailedCount ?? 0) + 1;
   if (s.reviewFailedCount >= MAX_REVIEW_FAILURES) {
-    const marker = unreviewedMarkerLine();
-    const marked = await persistLineSafe(marker);
-    recordDegradation(s, "审查重试连续失败，本次会话永久放行未审交付", `${reviewFailPrefix(s)}unreviewed 留痕${marked ? "已沉淀项目记忆 Open Questions" : "沉淀失败（人工须记录）"}`);
-    // 审查建议项：持久层沉淀失败（磁盘满/权限）→ output 内联兜底，审计行不丢
-    if (!marked) fb(`\n${TAG} 📌 ${marker}`);
+    // 连续执行异常同样停止静默放行：阻断到显式接受或人工补审。
+    await requireUnreviewedAcceptance(s, fb, bv);
   }
 }
 
@@ -800,7 +819,7 @@ function probeStaleDeploy(s) {
 
 // ── 层 3 闭环（审查未通过 → 阻断交付，修复后自动再审，直到通过或升级人工）──
 const MAX_REVIEW_ROUNDS = 2; // 自动审查轮次上限：超限放行并回注残余项（升级人工），防死循环烧钱
-const MAX_REVIEW_FAILURES = 2; // F 修复：inconclusive/执行异常连续失败重审上限——fail-open 放行有重试但不过度
+const MAX_REVIEW_FAILURES = 2; // inconclusive/执行异常连续失败上限：停止自动重审并阻断到显式接受/人工补审
 // 2026-10-16 收紧：同 verify-skipped，只认 echo 动词位（防 rg/grep 字面量误获接受语义）
 const REVIEW_ACCEPT_RE = /(?:^|[;|&])\s*echo\b[^\n]*review-accepted\s*:/i;
 
@@ -811,16 +830,16 @@ function hasAcceptMarker(s) {
 // F 修复（2026-09-26 层 3 fail-open 永久免审闭环缺口）：
 // inconclusive/执行异常路径直接置 dualReviewed=true → 同会话后续交付节点永远不再重审——
 // 「失败一次 = 永久免审」违背「失败后修复重试」的闭环语义。正确口径：
-//   失败时记下当时的 codeEditV（reviewFailedAtCodeEditV）与轮次，保留 dualReviewed=true
-//   （本次交付照常放行，fail-open 不变）；其后若有**新的代码编辑**，交付节点允许重审一次；
-//   连续 MAX_REVIEW_FAILURES 次失败（每次都在新编辑后重试仍失败）→ 永久放行并沉淀标记。
+//   失败时记下当时的 codeEditV（reviewFailedAtCodeEditV）与轮次，首次失败本次交付照常放行；
+//   其后若有**新的代码编辑**，交付节点允许重审一次；连续 MAX_REVIEW_FAILURES 次失败
+//   （每次都在新编辑后重试仍失败）→ 停止自动重审并阻断到 review-accepted/人工补审。
 // 纯函数（经 _export 暴露离线回归）：true = 交付节点应重审。
 function reviewRetryAllowed(s) {
   try {
     const s0 = s ?? {};
     // 起点从未失败过 → 不适用（由常规 !dualReviewed 触发口径覆盖）
     if (!s0.reviewFailedAtCodeEditV) return false;
-    // 连续失败次数已达上限 → 永久放行（unreviewedMarkerLine 由调用方沉淀）
+    // 连续失败次数已达上限 → 停止自动重审；交付由 reviewPending 阻断，需 review-accepted/人工补审
     if ((s0.reviewFailedCount ?? 0) >= MAX_REVIEW_FAILURES) return false;
     // 失败后无新代码编辑 → 不重审（同一素材重烧期望收益为负，防抖）
     if ((s0.codeEditV ?? 0) <= (s0.reviewFailedAtCodeEditV ?? 0)) return false;
@@ -830,14 +849,24 @@ function reviewRetryAllowed(s) {
   }
 }
 
-// F 修复：连续失败永久放行时的持久层留痕（写法与 residualFixupLine 同构，走同一沉淀通道）。
+// reviewPending 是否仍应阻断当前交付：所有待修复裁决都绑定 codeEditV——
+// 只改文档/配置不会解除阻断，必须改代码触发新一轮审查，或显式 review-accepted。
+// 旧/畸形记录缺 codeEditV 时 fail-closed（阻断），避免升级后静默放行。
+function reviewPendingBlocks(s) {
+  const p = s?.reviewPending;
+  if (!p) return false;
+  if (typeof p.codeEditV !== "number") return true;
+  return (s.codeEditV ?? 0) === p.codeEditV;
+}
+
+// F 修复：连续失败达上限时的持久层留痕（写法与 residualFixupLine 同构，走同一沉淀通道）。
 // 幂等性由 insertUnderHeading 的 seg.includes(line) 提供——同会话重复触发只追加一次。
 function unreviewedMarkerLine() {
   const date = new Date().toISOString().slice(0, 10);
-  return `- review_unreviewed_${date} :: 本会话复杂交付审查连续失败未复审（层 3 fail-open 放行）:: 待下次会话或人工补审；建议对当日 diff 跑一次 dual_review 确认`;
+  return `- review_unreviewed_${date} :: 本会话复杂交付审查连续失败未复审（层 3 待显式接受/人工补审）:: 建议对当日 diff 跑一次 dual_review 确认，或 review-accepted 留痕后交付`;
 }
 
-// F 修复：永久放行降级明细的失败概况前缀——显式判空（不用 `?? 0`：无记录与「第 0 轮」语义
+// F 修复：失败放行/阻断明细的概况前缀——显式判空（不用 `?? 0`：无记录与「第 0 轮」语义
 // 不同，强转会篡改审计文本）；轮次显示为 1-based（reviewRounds 内部 0-based，复审审查项）。
 // 类型强制（Number(...)）：容忍外部/序列化输入的字符串数字（如 "2"），非法值走判空分支。
 function reviewFailPrefix(s) {
@@ -976,10 +1005,9 @@ function reapStaleInflight(s) {
     const st = ref.startedAt;
     const age = typeof st === "number" && Number.isFinite(st) && st > 0 ? Date.now() - st : Infinity;
     if (age <= REVIEW_INFLIGHT_TTL_MS) return false;
-    // 已知取舍（二轮复审必修②残余）：runDualReview 无 signal 参数，强收不取消底层任务
-    // ——晚到结算被下方世代校验作废、不污染状态；病理挂死场景按 TTL 节奏有界重试
-    // （15min/次），属自愈语义的代价而非资源泄漏；AbortController 需改 dual-review.ts
-    // API，超出本轮范围另行立项。
+    // 已知取舍：runDualReview 内部已由 askWithDeadline 对每次上游请求 abort；本函数仍
+    // 不取消整个 runDualReview promise——晚到结算被下方世代校验作废、不污染状态；
+    // 病理挂死场景按 TTL 节奏有界重试（15min/次），属自愈语义的代价而非资源泄漏。
     s.reviewGen = (s.reviewGen ?? 0) + 1; // 晚到结算作废（世代先于旧结算生效）
     s.reviewInFlight = null;
     recordDegradation(s, "在途审查超硬死线（15min）强收指针并恢复重启资格", `在途 ${Number.isFinite(age) ? `${Math.round(age / 1000)}s` : "指针无有效时间戳"}未结算——按上游挂死处置，晚到结算被世代作废`);
@@ -1559,10 +1587,11 @@ async function reviewSubject(root, s, editedList, userAsks = []) {
     } catch { return false; }
   };
   const editedCodeFiles = [...s.edited].filter((f) => isCodeFile(f) && inRepo(f)).slice(0, 100);
-  // diff 段独立预算（层3 r2 必修②）：超大文件（如本插件自身）diff 会吃光素材 24000 总预算，
+  // diff 段独立预算（层3 r2 必修②）：超大文件（如本插件自身）diff 会吃光素材总预算，
   // 排在其后的段落（测试用例/命令证据）整段不可见——审查者「素材不可审即验收不可判」。
   // 子预算 + 显式截断标注：截断处之后的改动不入素材，复审可本地 git diff 对照。
-  const MAX_REVIEW_DIFF = 12000;
+  // 20K 与 dual-review 的 24K subject 上限配合：旧 12K + 8K 两道截断会把 diff 尾部砍掉。
+  const MAX_REVIEW_DIFF = 20000;
   let diffText = "";
   if (editedCodeFiles.length > 0) {
     try {
@@ -1590,7 +1619,13 @@ async function reviewSubject(root, s, editedList, userAsks = []) {
   if (diffText.trim().length <= 50 && unseen.length === 0) {
     parts.push(`会话内执行过的命令（已脱敏）：\n${s.commands.slice(-30).map(cmdText).join("\n") || "（无）"}`);
   }
-  return parts.join("\n\n").slice(0, 24000);
+  // 与 dual-review AGG_SUBJECT_LIMIT 保持一致（24K）：此处只做总预算兜底，不再二次砍到 8K。
+  // 超预算时留显式标注（标记计入 24K，避免 dual-review 再截一次把标记砍掉）。
+  const text = parts.join("\n\n");
+  const MAX_REVIEW_SUBJECT = 24000;
+  if (text.length <= MAX_REVIEW_SUBJECT) return text;
+  const marker = `\n（截断：审查素材超 ${MAX_REVIEW_SUBJECT} 字符）`;
+  return text.slice(0, MAX_REVIEW_SUBJECT - marker.length) + marker;
 }
 
 // ── 回合出口门禁（2026-10-03 收口审计专项）────────────────────
@@ -2042,11 +2077,11 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
             recordDegradation(s, "层 3 在途审查等待超时（before 540s），按未审查交付放行", "指针保留防双烧：下次交付动作继续等待在途裁决落地；建议人工核对 diff");
           }
         }
-        if (complexEarly && s.reviewPending && !hasAcceptMarker(s) && s.editVersion === s.reviewPending.editVersion) {
+        if (complexEarly && s.reviewPending && !hasAcceptMarker(s) && reviewPendingBlocks(s)) {
           const p = s.reviewPending;
           throw new Error(
             `[quality-gate] 层 3 闭环：双向审查未通过（${p.verdictLine || "有条件通过"}），存在未处理的必须修复项：\n${p.fixSection}\n\n` +
-              `二选一：① 逐条修复后重新标记全部完成——将自动触发第 ${s.reviewRounds + 1}/${MAX_REVIEW_ROUNDS} 轮审查；` +
+              `二选一：① 修改代码逐条修复后重新标记全部完成——将自动触发第 ${s.reviewRounds + 1}/${MAX_REVIEW_ROUNDS} 轮审查（只改文档/配置不解除阻断）；` +
               `② 确认接受残余风险则执行 echo "review-accepted: <原因>"（可审计）后重试。`
           );
         }
@@ -2137,7 +2172,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
         // 图纸/交付分流（2026-09-26）：写码前调 dual_review 审的是「验收清单+方案」（图纸），
         // 不得豁免写码后的交付自动审查（INSTRUCTIONS「图纸审查不计入交付审查豁免」的代码支撑）——
         // 只有发生过代码编辑（codeEditV>0）的审查才视为交付期审查置 dualReviewed。
-        // 手动补审通过 = 显式复审闭环（审查建议项）：同步清零失败计数，否则两败永久放行后
+        // 手动补审通过 = 显式复审闭环（审查建议项）：同步清零失败计数，否则两败阻断后
         // 手动补审通过，后续 codeEditV 前进仍被 reviewRetryAllowed 的 count 闸抑制——
         // 「人工已确认通过」却永远失去自动重审，语义矛盾。
         // C1 修复（2026-09-27 层 3 补审漏洞）：豁免绑定审查时的代码版本 dualReviewedAtCodeEditV——
@@ -2616,7 +2651,7 @@ export const _export = {
   shouldRestartAfterConsume, reapStaleInflight, // 二轮审查必修①②（2026-10-16）回归面
   providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary,
   staleDeployOf, moduleBasenamesOf, hasTestRefFor,
-  eslintConfigIn, reviewRetryAllowed, todoAnchorLines, unreviewedMarkerLine, driftCheckDue,
+  eslintConfigIn, reviewRetryAllowed, reviewPendingBlocks, todoAnchorLines, unreviewedMarkerLine, driftCheckDue,
   diagRunFailureOf, isDelegateCall, reviewFailPrefix,
   todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText, extractUserAsks,
   pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel,

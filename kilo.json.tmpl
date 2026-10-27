@@ -662,17 +662,14 @@
           },
         },
         // moa 工具配置（plugin/moa.ts 读这里）：2 个参考席独立分析 → 聚合席出交叉结论
-        // 聚合席需要吃两份长报告并输出结构化结论（当前首选 glm-5.3-flash，额度不足时
-        // 1017 兜底；额度恢复后自动优先原首选）。
+        // 聚合席用第三族 kimi-k3.1-pro（不再与参考席 glm 自评）；额度/渠道不足时 1017 兜底。
         // 参考席维持「一强推理 + 一轻档快」的互补组合，与被审主体异族。
-        // ⚠️ 当前聚合席＝参考席 2（glm-5.3-flash）：交叉结论含该席自评，不是独立三席；
-        // 聚合席 fallback 1017 与主执行同族 → 该次结论须标注「降级复核」。
+        // fallback 1017 与主执行同族 → 该次结论须标注「降级复核」。
         // 注：moa/dual_review 走 lib/hx-client 直连，不透传 reasoning_effort，聚合档位取网关默认。
-        // 2026-10-18：首选聚合档额度不足（HTTP 400 insufficient credits）——聚合席加 1017
-        // 兜底，首选成功时不额外调用；额度恢复后自动优先原首选。
+        // 2026-10-27：qwen3.8-max 实测 404 NO_ROUTE_CANDIDATE，不能作裁决席；kimi 短裁决实测可用。
         "moa": {
           "references": ["minimax-m3.1-flash", "glm-5.3-flash"],
-          "aggregator": "glm-5.3-flash",
+          "aggregator": "kimi-k3.1-pro",
           "aggregator_fallbacks": ["deepseek-v4.1-flash-1017"],
         },
         // dual_review 工具配置（plugin/dual-review.ts 读这里）：三层交付检查层 3，
@@ -682,26 +679,20 @@
         //       裁决不通过则阻断交付 —— 正反找得到的、裁决必须闭环落地
         // positive   正向审查者：查遗漏（验收缺口 / 未覆盖场景 / 缺失的测试与边界）
         // negative   反向审查者（红队）：专找错（bug / 安全 / 回归 / 错误假设）
-        // aggregator 裁决模型：读两份报告出终审结论（独立性见下注：当前与红队同档，非独立第三方）
-        // 异源设计：正向/红队两席与被审主体（主执行 deepseek）异族；裁决席当前与红队同档
-        //（glm-5.3-flash），对主执行仍异族，但不是独立于红队的第三族仲裁。
-        // 裁决席要同时吃下两份长报告 + diff 并输出结构化清单，需要足够上下文与输出上限；
-        // 未选大窗旗舰是因为其额度/延迟未经实测，而非大窗无价值。
-        // fallback 1017 与主执行同族：任何一席落到兜底后，该次审查须标注「降级复核」，
-        // 不得再声称完整异源交叉验证。若日后改回异族旗舰（gpt/kimi）可恢复第三族裁决，
-        // 前提是额度/渠道可用且单变量实测延迟可接受。
+        // aggregator 裁决席：第三族 kimi-k3.1-pro，与 positive/negative 均不同族；
+        // 三族独立：minimax / glm / kimi。2026-10-27：qwen3.8-max 实测 404 NO_ROUTE_CANDIDATE，不能作裁决席。
         // fallback 仅在首选失败（400/404/503/超时）时续试，首选成功不增加调用；
-        // 2026-10-18 因 glm-5.3-flash 额度不足与 minimax 503 实测导致一路阵亡/裁决缺失，
-        // 三个席位统一以 1017 兜底，先保证「审查必出结论」，额度/通道恢复后自动优先原席。
+        // 先跨族轮换（避免三席同时落到同一模型），最后 1017 保底；任一席使用 fallback
+        // 都标注「降级复核」，不计为完整三族独立交叉验证。
         // （三键均可被调用方 per-call 覆盖 positive_model/negative_model/aggregator；
         //   per-call 覆盖时不套配置 fallback；提示词真源 = plugin/dual-review.ts 的 POSITIVE_PROMPT/NEGATIVE_PROMPT）
         "dual_review": {
           "positive": "minimax-m3.1-flash",
-          "positive_fallbacks": ["deepseek-v4.1-flash-1017"],
+          "positive_fallbacks": ["kimi-k3.1-pro", "deepseek-v4.1-flash-1017"],
           "negative": "glm-5.3-flash",
-          "negative_fallbacks": ["deepseek-v4.1-flash-1017"],
-          "aggregator": "glm-5.3-flash",
-          "aggregator_fallbacks": ["deepseek-v4.1-flash-1017"],
+          "negative_fallbacks": ["minimax-m3.1-flash", "deepseek-v4.1-flash-1017"],
+          "aggregator": "kimi-k3.1-pro",
+          "aggregator_fallbacks": ["glm-5.3-flash", "deepseek-v4.1-flash-1017"],
         },
       },
       // 模型注册表（catalog：能力/上下文窗口/输出上限）

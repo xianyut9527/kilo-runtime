@@ -9,7 +9,7 @@
 // 可观测性由结果字符串自带（总耗时/每路字数与耗时/参与模型）。
 // 同日 execute 契约钉死：必须返回 Promise<string>——async 函数原生满足。
 
-import { loadCfg, ask, cbShouldFailFast, timeoutsOf, clipText, modelRoutes, AGG_MIN_BUDGET_MS } from "../lib/hx-client";
+import { loadCfg, askWithDeadline, cbShouldFailFast, timeoutsOf, clipText, modelRoutes, AGG_MIN_BUDGET_MS } from "../lib/hx-client";
 
 const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合）
 const AGG_VIEW_LIMIT = 12_000; // 聚合 prompt 单路参考截断上限（字符）
@@ -85,20 +85,10 @@ const MoaImpl = async (_ctx = {}) => {
           // 最坏情形 = 扇出+聚合两阶段各等满一次 ask 预算 → 单次 moa 卡 ~16min 无反馈
           //（遥测实证 timeout_total elapsedMs=480005 / stream_break_rewrap elapsedMs=585647）。
           // 整个工具钉总墙钟 ≈ timeoutMs：扇出共享剩余预算（超时路按普通失败处理，
-          // allSettled 语义不变；底层 ask 有自己的预算兜底，race 输后 ask 继续跑但结果无人消费）
+          // allSettled 语义不变；askWithDeadline 到点 abort 底层 fetch，不留迟到请求）
           // 聚合保底 AGG_MIN_BUDGET_MS，聚合超时走既有 catch 降级（返回原始视角）。
           const wallStart = Date.now();
           const wallDeadline = wallStart + totalMs;
-          const withDeadline = (p, ms, tag) => {
-            let timer;
-            return Promise.race([
-              p,
-              new Promise((_, rej) => {
-                timer = setTimeout(() => rej(new Error(`${tag} 墙钟预算 ${Math.round(ms / 1000)}s 到期`)), ms);
-                timer.unref?.(); // 不阻进程退出
-              }),
-            ]).finally(() => clearTimeout(timer));
-          };
 
           // 聚合路由兜底：按 aggModels 顺序尝试，共享聚合墙钟；快速失败立即续试。
           const askAggregator = async (prompt, deadlineMs) => {
@@ -108,9 +98,9 @@ const MoaImpl = async (_ctx = {}) => {
               const remaining = deadlineMs - Date.now();
               if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
               try {
-                const text = await withDeadline(
-                  ask({ baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs: totalMs, idleMs, attempts: undefined, signal: undefined }),
-                  Math.max(1, remaining),
+                const text = await askWithDeadline(
+                  { baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs: totalMs, idleMs, attempts: undefined },
+                  deadlineMs,
                   `moa 聚合(${model})`,
                 );
                 return { model, text, failed };
@@ -137,20 +127,22 @@ const MoaImpl = async (_ctx = {}) => {
           const durations = refs.map(() => 0);
           const promises = refs.map((m, i) => {
             const t0m = Date.now();
-            const p = ask({
-              baseURL: cfg.baseURL, key: cfg.key, model: m, prompt: task,
-              timeoutMs: totalMs, idleMs, attempts: undefined, signal: undefined,
-            });
+            const p = askWithDeadline(
+              {
+                baseURL: cfg.baseURL, key: cfg.key, model: m, prompt: task,
+                timeoutMs: totalMs, idleMs, attempts: undefined,
+              },
+              wallDeadline,
+              `moa 扇出(${m})`,
+            );
             p.then(
               () => { durations[i] = Date.now() - t0m; },
               () => { durations[i] = Date.now() - t0m; },
             );
             return p;
           });
-          // 扇出阶段共享总墙钟：每路与剩余预算赛跑，超时按普通失败处理（allSettled 语义不变）
-          const settled = await Promise.allSettled(
-            promises.map((p) => withDeadline(p, Math.max(1, wallDeadline - Date.now()), "moa 扇出"))
-          );
+          // 扇出阶段共享总墙钟：askWithDeadline 到点 abort，超时按普通失败处理
+          const settled = await Promise.allSettled(promises);
 
           const views = [];
           const failures = [];

@@ -4,7 +4,7 @@
 //   正向（证成为主）：找「为什么这个方案/改动是对的、完备的」，漏检点、边界遗漏；
 //   反向（证伪为主）：专门找错——逻辑缺陷、边界条件、安全漏洞、遗漏需求、过度设计。
 // 两路并行、不同参考模型分别承担（默认值见 kilo.json provider.openllamas.options.dual_review，
-// 与主执行模型异源），最后由聚合模型综合出裁决（裁决席可能与红队同档，非独立第三方）：通过 / 有条件通过（列出必须修复项）/ 不通过。
+// 与主执行模型异源），最后由第三族聚合模型综合出裁决（fallback 到 1017 时属降级复核）：通过 / 有条件通过（列出必须修复项）/ 不通过。
 // 与 moa 工具的区别：moa 是通用多视角聚合；本工具是改动审查专用协议，正反视角由 prompt 明确分工。
 //
 // 依赖：lib/hx-client.ts（与 moa.ts 共享的配置读取与请求层，改凭证/baseURL 规则只改那边）。
@@ -16,13 +16,15 @@
 // 2026-09-22 终裁：插件工具无 UI 进度通道（ctx.metadata/preliminary/stderr 三次证伪，
 // 详见 lib/hx-client.ts 契约注释）——进度机制已整体拆除，可观测性由结果字符串自带。
 
-import { loadCfg, ask, cbShouldFailFast, timeoutsOf, clipText, modelRoutes, AGG_MIN_BUDGET_MS } from "../lib/hx-client";
+import { loadCfg, askWithDeadline, cbShouldFailFast, timeoutsOf, clipText, modelRoutes, AGG_MIN_BUDGET_MS } from "../lib/hx-client";
 import { randomUUID } from "node:crypto";
 
 // 超时统一走配置：kilo.json provider.openllamas.options.timeout / chunkTimeout（timeoutsOf 单点解析，
 // 与 moa 同口径；空闲看门狗与主链路 chunkTimeout 同源，流式中无 chunk 判死快速失败进重试）。
 
-const AGG_SUBJECT_LIMIT = 8_000;   // 聚合 prompt 中审查对象截断
+// 与 quality-gate.reviewSubject 的 24K 总预算对齐：旧值 8K 会在质量门禁已截到 24K 后再砍掉
+// 2/3，审查者看不到 diff 尾部。单点保留 24K；超过由 quality-gate 明确标注截断。
+const AGG_SUBJECT_LIMIT = 24_000;
 const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
 // 墙钟预算（2026-10-08「巨卡」专项，与 moa.ts 同口径）：插件工具无 UI 进度通道——
 // 正反+裁决两阶段各等满一次 ask 预算（480s）时单次审查最坏 ~16min 无反馈。
@@ -35,7 +37,33 @@ const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
 // dr-2026-09-22.2：clipText 增加代理对边界防护（截断点落在 emoji/生僻字中间时回退一位）。
 // dr-2026-09-24.1：hx-client loadCfg 尾随逗号容错（工具全挂修复）——指纹变，旧缓存全失效。
 // dr-2026-10-18.1：正/反/裁决席加入 fallback 路由（首选失败续试），指纹含 fallback。
-const REVIEWER_VERSION = "dr-2026-10-18.1";
+// dr-2026-10-27.1：聚合输入上限 8K→24K，消除二次截断；超时 abort 底层请求。
+// dr-2026-10-27.2：fallback 席位显式标注「降级复核」；跨族轮换后再 1017 保底。
+const REVIEWER_VERSION = "dr-2026-10-27.2";
+
+// 审查素材的最终截断单点（离线测试经 _export 验证：20K 尾部不被二次砍掉）。
+function reviewSubjectForPrompt(subject) {
+  return clipText(subject, AGG_SUBJECT_LIMIT);
+}
+
+// 记录哪些席位实际用了 fallback（首选失败后换型）。任一席位降级都意味着本次
+// 不再是完整三族独立交叉验证，输出必须显式标注「降级复核」。
+function fallbackSeats(pos, neg, agg, posModels, negModels, aggModels) {
+  const out = [];
+  const seat = (label, got, models) => {
+    if (got && models?.[0] && got.model !== models[0]) out.push(`${label} ${models[0]}→${got.model}`);
+  };
+  seat("正向", pos, posModels);
+  seat("反向", neg, negModels);
+  seat("裁决", agg, aggModels);
+  return out;
+}
+
+function degradedReviewLine(seats) {
+  return seats.length
+    ? `> 降级复核：${seats.join("；")}（至少一席使用 fallback，不计为完整三族独立交叉验证）`
+    : "";
+}
 
 // 模型路由列表由 lib/hx-client 单点维护（与 moa 共用）；fallback 只在首选失败时启用，
 // 用于兜住单模型 400/404/503/超时导致的「一路阵亡」或「裁决缺失」。
@@ -148,18 +176,8 @@ async function runDualReview(subject, overrides = null) {
   // 整个审查钉总墙钟 ≈ timeoutMs：正反两路共享扇出窗口（超时路按普通失败处理，
   // allSettled/单路失败语义不变），聚合阶段保底 AGG_MIN_BUDGET_MS；
   // 聚合超时走既有 catch 降级（返回两路原始结论、无「## 裁决」段）。
-  // 底层 ask 有自己的预算兜底，race 输后 ask 继续跑但结果无人消费。
+  // askWithDeadline 到点 abort 底层 fetch，不再留下无人消费的迟到请求。
   const wallDeadline = Date.now() + timeoutMs;
-  const withDeadline = (p, ms, tag) => {
-    let timer;
-    return Promise.race([
-      p,
-      new Promise((_, rej) => {
-        timer = setTimeout(() => rej(new Error(`${tag} 墙钟预算 ${Math.round(ms / 1000)}s 到期`)), ms);
-        timer.unref?.(); // 不阻进程退出
-      }),
-    ]).finally(() => clearTimeout(timer));
-  };
 
   // 路由兜底执行器：按 models 顺序尝试，共享同一墙钟；快速失败（400/404/503/连接错误）
   // 会立即落到下一候选，首选成功时不产生额外调用。若首选耗尽全部预算，后续候选无预算
@@ -171,9 +189,9 @@ async function runDualReview(subject, overrides = null) {
       const remaining = deadlineMs - Date.now();
       if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
       try {
-        const text = await withDeadline(
-          ask({ baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs, idleMs, attempts: undefined, signal: undefined }),
-          Math.max(1, remaining),
+        const text = await askWithDeadline(
+          { baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs, idleMs, attempts: undefined },
+          deadlineMs,
           `${label}(${model})`,
         );
         return { model, text, failed };
@@ -200,7 +218,7 @@ async function runDualReview(subject, overrides = null) {
 
   // 输入上限（审查必须项）：正反两路 prompt 注入截断版 subject，防超大 diff 撑爆两次上游调用；
   // clipText 内联标注截断事实——审查者明确知道自己在看残件，不在残缺输入上假装全量结论
-  const subjectIn = clipText(subject, AGG_SUBJECT_LIMIT);
+  const subjectIn = reviewSubjectForPrompt(subject);
 
   // 本次审查的围栏 nonce（CSPRNG，固定 8 hex）：三路 prompt 共用，内容侧无法预测/闭合
   // s/p/n 必须各自独立——子审查模型可能回显它见过的 tag.s，若 p/n 复用 s 值则聚合阶段
@@ -223,6 +241,7 @@ async function runDualReview(subject, overrides = null) {
   const fallbackNotes = [];
   if (pos?.failed?.length) fallbackNotes.push(...pos.failed.map((x) => `正向 ${x}`));
   if (neg?.failed?.length) fallbackNotes.push(...neg.failed.map((x) => `反向 ${x}`));
+  const posNegSeats = fallbackSeats(pos, neg, null, posModels, negModels, aggModels);
 
   if (!pos && !neg) {
     return `dual_review: 两路审查均失败\n${failures.join("\n")}`;
@@ -233,6 +252,7 @@ async function runDualReview(subject, overrides = null) {
     return [
       `dual_review: 一路审查失败，无法裁决。幸存方原始结论：`,
       failures.join("\n"),
+      degradedReviewLine(posNegSeats),
       fallbackNotes.length ? `> 路由兜底：${fallbackNotes.join("；")}` : "",
       "",
       pos ? `### 正向审查（${pos.model}）\n${pos.text}` : "",
@@ -253,15 +273,18 @@ async function runDualReview(subject, overrides = null) {
     return [
       `dual_review: ${e.message}`,
       "",
+      degradedReviewLine(posNegSeats),
       `### 正向审查（${pos.model}）\n${pos.text}`,
       "",
       `### 反向审查（${neg.model}）\n${neg.text}`,
-    ].join("\n");
+    ].filter(Boolean).join("\n");
   }
   if (agg.failed?.length) fallbackNotes.push(...agg.failed.map((x) => `裁决 ${x}`));
+  const allSeats = fallbackSeats(pos, neg, agg, posModels, negModels, aggModels);
 
   return [
     `## 双向审查裁决（${pos.model} 正向 × ${neg.model} 反向 → ${agg.model} 裁决）`,
+    degradedReviewLine(allSeats),
     fallbackNotes.length ? `> 路由兜底：${fallbackNotes.join("；")}` : "",
     agg.text,
     "",
@@ -280,7 +303,7 @@ const DualReviewImpl = async (_ctx = {}) => {
     tool: {
       dual_review: {
         description:
-          "双向异源审查：对指定改动/方案并行发起正向（查遗漏）与反向（红队找错）两路独立模型审查，再由裁决席终审（裁决席可能与红队同档，非独立第三方）。" +
+          "双向异源审查：对指定改动/方案并行发起正向（查遗漏）与反向（红队找错）两路独立模型审查，再由第三族裁决席终审（任一席使用 fallback 时标注降级复核）。" +
           "仅在复杂任务交付前调用（多模块改动/公共契约/核心逻辑），简单任务不要调用（成本敏感）。" +
           "复杂任务的交付节点由 quality-gate 自动执行，通常无需手动调用。",
         args: {
@@ -314,6 +337,6 @@ export const DualReview = async (ctx = {}) => {
 // Kilo vE2 契约：模块唯一函数导出 = 工厂（DualReview/default 同引用被 Set 去重）。
 // 工具函数经此命名空间对象暴露（对象无 server 属性 → kE2 跳过，绝不会被当工厂调用）。
 // quality-gate 经 `(await import("./dual-review"))._export.runDualReview` 取用。
-export const _export = { runDualReview, reviewerFingerprint, modelRoutes };
+export const _export = { runDualReview, reviewerFingerprint, modelRoutes, reviewSubjectForPrompt, AGG_SUBJECT_LIMIT, fallbackSeats, degradedReviewLine };
 
 export default DualReview;
