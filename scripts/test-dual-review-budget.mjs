@@ -132,6 +132,132 @@ try {
       ];
       return new Set(first).size === 3 && !first.includes("deepseek-v4.1-flash-1017");
     });
+
+  // ── moa 降级复核标注：聚合席落到 fallback → 输出必须带「降级复核」（对齐 kilo.json.tmpl 注释）──
+  const moaServer = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", () => {
+      let model = "";
+      try { model = JSON.parse(body)?.model ?? ""; } catch { /* 忽略 */ }
+      if (model === "agg-primary") {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { code: "NO_ROUTE_CANDIDATE", message: "no active channel" } }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: model === "agg-fallback" ? "聚合结论" : "参考观点" } }] })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+    });
+  });
+  await new Promise((resolve) => moaServer.listen(0, "127.0.0.1", resolve));
+  const moaPort = moaServer.address().port;
+  const tmpCfgDir = path.join(tmpData, "cfg");
+  fs.mkdirSync(tmpCfgDir, { recursive: true });
+  fs.mkdirSync(path.join(tmpData, "kilo"), { recursive: true });
+  process.env.KILO_CONFIG_DIR = tmpCfgDir; // bundle 内 CONFIG_DIR 常量在 import 时求值，须先设
+  fs.writeFileSync(path.join(tmpCfgDir, "kilo.json"), JSON.stringify({
+    provider: { openllamas: { options: {
+      baseURL: `http://127.0.0.1:${moaPort}`,
+      timeout: 20000,
+      chunkTimeout: 5000,
+      moa: { references: ["ref-a", "ref-b"], aggregator: "agg-primary", aggregator_fallbacks: ["agg-fallback"] },
+    } } },
+  }));
+  fs.writeFileSync(path.join(tmpData, "kilo", "auth.json"), JSON.stringify({ openllamas: { key: "test-key" } }));
+  const moaMod = await bundle(path.join(ROOT, "plugin", "moa.ts"));
+  const moaTool = (await moaMod.Moa({}))?.tool?.moa;
+  const moaOut = await moaTool.execute({ task: "测试任务：给一个结论" });
+  t("moa 聚合席 fallback → 输出「降级复核：聚合 agg-primary→agg-fallback」标注",
+    () => /降级复核：聚合 agg-primary→agg-fallback/.test(moaOut) && /## MoA 结论/.test(moaOut));
+  t("moa 路由兜底明细同时保留（诊断用）", () => /路由兜底：.*agg-primary/.test(moaOut));
+  moaServer.closeAllConnections?.();
+  await new Promise((resolve) => moaServer.close(resolve));
+
+  // ── 裁决/聚合席 fallback 饿死修复（dr-2026-10-27.3 armFloor）：首选吃光共享墙钟后，
+  //    fallback 须拿到一次保底窗（实证：kimi 裁决 283s 超时 → glm 兜底「已试 1 个模型」饿死）。
+  //    KILO_AGG_FLOOR_MS=1000 + timeout=2000 秒级复现：agg-primary 挂死 2s 到点 → armFloor 补 1s → agg-fallback 出结论。──
+  process.env.KILO_AGG_FLOOR_MS = "1000";
+  const moaHangServer = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", () => {
+      let model = "";
+      try { model = JSON.parse(body)?.model ?? ""; } catch { /* 忽略 */ }
+      if (model === "agg-primary") return; // 挂死：不写任何响应，由墙钟 abort 收口
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: model === "agg-fallback" ? "聚合结论" : "参考观点" } }] })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+    });
+  });
+  await new Promise((resolve) => moaHangServer.listen(0, "127.0.0.1", resolve));
+  const moaHangPort = moaHangServer.address().port;
+  const tmpCfgDir2 = path.join(tmpData, "cfg-hang");
+  fs.mkdirSync(tmpCfgDir2, { recursive: true });
+  fs.writeFileSync(path.join(tmpCfgDir2, "kilo.json"), JSON.stringify({
+    provider: { openllamas: { options: {
+      baseURL: `http://127.0.0.1:${moaHangPort}`,
+      timeout: 2000,
+      chunkTimeout: 5000,
+      moa: { references: ["ref-a", "ref-b"], aggregator: "agg-primary", aggregator_fallbacks: ["agg-fallback"] },
+    } } },
+  }));
+  process.env.KILO_CONFIG_DIR = tmpCfgDir2;
+  const moaMod2 = await bundle(path.join(ROOT, "plugin", "moa.ts"));
+  const moaHangTool = (await moaMod2.Moa({}))?.tool?.moa;
+  const moaHangStart = Date.now();
+  const moaHangOut = await moaHangTool.execute({ task: "测试任务：给一个结论" });
+  t("moa 首选聚合吃光墙钟 → armFloor 补保底 → fallback 仍出结论（饿死回归）",
+    () => /## MoA 结论/.test(moaHangOut) &&
+      /降级复核：聚合 agg-primary→agg-fallback/.test(moaHangOut) &&
+      /路由兜底：.*agg-primary/.test(moaHangOut) && /墙钟预算/.test(moaHangOut));
+  t("moa armFloor 路径墙钟有界（2s 墙耗尽 + fallback 秒回，总耗时 <10s 不等保底窗）",
+    () => Date.now() - moaHangStart < 10_000);
+  moaHangServer.closeAllConnections?.();
+  await new Promise((resolve) => moaHangServer.close(resolve));
+
+  // dual_review 同口径：裁决席首选挂死 → 墙钟耗尽 → armFloor → agg-fallback 出裁决
+  const drServer = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", () => {
+      let model = "";
+      try { model = JSON.parse(body)?.model ?? ""; } catch { /* 忽略 */ }
+      if (model === "agg-primary") return; // 挂死
+      const content = model === "agg-fallback" ? "## 裁决\n通过\n\n## 必须修复项\n无"
+        : model === "p1" ? "正向无遗漏" : "反向无错误";
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+    });
+  });
+  await new Promise((resolve) => drServer.listen(0, "127.0.0.1", resolve));
+  const drPort = drServer.address().port;
+  const tmpCfgDir3 = path.join(tmpData, "cfg-dr");
+  fs.mkdirSync(tmpCfgDir3, { recursive: true });
+  fs.writeFileSync(path.join(tmpCfgDir3, "kilo.json"), JSON.stringify({
+    provider: { openllamas: { options: {
+      baseURL: `http://127.0.0.1:${drPort}`,
+      timeout: 2000,
+      chunkTimeout: 5000,
+      dual_review: { positive: "p1", negative: "n1", aggregator: "agg-primary", aggregator_fallbacks: ["agg-fallback"] },
+    } } },
+  }));
+  process.env.KILO_CONFIG_DIR = tmpCfgDir3;
+  const drMod2 = await bundle(path.join(ROOT, "plugin", "dual-review.ts"));
+  const drStart = Date.now();
+  const drOut = await drMod2._export.runDualReview("回归 subject：裁决席 fallback 饿死修复——首选聚合模型耗尽共享墙钟后，fallback 候选必须获得保底窗口并产出裁决（含关键改动摘要与场景描述以满足最小长度）。");
+  t("dual_review 裁决席首选超时 → armFloor 补保底 → fallback 裁决落地（饿死回归）",
+    () => /## 双向审查裁决（p1 正向 × n1 反向 → agg-fallback 裁决）/.test(drOut) &&
+      /降级复核：.*裁决 agg-primary→agg-fallback/.test(drOut) &&
+      /## 裁决\n通过/.test(drOut) && /路由兜底：.*agg-primary/.test(drOut));
+  t("dual_review armFloor 路径墙钟有界（2s 墙耗尽 + fallback 秒回，总耗时 <10s）",
+    () => Date.now() - drStart < 10_000);
+  drServer.closeAllConnections?.();
+  await new Promise((resolve) => drServer.close(resolve));
 } finally {
   for (const f of bundles) fs.rmSync(f, { force: true });
   fs.rmSync(tmpData, { recursive: true, force: true });

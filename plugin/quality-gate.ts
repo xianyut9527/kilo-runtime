@@ -157,7 +157,7 @@ function bucketOf(input) {
     sessions.set(id, s);
     return s;
   }
-  s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, dualReviewedAtCodeEditV: 0, planReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, exitContractWarned: false, sleepWarned: false, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null, reviewInFlight: null, reviewStarting: false, reviewGen: 0, reviewFailedAtCodeEditV: 0, reviewFailedAtRound: 0, reviewFailedCount: 0, driftChecked: false, highRiskDelegated: false, delegated: [], degradations: [], lastStaleCheck: 0, exitNudges: 0, exitNudgeAt: 0, exitNudgeFp: "", exitGateCapped: false, exitGateInFlight: false, noListNudged: false, lastStatus: "", exitCheckTimer: null, childUnsettled: new Map(), childReg: "", parentIDCache: undefined };
+  s = { commands: [], reads: [], lastTodos: [], edited: new Set(), fileChecks: new Map(), highRisk: new Set(), dualReviewed: false, dualReviewedAtCodeEditV: 0, planReviewed: false, reviewPending: null, reviewRounds: 0, editVersion: 0, codeEditV: 0, exitContractWarned: false, sleepWarned: false, pendingDiags: new Set(), diagTimer: null, diagBusy: false, diagNotes: new Map(), reviewCache: null, reviewInFlight: null, reviewStarting: false, reviewGen: 0, reviewFailedAtCodeEditV: 0, reviewFailedAtRound: 0, reviewFailedCount: 0, reviewLastOutcome: null, driftChecked: false, highRiskDelegated: false, delegated: [], degradations: [], lastStaleCheck: 0, exitNudges: 0, exitNudgeAt: 0, exitNudgeFp: "", exitGateCapped: false, exitGateInFlight: false, noListNudged: false, lastStatus: "", exitCheckTimer: null, childUnsettled: new Map(), childReg: "", parentIDCache: undefined };
   sessions.set(id, s);
   if (sessions.size > MAX_SESSIONS) {
     // LRU 驱逐前清理挂起的定时器：否则回调会在已脱离 Map 的会话对象上空跑 tsc / 空注入门禁
@@ -633,8 +633,9 @@ async function requireUnreviewedAcceptance(s, fb, bv) {
     "请人工复核本次 diff，或执行 echo \"review-accepted: <原因>\" 显式接受未审风险后重试交付。";
   s.dualReviewed = true;
   s.dualReviewedAtCodeEditV = bv;
-  // kind=unreviewed：与普通 FAIL 裁决一致，before 钩子按 codeEditV 判断是否仍阻断——
-  // 只改文档/配置不能绕过「连续失败未审」；新代码编辑才允许触发新一轮审查。
+  // kind=unreviewed：连续失败达上限的阻断不随新代码编辑解除（重审资格已被 reviewEntryDue
+  // 的 count 闸停止，随版本放行=每次编辑静默未审交付）——解除只有 review-accepted 或
+  // 人工 dual_review 补审（清 pending + 重置失败计数）。
   s.reviewPending = { kind: "unreviewed", editVersion: s.editVersion, codeEditV: bv, verdictLine: "审查连续失败（未审交付）", fixSection };
   const marker = unreviewedMarkerLine();
   const marked = await persistLineSafe(marker);
@@ -687,6 +688,7 @@ async function settleReviewOutcome(s, verdict, subjectKey, output, bindCodeEditV
     s.reviewFailedAtCodeEditV = bv;
     s.reviewFailedAtRound = s.reviewRounds;
     s.reviewFailedCount = (s.reviewFailedCount ?? 0) + 1;
+    s.reviewLastOutcome = "fail"; // 终审必修①：终态显式标记（reviewEntryDue 消费），与 failedAt 同点写
     const blocked = s.reviewFailedCount >= MAX_REVIEW_FAILURES;
     if (blocked) await requireUnreviewedAcceptance(s, fb, bv);
     recordDegradation(s, "审查上游失败（未获可解析裁决）", (v.verdictLine || "裁决不可解析").slice(0, 120));
@@ -708,6 +710,7 @@ async function settleReviewOutcome(s, verdict, subjectKey, output, bindCodeEditV
       s.reviewFailedAtCodeEditV = bv;
       s.reviewFailedAtRound = s.reviewRounds;
       s.reviewFailedCount = (s.reviewFailedCount ?? 0) + 1;
+      s.reviewLastOutcome = "fail"; // 终审必修①：达限放行也是失败收口（新编辑后可再试，count 闸接管）
       if (s.reviewFailedCount >= MAX_REVIEW_FAILURES) {
         const marker = unreviewedMarkerLine();
         const marked = await persistLineSafe(marker);
@@ -719,6 +722,10 @@ async function settleReviewOutcome(s, verdict, subjectKey, output, bindCodeEditV
           `残余必须修复项（交付前请人工确认${persisted ? "，已沉淀进项目记忆 Open Questions 待后续会话跟进" : ""}）：\n${v.fixSection}`
       );
     } else {
+      // 普通 FAIL 裁决（未达轮次上限）：pending 阻断交付，**非终态**——不写 reviewLastOutcome
+      // （写了会把「修复→重审」闭环错误路由到 count 闸：outcome="fail" 时 reviewEntryDue
+      // 走 reviewRetryAllowed，旧失败计数误伤本该无条件重审的修复闭环）；修复后由
+      // reviewEntryDue 的 C1/未审分支送审（其时 dualReviewed 为 false 或豁免版本过期）。
       s.reviewPending = { editVersion: s.editVersion, codeEditV: bv, verdictLine: v.verdictLine, fixSection: v.fixSection };
       fb(
         `\n${TAG} ❌ 审查未通过，交付已阻断：必须修复项未处理。修改代码后重新标记全部完成将自动再审（第 ${s.reviewRounds + 1}/${MAX_REVIEW_ROUNDS} 轮）；` +
@@ -733,6 +740,7 @@ async function settleReviewOutcome(s, verdict, subjectKey, output, bindCodeEditV
     s.reviewFailedAtCodeEditV = 0;
     s.reviewFailedAtRound = 0;
     s.reviewFailedCount = 0;
+    s.reviewLastOutcome = "pass"; // 终审必修①：PASS 终态与 failedAt 同点清（防陈旧等值误判「上次失败」）
     // 必修项①：仅 pass 写缓存（同素材复交付命中后只回显不重烧，防 reviewRounds 自增）
     s.reviewCache = { key: subjectKey, verdict };
     fb(`\n${TAG} ✅ 审查通过，闭环结束。`);
@@ -760,6 +768,7 @@ async function settleReviewError(s, e, output, bindCodeEditV) {
   s.reviewFailedAtCodeEditV = bv;
   s.reviewFailedAtRound = s.reviewRounds;
   s.reviewFailedCount = (s.reviewFailedCount ?? 0) + 1;
+  s.reviewLastOutcome = "fail"; // 终审必修①：执行异常终态与 inconclusive 同口径（两字段同点原子共写）
   if (s.reviewFailedCount >= MAX_REVIEW_FAILURES) {
     // 连续执行异常同样停止静默放行：阻断到显式接受或人工补审。
     await requireUnreviewedAcceptance(s, fb, bv);
@@ -849,12 +858,56 @@ function reviewRetryAllowed(s) {
   }
 }
 
-// reviewPending 是否仍应阻断当前交付：所有待修复裁决都绑定 codeEditV——
+// 查漏补缺三轮（2026-10-27）：reviewEntryDue——交付节点自动审查的启动资格。
+// 原 `(!dualReviewedFresh || reviewRetryAllowed(s))` 的 OR 存在旁路：连续失败达上限后
+// 任何新代码编辑都会让 dualReviewedFresh 变 false，OR 左支直接放行重烧，
+// reviewRetryAllowed 的 count 闸在该分支永远不被消费（对同一素材只有 fresh 短路防重烧），
+// 「停止自动重审」在自动路径上从未生效。正确口径按「上一次审查如何收口」分流（纯函数）：
+//   从未审查 / 上次 PASS 或 FAIL 轮次放行后又有新编辑 → 送审（C1：审查时点之后的新改动绝不静默跳审）；
+//   上次以失败收口 → 重审资格全权交给 reviewRetryAllowed：count 达上限后连新编辑也不再
+//     自动重烧，解锁只有 review-accepted（重置计数）或人工 dual_review 补审。
+// 终审必修①（三轮复审）：终态判据用显式 reviewLastOutcome（"pass"/"fail"，settle 系列
+// 单点原子写，与 dualReviewed/failedAt 同点）——不再依赖「failedAt 与豁免版本等值」的
+// 隐式契约（任何只写其一的未来改动都会静默破坏 count 闸）。
+// 缺标记时按等值回退（兼容手工构造的桶/离线测试），行为与显式标记一致；
+// 「pass 且等值成立」在生产桶不可能出现（PASS 同点清 failedAt）——视为半写态/不变量
+// 违例，保守按失败收口处理（走 count 闸：宁可多重审，不静默放行；反向审查裁定采纳）。
+// FAIL 轮次上限放行与 inconclusive/异常收口都写 "fail"（放行≠通过）；普通 FAIL 裁决
+// 未收口（pending 阻断交付）**不写** outcome——修复后由本函数 C1/未审分支送审重审，
+// 若误写 "fail" 反而会把「修复→重审」闭环错误路由到 count 闸（旧失败计数误伤新闭环）。
+function reviewEntryDue(s) {
+  try {
+    const s0 = s ?? {};
+    const fresh = !!s0.dualReviewed && (s0.codeEditV ?? 0) === (s0.dualReviewedAtCodeEditV ?? 0);
+    if (!fresh) {
+      const fV = s0.reviewFailedAtCodeEditV ?? 0;
+      const eqFailed = fV > 0 && fV === (s0.dualReviewedAtCodeEditV ?? 0);
+      const lastReviewFailed = s0.reviewLastOutcome === "fail" || eqFailed;
+      if (!lastReviewFailed) return true;
+    }
+    return reviewRetryAllowed(s0);
+  } catch {
+    return false;
+  }
+}
+
+// reviewPending 是否仍应阻断当前交付：普通 FAIL 裁决绑定 codeEditV——
 // 只改文档/配置不会解除阻断，必须改代码触发新一轮审查，或显式 review-accepted。
+// kind=unreviewed（连续失败达上限）例外：阻断**不随新代码编辑解除**——其重审资格已被
+// reviewEntryDue 的 count 闸停止，若随版本放行会退化为「每次编辑静默未审交付」。
+// 终审必修②（优先级与终态出口，与 FAIL 轮次达限放行不冲突）：
+//   FAIL 轮次达 MAX_REVIEW_ROUNDS 放行 = 放行即终态（清 pending + 残余沉淀 + 账本留痕，
+//   即使 reviewFailedCount 同时达上限也不置 unreviewed pending——出口就是放行本身）；
+//   unreviewed pending 仅由 inconclusive/执行异常连续达 MAX_REVIEW_FAILURES 置位，
+//   出口恰两条：echo review-accepted（bypass + 残余沉淀留痕）或人工 dual_review
+//   （清 pending + 重置计数）；桶为会话内内存态（LRU 驱逐，不跨会话持久）——活跃会话
+//   每次钩子访问都会刷新 LRU 位，驱逐只发生在长期非活跃会话上（其 pending 随会话
+//   一并失效，不构成第三出口）；最坏情形 = 用户放弃本会话后续复杂交付，无零出口死锁。
 // 旧/畸形记录缺 codeEditV 时 fail-closed（阻断），避免升级后静默放行。
 function reviewPendingBlocks(s) {
   const p = s?.reviewPending;
   if (!p) return false;
+  if (p.kind === "unreviewed") return true;
   if (typeof p.codeEditV !== "number") return true;
   return (s.codeEditV ?? 0) === p.codeEditV;
 }
@@ -992,10 +1045,10 @@ function shouldRestartAfterConsume(s, inflightKey, subjectKey, r) {
 
 // 必修②（2026-10-16 二轮审查裁决）：在途审查硬死线看门狗——bgPromise 理论上可能永不结算
 // （上游挂死超出内部超时/settle 自身异常路径外的空隙），指针永久非空会让后续所有交付动作
-// 540s 等待超时后跳过 → 审查全量停摆且无自愈。超硬死线：强制清指针 + 递增 gen（晚到结算
+// 600s 等待超时后跳过 → 审查全量停摆且无自愈。超硬死线：强制清指针 + 递增 gen（晚到结算
 // 被世代校验作废）+ 账本留痕，恢复重启资格（代价是病理场景下有界双烧，优于永久停摆）。
 // 纯副作用函数（经 _export 暴露离线回归）：true = 本次收割了一个超期在途。
-const REVIEW_INFLIGHT_TTL_MS = 900000; // 15min：单路 480s + 结算带宽之上的宽裕余量
+const REVIEW_INFLIGHT_TTL_MS = 900000; // 15min：最坏审查 570s（480s 扇出+90s 聚合保底）+ 结算带宽之上的宽裕余量
 function reapStaleInflight(s) {
   try {
     const ref = s?.reviewInFlight;
@@ -2053,7 +2106,10 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
         const complexEarly = isComplexDelivery(s, codeEdits);
         // 层 3 异步化闭环（2026-10-16）：审查在后台跑时，任何交付动作先等在途裁决落地
         // ——「裁决必达」由此保证；settleReviewOutcome 已在其 .then 完成状态迁移，落地后走下方 reviewPending 校验。
-        // dual_review 建议项（2026-10-16）：加独立等待上限 540s（runDualReview 单路 480s+结算带宽余量）
+        // dual_review 建议项（2026-10-16）：加独立等待上限 600s（查漏补缺三轮 2026-10-27 校准：
+        // runDualReview 硬上界 = 扇出窗口 480s + 聚合保底 90s（aggDeadline=max(wall, now+90s)，
+        // 到点 askWithDeadline abort）= 570s，+ 结算带宽（fs 级沉淀）→ 600s 留 30s 余量；
+        // 旧 540s 会在裁决落地前 ~30s 提前放弃）
         // ——审查若内部挂死，before 钩子不被一个永不结算的 promise 永久拦住；超时 fail-open 放行 + 账本留痕。
         // 必修②接入：等待前先收割超硬死线的在途（挂死指针不托住后续所有交付动作）
         if (complexEarly && (reapStaleInflight(s), s.reviewInFlight)) {
@@ -2062,7 +2118,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
             await Promise.race([
               s.reviewInFlight.promise.then(() => { settled = true; }),
               new Promise((res) => {
-                const t = setTimeout(res, 540000);
+                const t = setTimeout(res, 600000);
                 if (typeof t?.unref === "function") t.unref();
               }),
             ]);
@@ -2074,7 +2130,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
           if (settled) {
             s.reviewInFlight = null;
           } else {
-            recordDegradation(s, "层 3 在途审查等待超时（before 540s），按未审查交付放行", "指针保留防双烧：下次交付动作继续等待在途裁决落地；建议人工核对 diff");
+            recordDegradation(s, "层 3 在途审查等待超时（before 600s），按未审查交付放行", "指针保留防双烧：下次交付动作继续等待在途裁决落地；建议人工核对 diff");
           }
         }
         if (complexEarly && s.reviewPending && !hasAcceptMarker(s) && reviewPendingBlocks(s)) {
@@ -2186,6 +2242,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
             s.reviewFailedAtCodeEditV = 0;
             s.reviewFailedAtRound = 0;
             s.reviewFailedCount = 0;
+            s.reviewLastOutcome = null; // 人工补审重置终态标记：后续按「从未失败」口径起算
           } else {
             s.planReviewed = true;
           }
@@ -2264,8 +2321,10 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
           // 消费点保持原位（回注顺序不变）。进入条件（complex/reviewEntry）均为纯本地可算状态，
           // 提前计算值与原位置计算一致（中途无相关状态变更）。
           const complex = isComplexDelivery(s, codeEdits);
-          const dualReviewedFresh = s.dualReviewed && (s.codeEditV ?? 0) === (s.dualReviewedAtCodeEditV ?? 0);
-          const reviewEntry = allDone && complex && !hasAcceptMarker(s) && (!dualReviewedFresh || reviewRetryAllowed(s));
+          // 查漏补缺三轮（2026-10-27）：启动资格收敛为 reviewEntryDue 单点——
+          // 原 `(!dualReviewedFresh || reviewRetryAllowed)` 的 OR 会让连续失败达上限后的
+          // 新代码编辑绕过 count 闸继续自动重烧（详见函数注释）。
+          const reviewEntry = allDone && complex && !hasAcceptMarker(s) && reviewEntryDue(s);
           let flushP = null, testRefP = null, testRefDropped = 0, subjectP = null, subjectTookMs = 0;
           if (allDone) {
             // ⑥ 部署≠生效检测（节流，fail-open）：运行中进程可能还在执行旧插件逻辑
@@ -2437,7 +2496,8 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
               console.error(TAG, "审查器指纹不可得（缓存本次不复用）:", e?.message ?? e);
             }
             const subjectKey = createHash("sha1").update(`${reviewerFp}\n${subject}`).digest("hex");
-            // 在途审查消费（查漏补缺 2026-10-16）：等待上限 540s 与 before 钩子同口径——
+            // 在途审查消费（查漏补缺 2026-10-16）：等待上限 600s 与 before 钩子同口径——
+            // 覆盖 runDualReview 最坏墙钟（480s 扇出 + 90s 聚合保底 + 结算带宽）；
             // 超时不清指针、不重启（防与未落地审查双烧）；下次交付动作继续等待/闭环。
             let inflightKey = null;
             let inflightSkip = false;
@@ -2449,15 +2509,15 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
               try {
                 await Promise.race([
                   ref.promise.then(() => { settled = true; }),
-                  new Promise((res) => {
-                    const t = setTimeout(res, 540000);
-                    if (typeof t?.unref === "function") t.unref();
-                  }),
-                ]);
+              new Promise((res) => {
+                const t = setTimeout(res, 600000);
+                if (typeof t?.unref === "function") t.unref();
+              }),
+            ]);
               } catch { settled = true; }
               if (!settled) {
                 inflightSkip = true;
-                recordDegradation(s, "层 3 在途审查等待超时（交付节点 540s）", "本轮不重复启动防双烧；下次交付动作继续等待");
+                recordDegradation(s, "层 3 在途审查等待超时（交付节点 600s）", "本轮不重复启动防双烧；下次交付动作继续等待");
               } else {
                 s.reviewInFlight = null;
                 inflightKey = ref.key;
@@ -2651,7 +2711,7 @@ export const _export = {
   shouldRestartAfterConsume, reapStaleInflight, // 二轮审查必修①②（2026-10-16）回归面
   providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary,
   staleDeployOf, moduleBasenamesOf, hasTestRefFor,
-  eslintConfigIn, reviewRetryAllowed, reviewPendingBlocks, todoAnchorLines, unreviewedMarkerLine, driftCheckDue,
+  eslintConfigIn, reviewRetryAllowed, reviewEntryDue, reviewPendingBlocks, todoAnchorLines, unreviewedMarkerLine, driftCheckDue,
   diagRunFailureOf, isDelegateCall, reviewFailPrefix,
   todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText, extractUserAsks,
   pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel,

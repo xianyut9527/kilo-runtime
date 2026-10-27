@@ -479,7 +479,13 @@ export async function loadCfg() {
 
 // 聚合/裁决阶段保底墙钟（moa/dual_review 共用口径）：扇出烧完全局预算后仍给聚合一次
 // 出结论的机会；两个工具此前各留一份同名常量，改一处漏一处会导致预算口径漂移。
-export const AGG_MIN_BUDGET_MS = 90_000;
+// KILO_AGG_FLOOR_MS 环境变量仅作离线测试注入（缩短保底窗以秒级复现「首选耗尽墙钟」
+// 场景，见 test-dual-review-budget.mjs）；夹取 ≤90s 保证任何注入都不能击穿
+// 570s 总墙钟上界（终审追修：防生产误配放大保底窗），生产不设此变量即默认 90s。
+export const AGG_MIN_BUDGET_MS = (() => {
+  const v = Number(process.env.KILO_AGG_FLOOR_MS);
+  return Number.isFinite(v) && v > 0 ? Math.min(v, 90_000) : 90_000;
+})();
 
 // 模型路由列表（moa/dual_review 共用）：首选 + 配置 fallback，去空、trim、去重保序。
 // fallback 只在首选失败时启用；调用方显式覆盖模型时传空 fallback 表示精确指定。

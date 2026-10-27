@@ -91,16 +91,25 @@ const MoaImpl = async (_ctx = {}) => {
           const wallDeadline = wallStart + totalMs;
 
           // 聚合路由兜底：按 aggModels 顺序尝试，共享聚合墙钟；快速失败立即续试。
+          // 2026-10-27 终审追修（与 dual-review askRoute 同口径）：首选聚合耗尽共享墙钟后，
+          // fallback 补一段 AGG_MIN_BUDGET_MS 保底窗口（只补一次、剩余候选共享）——
+          // 防首选超时把 aggregator_fallbacks 饿死，总墙钟上界不变（480s+90s=570s）。
           const askAggregator = async (prompt, deadlineMs) => {
             const failed = [];
             let lastErr = null;
+            let effDeadline = deadlineMs;
+            let floorArmed = false;
             for (const model of aggModels) {
-              const remaining = deadlineMs - Date.now();
+              if (!floorArmed && Date.now() >= effDeadline) {
+                effDeadline = Date.now() + AGG_MIN_BUDGET_MS;
+                floorArmed = true;
+              }
+              const remaining = effDeadline - Date.now();
               if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
               try {
                 const text = await askWithDeadline(
                   { baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs: totalMs, idleMs, attempts: undefined },
-                  deadlineMs,
+                  effDeadline,
                   `moa 聚合(${model})`,
                 );
                 return { model, text, failed };
@@ -191,8 +200,12 @@ const MoaImpl = async (_ctx = {}) => {
           }
 
           const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+          // 降级复核标注（对齐 kilo.json.tmpl 注释与 dual-review 口径）：聚合席落到 fallback
+          //（如 1017 与主执行同族）→ 本次结论不再是完整异族交叉验证，必须显式可见。
+          const aggDegraded = aggModels.length > 0 && agg.model !== aggModels[0];
           return [
             `## MoA 结论（聚合模型：${agg.model}，总耗时 ${elapsed}s）`,
+            aggDegraded ? `> 降级复核：聚合 ${aggModels[0]}→${agg.model}（使用 fallback 非首选聚合模型，交叉验证强度降级）` : "",
             agg.failed.length ? `> 路由兜底：${agg.failed.join("；")}` : "",
             agg.text,
             "",

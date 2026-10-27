@@ -39,7 +39,9 @@ const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
 // dr-2026-10-18.1：正/反/裁决席加入 fallback 路由（首选失败续试），指纹含 fallback。
 // dr-2026-10-27.1：聚合输入上限 8K→24K，消除二次截断；超时 abort 底层请求。
 // dr-2026-10-27.2：fallback 席位显式标注「降级复核」；跨族轮换后再 1017 保底。
-const REVIEWER_VERSION = "dr-2026-10-27.2";
+// dr-2026-10-27.3：裁决席 fallback 饿死修复——共享墙钟耗尽后补一次 90s 保底窗口（armFloor），
+// kimi 裁决超时后 glm/1017 兜底得以执行（本轮实证「已试 1 个模型」饿死场景）。
+const REVIEWER_VERSION = "dr-2026-10-27.3";
 
 // 审查素材的最终截断单点（离线测试经 _export 验证：20K 尾部不被二次砍掉）。
 function reviewSubjectForPrompt(subject) {
@@ -182,16 +184,31 @@ async function runDualReview(subject, overrides = null) {
   // 路由兜底执行器：按 models 顺序尝试，共享同一墙钟；快速失败（400/404/503/连接错误）
   // 会立即落到下一候选，首选成功时不产生额外调用。若首选耗尽全部预算，后续候选无预算
   // 可试——这是「兜底不无限延长单次审查」的有界成本取舍。
-  const askRoute = async (label, models, prompt, deadlineMs) => {
+  // 2026-10-27 终审追修（实证：kimi 裁决吃光 283s 共享预算后 glm/1017 兜底「已试 1 个模型」
+  // 饿死，兜底在其目标场景失效）：armFloor 席位（裁决）在共享墙钟首次耗尽且仍有候选时，
+  // 补一段 AGG_MIN_BUDGET_MS 保底窗口（只补一次、剩余候选共享）——总墙钟上界不变
+  // （扇出 480s + 保底 90s = 570s，arm 必发生在 ≤wall 处），且与聚合保底「至少一次出结论
+  // 机会」的既有语义对齐。已知残余（终审三轮口径）：保底窗内多候选共享不切片，首个候选
+  // 可占满窗口（fallback 均为 flash 级快速模型，现实风险低；再深一层饿死 →「聚合失败」
+  // → quality-gate 按 inconclusive 走失败阶梯收口，不静默）。正/反席不启用（保持原取舍）：
+  // flash 级首选超时属异常路径，由失败阶梯（inconclusive 记账 → 连续两败阻断）收口，
+  // 不扩有界成本。作用域：armFloor 每次审查（每次 askRoute 调用）独立一次，跨审查不复用。
+  const askRoute = async (label, models, prompt, deadlineMs, armFloor = false) => {
     const failed = [];
     let lastErr = null;
+    let effDeadline = deadlineMs;
+    let floorArmed = false;
     for (const model of models) {
-      const remaining = deadlineMs - Date.now();
+      if (armFloor && !floorArmed && Date.now() >= effDeadline) {
+        effDeadline = Date.now() + AGG_MIN_BUDGET_MS;
+        floorArmed = true;
+      }
+      const remaining = effDeadline - Date.now();
       if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
       try {
         const text = await askWithDeadline(
           { baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs, idleMs, attempts: undefined },
-          deadlineMs,
+          effDeadline,
           `${label}(${model})`,
         );
         return { model, text, failed };
@@ -266,9 +283,10 @@ async function runDualReview(subject, overrides = null) {
 
   let agg;
   try {
-    // 裁决阶段拿剩余墙钟（保底 AGG_MIN_BUDGET_MS，可能略超 timeoutMs）；fallback 共享该预算
+    // 裁决阶段拿剩余墙钟（保底 AGG_MIN_BUDGET_MS，可能略超 timeoutMs）；fallback 共享该预算，
+    // 首选裁决耗尽预算时 armFloor 补一次保底窗口（见 askRoute 注释），兜底不再被饿死
     const aggDeadline = Math.max(wallDeadline, Date.now() + AGG_MIN_BUDGET_MS);
-    agg = await askRoute("裁决", aggModels, AGGREGATE_PROMPT(subjectIn, posC, negC, tag), aggDeadline);
+    agg = await askRoute("裁决", aggModels, AGGREGATE_PROMPT(subjectIn, posC, negC, tag), aggDeadline, true);
   } catch (e) {
     return [
       `dual_review: ${e.message}`,
