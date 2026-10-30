@@ -92,6 +92,39 @@ try {
   }
 }
 
+// 单模型模式判定与 provider 同源：直接读部署配置的 provider.openllamas.options.singleModel，
+// 不依赖独立状态文件（状态文件只负责 restore/审计）。配置被恢复后 QG 必须立即恢复门禁，
+// 不能出现「配置已恢复、QG 仍旁路」的不一致。
+// 第二检测路径（2026-10-30 UI 选择模式）：single 已是常驻可选 primary，不再改写配置——
+// 此类会话靠出口门禁的 agent=single 豁免（exitGateVerdict reason=single-mode）隔离，
+// 层 1/2/3 天然不触发（single 的 agent permission 全 deny todowrite，无清单可钩）。
+let CONFIG_DIR;
+try {
+  CONFIG_DIR = process.env.KILO_CONFIG_DIR ||
+    path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), "kilo");
+} catch {
+  CONFIG_DIR = null;
+}
+
+function singleModelOf(options) {
+  const raw = options?.singleModel;
+  const id = typeof raw === "string" ? raw : raw?.model;
+  if (typeof id !== "string") return "";
+  const value = id.trim();
+  if (!value) return "";
+  return value.startsWith("openllamas/") ? value.slice("openllamas/".length) : value;
+}
+
+function singleModelPinFromConfig() {
+  if (!CONFIG_DIR) return "";
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, "kilo.json"), "utf8"));
+    return singleModelOf(cfg?.provider?.openllamas?.options);
+  } catch {
+    return "";
+  }
+}
+
 // ⑥ 部署≠生效检测（2026-09-24 查漏补缺）：Kilo 不热加载插件——install.ps1 下发新版后，
 // 运中的旧进程仍执行旧逻辑（plugin_deploy_no_hot_reload 实证：⑤⑦ 落地当轮残余项未沉淀即此因）。
 // 加载期记自身指纹（源码 sha1，经 fileURLToPath 定位——URL 对象直读在部分平台有边缘兼容问题，
@@ -1874,7 +1907,11 @@ function exitNudgeFingerprint(todos, children) {
 // 是「小任务随手做完但漏一项」的最大入口。独立 cap（noListNudged，1 次/会话），
 // 不占 hasOwn/kids 的指纹/封顶矩阵（互不烧额度）；豁免链（no-work/child/aborted/askingUser）
 // 照常生效——顺序上置于 cap/cooldown 之后、与 child-unsettled 同级的末端分派。
-function exitGateVerdict(s, { now, hasWork, isChild, aborted, errored, askingUser, undone, children, fingerprint, noList }) {
+function exitGateVerdict(s, { now, hasWork, isChild, aborted, errored, askingUser, undone, children, fingerprint, noList, agentSingle }) {
+  // 单模型能力测试会话（UI 选 single 模式）：不注入出口提示——合成提示会污染
+  // 「纯模型能力」的观察对象。agentSingle 只在 session.get 明确返回 agent=single 时为 true，
+  // 字段缺失/不可得时保持 false（fail-open：维持常规门禁行为，绝不因契约漂移漏管正常会话）。
+  if (agentSingle === true) return { act: false, reason: "single-mode" };
   const hasOwn = !!undone && undone.length > 0;
   const hasKids = Array.isArray(children) && children.length > 0;
   const p2 = !!noList && !s.noListNudged && !hasOwn && !hasKids;
@@ -1941,6 +1978,12 @@ function exitNudgeText(undone, n, reason, total, children, now = Date.now(), ask
 }
 
 const QualityGateImpl = async ({ directory, client } = {}) => {
+  const singleModel = singleModelPinFromConfig();
+  if (singleModel) {
+    console.error(TAG, `单模型模式已启用（${singleModel}）：quality-gate 整体旁路`);
+    return {};
+  }
+
   // 工作区根由 Kilo 注入（同 compaction-anchor/memory-bootstrap 契约）；
   // 用它而非 process.cwd()，否则 worktree/monorepo 场景下 tsconfig 探测必败、检查静默关闭
   if (directory) projectRoot = directory;
@@ -2025,10 +2068,14 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
       }
       let isChild = false;
       let parentID = "";
+      let agentSingle = false;
       try {
         const sg = await client.session.get({ path: { id: sid } });
         parentID = String(sg?.data?.parentID ?? "");
         isChild = !!parentID;
+        // 会话表有 agent 列（kilo.db 实证：code/plan/.../single）；session.get 响应
+        // 未带该字段时按非 single 处理（fail-open，见 exitGateVerdict 注释）。
+        agentSingle = String(sg?.data?.agent ?? sg?.agent ?? "") === "single";
         s.parentIDCache = parentID; // 定案缓存：parentID 会话生命周期内不变，供本地预检早退
       } catch (e) {
         isChild = true; // parentID 不可得 → 保守当子代理（子代理收口归父会话衔接，注入会引发文件竞争）
@@ -2050,7 +2097,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
       }
       // 本地预检以实际输入即可定案的路径不变（isChild 已在上方提前返回，此处恒 false 为纵深防御）
       const fingerprint = exitNudgeFingerprint(own, kids);
-      const v = exitGateVerdict(s, { now: Date.now(), hasWork, isChild: false, aborted, errored, askingUser, undone, children: kids, fingerprint, noList });
+      const v = exitGateVerdict(s, { now: Date.now(), hasWork, isChild: false, aborted, errored, askingUser, undone, children: kids, fingerprint, noList, agentSingle });
       if (!v.act) {
         if (v.reason === "nudge-cap") recordExitCap(s, undone, kids);
         return;
@@ -2714,6 +2761,7 @@ export const _export = {
   eslintConfigIn, reviewRetryAllowed, reviewEntryDue, reviewPendingBlocks, todoAnchorLines, unreviewedMarkerLine, driftCheckDue,
   diagRunFailureOf, isDelegateCall, reviewFailPrefix,
   todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText, extractUserAsks,
+  singleModelOf, singleModelPinFromConfig,
   pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel,
   bucketOf, // 离线回归测试缝：断言钩子对会话桶的登记副作用（如 s.highRisk/s.delegated），只读使用
   setFileCheck, addHighRisk, // 有界化辅助（体检 2026-10-07）：上限驱逐语义离线回归

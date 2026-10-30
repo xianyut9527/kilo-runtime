@@ -1,4 +1,4 @@
-# Kilo Runtime 快速上手
+# Kilo Runtime 使用指南
 
 <div align="center">
 
@@ -6,139 +6,298 @@
 
 </div>
 
-**改配置**：编辑 `kilo.json.tmpl` → `.\install.ps1` → 重载 VS Code 窗口。
-**换 API Key**：改 `~/.local/share/kilo/auth.json` 的 `openllamas.key`（不用 install，即时生效）。
+这份指南面向**使用 Kilo Runtime 的人**，按“安装 → 跑通任务 → 日常使用 → 理解能力 → 修改配置”的顺序组织。只想快速安装可看[仓库首页](../README.md)；架构演变和维护者细节在 [HISTORY](HISTORY.md)。
 
-## 架构
+## 1. 它是什么
 
-```
-                    ┌─────────────────────────────────────────────┐
-                    │            VS Code + Kilo 扩展              │
-                    └────────────────────┬────────────────────────┘
-                                         │ 读取
-                                         ▼
-本仓库（唯一真源） ─install.ps1/sh→ ~/.config/kilo/（运行时副本，别直接改）
-│                                          │
-├─ kilo.json.tmpl ──渲染──▶ kilo.json      │← 全部配置：模型路由 / 网关 / 权限 / 开关
-├─ provider/hx-failover                    │← 模型网关客户端：流式、三级超时、故障自动降级、
-│   src/ → build → dist/                   │   排队回执拦截、thinking 双兜底（协议+推理门控）
-├─ plugin/（随进程自动加载，改后需重载窗口） │
-│   ├─ quality-gate                        │← 三层交付质量门禁：防"声称完成但没做"
-│   ├─ dual-review                         │← 双向异源审查：正向查遗漏 × 反向红队 + 裁决
-│   ├─ moa                                 │← 多模型交叉分析（高风险决策）
-│   ├─ permission-guard                    │← 动态拦截危险命令、密钥路径、锁文件写通道绕过
-│   ├─ compaction-anchor                   │← 长会话压缩后保留任务锚点
-│   ├─ memory-store                        │← 全局经验记忆 store：mem_* 工具/检索/编译注入
-│   └─ memory-bootstrap                    │← git 项目自动启用原生记忆
-├─ agent/verify.md                         │← 异源复核子代理（高风险改动只读复核）
-├─ lib/hx-client.ts                        │← moa/dual-review 共享请求层：SSE 流式、三级超时、
-│                                          │   过载断路器、失败遥测
-├─ INSTRUCTIONS.md                         │← 每会话注入的工程原则
-└─ command/evolve.md 等                    │← 全局命令（/evolve 复盘进化）
-                                           │
-                              ~/.local/share/kilo/（数据目录：会话库 / 记忆 / 凭证 auth.json）
-```
+Kilo Runtime 是 Kilo 的全局配置与运行时增强包，不是独立 IDE，也不是多智能体编排界面。安装后，你可以继续在 Kilo GUI 客户端、VS Code + Kilo 扩展或 Kilo CLI 中工作：
 
-数据流：Kilo 会话 → provider（网关客户端）→ OpenLlamas 模型网关；
-主模型故障时按 `failover.chain.models` 依次自动降级（切换时流首注入 ⚠️ [failover]
-可见提示，同一「主模型→备用」在冷却窗口内只提示一次；主模型自身也进冷却——
-持续故障期后续调用直接从可用备用起跑，全链冷却时快速失败、到期自动恢复）；
-moa/dual-review 的分析
-调用走 lib/hx-client 独立请求层（网关连续过载时断路器 fail-fast）；交付节点
-由 quality-gate 按风险触发 dual-review 自动审查。
+- `kilo.json.tmpl` 定义模型、网关、权限和行为开关；
+- 安装脚本把仓库资产渲染并下发到 `~/.config/kilo/`；
+- provider 负责模型请求、流式异常保护和故障切换；
+- plugin 负责质量门禁、审查、危险命令防护和记忆；
+- 会话、记忆和凭证保存在 `~/.local/share/kilo/`，不属于仓库配置。
 
-## 任务执行流程（发出任务后程序自动做什么）
+最重要的使用原则：**仓库是唯一真源，部署目录只读**。修改 `~/.config/kilo/kilo.json` 会在下次 install 时被覆盖。
 
-```
-你输入任务
-   │
-   ▼
-① 主模型接手：拆解任务 → todowrite 建任务清单 → 逐步执行
-   （读文件/改代码/跑命令；子代理按需扇出，explore 只做粗扫）
-   │  期间插件自动工作：
-   │   · permission-guard  实时拦截危险命令（rm -rf、改密钥文件等）
-   │   · compaction-anchor 长会话压缩时保留任务锚点，上下文不丢
-   │   · quality-gate 层1  每标记一个 todo 完成 → 核对真实执行痕迹，
-   │                       「声称完成但没做」当场警告
-   │   · quality-gate 层2  编辑过代码但没跑测试 → 否决「全部完成」
-   │                       （只认末次编辑后 exit 0 的验证命令；改 provider src
-   │                        未重建 dist 同样拦；跳过须显式 verify-skipped 登记）
-   │   · quality-gate 诊断  编辑 TS/Python 后后台异步跑 tsc/ruff（5s 防抖），
-   │                       诊断积压在交付节点冲刷回注
-   ▼
-② 交付节点（全部 todo 标记完成时）
-   │  · 高风险文件（认证/支付/迁移等）命中，或普通改动 ≥3 个代码文件
-   │    （文档不计，2026-10-07 codeEdits 口径）
-   │    → quality-gate 自动发起 dual-review：正向查遗漏 × 反向红队
-   │      并行审查 + 裁决席终审（2~4 分钟；纯文档会话不烧审查费）
-   │  · 裁决「不通过」→ 阻断交付，模型必须修复后重审（最多 2 轮；
-   │    接受残余风险须显式 echo "review-accepted" 登记，可审计）
-   │  · 通过 → 交付完成；超限放行/显式接受/上游失败等未闭环时，
-   │    残余必须修复项沉淀进项目记忆 Open Questions（下次会话自动注入待跟进）
-   ▼
-③ 你看到结果：改动完成 + 审查裁决记录 + 全部降级/跳过事件账本汇总
-```
+## 2. 安装并跑通第一个任务
 
-你全程只需要做两件事：**描述任务**、**确认权限询问**。质量把关由插件自动执行。
+### 2.1 前置条件
 
-## 改模型（都在 kilo.json.tmpl）
+| 环境 | 要求 |
+|------|------|
+| Kilo | Kilo GUI 客户端、VS Code + Kilo 扩展，或 Kilo CLI（任选其一） |
+| Windows | PowerShell 7+ |
+| macOS / Linux | bash |
+| 运行时工具 | Node.js 22+；Bun 可选 |
+| 模型供应商 | [OpenLlamas](https://openllamas.com) API Key |
 
-| 要改什么 | 位置 |
-|---------|------|
-| 主模型 | 顶部 `"model"` |
-| 角色模型 | `agent.code / agent.plan / ...` 的 `model` |
-| 网关地址 | `provider.openllamas.options.baseURL` |
-| 降级链 / 审查模型 | `provider.openllamas.options.failover / moa / dual_review` |
+仓库已包含 provider 构建产物，**日常安装不需要 `npm install`**。只有重新构建 provider 时才需要安装它的开发依赖。Windows 日常使用也不需要 Git Bash；只有 `cleanup.sh`、`db-maintain.sh` 等 bash 维护脚本需要它。
 
-新模型需在 `provider.openllamas.models` 登记后才能被引用。换模型只改这些字段——文档
-不复制模型名；配置注释只解释当前取舍，模型绑定仍以字段为准。例外只有两处：
-`INSTRUCTIONS.md` 的「模型使用口径」（策略快照，换型时一并更新）与
-`docs/HISTORY.md` 的历史记录（保留旧模型名，不回写）。
+### 2.2 预览并安装
 
-## 模型与分工
+在仓库根目录执行。
 
-上游：OpenLlamas 网关 <https://openllamas.com/v1>（支持 OpenAI / Anthropic 协议）
-
-模型随上游持续迭代，所以**文档不复制模型名**：岗位绑定、兜底链、审查三席全部只写在
-`kilo.json.tmpl`（唯一真源，渲染为 `kilo.json`），换模型只改那一个文件，下面的分工口径不会随之过期。
-
-| 岗位 | 档位 | 职责 |
-|------|------|------|
-| 主力执行 | 性价比·主力 | 日常写码/跑命令 |
-| 规划 | 旗舰·规划 | 方案设计（与主力执行异族） |
-| 深实现 | 性价比·重活 | 高风险/跨文件改动 |
-| 侦察 | 性价比·轻档 | 只读粗扫 |
-| 编排 | 性价比·轻档 | 拆解任务、分派子代理 |
-| 压缩 | 性价比·轻档 | 会话摘要 |
-| 轻任务 | 性价比·轻档 | 标题/摘要 |
-| 子代理缺省 | 同主力执行 | task 子代理默认模型 |
-| 复核 | 性价比·重活（异族） | 异源只读复核 |
-
-口径：路由模型 ≤5；当前实际 4 = 3 性价比档 + 1 旗舰规划档，其余注册模型保留作手动选择池。
-按模型最强项定岗位，异源只用在有交叉验证价值的岗位（编码/规划/复核/深实现/审查面板），
-跑腿型轻岗不为了族别多样换模型。
-审查面板：正向（查遗漏）+ 红队（找错）+ 裁决席终审；正向/红队与被审主体异族，
-裁决席当前与红队同档（见配置注释）；任一席兜底回主力族时，该次审查须标注「降级复核」。
-兜底链 3 跳，均为性价比档；旗舰档注册保留、未入链（额度/渠道恢复后可单变量加回）。
-具体顺序见配置 `failover.chain.models`。
-
-## 常用命令
+Windows：
 
 ```powershell
-.\install.ps1 -DryRun   # 改完模板先校验（不写盘）
-.\install.ps1           # 下发（自动备份）
-.\install.ps1 -Check    # 漂移体检
+.\install.ps1 -DryRun   # 渲染、校验并列出差异，不写盘
+.\install.ps1           # 正式下发，写盘前自动备份
+.\install.ps1 -Check    # 日后检查仓库与部署副本是否漂移
 ```
 
-改 provider/hx-failover/src 后：`npm run build` → 跑 `test-failover.mjs` / `test-reasoning-gate.mjs` → install → 重载。
+macOS / Linux：
 
-## 坑
+```bash
+./install.sh --dry-run
+./install.sh
+./install.sh --check
+```
 
-- 直接改 `~/.config/kilo/kilo.json` 会被 install 覆盖，白改
-- VS Code 模型选择器保存的模型/变体可能覆盖模板中的 `agent.*` 路由；改完模板后先核对新会话实际使用的模型与思考档位；已开会话不会被配置改回，需手动切换
-- 模板注释只写「行首 `//`」；kilo.json 加自定义键整份失效
-- `debug config` 通过 ≠ 能跑任务，改完必须真跑一次 `kilo run`
+默认目标是 `~/.config/kilo/`。安装是幂等的：内容相同的文件会跳过，确有写入时才备份。已有个人定制时先看 Dry Run，避免清单内文件被意外替换。
 
----
+需要安装到其他目录时，Windows 用 `.\install.ps1 -Target D:\path\kilo`，bash 用 `./install.sh --target /path/kilo`。模板中的绝对路径会按目标目录重新渲染。
 
-维护者进阶见 [docs/HISTORY.md](HISTORY.md)
+### 2.3 配置 OpenLlamas API Key
+
+模型请求通过 **OpenLlamas** 网关转发。先在 [OpenLlamas 官网](https://openllamas.com) 获取 API Key，再编辑：
+
+```text
+~/.local/share/kilo/auth.json
+```
+
+合并 `openllamas.key`，不要覆盖已有的其他 provider 凭证：
+
+```json
+{
+  "openllamas": {
+    "key": "你的 API Key"
+  }
+}
+```
+
+Key 只存在运行时数据目录，不进入 git。修改 Key 不需要重新 install；`moa` / `dual_review` 的共享请求层最多缓存配置 60 秒，遇到 401 会立即失效缓存。若正在运行的 Kilo 仍持旧凭证，重载或重启 Kilo 后再试。
+
+### 2.4 重载并验证
+
+1. 重载或重启 Kilo，确保新插件和 provider 被加载；VS Code 用户可执行 `Developer: Reload Window`。
+2. 在所选客户端中打开任意项目，新建 Kilo 会话。
+3. 确认默认 agent 是 `code`，模型来自 `openllamas`。
+4. 发送只读任务：
+
+   > 阅读当前项目结构，告诉我如何安装依赖和运行测试；不要修改文件。
+
+随后再试一个小型代码任务，例如：
+
+> 修复当前最相关的测试失败，修改后运行对应测试，并总结根因与改动。
+
+只读问答验证模型链路；代码任务验证编辑、权限和质量门禁链路。配置解析成功不等于任务可运行，因此首次安装至少应跑通一个真实任务。
+
+## 3. 日常怎么用
+
+### 3.1 两种主要入口
+
+- **`code`**：默认执行入口，用于读代码、改代码、跑命令和交付任务。
+- **`plan`**：用于方案设计与分析；确认方案后再切回 `code` 实现。
+
+复杂任务可以直接描述目标、限制和验收要求，不需要手动编排子代理。例如：
+
+> 给这个模块补充分页接口。保持现有 API 风格，增加正常页、越界页和空结果测试；不要修改无关模块。
+
+### 3.2 提交任务后自动发生什么
+
+```text
+你描述任务
+   │
+   ▼
+主 agent 分析并执行（读取、编辑、运行命令，按需委派）
+   │  ├─ permission-guard：拦截高风险命令与凭证写入
+   │  ├─ compaction-anchor：长会话压缩时保留任务锚点
+   │  └─ quality-gate：核对执行痕迹、测试结果和未完成待办
+   ▼
+交付检查
+   │  ├─ 普通代码改动：要求末次编辑后有真实通过的验证
+   │  └─ 高风险文件或 ≥3 个代码文件：自动 dual_review
+   │      （正向查遗漏 + 反向找错 + 裁决终审）
+   ▼
+返回改动、验证结果，以及审查/降级/显式跳过记录
+```
+
+纯文档改动不触发代码测试硬门禁或自动交付审查。审查不通过时会要求先修复必须项；自动审查最多两轮，显式跳过验证或接受残余风险都会留下可审计记录。
+
+### 3.3 常见操作
+
+| 需求 | 入口 |
+|------|------|
+| 修改模型或行为配置 | 编辑仓库 `kilo.json.tmpl` → Dry Run → install |
+| 检查是否部署完整 | `install.ps1 -Check` 或 `install.sh --check` |
+| 启用非 git 目录的项目记忆 | 在 Kilo 中运行 `/memory-setup` |
+| 定期复盘、修正和沉淀经验 | 在 Kilo 中运行 `/evolve` |
+| 查看故障切换记录 | `~/.local/share/kilo/failover-events.jsonl` |
+| 清理与数据库维护 | 见 [HISTORY 的维护章节](HISTORY.md#磁盘垃圾与维护2026-09-15-专项) |
+
+## 4. 模型、降级与审查
+
+### 4.1 模型配置只看一个文件
+
+所有具体绑定都在 `kilo.json.tmpl`。其中的模型是作者的一套默认选择，不是唯一答案：模型怎么选由用户自己的偏好决定，按需改任意角色的 `model` / `variant` 即可。
+
+| 要改什么 | 字段 |
+|---------|------|
+| 默认主模型 | 顶部 `model` |
+| 轻任务 / 子代理缺省模型 | `small_model` / `subagent_model` |
+| 规划、执行、复核等角色 | `agent.<name>.model`，推理档位用 `variant` |
+| 网关地址 | `provider.openllamas.options.baseURL` |
+| 故障切换后备列表 | `provider.openllamas.options.failover.chain.models` |
+| 多模型分析席位 | `provider.openllamas.options.moa` |
+| 双向审查席位与回退 | `provider.openllamas.options.dual_review` |
+| 新模型能力、窗口和 variants | `provider.openllamas.models` |
+
+新模型必须先在 `provider.openllamas.models` 注册，再被路由引用。文档不复制当前模型名和数量，避免配置更新后再次失真；角色职责如下：
+
+| 角色 | 职责 |
+|------|------|
+| `code` | 日常实现与命令执行 |
+| `plan` | 方案设计与规划 |
+| `general` | 高风险、跨文件或深度实现子任务 |
+| `explore` | 只读粗扫与定位 |
+| `orchestrator` | 任务拆解与分派 |
+| `compaction` | 会话压缩与摘要 |
+| `verify` | 异源、只读独立复核 |
+
+### 4.2 故障切换的正确口径
+
+`failover.chain.models` 不是完整调用链，而是**当前模型之后的后备模型列表**。provider 会把本次请求的当前模型放在链首并去重，因此 `code`、`plan`、`verify` 等 agent 的实际链长和顺序可能不同。
+
+失败模型会进入冷却；持续故障时后续请求可跳过已知不可用模型。切换时会注入可见的 failover 提示，同一冷却窗口内重复提示会去重。全链不可用时会失败并保留上游错误信息，不会把问题包装成难以定位的自定义文案。
+
+### 4.3 多模型审查不是默认每次必跑
+
+- `moa`：需要多视角判断时按需调用，多个参考模型分析后由聚合模型综合。
+- `dual_review`：复杂交付自动触发，也可手动用于特定方案；正向与反向并行，之后由裁决席终审。
+- 三席的当前模型与回退顺序以配置为准。回退可能导致席位与被审主体同族，此时结果应标注“降级复核”，不能算作完整的独立异源审查。
+- 审查会额外消耗上游调用与时间，因此简单、低风险改动不会机械触发。
+
+## 5. 单模型能力测试模式
+
+该模式用于观察**一个模型从头到尾独立完成任务**的能力，不用于正常交付。有两种进入方式：日常用模式选择器直接进入；需要严格隔离时用命令行锁定。
+
+### 5.1 模式选择器进入（日常）
+
+1. 在 Kilo 模式选择器中选择「单模型测试」（`single`）；
+2. 在模型选择器中选定要测试的模型与思考档位；
+3. 直接下达任务——会话由该模型执行，不需要改配置或重载。
+
+该路径的隔离边界与残余影响：
+
+- `single` 模式的权限禁用 task 委派、moa/dual_review 多模型审查、Agent Manager、todo/goal、技能与记忆工具；quality-gate 的回合出口兜底对 `single` 会话不注入提示，层 1/2/3 门禁因 todo 工具被禁而天然不触发；
+- 模型与档位跟随模型选择器的当前选择，换模型即换测试对象；
+- 全局 instructions 与项目记忆仍会注入，failover 链仍然生效——所选模型故障时回复流首会出现「⚠️ [failover]」并切换到备用模型，出现该提示的测试结果作废；
+- 会话标题/摘要与自动压缩等后台任务使用配置中的轻量模型，不参与任务执行。
+
+### 5.2 命令行锁定（严格隔离）
+
+需要清空 failover、把注册表收敛到单一模型、清空 instructions/skills 并让 quality-gate 整体旁路时，使用锁定模式。进入后：
+
+- 主模型、轻任务、子代理、项目记忆、全部 agent、failover、moa 和 dual_review 都固定到同一模型；
+- 其他 primary agent 变为 hidden subagent，包括未写入 `kilo.json` 的内置 `ask/debug/summary/title` 等，主界面只保留 `single`；
+- 清空附加 `instructions` 与 `skills`，禁止 task 委派、多模型审查、Agent Manager、todo/goal、技能和记忆工具；
+- 关闭自动压缩、`task_model_selection` 与 reasoningGate。
+
+以下命令在两平台都可执行（PowerShell 与 bash 都支持 `$HOME` 和正斜杠路径）：
+
+```bash
+# 1. 查看部署配置中已注册的模型与 variants
+node "$HOME/.config/kilo/scripts/single-model.mjs" list
+
+# 2. 预览进入后的配置；把 MODEL_ID / VARIANT 换成 list 输出的值
+node "$HOME/.config/kilo/scripts/single-model.mjs" enter --model MODEL_ID --variant VARIANT --dry-run
+
+# 3. 正式进入
+node "$HOME/.config/kilo/scripts/single-model.mjs" enter --model MODEL_ID --variant VARIANT
+
+# 4. 重载 VS Code 窗口/Kilo，新建会话后检查状态
+node "$HOME/.config/kilo/scripts/single-model.mjs" status
+
+# 5. 测试结束恢复原始配置，并再次重载
+node "$HOME/.config/kilo/scripts/single-model.mjs" restore
+```
+
+`enter` 会备份部署配置为 `kilo.json.bak-single-*`，状态写入 `~/.local/share/kilo/single-model.json`。`restore` 默认拒绝覆盖进入模式后的手工修改；确认丢弃这些修改时才使用 `--force`，需要保留备份时可用 `--keep-backup`。
+
+锁定模式活动期间，两个安装器都会拒绝覆盖配置。要恢复日常配置修改流程，必须先 `restore`。
+
+## 6. 配置维护与开发
+
+### 6.1 修改模板的固定步骤
+
+1. 只改仓库 `kilo.json.tmpl`。
+2. 运行 Dry Run，确认渲染与 JSON 校验通过。
+3. 正式 install。
+4. 修改 plugin/provider 后重载 VS Code 窗口；模型路由调整后新建会话核对实际模型。
+5. 跑一个真实任务，不只依赖配置解析结果。
+
+模板注释只能使用**行首 `//` 整行注释**。不要添加自定义 `"//"` 键，也不要假设 Kilo 会展开 `~`；需要路径时使用现有 `__KILO_HOME__` / `__KILO_CONFIG__` 占位符。
+
+VS Code 模型选择器保存的模型或 variant 可能覆盖 `agent.*` 路由，已打开的会话也不会因修改模板而自动切回，这是“配置正确但行为没变”的常见原因。
+
+### 6.2 修改 provider 后
+
+在仓库根目录执行：
+
+```bash
+# 仅首次构建或依赖锁变化时需要
+npm --prefix provider/hx-failover ci
+
+# src/index.js 修改后必须重建 dist，再运行针对 dist 的离线回归
+npm --prefix provider/hx-failover run build
+node provider/hx-failover/test-failover.mjs
+node provider/hx-failover/test-reasoning-gate.mjs
+```
+
+然后再 Dry Run、install、重载并跑真实任务。安装器会检查 src 与 dist 的构建指纹，旧 dist 不能冒充新实现。
+
+完整测试与插件契约命令见 [HISTORY 的验收章节](HISTORY.md#验收)。
+
+## 7. 架构速览
+
+```text
+┌─ 仓库（唯一真源）──────────────────────────────┐
+│ kilo.json.tmpl / plugin / provider / agent    │
+│ command / lib / INSTRUCTIONS.md / scripts     │
+└──────────────────┬─────────────────────────────┘
+                   │ install（渲染、校验、备份、下发）
+                   ▼
+        ~/.config/kilo/（运行时配置副本）
+                   │
+                   ▼
+       Kilo GUI 客户端 / VS Code 扩展 / CLI
+                   │
+                   ▼
+       provider / lib ──▶ OpenLlamas 模型网关
+
+~/.local/share/kilo/：会话库、项目与全局记忆、API Key、故障事件
+```
+
+各资产的完整职责、历史决策和性能数据不放在使用指南里，统一见 [HISTORY](HISTORY.md)。
+
+## 8. 故障排查与隐私边界
+
+### 常见问题
+
+| 现象 | 优先检查 |
+|------|----------|
+| 模型列表为空、provider 初始化失败 | install 是否成功；是否重载窗口；`provider.npm` 是否仍含未渲染占位符 |
+| 401 / Invalid token | `openllamas.key` 是否正确，Key 与 `baseURL` 是否匹配同一网关 |
+| 配置改完没有变化 | `-Check` / `--check`、窗口重载、新会话、模型选择器覆盖 |
+| 修改 provider 后行为仍旧 | 是否重新 build、install 并重载；dist 指纹是否与 src 一致 |
+| 故障切换为何发生 | 查看 `failover-events.jsonl` 的模型、状态码和错误摘要 |
+| 单模型锁定模式无法 install | 先运行 single-model `status`，再 `restore` |
+
+### 数据与隐私
+
+- 对话和代码任务会发往配置的模型网关；`moa` / `dual_review` 还会把任务描述、diff 等审查素材发送给相应模型。
+- API Key 只应在 `auth.json`，不要提交进仓库或贴进任务。
+- `failover-events.jsonl` 只记录模型、动作、状态与错误摘要，不记录对话正文。
+- `GLOBAL-NOTES.md` 是全局记忆编译产物，不要手工编辑；写入使用 `mem_add`，检索使用 `mem_search`。
+- 完整出网链路、遥测和维护边界见 [HISTORY 的隐私与安全边界](HISTORY.md#隐私与安全边界)。

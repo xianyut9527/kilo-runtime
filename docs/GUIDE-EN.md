@@ -1,4 +1,4 @@
-# Kilo Runtime — Quick Start
+# Kilo Runtime User Guide
 
 <div align="center">
 
@@ -6,151 +6,298 @@
 
 </div>
 
-> **Change config**: edit `kilo.json.tmpl` → `.\install.ps1` → reload the VS Code window.
-> **Change API key**: edit `openllamas.key` in `~/.local/share/kilo/auth.json` (no install needed, takes effect immediately).
+This guide is for **people using Kilo Runtime**, ordered as installation → first task → daily use → capabilities → configuration. For a shorter installation path, see the [repository README](../README.md). Architecture history and maintainer details live in [HISTORY](HISTORY.md) (Chinese).
 
-## Architecture
+## 1. What it is
 
-```
-                 ┌─────────────────────────────────────────────┐
-                 │           VS Code + Kilo extension          │
-                 └───────────────────┬─────────────────────────┘
-                                     │ reads
-                                     ▼
-This repo (source of truth) ─install→ ~/.config/kilo/ (runtime copy — never edit directly)
-│                                         │
-├─ kilo.json.tmpl ──render──▶ kilo.json   │← All config: model routing / gateway / permissions / switches
-├─ provider/hx-failover                   │← Model gateway client: streaming, 3-tier timeouts, auto failover,
-│   src/ → build → dist/                  │   queued-ack interception, thinking dual safety net (protocol + reasoning gate)
-├─ plugin/ (auto-loaded; reload window after changes)
-│   ├─ quality-gate                       │← 3-layer delivery gate: prevents fake completion claims
-│   ├─ dual-review                        │← dual cross review: omission check × red team + verdict
-│   ├─ moa                                │← multi-model cross analysis (high-risk decisions)
-│   ├─ permission-guard                   │← blocks dangerous commands, secret paths, lock-file write bypasses
-│   ├─ compaction-anchor                  │← keeps task anchors after long-session compaction
-│   ├─ memory-store                       │← global experience memory store: mem_* tools / retrieval / compiled injection
-│   └─ memory-bootstrap                   │← auto-enables native memory for git projects
-├─ agent/verify.md                        │← cross-source review subagent (read-only, high-risk changes)
-├─ lib/hx-client.ts                       │← shared request layer for moa/dual-review: SSE streaming,
-│                                         │   3-tier timeouts, overload circuit breaker, failure telemetry
-├─ INSTRUCTIONS.md                        │← engineering principles injected every session
-└─ command/evolve.md etc.                 │← global commands (/evolve retrospective)
-                                          │
-                           ~/.local/share/kilo/ (data dir: sessions / memory / credentials auth.json)
-```
+Kilo Runtime is a global configuration and runtime enhancement package for Kilo. It is not a standalone IDE or a multi-agent orchestration UI. After installation, you can keep working in the Kilo GUI client, the VS Code Kilo extension, or Kilo CLI:
 
-Data flow: Kilo session → provider (gateway client) → OpenLlamas model gateway.
-On main-model failure it fails over through `failover.chain.models` (each hop injects a visible
-"⚠️ [failover]" notice; the same main→standby notice is emitted once per cooldown window. The
-main model itself also cools down: during sustained outages later calls start directly from an
-available standby, and a fully-cooled chain fails fast until the window expires);
-moa/dual-review analysis calls
-go through the separate lib/hx-client request layer (circuit breaker fail-fasts when the gateway is
-overloaded); at delivery nodes quality-gate triggers dual-review automatically based on risk.
+- `kilo.json.tmpl` defines models, the gateway, permissions and behavior switches;
+- the installer renders and deploys repository assets to `~/.config/kilo/`;
+- the provider handles model requests, streaming safeguards and failover;
+- plugins handle delivery checks, reviews, dangerous-command protection and memory;
+- sessions, memories and credentials live in `~/.local/share/kilo/`, outside the repository configuration.
 
-## Task execution flow (what happens automatically after you submit a task)
+The main rule: **the repository is the source of truth; treat the deployed directory as read-only**. Editing `~/.config/kilo/kilo.json` directly will be overwritten by the next install.
 
-```
-You submit a task
-   |
-   v
-① Main model takes over: break down task -> todowrite checklist -> execute step by step
-   (read files / edit code / run commands; subagents fan out as needed)
-   |  Plugins work automatically along the way:
-   |   · permission-guard  blocks dangerous commands in real time (rm -rf, touching key files, etc.)
-   |   · compaction-anchor keeps task anchors when long sessions compress, context never lost
-   |   · quality-gate L1  each todo marked completed -> verified against real execution traces;
-   |                       "claimed done but never done" gets flagged on the spot
-   |   · quality-gate L2  code edited but no test run -> "all completed" is rejected
-   |                       (only accepts exit 0 after the last edit; stale provider dist also
-   |                        blocked; skipping requires explicit verify-skipped registration)
-   |   · quality-gate diagnostics: TS/Python edits get background tsc/ruff (5s debounce),
-   |                       backlog flushed back at the delivery node
-   v
-② Delivery node (when all todos are marked completed)
-   |  · High-risk files (auth / payments / migrations) hit, or generic changes
-   |    spanning 3+ code files (docs excluded, codeEdits rule since 2026-10-07) ->
-   |    quality-gate auto-triggers dual-review: omission check × red team
-   |    in parallel + verdict-seat arbitration (2-4 minutes; doc-only sessions skip)
-   |  · Verdict "fail" -> delivery blocked, model must fix and re-review (max 2 rounds;
-   |    accepting residual risk requires explicit "review-accepted" echo registration)
-   |  · Pass -> delivered; on cap-release / explicit acceptance / upstream failure,
-   |    residual must-fix items persist into project memory Open Questions
-   |    (auto-injected next session)
-   v
-③ You see the result: completed changes + review verdict + summary of all
-   degradation/skip events
-```
+## 2. Install and run your first task
 
-You only ever do two things: **describe the task** and **approve permission prompts**.
-Quality control is fully automated by the plugins.
+### 2.1 Prerequisites
 
-## Model configuration (all in kilo.json.tmpl)
+| Component | Requirement |
+|-----------|-------------|
+| Kilo | Kilo GUI client, VS Code + Kilo extension, or Kilo CLI (choose one) |
+| Windows | PowerShell 7+ |
+| macOS / Linux | bash |
+| Runtime tools | Node.js 22+; Bun is optional |
+| Model provider | An [OpenLlamas](https://openllamas.com) API key |
 
-| What to change | Where |
-|---------------|-------|
-| Main model | Top-level `"model"` |
-| Per-role models | `agent.code / agent.plan / ...` → `model` |
-| Gateway URL | `provider.openllamas.options.baseURL` |
-| Failover chain / review models | `provider.openllamas.options.failover / moa / dual_review` |
+The repository already contains the provider build, so **normal installation does not require `npm install`**. Development dependencies are needed only when rebuilding the provider. Git Bash is not required for everyday Windows use; it is needed only for bash maintenance scripts such as `cleanup.sh` and `db-maintain.sh`.
 
-New models must be registered in `provider.openllamas.models` before they can be referenced.
-Swapping a model touches only those fields — the docs never copy model names; config
-comments only explain current tradeoffs, and the routing fields stay authoritative. The only
-exceptions are the model-usage section in `INSTRUCTIONS.md` — a policy snapshot updated
-alongside a model swap — and historical records in `docs/HISTORY.md`, which keep old model
-names as-is.
+### 2.2 Preview and install
 
-## Models & division of labor
+Run these commands from the repository root.
 
-Upstream: OpenLlamas gateway <https://openllamas.com/v1> (OpenAI / Anthropic protocols)
-
-Models iterate upstream continuously, so **the docs never copy model names**: role
-bindings, the failover chain and the review seats live only in `kilo.json.tmpl` (single
-source of truth, rendered to `kilo.json`) — swapping a model touches that one file and nothing below goes stale.
-
-| Role | Tier | Duty |
-|------|-------|------|
-| Main executor | value·primary | everyday coding / commands |
-| Planning | flagship·planning | solution design (other family than the executor) |
-| Heavy implementation | value·heavy | high-risk / cross-file changes |
-| Recon | value·light | read-only coarse scanning |
-| Dispatch | value·light | task breakdown, subagent dispatch |
-| Compaction | value·light | session summaries |
-| Light tasks | value·light | titles / summaries |
-| Subagent default | same as executor | default model for task subagents |
-| Review | value·heavy (other family) | hetero read-only review |
-
-Rule: at most 5 routed models; currently 4 = 3 value + 1 flagship planner. Other registered
-models stay available as a manual-selection pool. Each role gets the model it is strongest at,
-and family diversity is spent only where cross-validation actually pays (coding / planning /
-review / heavy implementation / review panel).
-Review panel: positive (gaps) + red team (bugs) + verdict seat; positive/red team are
-cross-family from the audited subject, the verdict seat currently shares the red team's tier,
-and any seat that falls back to the executor's family must be reported as a degraded review
-(see config comments).
-Failover chain has 3 hops, all value tier; the flagship stays registered but unrouted and can
-be re-added after credits/channel recover (order in `failover.chain.models`).
-
-## Common commands
+Windows:
 
 ```powershell
-.\install.ps1 -DryRun   # Validate the template first (no writes)
-.\install.ps1           # Deploy (auto backup)
-.\install.ps1 -Check    # Drift check
+.\install.ps1 -DryRun   # Render, validate and list differences without writing
+.\install.ps1           # Deploy; back up existing configuration before writing
+.\install.ps1 -Check    # Later, check repository/deployment drift
 ```
 
-macOS / Linux: `./install.sh --dry-run` → `./install.sh` → `./install.sh --check`.
+macOS / Linux:
 
-After editing provider/hx-failover/src: `npm run build` → run `test-failover.mjs` / `test-reasoning-gate.mjs` → install → reload.
+```bash
+./install.sh --dry-run
+./install.sh
+./install.sh --check
+```
 
-## Gotchas
+The default target is `~/.config/kilo/`. Installation is idempotent: unchanged files are skipped, and a backup is created only when writes are required. If you have local customizations, inspect Dry Run first to avoid replacing managed files unexpectedly.
 
-- Editing `~/.config/kilo/kilo.json` directly gets overwritten by install — always edit the repo copy
-- A model or variant saved by the VS Code model selector can override the template's `agent.*` route; after editing the template, verify the model and reasoning effort used by a new session. Already-open sessions are not switched back by config — change them manually
-- Template comments: whole-line `//` at line start only; any custom key in kilo.json invalidates the whole config
-- `debug config` passing ≠ tasks actually run — always smoke-test with a real `kilo run` after changes
+To use another target, run `.\install.ps1 -Target D:\path\kilo` on Windows or `./install.sh --target /path/kilo` in bash. Absolute paths in the template are rendered for the selected target.
 
----
+### 2.3 Configure the OpenLlamas API key
 
-Maintainer deep-dive (architecture history / asset inventory / performance / privacy / full conventions): see [docs/HISTORY.md](HISTORY.md).
+Model requests are routed through the **OpenLlamas** gateway. Get an API key from the [OpenLlamas website](https://openllamas.com), then edit:
+
+```text
+~/.local/share/kilo/auth.json
+```
+
+Merge in `openllamas.key` without overwriting credentials for other providers:
+
+```json
+{
+  "openllamas": {
+    "key": "YOUR_API_KEY"
+  }
+}
+```
+
+The key stays in the runtime data directory and out of git. Changing it does not require another install. The shared `moa` / `dual_review` client caches configuration for up to 60 seconds and invalidates that cache immediately on a 401. If a running Kilo process still holds the old credential, reload or restart Kilo and retry.
+
+### 2.4 Reload and verify
+
+1. Reload or restart Kilo so the new plugins and provider are loaded; VS Code users can run `Developer: Reload Window`.
+2. Open a project in your chosen client and start a new Kilo session.
+3. Confirm that the default agent is `code` and the selected model belongs to `openllamas`.
+4. Submit a read-only task:
+
+   > Inspect this project and tell me how to install dependencies and run tests. Do not modify files.
+
+Then try a small coding task:
+
+> Fix the most relevant failing test, run that test after the change, and summarize the root cause and edits.
+
+The read-only request validates the model path; the coding task validates editing, permissions and delivery checks. A valid configuration does not prove that tasks work, so run at least one real task after installation.
+
+## 3. Daily use
+
+### 3.1 The two main entry points
+
+- **`code`**: the default execution agent for reading code, editing, running commands and delivering changes.
+- **`plan`**: solution design and analysis; return to `code` after approving the approach.
+
+For a complex task, state the goal, constraints and acceptance criteria directly. There is no need to orchestrate subagents manually:
+
+> Add a paginated endpoint to this module. Preserve the existing API style, add tests for a normal page, an out-of-range page and an empty result, and do not change unrelated modules.
+
+### 3.2 What happens after you submit a task
+
+```text
+You describe the task
+   |
+   v
+The main agent analyzes and executes (reads, edits, runs commands, delegates as needed)
+   |  ├─ permission-guard: blocks dangerous commands and credential writes
+   |  ├─ compaction-anchor: preserves task anchors during long-session compaction
+   |  └─ quality-gate: checks execution evidence, test results and unfinished todos
+   v
+Delivery checks
+   |  ├─ Normal code changes: require a real passing verification after the last edit
+   |  └─ High-risk files or 3+ code files: automatic dual_review
+   |      (omission check + red team + final verdict)
+   v
+Changes, verification results and review/degradation/explicit-skip records
+```
+
+Documentation-only changes do not trigger the code-test gate or automatic delivery review. A failed review requires its must-fix items to be addressed. Automatic review is capped at two rounds; explicitly skipping verification or accepting residual risk leaves an auditable record.
+
+### 3.3 Common operations
+
+| Need | Action |
+|------|--------|
+| Change models or behavior | Edit `kilo.json.tmpl` → Dry Run → install |
+| Check deployment completeness | `install.ps1 -Check` or `install.sh --check` |
+| Enable project memory in a non-git directory | Run `/memory-setup` in Kilo |
+| Review, correct and retain experience | Run `/evolve` in Kilo |
+| Inspect failover events | `~/.local/share/kilo/failover-events.jsonl` |
+| Cleanup and database maintenance | See the maintenance section in [HISTORY](HISTORY.md) |
+
+## 4. Models, failover and reviews
+
+### 4.1 One file owns model configuration
+
+All concrete bindings live in `kilo.json.tmpl`. The models there are the author's default choices, not the only option: model selection is up to your own preference, so change any role's `model` / `variant` as needed.
+
+| What to change | Field |
+|----------------|-------|
+| Default main model | Top-level `model` |
+| Light-task / subagent default | `small_model` / `subagent_model` |
+| Planning, execution, review and other roles | `agent.<name>.model`; reasoning effort uses `variant` |
+| Gateway URL | `provider.openllamas.options.baseURL` |
+| Failover backup list | `provider.openllamas.options.failover.chain.models` |
+| Multi-model analysis seats | `provider.openllamas.options.moa` |
+| Dual-review seats and fallbacks | `provider.openllamas.options.dual_review` |
+| New model capabilities, limits and variants | `provider.openllamas.models` |
+
+Register a new model in `provider.openllamas.models` before referencing it. This guide intentionally does not copy current model names or counts, which change frequently. Role responsibilities are:
+
+| Role | Responsibility |
+|------|----------------|
+| `code` | Everyday implementation and command execution |
+| `plan` | Solution design and planning |
+| `general` | High-risk, cross-file or deep implementation subtasks |
+| `explore` | Read-only reconnaissance and location |
+| `orchestrator` | Task breakdown and delegation |
+| `compaction` | Session compaction and summaries |
+| `verify` | Independent, read-only cross-family verification |
+
+### 4.2 What the failover list means
+
+`failover.chain.models` is not the complete call chain. It is the **backup list after the current model**. The provider prepends the model for the current request and removes duplicates, so the actual chain length and order can differ between `code`, `plan`, `verify` and other agents.
+
+Failed models enter cooldown. During a sustained failure, later requests can skip a model already known to be unavailable. A visible failover notice is injected on a switch and deduplicated within the same cooldown window. If the whole chain is unavailable, the upstream error remains visible instead of being hidden behind a custom wrapper message.
+
+### 4.3 Multi-model review is not run for every task
+
+- `moa`: used on demand when several perspectives are valuable; reference models analyze independently before an aggregator synthesizes their conclusions.
+- `dual_review`: triggered automatically for complex deliveries and available manually for a specific plan. Positive and negative reviews run in parallel before a verdict seat makes the final decision.
+- Current seat models and fallback order come from configuration. A fallback can put a seat in the same family as the audited implementation; that result must be labeled a degraded review rather than full independent cross-family validation.
+- Reviews consume extra upstream calls and time, so simple, low-risk changes do not trigger them mechanically.
+
+## 5. Single-model capability mode
+
+Use this mode to evaluate **one model completing a task end to end without assistance**. It is not intended for normal delivery. There are two ways in: the mode picker for everyday use, and a command-line lockdown when strict isolation is required.
+
+### 5.1 Mode picker (everyday)
+
+1. Select `single` in the Kilo mode picker;
+2. pick the model and reasoning effort to test in the model picker;
+3. send the task — the session runs on that model, with no config change or reload.
+
+Isolation boundaries and residual effects of this path:
+
+- The `single` agent permission denies task delegation, moa/dual_review, Agent Manager, todo/goal, skill and memory tools; quality-gate skips its exit nudge for `single` sessions, and layers 1/2/3 never fire because the todo tool is denied;
+- model and effort follow the model picker, so switching models switches the test subject;
+- global instructions and project memory are still injected, and the failover chain stays active — if the chosen model fails, the response starts with a visible "⚠️ [failover]" marker and switches to a backup model; discard any test run that shows that marker;
+- background jobs such as session title/summary and auto-compaction use the configured light models and do not execute the task.
+
+### 5.2 Command-line lockdown (strict isolation)
+
+Use the lockdown mode when you need to empty the failover chain, collapse the model registry to a single model, clear instructions/skills, and bypass quality-gate entirely. Entering the mode:
+
+- pins the main model, light tasks, subagents, project memory, every agent, failover, MoA and dual_review to the same model;
+- turns other primary agents into hidden subagents, including built-ins such as `ask/debug/summary/title` that are absent from `kilo.json`, leaving only `single` in the main picker;
+- clears additional `instructions` and `skills`, and denies task delegation, multi-model review, Agent Manager, todo/goal, skill and memory tools;
+- disables automatic compaction, `task_model_selection` and reasoningGate.
+
+These commands work in both PowerShell and bash:
+
+```bash
+# 1. List registered models and variants in the deployed config
+node "$HOME/.config/kilo/scripts/single-model.mjs" list
+
+# 2. Preview the transition; replace MODEL_ID / VARIANT with list output
+node "$HOME/.config/kilo/scripts/single-model.mjs" enter --model MODEL_ID --variant VARIANT --dry-run
+
+# 3. Enter the mode
+node "$HOME/.config/kilo/scripts/single-model.mjs" enter --model MODEL_ID --variant VARIANT
+
+# 4. Reload VS Code/Kilo, start a new session and check status
+node "$HOME/.config/kilo/scripts/single-model.mjs" status
+
+# 5. Restore the original configuration after testing, then reload again
+node "$HOME/.config/kilo/scripts/single-model.mjs" restore
+```
+
+`enter` backs up the deployed config as `kilo.json.bak-single-*` and writes state to `~/.local/share/kilo/single-model.json`. By default, `restore` refuses to overwrite manual edits made after entering the mode; use `--force` only when those edits should be discarded, and `--keep-backup` when the backup should be retained.
+
+While the lockdown is active, both installers refuse to overwrite the configuration. Run `restore` before returning to the normal configuration workflow.
+
+## 6. Configuration maintenance and development
+
+### 6.1 The template edit workflow
+
+1. Edit only the repository's `kilo.json.tmpl`.
+2. Run Dry Run and confirm rendering and JSON validation pass.
+3. Install for real.
+4. Reload the VS Code window after plugin/provider changes; start a new session to verify model-routing changes.
+5. Run a real task rather than relying only on configuration parsing.
+
+Template comments must be whole-line `//` comments at the start of a line. Do not add custom `"//"` keys, and do not assume Kilo expands `~`; use the existing `__KILO_HOME__` / `__KILO_CONFIG__` placeholders for paths.
+
+A model or variant saved by the VS Code model selector can override an `agent.*` route. Existing sessions also do not automatically switch back after a template edit, which commonly explains why a correct configuration appears to have no effect.
+
+### 6.2 After editing the provider
+
+Run from the repository root:
+
+```bash
+# Needed only for the first build or after dependency lock changes
+npm --prefix provider/hx-failover ci
+
+# Rebuild dist after editing src/index.js, then test the dist behavior offline
+npm --prefix provider/hx-failover run build
+node provider/hx-failover/test-failover.mjs
+node provider/hx-failover/test-reasoning-gate.mjs
+```
+
+Then Dry Run, install, reload and run a real task. The installer compares the source and dist build fingerprints, so an old dist cannot stand in for a new implementation.
+
+See the acceptance section in [HISTORY](HISTORY.md) for the full test and plugin-contract commands.
+
+## 7. Architecture at a glance
+
+```text
+┌─ Repository (source of truth)──────────────────────┐
+│ kilo.json.tmpl / plugin / provider / agent         │
+│ command / lib / INSTRUCTIONS.md / scripts          │
+└──────────────────────┬─────────────────────────────┘
+                       │ install (render, validate, back up, deploy)
+                       v
+          ~/.config/kilo/ (deployed configuration)
+                       │
+                       v
+           Kilo GUI client / VS Code extension / CLI
+                       │
+                       v
+           provider / lib ──▶ OpenLlamas model gateway
+
+~/.local/share/kilo/: session DB, project/global memory, API key, failover events
+```
+
+See [HISTORY](HISTORY.md) for full asset responsibilities, historical decisions and performance measurements.
+
+## 8. Troubleshooting and privacy
+
+### Common problems
+
+| Symptom | Check first |
+|---------|-------------|
+| Empty model list or provider initialization failure | Whether install succeeded; whether the window was reloaded; whether `provider.npm` still contains an unrendered placeholder |
+| 401 / Invalid token | Whether `openllamas.key` is correct and belongs to the gateway in `baseURL` |
+| A config edit has no effect | `-Check` / `--check`, window reload, a new session and model-selector overrides |
+| Provider behavior is still old after an edit | Whether you rebuilt, installed and reloaded; whether src and dist fingerprints match |
+| Why failover occurred | Model, status and error summary in `failover-events.jsonl` |
+| Install refused during single-model lockdown | Run single-model `status`, then `restore` |
+
+### Data and privacy
+
+- Conversations and coding tasks are sent to the configured model gateway. `moa` / `dual_review` also send review material such as task descriptions and diffs to their configured models.
+- Keep the API key only in `auth.json`; never commit it or paste it into a task.
+- `failover-events.jsonl` records models, actions, statuses and error summaries, not conversation content.
+- `GLOBAL-NOTES.md` is a compiled global-memory artifact and must not be edited manually. Write through `mem_add` and search through `mem_search`.
+- See the privacy and security section in [HISTORY](HISTORY.md) for full network, telemetry and maintenance boundaries.

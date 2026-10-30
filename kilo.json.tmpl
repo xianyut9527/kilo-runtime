@@ -67,10 +67,12 @@
 
   // ── 智能体路由（前 6 个是内置 agent 的模型覆盖，verify 是自定义）──
   // ── 生效模型口径（被引用模型 ≤5；2026-10-26 实际 4 = 3 性价比档 + 1 旗舰规划档）──
-  // 模型随上游持续迭代，因此本文件是模型**绑定**的唯一真源：下方各 agent 字段、
-  // provider.options.failover / moa / dual_review 写具体模型；仓库文档只讲岗位与
-  // 档位口径、不复制模型名。例外只有 INSTRUCTIONS.md「模型使用口径」策略快照
-  //（换模型时随本文件一并更新）与 docs/HISTORY.md 历史记录（保留旧模型名，不回写）。
+  // 模型怎么选由用户自己的偏好决定：本文件给的是作者的一套默认绑定，用户可按喜好
+  // 改任意 agent 的 model/variant，也可整链换掉。因此本文件是模型**绑定**的唯一真源：
+  // 下方各 agent 字段、provider.options.failover / moa / dual_review 写具体模型；
+  // 仓库文档只讲岗位与档位口径、不复制模型名（避免把作者默认当成唯一方案）。
+  // 例外只有 INSTRUCTIONS.md「模型使用口径」策略快照（换模型时随本文件一并更新）
+  // 与 docs/HISTORY.md 历史记录（保留旧模型名，不回写）。
   // 两档分工：性价比档（glm / deepseek / minimax 三席）承担高频与轻量岗位，要快与便宜；
   // 旗舰档仅 kimi 规划席在路由内，大窗旗舰只注册不路由（手动选择池/回退口）。
   // 分配原则：按模型最强项定岗位，异源只用在有交叉验证价值的岗位（编码/规划/复核/
@@ -203,10 +205,20 @@
       "description": "独立验证视角（异源模型复核高风险改动，只读不改动）。仅在认证/权限/支付/数据迁移/公共契约等高风险改动时按需调用。禁止用 task 的 model/provider/variant 覆盖成与主执行同族的模型；failover 造成同族降级时，结论必须标注「降级复核」，不计为独立异源票。",
       "permission": {
         "edit": "deny",
+        "task": "deny",
         // 只读强制力补全：edit 全禁，bash 堵明确的仓库/文件/磁盘写通道。
         // node/python/npm test 等通用执行与测试通道保留给验证；这不是进程级沙箱，
         // 其只读用途由提示词约束，高危内容由 permission-guard 按命令内容二次拦截。
         "bash": {
+          // 复核 agent 不得用 eval/内联脚本绕过只读约束（2026-10-28 部署副本回填）。
+          "node -e*": "deny",
+          "node --eval*": "deny",
+          "node -p*": "deny",
+          "node --print*": "deny",
+          "python -c*": "deny",
+          "bun -e*": "deny",
+          "npx -c*": "deny",
+          "npx --call*": "deny",
           "sed -i*": "deny",
           "Set-Content *": "deny",
           "Out-File *": "deny",
@@ -264,6 +276,35 @@
           "iex *": "deny",
           "iex(*": "deny",
         },
+      },
+    },
+    "single": {
+      // 单模型能力测试模式（2026-10-30 用户裁定「选择模式→选择模型→执行」）：
+      // 常驻 primary，直接出现在模式选择器；不钉 model/variant——继承模型选择器的
+      // 当前选择，换模型即换测试对象，无需改配置或重载。工作流隔离 = 本节 permission
+      //（task/moa/dual_review/agent_manager/todo/goal/skill/记忆工具全 deny）+ agent/single.md
+      // 提示词 + quality-gate 对 single 会话的出口豁免。failover 链仍生效：流首出现
+      // ⚠️ [failover] 即该次执行已切换模型，测试结果作废；需要严格隔离（failover 清空、
+      // 注册表收敛、instructions 清空、quality-gate 整体旁路）时用 scripts/single-model.mjs enter/restore。
+      "mode": "primary",
+      "description": "单模型能力测试模式：用模型选择器选定的模型执行任务，禁止委派、多模型审查与规划脚手架。",
+      "permission": {
+        "task": "deny",
+        "moa": "deny",
+        "dual_review": "deny",
+        "agent_manager": "deny",
+        "todowrite": "deny",
+        "todoread": "deny",
+        "goal": "deny",
+        "goal_report": "deny",
+        "skill": "deny",
+        "kilo_memory_save": "deny",
+        "kilo_memory_recall": "deny",
+        "mem_add": "deny",
+        "mem_search": "deny",
+        "mem_get": "deny",
+        "mem_cite": "deny",
+        "mem_flag": "deny",
       },
     },
   },
@@ -449,6 +490,23 @@
       "Invoke-Expression(*": "deny",
       "iex *": "deny",
       "iex(*": "deny",
+      // 计划任务持久化面：创建/修改/删除/注册一律 deny（2026-10-28 部署副本回填）。
+      // 用 * 前缀覆盖大小写，避免 JSON 键仅大小写不同（PowerShell 解析器拒绝）。
+      "*et-ScheduledTask*": "deny",
+      "*egister-ScheduledTask*": "deny",
+      "schtasks /*reate*": "deny",
+      "schtasks /*elete*": "deny",
+      "schtasks /*hange*": "deny",
+      // 只读格式化放行；shell 包装器 deny，防止用 -c/-Command 绕过前缀式静态规则。
+      "Out-String *": "allow",
+      "bash -c*": "deny",
+      "sh -c*": "deny",
+      "cmd /c*": "deny",
+      "cmd /k*": "deny",
+      "pwsh -Command*": "deny",
+      "pwsh -EncodedCommand*": "deny",
+      "powershell -Command*": "deny",
+      "powershell -EncodedCommand*": "deny",
     },
     // 只读类工具全放行
     "read": "allow",
@@ -701,38 +759,6 @@
       // 不写则模型选择器里没有"思考强度"选项。key=reasoningEffort 会被
       // openai-compatible 映射成请求体 reasoning_effort 透传给上游网关。
       "models": {
-        // 无路由引用：保留为手动选择池（历史世代名；test-failover.mjs 的同名桩是
-        // 测试内字面量，与本注册表条目无关，不要据此认为删掉会破坏该测试）。
-        "deepseek-v4-flash": {
-          "reasoning": true,
-          "variants": {
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" },
-          },
-          "limit": {
-            "context": 200000,
-            "output": 32000,
-          },
-        },
-        "deepseek-v4.1-flash": {
-          "reasoning": true,
-          "variants": {
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" },
-          },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"],
-          },
-          "limit": {
-            "context": 200000,
-            "output": 32000,
-          },
-        },
         "deepseek-v4.1-flash-1017": {
           "reasoning": true,
           "variants": {
@@ -750,21 +776,6 @@
             "output": 32000,
           },
         },        
-        "glm-5.2": {
-          "reasoning": true,
-          // 无路由引用（选择器备用/回退口）：不在 agent 路由 / failover / 审查面板中，
-          // 注册保留供手动选用与单变量回退。模型换代后本行可直接删除。
-          "variants": {
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" },
-          },
-          "limit": {
-            "context": 200000,
-            "output": 32000,
-          },
-        },
         "glm-5.3": {
           "reasoning": true,
           // ⚠️ 无路由引用（选择器备用）；modalities 未声明（text-only 口径）。若日后启用
@@ -888,95 +899,6 @@
           "limit": {
             "context": 200000,
             "output": 32000,
-          },
-        },
-        "qwen3.8-flash": {
-          "reasoning": true,
-          // 无路由引用（选择器备用）：注册保留供手动选用，模型换代后本行可直接删除。
-          "variants": {
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" },
-          },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"],
-          },
-          "limit": {
-            "context": 200000,
-            "output": 32000,
-          },
-        },
-        "qwen3.8-max": {
-          "reasoning": true,
-          "variants": {
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-            "max": { "reasoningEffort": "max" },
-          },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"],
-          },
-          "limit": {
-            "context": 200000,
-            "output": 32000,
-          },
-        },
-        "gpt-6-luna": {
-          "reasoning": true,
-          // 无路由引用（额度/渠道不可用：400 insufficient credits / 404 no active channel）：
-          // 注册保留供额度恢复后单变量加回（曾作聚合/审查席与 failover 末跳候选），
-          // 当前 moa/dual_review 聚合首选与 failover 链均不含本档。定位=旗舰档，
-          // 规格见下方 limit；无 max 档，最高档为 high。
-          "variants": {
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-          },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"],
-          },
-          "limit": {
-            "context": 1050000,
-            "output": 128000,
-          },
-          "tool_call": true,
-        },
-        "claude-haiku-5-5": {
-          "reasoning": true,
-          "variants": {
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-          },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"],
-          },
-          "limit": {
-            "context": 1050000,
-            "output": 128000,
-          },
-          "tool_call": true,
-        },
-        "doubao-seed-2-1-pro": {
-          "reasoning": true,
-          "variants": {
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" }
-          },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"],
-          },
-          "limit": {
-            "context": 200000,
-            "output": 128000,
           },
         },
       },

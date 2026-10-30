@@ -38,7 +38,8 @@ try {
 // 工具函数经 _export 命名空间暴露（非顶层导出——Kilo vE2 会把每个导出函数当工厂调用）
 const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf, moduleBasenamesOf, hasTestRefFor, eslintConfigIn, reviewRetryAllowed, reviewEntryDue, reviewPendingBlocks, todoAnchorLines, unreviewedMarkerLine, driftCheckDue, diagRunFailureOf, isDelegateCall, reviewFailPrefix, todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText, extractUserAsks,
     pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel,
-    setFileCheck, addHighRisk, rememberCommand, MAX_FILE_CHECKS, MAX_HIGH_RISK, SLEEP_CMD_RE } = mod._export ?? mod;
+    setFileCheck, addHighRisk, rememberCommand, MAX_FILE_CHECKS, MAX_HIGH_RISK, SLEEP_CMD_RE,
+    singleModelOf } = mod._export ?? mod;
 let pass = 0, fail = 0;
 const failed = [];
 // t 双模（层 3 必修项②）：cond 传函数则在其内部捕获异常记为 fail（含错误信息），
@@ -61,6 +62,12 @@ const t = (name, cond) => {
   if (ok) { pass++; }
   else { fail++; failed.push(name); console.error(`  FAIL: ${name}`); }
 };
+
+// ── singleModel 配置判定（与 provider 同源）──
+t("singleModel 字符串形态", singleModelOf({ singleModel: "kimi-k3.1-pro" }) === "kimi-k3.1-pro");
+t("singleModel provider 前缀形态", singleModelOf({ singleModel: "openllamas/kimi-k3.1-pro" }) === "kimi-k3.1-pro");
+t("singleModel 对象形态", singleModelOf({ singleModel: { model: "kimi-k3.1-pro" } }) === "kimi-k3.1-pro");
+t("singleModel 缺省为空", singleModelOf({}) === "");
 
 // ── parseReviewVerdict ──
 t("通过+必须修复项为空 → fail=false", (() => {
@@ -1185,6 +1192,12 @@ t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/revi
     const y = mkS({ exitNudges: 2, exitNudgeFp: "fp-old", exitGateCapped: true });
     return exitGateVerdict(y, base).act === true && y.exitGateCapped === false;
   })());
+  t("verdict：agentSingle → single-mode 豁免（UI 单模型会话不注入）",
+    exitGateVerdict(mkS({}), { ...base, agentSingle: true }).act === false &&
+    exitGateVerdict(mkS({}), { ...base, agentSingle: true }).reason === "single-mode");
+  t("verdict：agentSingle 未传/假值 → 维持常规判定（契约漂移不漏管）",
+    exitGateVerdict(mkS({}), base).act === true &&
+    exitGateVerdict(mkS({}), { ...base, agentSingle: false }).act === true);
   t("verdict：undone=null → all-settled", exitGateVerdict(mkS({}), { ...base, undone: null }).reason === "all-settled");
   t("verdict：同快照 cap=2 → nudge-cap", exitGateVerdict(mkS({ exitNudges: 2, exitNudgeFp: base.fingerprint }), base).reason === "nudge-cap");
   t("verdict：15s 内 → cooldown", exitGateVerdict(mkS({ exitNudgeAt: 10 ** 12 - 1, exitNudgeFp: base.fingerprint }), base).reason === "cooldown");
@@ -1529,6 +1542,39 @@ t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/revi
   await idle(sidQ);
   t("层0 兜底：纯调研（无编辑无委派）不触发（低风险口径改完即交付）",
     injected.length === 11 && sQ.noListNudged !== true);
+
+  // 单模型会话豁免（2026-10-30 UI 选择模式）：agent=single 的会话出口不注入——
+  // 合成提示会污染「纯模型能力」的观察对象；未落定清单与层0兜底两条注入路径均须被盖住
+  const sidSgl = "t-exit-single";
+  const sSgl = mod._export.bucketOf({ sessionID: sidSgl });
+  sSgl.lastTodos = [{ content: "甲", status: "pending" }];
+  sSgl.edited.add("src/s.ts");
+  msgs.set(sidSgl, plainAssistant("测试执行到一半"));
+  const origGetSgl = fakeClient.session.get;
+  fakeClient.session.get = async (H) => {
+    const r = await origGetSgl(H);
+    if (H?.path?.id === sidSgl) r.data.agent = "single";
+    return r;
+  };
+  await idle(sidSgl);
+  fakeClient.session.get = origGetSgl;
+  t("出口门禁：agent=single（UI 单模型模式）→ single-mode 豁免不注入",
+    injected.length === 11 && sSgl.exitNudges === 0 && sSgl.noListNudged !== true);
+
+  const sidSgl2 = "t-exit-single2";
+  const sSgl2 = mod._export.bucketOf({ sessionID: sidSgl2 });
+  sSgl2.edited.add("src/s2.ts");
+  msgs.set(sidSgl2, plainAssistant("改完收工"));
+  const origGetSgl2 = fakeClient.session.get;
+  fakeClient.session.get = async (H) => {
+    const r = await origGetSgl2(H);
+    if (H?.path?.id === sidSgl2) r.data.agent = "single";
+    return r;
+  };
+  await idle(sidSgl2);
+  fakeClient.session.get = origGetSgl2;
+  t("出口门禁：agent=single 层0兜底路径同样豁免（无清单+有编辑不注入）",
+    injected.length === 11 && sSgl2.noListNudged !== true);
 
   const hooksY = await qgExit({ directory: ROOT });
   let threw = false;

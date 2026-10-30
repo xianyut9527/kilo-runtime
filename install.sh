@@ -53,6 +53,14 @@ case "$TARGET_NATIVE" in
   /[a-zA-Z]/*) TARGET_NATIVE="$(echo "$TARGET_NATIVE" | sed 's|^/\([a-zA-Z]\)/|\1:/|')" ;;
 esac
 
+# 单模型模式活动期间禁止覆盖配置（与 install.ps1 对等）。
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/kilo"
+SINGLE_STATE="$DATA_DIR/single-model.json"
+if [ -e "$SINGLE_STATE" ]; then
+  echo "[INSTALL] FAIL: 单模型模式仍处于活动状态（$SINGLE_STATE）。先运行 node \"$TARGET_DIR/scripts/single-model.mjs\" restore，再重新安装。" >&2
+  exit 1
+fi
+
 [ -f "$MANIFEST" ] || { echo "[INSTALL] FAIL: 清单缺失 $MANIFEST" >&2; exit 1; }
 
 # ---------- 工具探测 ----------

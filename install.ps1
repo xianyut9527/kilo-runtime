@@ -27,6 +27,16 @@ $HomeSlash = ($HOME -replace '\\', '/').TrimEnd('/')
 # Kilo 是原生程序：file:///C:/... 有效，file:///c/... 与 ~ 均无效（实测）。
 $TargetNative = ($TargetDir -replace '\\', '/').TrimEnd('/')
 
+# 单模型模式活动期间禁止覆盖配置：install 会把 kilo.json 恢复成模板，但状态文件仍在，
+# 形成「配置已恢复、QG 仍旁路/restore 指向旧备份」的不一致。必须先 restore。
+$DataDir = if ($env:XDG_DATA_HOME) { Join-Path $env:XDG_DATA_HOME 'kilo' } else { Join-Path $HOME '.local\share\kilo' }
+$SingleState = Join-Path $DataDir 'single-model.json'
+if (Test-Path -LiteralPath $SingleState) {
+    $restoreScript = Join-Path $TargetDir 'scripts\single-model.mjs'
+    Write-Error "[INSTALL] FAIL: 单模型模式仍处于活动状态（$SingleState）。先运行 node `"$restoreScript`" restore，再重新安装。"
+    exit 1
+}
+
 if (-not (Test-Path $Manifest)) { Write-Error "[INSTALL] FAIL: 清单缺失 $Manifest"; exit 1 }
 
 function Get-Sha256([string]$Path) {
@@ -436,9 +446,17 @@ if (-not $DryRun -and -not $Check -and $changed -gt 0 -and (Test-Path $TargetDir
     # 只能显式检查产物，否则会打印一个并不存在、看起来成功的备份路径。
     $bk = "$TargetDir.backup-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
     try {
-        Compress-Archive -Path (Join-Path $TargetDir '*') -DestinationPath $bk -Force
-        if (Test-Path -LiteralPath $bk) { Write-Host "[BACKUP] $bk" }
-        else { Write-Warning "[INSTALL] WARN: 备份未产出（目标目录为空或无可打包内容），跳过：[BACKUP] $bk" }
+        # 排除 Windows 非法尾缀（历史备份文件可能以 . 或空格结尾，Compress-Archive
+        # 遇到会整包失败，导致本次下发没有回滚点；2026-10-29 实测）。
+        $backupItems = @(Get-ChildItem -LiteralPath $TargetDir | Where-Object { $_.Name -notmatch '[. ]$' })
+        if ($backupItems.Count -eq 0) {
+            Write-Warning "[INSTALL] WARN: 备份未产出（目标目录为空或仅含非法文件名），跳过：[BACKUP] $bk"
+        }
+        else {
+            Compress-Archive -Path ($backupItems | ForEach-Object { $_.FullName }) -DestinationPath $bk -Force
+            if (Test-Path -LiteralPath $bk) { Write-Host "[BACKUP] $bk" }
+            else { Write-Warning "[INSTALL] WARN: 备份未产出（目标目录为空或无可打包内容），跳过：[BACKUP] $bk" }
+        }
     }
     catch { Write-Warning "[INSTALL] WARN: 备份失败（继续下发）：$($_.Exception.Message)" }
 }

@@ -1576,3 +1576,44 @@ for (const [tag, message, shouldFallback] of [
   console.log(`${tag} attempts:`, calls.join(", "), "| err:", err?.statusCode);
   console.log(`PASS ${tag} :`, passed);
 }
+
+// ── 回归 12：singleModel 硬锁（单模型能力测试模式）──────────────────────
+// 无论调用方请求哪个模型、配置里还有什么 fallback，provider 都必须只请求 pinned 模型，
+// 且 hxFailoverChain 只暴露一个候选。未设置 singleModel 时必须保持原链语义。
+const p12off = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: async () => new Response(sseOk("off")),
+  failover: { chain: { models: ["glm-5.3-flash"] } },
+});
+console.log("PASS single-model-off-chain   :", JSON.stringify(p12off.languageModel("deepseek-v4.1-flash-1017").hxFailoverChain) === JSON.stringify(["deepseek-v4.1-flash-1017", "glm-5.3-flash"]));
+
+let calls12 = [];
+const p12 = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub",
+  fetch: async (url, init) => {
+    let model = "?";
+    try { model = JSON.parse(init.body).model; } catch {}
+    calls12.push(model);
+    return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+  },
+  failover: { chain: { models: ["glm-5.3-flash"] } },
+  singleModel: "kimi-k2.6",
+});
+const chain12 = p12.languageModel("deepseek-v4.1-flash-1017").hxFailoverChain;
+const out12 = await gen9(p12, "deepseek-v4.1-flash-1017");
+console.log("PASS single-model-pin-chain   :", JSON.stringify(chain12) === JSON.stringify(["kimi-k2.6"]));
+console.log("PASS single-model-pin-served  :", JSON.stringify(calls12) === JSON.stringify(["kimi-k2.6"]) && out12.includes("[ok kimi-k2.6]"));
+
+let calls12b = [];
+const p12b = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub",
+  fetch: async (url, init) => {
+    let model = "?";
+    try { model = JSON.parse(init.body).model; } catch {}
+    calls12b.push(model);
+    return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+  },
+  failover: { chain: { models: ["glm-5.3-flash"] } },
+  singleModel: { model: "openllamas/kimi-k2.6" },
+});
+const out12b = await gen9(p12b, "glm-5.3-flash");
+console.log("PASS single-model-object-form :", JSON.stringify(calls12b) === JSON.stringify(["kimi-k2.6"]) && out12b.includes("[ok kimi-k2.6]"));
