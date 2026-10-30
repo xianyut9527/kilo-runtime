@@ -43,6 +43,10 @@
 - **注册表中仍在网关 `/v1/models` 的候选模型是手动选择池**：零路由引用 ≠ 冗余，不要以
   「清理/优化」为名删除（glm-5.3、kimi-k3 等保留）；已从网关下线的模型可移除。优化只动实际执行路径与使用方式。
   本节只快照高频岗位（执行/规划/复核），其余角色档位以 `kilo.json.tmpl` 为准；换型时随路由一并更新。
+- **`single` 模式仅用于纯单模型能力测试，不用于交付**：模式选择器选 `single` + 模型选择器选定模型即进入；
+  该模式禁用 task/moa/dual_review/agent_manager/todo/goal/技能/记忆工具，quality-gate 出口对 single 会话豁免；
+  failover 链仍生效，回复流首出现「⚠️ [failover]」的测试结果作废。需要严格隔离（failover 清空 + 注册表收敛
+  + instructions 清空 + quality-gate 整体旁路）时用 `scripts/single-model.mjs enter/restore`。
 
 ## 自我进化（原生记忆，越用越强）
 - **检索优先，先查记忆**：项目问题（怎么跑/为什么这样设计/之前踩过什么坑）先用 `kilo_memory_recall`
@@ -150,8 +154,9 @@
 - **不要**在内置 agent 名下写同名 `.md`（会整体覆盖内置提示词）；`verify` 这类非内置 agent 才用 `.md`。
 
 ## 版本口径
-- 本机日常实际使用的是 VS Code 扩展内嵌 CLI（7.7.6）；终端里全局 npm 的 `kilo`（7.4.16）校验口径不同，
-  它对 `privacy_mode` / `web_search` / `subagent_depth` 会报不识别 —— 那是旧版本读取同一份配置，不代表配置坏了。
+- 本机日常实际使用的是 VS Code 扩展内嵌 CLI（7.8.18），配置校验以它为准（`kilo.exe debug config`，
+  扩展路径解析见 docs/HISTORY.md 验收命令节）。旧版全局 npm `kilo`（7.4.16，现已不在 PATH）曾对
+  `privacy_mode` / `web_search` / `subagent_depth` 报不识别 —— 那是旧版本读取同一份配置，不代表配置坏了。
 
 ## 边界
 - 不新建编排引擎、DAG 或阶段门禁；不把工作方式写成机械清单。

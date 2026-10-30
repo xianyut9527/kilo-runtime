@@ -164,6 +164,7 @@ Register a new model in `provider.openllamas.models` before referencing it. This
 | `orchestrator` | Task breakdown and delegation |
 | `compaction` | Session compaction and summaries |
 | `verify` | Independent, read-only cross-family verification |
+| `single` | Single-model capability testing entry (not for delivery; see section 5) |
 
 ### 4.2 What the failover list means
 

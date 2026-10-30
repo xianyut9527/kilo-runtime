@@ -77,7 +77,7 @@ const provider = createHxFailover({
   apiKey: "stub",
   fetch: fakeFetch,
   // 显式传链：降级链唯一真源是配置（kilo.json failover.chain.models），代码已无内置默认链
-  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash", "glm-5.2"] } },
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash-1017", "glm-5.2"] } },
 });
 
 const model = provider.languageModel("glm-5.3-flash");
@@ -845,13 +845,13 @@ const fakeFetch9e = async (url, init) => {
 };
 const p9e = createHxFailover({
   name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9e,
-  failover: { chain: { models: ["glm-5.3-flash", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+  failover: { chain: { models: ["glm-5.3-flash", "deepseek-v4.1-flash-1017"] }, cooldownMs: 30000 },
 });
 await gen9(p9e, "kimi-k2.6"); // 第 1 轮：kimi×3 失败冷却 → glm×3 失败冷却 → deepseek 成功（此时 glm 未冷却所以被真试了 3 次）
 const out9e = await gen9(p9e, "kimi-k2.6"); // 第 2 轮：kimi 失败×3 → glm 冷却被跳过 → deepseek 成功
 console.log("");
 console.log("9e output:", JSON.stringify(out9e));
-console.log("PASS standby-cooldown-skip    :", out9e.includes("[ok deepseek-v4.1-flash]") && !out9e.includes("[failover]"));
+console.log("PASS standby-cooldown-skip    :", out9e.includes("[ok deepseek-v4.1-flash-1017]") && !out9e.includes("[failover]"));
 
 // 9f：去重命中留遥测痕迹（notice_dedup）——静默切换不丢诊断
 let dedup9f = [];
@@ -903,7 +903,7 @@ const fakeFetch9h = async (url, init) => {
 };
 const p9h = createHxFailover({
   name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9h,
-  failover: { chain: { models: ["glm-5.3-flash", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+  failover: { chain: { models: ["glm-5.3-flash", "deepseek-v4.1-flash-1017"] }, cooldownMs: 30000 },
 });
 const t9h = Date.now();
 const out9h = await gen9(p9h, "glm-5.2"); // 主模型渠道不可用 → 零重试直接换链（链 = 请求模型 + chain.models）
@@ -924,7 +924,7 @@ const fakeFetch9i = async (url, init) => {
 };
 const p9i = createHxFailover({
   name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9i,
-  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash-1017"] }, cooldownMs: 30000 },
 });
 const t9i = Date.now();
 let err9i = null;
@@ -953,7 +953,7 @@ const fakeFetch9j = async (url, init) => {
 };
 const p9j = createHxFailover({
   name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9j,
-  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash-1017"] }, cooldownMs: 30000 },
 });
 const t9j = Date.now();
 const out9j = await gen9(p9j, "glm-5.3-flash"); // 主模型 404 渠道不可用 → 零重试直接换链
@@ -974,7 +974,7 @@ const fakeFetch9k = async (url, init) => {
 };
 const p9k = createHxFailover({
   name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9k,
-  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash-1017"] }, cooldownMs: 30000 },
 });
 let err9k = null;
 const t9k = Date.now();
@@ -999,7 +999,7 @@ const fakeFetch9l = async (url, init) => {
 };
 const p9l = createHxFailover({
   name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9l,
-  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash-1017"] }, cooldownMs: 30000 },
 });
 const out9l = await gen9(p9l, "glm-5.3-flash");
 console.log("9l attempts:", calls9l.join(", "));
@@ -1117,7 +1117,7 @@ const fakeFetch9p = async (url, init) => {
 };
 const p9p = createHxFailover({
   name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9p,
-  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash-1017"] }, cooldownMs: 30000 },
 });
 const t9p = Date.now();
 const out9p = await gen9(p9p, "glm-5.3-flash"); // 事故原样形态：主模型 404 → 必须零重试换链
@@ -1194,7 +1194,7 @@ const fakeFetch9r = async (url, init) => {
 };
 const p9r = createHxFailover({
   name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch9r,
-  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash"] }, cooldownMs: 30000 },
+  failover: { chain: { models: ["kimi-k2.6", "deepseek-v4.1-flash-1017"] }, cooldownMs: 30000 },
 });
 const t9r = Date.now();
 let err9r = null;

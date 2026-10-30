@@ -275,6 +275,22 @@
           "Invoke-Expression(*": "deny",
           "iex *": "deny",
           "iex(*": "deny",
+          // 与全局 permission.bash 同口径回填（2026-10-30 查漏补缺）：计划任务持久化面
+          // 与 shell 包装器载体。verify 只读约束须覆盖全部写/执行逃逸通道——全局 2026-10-28
+          // 新增本组规则时本段未同步，静态层存在缺口（动态 permission-guard 仍在位，此处补齐静态防线）。
+          "*et-ScheduledTask*": "deny",
+          "*egister-ScheduledTask*": "deny",
+          "schtasks /*reate*": "deny",
+          "schtasks /*elete*": "deny",
+          "schtasks /*hange*": "deny",
+          "bash -c*": "deny",
+          "sh -c*": "deny",
+          "cmd /c*": "deny",
+          "cmd /k*": "deny",
+          "pwsh -Command*": "deny",
+          "pwsh -EncodedCommand*": "deny",
+          "powershell -Command*": "deny",
+          "powershell -EncodedCommand*": "deny",
         },
       },
     },
