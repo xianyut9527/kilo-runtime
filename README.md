@@ -17,7 +17,7 @@ Kilo Runtime 是 **Kilo 的全局配置与运行时增强包**，可用于 Kilo 
 - Kilo GUI 客户端、VS Code + Kilo 扩展，或 Kilo CLI（任选其一）
 - Windows：PowerShell 7+；macOS / Linux：bash
 - Node.js 22+（安装冒烟检查、维护脚本和单模型工具使用；Bun 可选）
-- 模型供应商：[OpenLlamas](https://openllamas.com)（准备其 API Key）
+- 模型供应商：[OpenLlamas](https://openllamas.com)（准备其 API Key；这里默认使用 OpenLlamas，你也可以更换为自己的模型供应商与 API Key）
 
 日常安装不需要执行 `npm install`；provider 的构建产物已随仓库提供。
 
@@ -54,6 +54,8 @@ cd kilo-runtime
 ```
 
 API Key 不进入仓库。修改 Key 不需要重新 install；共享分析客户端的配置缓存最长 60 秒，若运行中的 Kilo 仍使用旧凭证，重载或重启 Kilo 后再试。
+
+使用自己的模型供应商时，在 `auth.json` 中配置你的 Key，并将 `kilo.json.tmpl` 中的 `baseURL` 改为你的网关地址后重新 install。
 
 ### 4. 跑通第一个任务
 
