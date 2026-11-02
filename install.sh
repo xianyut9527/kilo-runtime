@@ -99,7 +99,7 @@ esac
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/kilo"
 SINGLE_STATE="$DATA_DIR/single-model.json"
 if [ -e "$SINGLE_STATE" ]; then
-  echo "[INSTALL] FAIL: 单模型模式仍处于活动状态（$SINGLE_STATE）。先运行 node \"$TARGET_DIR/scripts/single-model.mjs\" restore，再重新安装。" >&2
+  echo "[INSTALL] FAIL: 单模型模式仍处于活动状态（${SINGLE_STATE}）。先运行 node \"$TARGET_DIR/scripts/single-model.mjs\" restore，再重新安装。" >&2
   exit 1
 fi
 
@@ -496,7 +496,7 @@ smoke_ts() { # $1 = 源文件；返回 0=通过，2=无引擎（放行+告警）
   if [ "$rc" -ne 0 ]; then
     # 引擎原始输出此前被吞（>/dev/null 2>&1），远程排障只剩「加载即崩」四个字（macOS 无工具链时无法定位）；
     # 失败才回显（成功保持零噪音），前 15 行足够定位语法/依赖/引擎错
-    echo "[INSTALL] 冒烟引擎原始输出（$f，前 15 行）：" >&2
+    echo "[INSTALL] 冒烟引擎原始输出（${f}，前 15 行）：" >&2
     [ -n "$out" ] && printf '%s\n' "$out" | sed -n '1,15p' >&2
   fi
   return "$rc"
@@ -550,7 +550,7 @@ VE2JS
     rm -f "$tmpmjs"
     rm -rf "$smoke_xdg"
     if [ "$rc" -ne 0 ]; then
-      echo "[INSTALL] vE2 模拟引擎原始输出（$f，前 15 行）：" >&2
+      echo "[INSTALL] vE2 模拟引擎原始输出（${f}，前 15 行）：" >&2
       [ -n "$out" ] && printf '%s\n' "$out" | sed -n '1,15p' >&2
     fi
     return "$rc"
@@ -588,7 +588,7 @@ VE2JS
   rm -f "$tmpmjs"
   rm -rf "$smoke_xdg"
   if [ "$rc" -ne 0 ]; then
-    echo "[INSTALL] vE2 模拟引擎原始输出（$f，前 15 行）：" >&2
+    echo "[INSTALL] vE2 模拟引擎原始输出（${f}，前 15 行）：" >&2
     [ -n "$out" ] && printf '%s\n' "$out" | sed -n '1,15p' >&2
   fi
   return "$rc"
@@ -632,7 +632,7 @@ smoke_provider_js() { # $1 = 源文件；返回 0=通过/降级放行，1=硬失
   url="$(to_file_url "$f")"
   out="$("$NODE_SMOKE" --input-type=module -e "import('$url').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })" 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    echo "[INSTALL] provider 冒烟引擎原始输出（$f，前 15 行）：" >&2
+    echo "[INSTALL] provider 冒烟引擎原始输出（${f}，前 15 行）：" >&2
     [ -n "$out" ] && printf '%s\n' "$out" | sed -n '1,15p' >&2
   fi
   return "$rc"
@@ -718,10 +718,10 @@ if [ "$DRY_RUN" = "0" ] && [ "$CHECK" = "0" ] && [ "$DIFF_COUNT" -gt 0 ] && [ -d
   # 排除 node_modules：本机依赖动辄几十 MB，备份里没有价值
   KEEP_BACKUPS="${KILO_KEEP_BACKUPS:-2}"
   case "$KEEP_BACKUPS" in
-    ''|*[!0-9]*) echo "[BACKUP] WARN: KILO_KEEP_BACKUPS 非法（$KEEP_BACKUPS，需 ≥1 整数），按默认 2 处理" >&2; KEEP_BACKUPS=2 ;;
+    ''|*[!0-9]*) echo "[BACKUP] WARN: KILO_KEEP_BACKUPS 非法（${KEEP_BACKUPS}，需 ≥1 整数），按默认 2 处理" >&2; KEEP_BACKUPS=2 ;;
   esac
   if [ "$KEEP_BACKUPS" -lt 1 ]; then
-    echo "[BACKUP] WARN: KILO_KEEP_BACKUPS 非法（$KEEP_BACKUPS，需 ≥1 整数），按默认 2 处理" >&2
+    echo "[BACKUP] WARN: KILO_KEEP_BACKUPS 非法（${KEEP_BACKUPS}，需 ≥1 整数），按默认 2 处理" >&2
     KEEP_BACKUPS=2
   fi
   # BSD/macOS find 没有 -printf（GNU 专有）：mtime 改用 stat 取（GNU -c %Y / BSD -f %m）。
@@ -790,7 +790,7 @@ echo "  清单条目 : $TOTAL"
 echo "  未变化   : $SAME"
 echo "  差异/写入: $CHANGED"
 if [ "$STRAYS" -gt 0 ]; then
-  echo "  多余文件 : $STRAYS（清单外，白名单外）"
+  echo "  多余文件 : ${STRAYS}（清单外，白名单外）"
   printf '%s\n' "$STRAY_LIST" | sed 's/^/    /'
 fi
 if [ -n "$PY" ]; then
@@ -809,10 +809,10 @@ fi
 if [ "$WROTE" -gt 0 ]; then
   RELOAD_WHAT=""
   if [ "$PLUGIN_WROTE" = "1" ]; then RELOAD_WHAT="plugin/"; fi
-  if [ "$PROVIDER_WROTE" = "1" ]; then RELOAD_WHAT="${RELOAD_WHAT:+$RELOAD_WHAT、}provider/hx-failover/dist/"; fi
+  if [ "$PROVIDER_WROTE" = "1" ]; then RELOAD_WHAT="${RELOAD_WHAT:+${RELOAD_WHAT}、}provider/hx-failover/dist/"; fi
   if [ -n "$RELOAD_WHAT" ]; then
     echo ""
-    echo "[install] 提示：本次更新了 $RELOAD_WHAT。Kilo 不热加载这些模块——运行中的 Kilo/VS Code 窗口仍执行旧逻辑，重载窗口后新版才生效（quality-gate ⑥ 检测亦会在交付节点告警）。"
+    echo "[install] 提示：本次更新了 ${RELOAD_WHAT}。Kilo 不热加载这些模块——运行中的 Kilo/VS Code 窗口仍执行旧逻辑，重载窗口后新版才生效（quality-gate ⑥ 检测亦会在交付节点告警）。"
   fi
 fi
 
