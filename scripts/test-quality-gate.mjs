@@ -547,7 +547,9 @@ t("diagCovers：文档编辑不数（editVersion 变但 codeEditV 不变）→ �
       fs.mkdirSync(path.join(pkgDir, "dist"), { recursive: true });
       return pkgDir;
     };
-    const sha = (t) => createHash("sha256").update(t).digest("hex");
+    // 指纹口径与生产代码一致（2026-11-02）：哈希前剥离 CR —— 仓库 blob 是 LF、
+    // Windows 工作区是 CRLF，不归一化会把行尾差异误判成「src 已改未重建」
+    const sha = (t) => createHash("sha256").update(Buffer.from(String(t).replace(/\r/g, ""), "utf8")).digest("hex");
     const past = new Date(Date.now() - 60_000);
     const future = new Date(Date.now() + 60_000);
     // 指纹 MATCH：src mtime 事后变新（git checkout/还原同步）不得误报过期
@@ -575,6 +577,14 @@ t("diagCovers：文档编辑不数（editVersion 变但 codeEditV 不变）→ �
     fs.utimesSync(path.join(fpExtra, "src", "util.js"), future, future);
     t("distStaleOf：指纹 MATCH + 非 index src 编辑比 dist 新 → mtime 兜底拦截",
       () => distStaleOf(tmp, "fpextra", ["index.js", "util.js"]).stale === true);
+    // 跨平台行尾（2026-11-02 macOS 实机踩中）：src 工作区是 CRLF（Windows autocrlf）、
+    // dist 指纹按 LF 口径嵌入（git blob）→ 行尾差异不是「src 已改」，必须判 MATCH
+    const fpCrlf = mkPkg("fpcrlf");
+    fs.writeFileSync(path.join(fpCrlf, "src", "index.js"), "line1\r\nline2\r\n");
+    fs.writeFileSync(path.join(fpCrlf, "dist", "index.js"), `// kilo-build: src-sha256=${sha("line1\nline2\n")}\ndist`);
+    const rCrlf = distStaleOf(tmp, "fpcrlf", ["index.js"]);
+    t("distStaleOf：src 工作区 CRLF + 指纹按 LF 口径嵌入 → MATCH（行尾差异不算 src 已改）",
+      () => rCrlf.stale === false && rCrlf.fingerprint === "match");
     // 无指纹（旧版产物）→ 整体回落 mtime 口径（与旧行为一致）
     const fresh = mkPkg("fresh");
     fs.writeFileSync(path.join(fresh, "src", "index.js"), "src");

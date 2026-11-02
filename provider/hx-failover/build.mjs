@@ -38,13 +38,22 @@ if (srcEntries.length !== 1 || srcEntries[0] !== srcPath) {
 // 正则漏拦 import(/*c*/'./x')、import(`./x`) 等插入形态。node22 无内置 AST 解析器，
 // 但 esbuild 自带精确依赖图：metafile.inputs 就是 bundle 实际吞下的全部输入文件，
 // 任何导入形态（注释/模板/动态/require）都无处可逃。断言下移至 build 调用之后。
-const srcText = await readFile(srcPath, "utf8");
+const srcBytes = await readFile(srcPath);
 
 // dist 新鲜度指纹（2026-09-28）：install 脚本曾用 mtime 对比 src/dist 判断 dist 是否
 // 过期，但 git checkout/还原会同步两个文件的 mtime（本机实证同秒），毫秒级精度即误报。
 // 改为内容锚定：构建时把 src 内容 sha256 写进 dist 首行注释，install 端提取比对——
 // 不依赖文件系统时间、可跨端/跨时区/跨 checkout 复现。
-const srcHash = createHash("sha256").update(srcText).digest("hex");
+//
+// 指纹必须跨平台稳定（2026-11-02 macOS 实机踩中）：仓库 blob 是 LF，但 Windows 工作区
+// 因 core.autocrlf=true 落地成 CRLF。直接哈希工作区字节 = 同一份 src 在 Windows 与
+// macOS 得到两个哈希（实证 CRLF=2a0ad8d7… / LF=e395b997…），dist 里嵌入的指纹只对
+// 构建机成立，另一端必判「src 已改未重建」并硬失败。口径：哈希前剥离全部 CR 字节
+// （CRLF→LF）。build.mjs / install.sh / install.ps1 / plugin/quality-gate.ts 必须同口径，
+// 否则安装闸门与交付门禁互相打脸。
+const srcHash = createHash("sha256")
+  .update(srcBytes.filter((b) => b !== 0x0d))
+  .digest("hex");
 
 const buildResult = await build({
   entryPoints: [srcPath],

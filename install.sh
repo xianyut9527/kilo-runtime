@@ -28,7 +28,7 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY_RUN=1 ;;
     --check)   CHECK=1 ;;
     --force)   FORCE=1 ;;
-    --target)  shift; TARGET_DIR="$1" ;;
+    --target)  shift; [ $# -ge 1 ] || { echo "[INSTALL] FAIL: --target 需要一个目录参数" >&2; exit 2; }; TARGET_DIR="$1" ;;
     -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "[INSTALL] FAIL: 未知参数 $1" >&2; exit 2 ;;
   esac
@@ -36,6 +36,16 @@ while [ $# -gt 0 ]; do
 done
 
 TARGET_DIR="${TARGET_DIR//\\//}"
+# 尾随分隔符必须去掉（2026-11-02 七轮双端对等实测）：`--target ~/.config/kilo/` 会把尾部
+# 斜杠带进 provider.npm 的 file:// URL（.../kilo//provider/hx-failover），与不带斜杠的下发
+# 结果产生 1 处假漂移（kilo.json），--check 也误报 exit 1；install.ps1 侧本就 TrimEnd('/')，
+# 两端必须对等。根 '/' 与其变体 'C:/' 保留分隔符（去掉会退化成相对路径 C:）。
+case "$TARGET_DIR" in
+  '') echo "[INSTALL] FAIL: 目标目录为空（--target / KILO_SYNC_TARGET 不能为空）" >&2; exit 2 ;;
+  /) ;;
+  [A-Za-z]:/) ;;
+  *) while [ "${TARGET_DIR%/}" != "$TARGET_DIR" ]; do TARGET_DIR="${TARGET_DIR%/}"; done ;;
+esac
 # 家目录必须转成 **原生** 正斜杠形式（C:/Users/x），不能是 MSYS 的 /c/Users/x：
 # Kilo 是原生程序，不认 MSYS 路径。有 cygpath 时优先用它。
 if command -v cygpath >/dev/null 2>&1; then
@@ -181,6 +191,16 @@ hash_of() { # $1 = file
   else echo ""; fi
 }
 
+# 指纹专用哈希（2026-11-02 macOS 实机踩中后新增）：哈希前剥离全部 CR 字节（CRLF→LF）。
+# 仓库 blob 是 LF，Windows 工作区因 core.autocrlf=true 是 CRLF——同一份 src 在两端
+# 哈希不同，会让 dist 里嵌入的指纹只对构建机成立，另一端必判「已改未重建」并硬失败。
+# 口径必须与 build.mjs / install.ps1 / plugin/quality-gate.ts 完全一致。
+hash_of_lf() { # $1 = file
+  if command -v sha256sum >/dev/null 2>&1; then tr -d '\r' < "$1" | sha256sum | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then tr -d '\r' < "$1" | shasum -a 256 | cut -d' ' -f1
+  else echo ""; fi
+}
+
 # 判断某文件是否需要占位符替换（按 basename 判断，不能用完整路径）
 needs_subst() {
   case "$(basename "$1")" in
@@ -276,7 +296,7 @@ DIST_FP_OK=0
 SRC_JS="$SCRIPT_DIR/provider/hx-failover/src/index.js"
 DIST_JS="$SCRIPT_DIR/provider/hx-failover/dist/index.js"
 if [ -f "$SRC_JS" ] && [ -f "$DIST_JS" ]; then
-  SRC_HASH="$(hash_of "$SRC_JS")"
+  SRC_HASH="$(hash_of_lf "$SRC_JS")"
   # 仅首行：剥 BOM + 严格整行匹配 ^// kilo-build: src-sha256=<64hex>$
   # （[[:space:]]*$ 允许尾随空格/CR，其余任何尾随字符都不算有效指纹）
   # 2026-11-02 BSD/macOS 兼容：BSD sed 不支持 GNU 专有的 \xEF 转义与 `1{...;p}` 写法

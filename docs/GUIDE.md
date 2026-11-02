@@ -294,6 +294,8 @@ node provider/hx-failover/test-reasoning-gate.mjs
 | 修改 provider 后行为仍旧 | 是否重新 build、install 并重载；dist 指纹是否与 src 一致 |
 | 故障切换为何发生 | 查看 `failover-events.jsonl` 的模型、状态码和错误摘要 |
 | 单模型锁定模式无法 install | 先运行 single-model `status`，再 `restore` |
+| `./install.sh` 提示 Permission denied（macOS/Linux） | 克隆或解压丢了可执行位：`chmod +x install.sh`，或直接用 `bash install.sh` |
+| 安装报 provider dist 指纹不匹配 | 产物与源码未同步：`cd provider/hx-failover && npm install && npm run build` 后重试；确认产物可用时加 `--force` |
 
 ### 数据与隐私
 

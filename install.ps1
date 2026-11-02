@@ -21,13 +21,33 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+# 路径归一化（2026-11-02 七轮实测）：-Target 传入 8.3 短名（C:\Users\ADMINI~1\…）、相对
+# 路径或尾随分隔符时，下面两处 `$_.FullName.Substring($根.Length)` 会错位——孤儿扫描把
+# 已部署的 25 个文件全判成「清单外多余文件」并 exit 1（实测 8.3 短名复现）。GetFullPath
+# 展开短名并绝对化，TrimEnd 去尾分隔符（盘符根 C:\ 不能退化成 C:）。
+function Resolve-FullPath([string]$p) {
+    if ([string]::IsNullOrWhiteSpace($p)) { return '' }
+    # 相对路径必须先按 PowerShell 当前位置绝对化：Set-Location 不会同步进程 CWD，
+    # 直接 GetFullPath('.\x') 可能解析到启动目录而非当前目录（PS 5.1 已知行为）。
+    if (-not [System.IO.Path]::IsPathRooted($p)) { $p = Join-Path (Get-Location).ProviderPath $p }
+    $full = [System.IO.Path]::GetFullPath($p)
+    $trim = $full.TrimEnd('\', '/')
+    if ($trim -match '^[A-Za-z]:$') { $trim = $trim + '\' }
+    return $trim
+}
+
+$ScriptDir = Resolve-FullPath (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $Manifest  = Join-Path $ScriptDir 'install.manifest'
-$TargetDir = if ($Target) { $Target } else { Join-Path $HOME '.config\kilo' }
+$TargetDir = Resolve-FullPath $(if ($Target) { $Target } else { Join-Path $HOME '.config\kilo' })
+if ([string]::IsNullOrWhiteSpace($TargetDir)) {
+    Write-Error "[INSTALL] FAIL: 目标目录为空（-Target 不能为空）"
+    exit 1
+}
 $HomeSlash = ($HOME -replace '\\', '/').TrimEnd('/')
 # 部署目录的原生正斜杠路径（供 provider.npm 的 file:// URL 使用）。
 # Kilo 是原生程序：file:///C:/... 有效，file:///c/... 与 ~ 均无效（实测）。
 $TargetNative = ($TargetDir -replace '\\', '/').TrimEnd('/')
+if ($TargetNative -match '^[A-Za-z]:$') { $TargetNative = $TargetNative + '/' }
 # provider.npm 的 file:// 基址：必须恰好三斜杠。
 # 盘符路径（C:/...）→ file:///C:/...；POSIX 绝对路径（/Users/...，pwsh on macOS）→ file:///Users/...
 # file:// URL 的路径段必须百分号编码（RFC 3986）：只保留 unreserved（A-Za-z0-9-._~）
@@ -64,6 +84,23 @@ if (-not (Test-Path $Manifest)) { Write-Error "[INSTALL] FAIL: 清单缺失 $Man
 function Get-Sha256([string]$Path) {
     if (-not (Test-Path $Path)) { return '' }
     return (Get-FileHash -Algorithm SHA256 -Path $Path).Hash
+}
+
+# 指纹专用哈希（2026-11-02 macOS 实机踩中后新增）：哈希前剥离全部 CR 字节（CRLF→LF）。
+# 仓库 blob 是 LF，Windows 工作区因 core.autocrlf=true 是 CRLF——同一份 src 在两端
+# 哈希不同，会让 dist 里嵌入的指纹只对构建机成立，另一端必判「已改未重建」并硬失败。
+# 口径必须与 build.mjs / install.sh / plugin/quality-gate.ts 完全一致。
+function Get-Sha256Lf([string]$Path) {
+    if (-not (Test-Path $Path)) { return '' }
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $ms = New-Object System.IO.MemoryStream
+    try {
+        foreach ($b in $bytes) { if ($b -ne 13) { $ms.WriteByte($b) } }
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return (([BitConverter]::ToString($sha.ComputeHash($ms.ToArray()))) -replace '-', '').ToLower()
+        } finally { $sha.Dispose() }
+    } finally { $ms.Dispose() }
 }
 
 function Test-NeedsSubst([string]$Path) {
@@ -114,7 +151,7 @@ foreach ($raw in Get-Content $Manifest) {
         $root = $src.TrimEnd('/')
         $rootPath = Join-Path $ScriptDir $root
         if (-not (Test-Path $rootPath)) { Write-Warning "[INSTALL] WARN: 清单目录不存在，跳过 $root"; continue }
-        foreach ($f in Get-ChildItem -Recurse -File -Path $rootPath | Sort-Object FullName) {
+        foreach ($f in Get-ChildItem -Recurse -File -LiteralPath $rootPath | Sort-Object FullName) {
             $rel = $f.FullName.Substring($rootPath.Length).TrimStart('\', '/')
             $pairs += [pscustomobject]@{ Src = $f.FullName; Dst = ((Join-Path $dst $rel) -replace '\\', '/') }
         }
@@ -139,7 +176,7 @@ $distFpOk = $false
 $srcJs  = Join-Path $ScriptDir 'provider/hx-failover/src/index.js'
 $distJs = Join-Path $ScriptDir 'provider/hx-failover/dist/index.js'
 if ((Test-Path $srcJs) -and (Test-Path $distJs)) {
-    $srcHash = (Get-FileHash -Algorithm SHA256 -Path $srcJs).Hash.ToLower()
+    $srcHash = Get-Sha256Lf $srcJs
     # 剥 BOM + 截断 CR（Get-Content 已按行分割，此处再防首行尾随 CR 残留）
     $firstLine = (Get-Content -LiteralPath $distJs -TotalCount 1) -replace '^\uFEFF', '' -replace "`r$", ''
     # 严格整行匹配：^// kilo-build: src-sha256=<64hex>（末尾不得有其他字符）
@@ -150,7 +187,12 @@ if ((Test-Path $srcJs) -and (Test-Path $distJs)) {
         if ($Force) {
             Write-Warning "[INSTALL] WARN: provider dist/index.js 首行无有效构建指纹 —— 已用 -Force 跳过完整性闸门"
         } else {
-            Write-Warning "[INSTALL] FAIL: provider dist/index.js 首行无有效构建指纹（旧版产物/首行被改动）—— 在 provider/hx-failover 跑 npm run build 重建后再下发（确认可跳过时加 -Force）"
+            # FAIL 文案走 error 流（EAP 临时降 Continue，避免 terminating error 吃掉后续
+            # [check] 漂移行与退出码控制流）；与 install.sh 的 >&2 + exit 1 语义对齐。
+            $prevEapFail = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            Write-Error "[INSTALL] FAIL: provider dist/index.js 首行无有效构建指纹（旧版产物/首行被改动）—— 在 provider/hx-failover 跑 npm run build 重建后再下发（确认可跳过时加 -Force）"
+            $ErrorActionPreference = $prevEapFail
         }
         if ($Check) { Write-Error "[check] 漂移：provider dist 缺构建指纹"; exit 1 }
         elseif (-not $Force) { exit 1 }
@@ -159,7 +201,10 @@ if ((Test-Path $srcJs) -and (Test-Path $distJs)) {
         if ($Force) {
             Write-Warning "[INSTALL] WARN: provider src/index.js 已改但 dist 指纹不匹配 —— 已用 -Force 跳过完整性闸门"
         } else {
-            Write-Warning "[INSTALL] FAIL: provider src/index.js 已改但 dist 指纹不匹配 —— 先在 provider/hx-failover 跑 npm run build 再下发（确认可跳过时加 -Force）"
+            $prevEapFail = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            Write-Error "[INSTALL] FAIL: provider src/index.js 已改但 dist 指纹不匹配 —— 先在 provider/hx-failover 跑 npm run build 再下发（确认可跳过时加 -Force）"
+            $ErrorActionPreference = $prevEapFail
         }
         if ($Check) { Write-Error "[check] 漂移：provider dist 过期（src 已改未重建）"; exit 1 }
         elseif (-not $Force) { exit 1 }
@@ -550,7 +595,7 @@ $strayList = @()
 if (Test-Path $TargetDir) {
     $expected = @($pairs | ForEach-Object { ($_.Dst -replace '\\', '/') } | Sort-Object)
     # 空目录时管道产出 $null，Compare-Object 的 -DifferenceObject 不接受 null（实测崩溃），必须显式套 @()
-    $present = @(Get-ChildItem -Recurse -File -Path $TargetDir |
+    $present = @(Get-ChildItem -Recurse -File -LiteralPath $TargetDir |
         Where-Object { $_.FullName -notmatch '[\\/]node_modules[\\/]' -and $_.FullName -notmatch '[\\/]\.kilo[\\/]' } |
         ForEach-Object { $_.FullName.Substring($TargetDir.Length).TrimStart('\', '/') -replace '\\', '/' } | Sort-Object)
     $strayList = @(Compare-Object -ReferenceObject $expected -DifferenceObject $present |

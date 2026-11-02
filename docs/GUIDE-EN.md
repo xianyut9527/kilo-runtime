@@ -294,6 +294,8 @@ See [HISTORY](HISTORY.md) for full asset responsibilities, historical decisions 
 | Provider behavior is still old after an edit | Whether you rebuilt, installed and reloaded; whether src and dist fingerprints match |
 | Why failover occurred | Model, status and error summary in `failover-events.jsonl` |
 | Install refused during single-model lockdown | Run single-model `status`, then `restore` |
+| `./install.sh` reports Permission denied (macOS/Linux) | The clone or archive lost the executable bit: run `chmod +x install.sh`, or run `bash install.sh` directly |
+| Install reports a provider dist fingerprint mismatch | Artifacts are out of sync with source: run `cd provider/hx-failover && npm install && npm run build`, then retry; add `--force` when the artifacts are known good |
 
 ### Data and privacy
 

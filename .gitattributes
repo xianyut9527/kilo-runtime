@@ -1,0 +1,17 @@
+# 行尾统一为 LF（2026-11-02 macOS 实机踩中后补）
+#
+# 仓库 blob 全部已是 LF（实测 56/56 文件无 CR），本文件只约束**工作区落地形态**：
+# 不加此文件时，Windows（core.autocrlf=true）工作区是 CRLF、macOS/Linux 是 LF，
+# 同一份代码在两端字节不同——provider 的构建指纹（sha256 of src）因此在两端算出两个值，
+# dist 里嵌入的指纹只对构建机成立，另一端安装闸门必判「src 已改未重建」并硬失败。
+#
+# 规则：
+#   * text=auto eol=lf —— 文本文件统一 LF；Windows 工作区也不再被 autocrlf 转成 CRLF，
+#     下发到 ~/.config/kilo 的字节与 macOS/Linux 完全一致。
+#   * *.sh 显式 eol=lf —— CRLF 的 shell 脚本在 macOS/Linux 会报
+#     "bad interpreter: /usr/bin/env bash\r"（zip 下载/跨机拷贝场景高发）。
+#   * provider/hx-failover/** —— provider 自包含产物与源码一并固定 LF，
+#     构建指纹与部署字节跨平台可复现。
+* text=auto eol=lf
+*.sh text eol=lf
+provider/hx-failover/** text eol=lf

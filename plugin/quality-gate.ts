@@ -1156,7 +1156,12 @@ function distStaleOf(root, pkg, srcFiles) {
       const banner = fs.readFileSync(dist, "utf8").replace(/^\uFEFF/, "").split("\n", 1)[0].replace(/\r$/, "");
       const m = banner.match(/^\/\/\s*kilo-build:\s*src-sha256=([0-9a-f]{64})$/);
       if (m) {
-        const srcHash = createHash("sha256").update(fs.readFileSync(srcIndex, "utf8")).digest("hex");
+        // 指纹口径必须与 build.mjs / install.sh / install.ps1 一致：剥离 CR 后再哈希
+        // （仓库 blob 是 LF，Windows 工作区因 core.autocrlf=true 是 CRLF——不归一化
+        // 就会在 macOS/Linux 上把「行尾差异」误判成「src 已改未重建」，误拦交付）。
+        const srcHash = createHash("sha256")
+          .update(fs.readFileSync(srcIndex).filter((b) => b !== 0x0d))
+          .digest("hex");
         if (m[1] !== srcHash) return { stale: true, missing: false, fingerprint: "mismatch" };
         return { stale: nonIndexEdit >= distMtime, missing: false, fingerprint: "match" };
       }

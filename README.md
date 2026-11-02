@@ -39,6 +39,10 @@ cd kilo-runtime
 ./install.sh
 ```
 
+> 若提示 `bash: ./install.sh: Permission denied`（压缩包下载或旧版克隆会丢失可执行位），先执行一次 `chmod +x install.sh`，或直接用 `bash install.sh` 运行。
+>
+> 若提示 `provider src/index.js 已改但 dist 指纹不匹配`，说明本机检出的 provider 产物与源码指纹不一致：在 `provider/hx-failover` 跑 `npm install && npm run build` 重建后重试；确认产物可用时可用 `bash install.sh --force` 跳过该闸门。
+
 默认安装到 `~/.config/kilo/`。已有个人配置会先备份，但安装会替换清单内的同名文件；有定制配置时，务必先看 Dry Run 输出。
 
 ### 3. 配置 OpenLlamas API Key
