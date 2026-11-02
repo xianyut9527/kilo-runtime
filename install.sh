@@ -52,6 +52,13 @@ fi
 case "$TARGET_NATIVE" in
   /[a-zA-Z]/*) TARGET_NATIVE="$(echo "$TARGET_NATIVE" | sed 's|^/\([a-zA-Z]\)/|\1:/|')" ;;
 esac
+# provider.npm 用的 file:// 基址：必须恰好三斜杠。
+# POSIX 绝对路径自带前导斜杠（/Users/x）→ file:// + 路径 = file:///Users/x；
+# Windows 盘符路径（C:/Users/x）→ file:/// + 路径 = file:///C:/Users/x。
+case "$TARGET_NATIVE" in
+  /*) TARGET_URL="file://$TARGET_NATIVE" ;;
+  *)  TARGET_URL="file:///$TARGET_NATIVE" ;;
+esac
 
 [ -f "$MANIFEST" ] || { echo "[INSTALL] FAIL: 清单缺失 $MANIFEST" >&2; exit 1; }
 
@@ -149,6 +156,14 @@ needs_subst() {
   esac
 }
 
+# 占位符替换（stdin -> stdout）：所有渲染点共用，避免各自漏掉 URL 基址。
+# __KILO_CONFIG_URL__ 必须先于 __KILO_CONFIG__ 替换（虽然前者不含后者的完整字面量）。
+subst_placeholders() {
+  sed -e "s|__KILO_CONFIG_URL__|$TARGET_URL|g" \
+      -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" \
+      -e "s|__KILO_HOME__|$HOME_SLASH|g"
+}
+
 # 把源文件渲染到目标（含占位符替换 + 模板注释剥离），并返回是否发生变化
 # 注释约定：仅 *.tmpl 里「行首 //」是给人看的注释，部署时剥离成纯 JSON
 # （Kilo 拒绝 JSON 注释键；行内 // 不动，防误伤 URL）
@@ -157,11 +172,11 @@ render_file() { # $1=src $2=dst
   tmp="$(mktemp)"
   case "$src" in
     *.tmpl)
-      sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$src" \
+      subst_placeholders < "$src" \
         | sed -e '/^[[:space:]]*\/\//d' | strip_tc > "$tmp" ;;
     *)
       if needs_subst "$1"; then
-        sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$src" > "$tmp"
+        subst_placeholders < "$src" > "$tmp"
       else
         cp -f "$src" "$tmp"
       fi ;;
@@ -227,9 +242,17 @@ SRC_JS="$SCRIPT_DIR/provider/hx-failover/src/index.js"
 DIST_JS="$SCRIPT_DIR/provider/hx-failover/dist/index.js"
 if [ -f "$SRC_JS" ] && [ -f "$DIST_JS" ]; then
   SRC_HASH="$(hash_of "$SRC_JS")"
-  # sed 一道：仅首行（1{...}）剥 BOM/CR + 严格整行匹配 ^// kilo-build: src-sha256=<64hex>$
-  # （[[:space:]]*$ 允许尾随空格，其余任何尾随字符都不算有效指纹）
-  DIST_FP="$(sed -n '1{s/^\xEF\xBB\xBF//;s/\r$//;s|^//[[:space:]]*kilo-build:[[:space:]]*src-sha256=\([0-9a-f]\{64\}\)[[:space:]]*$|\1|p}' "$DIST_JS")"
+  # 仅首行：剥 BOM + 严格整行匹配 ^// kilo-build: src-sha256=<64hex>$
+  # （[[:space:]]*$ 允许尾随空格/CR，其余任何尾随字符都不算有效指纹）
+  # 2026-11-02 BSD/macOS 兼容：BSD sed 不支持 GNU 专有的 \xEF 转义与 `1{...;p}` 写法
+  # （macOS 报 bad flag in substitute command: '}'），改用 head/tr 剥 CR、od 判 BOM
+  # + POSIX ERE（sed -E）匹配，GNU/BSD 通用。
+  first_line="$(head -n 1 "$DIST_JS" | tr -d '\r')"
+  first3="$(printf '%s' "$first_line" | head -c 3 | od -An -tx1 | tr -d ' \n' | tr 'A-F' 'a-f')"
+  if [ "$first3" = "efbbbf" ]; then
+    first_line="$(printf '%s' "$first_line" | tail -c +4)"
+  fi
+  DIST_FP="$(printf '%s\n' "$first_line" | sed -n -E 's|^//[[:space:]]*kilo-build:[[:space:]]*src-sha256=([0-9a-f]{64})[[:space:]]*$|\1|p')"
   if [ -z "$DIST_FP" ]; then
     echo "[INSTALL] WARN: provider dist/index.js 首行无有效构建指纹（旧版产物/首行被改动）—— 在 provider/hx-failover 跑 npm run build 重建后再下发" >&2
     if [ "$CHECK" = "1" ]; then
@@ -249,8 +272,8 @@ fi
 
 # ---------- 校验：kilo.json.tmpl 渲染后必须是合法 JSON，且不得残留占位符 ----------
 # （strip_tc 已剥尾随逗号，这里严格校验的正是将要落盘的内容）
-RENDERED_JSON="$(sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$SCRIPT_DIR/kilo.json.tmpl" | sed -e '/^[[:space:]]*\/\//d' | strip_tc)"
-if printf '%s' "$RENDERED_JSON" | grep -q '__KILO_\(HOME\|CONFIG\)__'; then
+RENDERED_JSON="$(subst_placeholders < "$SCRIPT_DIR/kilo.json.tmpl" | sed -e '/^[[:space:]]*\/\//d' | strip_tc)"
+if printf '%s' "$RENDERED_JSON" | grep -Eq '__KILO_[A-Z_]+__'; then
   echo "[INSTALL] FAIL: kilo.json.tmpl 渲染后仍残留占位符（provider 将初始化失败）" >&2
   exit 1
 fi
@@ -275,13 +298,18 @@ fi
 # lib/ 只作共享依赖目录，plugin/ 只放真正的插件入口。
 # 路径 → file:// URL。bun/node 是原生程序，不认 MSYS 路径（/e/... 或 /tmp/...），
 # 必须先用 cygpath 转成 Windows 形式（E:/...），否则 import 一律失败 →
-# 冒烟闸门会误判所有文件「加载即崩」。无 cygpath（Linux/WSL）时原样使用。
+# 冒烟闸门会误判所有文件「加载即崩」。无 cygpath（Linux/WSL/macOS）时原样使用。
+# URL 必须恰好三斜杠：POSIX 绝对路径自带前导 /（/Users/x → file:///Users/x），
+# Windows 盘符路径无前导 /（E:/x → file:///E:/x）；不能无脑拼 file:///（POSIX 会变四斜杠）。
 to_file_url() { # $1 = 文件路径
   local p="$1"
   if command -v cygpath >/dev/null 2>&1; then
-    p="$(cygpath -m "$p" 2>/dev/null || echo "$p")"
+    p="$(cygpath -m "$p" 2>/dev/null || printf '%s' "$p")"
   fi
-  echo "file:///$p"
+  case "$p" in
+    /*) printf 'file://%s\n' "$p" ;;
+    *)  printf 'file:///%s\n' "$p" ;;
+  esac
 }
 
 # 原生程序（node 等）可读的路径：git-bash 的 mktemp 产出 /tmp/... 属 MSYS 路径，
@@ -294,48 +322,65 @@ to_native() { # $1 = MSYS 路径 → 原生路径
 }
 
 # 返回 0 = 通过；非 0 = 该文件加载即崩 / vE2 工厂模拟失败。
-# TS 冒烟引擎（2026-09-28，与 install.ps1 对等）：bun → node>=22+loader hook → 放行告警。
-# bun 缺失不再跳过检查——node>=22 原生可跑 TS（strip-types 稳定化），但裸相对导入
+# TS 冒烟引擎（2026-09-28，与 install.ps1 对等）：bun → node（版本窗内）+loader hook → 放行告警。
+# bun 缺失不再跳过检查——版本窗内的 node 原生可跑 TS，但裸相对导入
 # '../lib/hx-client' 解析不到 .ts（node 严格、bun/Kilo 宽松），需要 register loader hook
 # 补全扩展名拉平语义。两引擎断言语义相同（import 不抛 + vE2 工厂模拟）。
-# node 候选：PATH 上的 node（本机实证可能 v14）→ hermes node22 兜底
-# （$LOCALAPPDATA/hermes/node/node.exe，install.ps1 同款回退；MSYS PATH 需要 /c/ 形式，
-# Windows 形式的 C:\... 追加进 PATH 会被 which 忽略——本机实证）。
+# 版本窗（2026-11-02 三轮查漏补缺）：原生 strip-types 默认开启自 23.6 / 22.18 起；
+# 22.6–22.17 需 --experimental-strip-types 旗（与 loader hook 组合行为未证，选它会让冒烟
+# 假报「加载即崩」并中止下发）。窗外的 node 不选引擎 → 走无引擎软门禁 WARN+放行——
+# 假失败拦死下发比跳过检查危害更大。
+# node 候选：PATH 上的 node（本机实证可能 v14）→ hermes node 兜底（Windows 专属，
+# $LOCALAPPDATA/hermes/node/node.exe；PATH node 缺失或窗外时才试，同一版本窗校验；
+# MSYS PATH 需要 /c/ 形式，Windows 形式的 C:\... 追加进 PATH 会被 which 忽略——本机实证）。
+ts_node_supported() { # $1 = 完整版本串（如 22.23.4）；空/畸形 → 不支持
+  local v="$1" major minor rest
+  case "$v" in ''|*[!0-9.]*) return 1 ;; esac
+  major="${v%%.*}"; rest="${v#*.}"; minor="${rest%%.*}"
+  case "$major" in ''|*[!0-9]*) return 1 ;; esac
+  case "$minor" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$major" -ge 24 ] && return 0
+  if [ "$major" -eq 23 ] && [ "$minor" -ge 6 ]; then return 0; fi
+  if [ "$major" -eq 22 ] && [ "$minor" -ge 18 ]; then return 0; fi
+  return 1
+}
 TS_NODE=""
-if command -v node >/dev/null 2>&1; then TS_NODE="node"; fi
-TS_NODE_MAJOR=0
-if [ -n "$TS_NODE" ]; then
-  TS_NODE_MAJOR="$("$TS_NODE" -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
-  case "$TS_NODE_MAJOR" in ''|*[!0-9]*) TS_NODE_MAJOR=0 ;; esac
+if command -v node >/dev/null 2>&1 \
+   && ts_node_supported "$(node -p "process.versions.node" 2>/dev/null || echo 0)"; then
+  TS_NODE="node"
 fi
-if [ "$TS_NODE_MAJOR" -lt 22 ] && command -v cygpath >/dev/null 2>&1; then
+if [ -z "$TS_NODE" ] && command -v cygpath >/dev/null 2>&1; then
   # cygpath 转换失败/空值防御（与 NODE_SMOKE 同口径，r2 必修项③）：输出必须非空且以 / 开头
   HERMES_NODE_DIR="$(cygpath -u "$LOCALAPPDATA/hermes/node" 2>/dev/null || true)"
   case "$HERMES_NODE_DIR" in
     /*) ;;
     *) HERMES_NODE_DIR="" ;;
   esac
-  if [ -n "$HERMES_NODE_DIR" ] && [ -x "$HERMES_NODE_DIR/node" ]; then
-    HERMES_MAJOR="$("$HERMES_NODE_DIR/node" -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
-    case "$HERMES_MAJOR" in ''|*[!0-9]*) HERMES_MAJOR=0 ;; esac
-    if [ "$HERMES_MAJOR" -ge 22 ] 2>/dev/null; then
-      TS_NODE="$HERMES_NODE_DIR/node"
-      TS_NODE_MAJOR="$HERMES_MAJOR"
-    fi
+  if [ -n "$HERMES_NODE_DIR" ] && [ -x "$HERMES_NODE_DIR/node" ] \
+     && ts_node_supported "$("$HERMES_NODE_DIR/node" -p "process.versions.node" 2>/dev/null || echo 0)"; then
+    TS_NODE="$HERMES_NODE_DIR/node"
   fi
 fi
 TS_ENGINE=""      # bun | node22
+TS_SMOKE_DIR=""
 TS_HOOK_MJS=""
 TS_RUN_MJS=""
 if command -v bun >/dev/null 2>&1; then
   TS_ENGINE="bun"
-elif [ -n "$TS_NODE" ] && [ "$TS_NODE_MAJOR" -ge 22 ] 2>/dev/null; then
+elif [ -n "$TS_NODE" ]; then
   TS_ENGINE="node22"
-  TS_HOOK_MJS="$(mktemp /tmp/kilo-ts-smoke-hook-XXXXXX.mjs)"
+  # BSD/macOS mktemp 要求模板末尾是 XXXXXX：带 .mjs 后缀的模板不会被随机化
+  # （返回字面量路径，且第二次调用报 File exists）。改为临时目录 + 固定文件名，
+  # 回收统一 rm -rf "$TS_SMOKE_DIR"。
+  TS_SMOKE_DIR="$(mktemp -d /tmp/kilo-ts-smoke-XXXXXX)"
+  TS_HOOK_MJS="$TS_SMOKE_DIR/hook.mjs"
   cat > "$TS_HOOK_MJS" <<'TSHOOK'
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-// resolve：裸相对导入（如 ../lib/hx-client）依次补 .ts/.js 重试
+// resolve：裸相对导入（如 ../lib/hx-client）依次补 .ts/.js 重试。
+// 仅 resolve、不接管 load：.ts 的类型剥离交给 node 原生默认 loader（strip-types
+// 默认开启于 23.6+/22.18+，即引擎版本窗内）。不能 short-circuit 返回原始源码——
+// 那会绕过类型剥离，任何带类型注解的 .ts 都会炸「Missing initializer」类语法错
+// （2026-11-02 实证 node 22.23：注解探针必炸；仓库现存 .ts 恰好全部免注解才没暴露，
+// 首个带注解的导入就会让无 bun 机器的安装全线中止——macOS 正是这种机器）。
 export async function resolve(specifier, context, next) {
   if (specifier.startsWith(".") && !/\.[a-zA-Z0-9]+$/.test(specifier)) {
     for (const cand of [specifier + ".ts", specifier + ".js"]) {
@@ -344,16 +389,8 @@ export async function resolve(specifier, context, next) {
   }
   return next(specifier, context);
 }
-// load：.ts 源码直接交给 node 原生 strip-types 转译（format: module）
-export async function load(url, context, next) {
-  if (url.endsWith(".ts")) {
-    const source = await readFile(fileURLToPath(url), "utf8");
-    return { format: "module", shortCircuit: true, source };
-  }
-  return next(url, context);
-}
 TSHOOK
-  TS_RUN_MJS="$(mktemp /tmp/kilo-ts-smoke-run-XXXXXX.mjs)"
+  TS_RUN_MJS="$TS_SMOKE_DIR/run.mjs"
   cat > "$TS_RUN_MJS" <<'TSRUN'
 const { register } = await import("node:module");
 if (process.argv[2]) register(process.argv[2], import.meta.url);
@@ -369,20 +406,26 @@ fi
 ts_engine_warned=0
 ts_smoke_unavailable() { # $1 = 文件（仅告警一次，防 7 插件 × N 行刷屏）
   if [ "$ts_engine_warned" = "0" ]; then
-    echo "[INSTALL] WARN: 无 bun 且无 node>=22 可用，跳过 TS 冒烟检查（$1 等 $DIFF_COUNT 项未经验证即下发）" >&2
+    echo "[INSTALL] WARN: 无 bun 且无版本窗内的 node（TS 类型剥离需 23.6+ / 22.18+），跳过 TS 冒烟检查（$1 等 $DIFF_COUNT 项未经验证即下发）" >&2
     ts_engine_warned=1
   fi
 }
 smoke_ts() { # $1 = 源文件；返回 0=通过，2=无引擎（放行+告警），1=加载即崩
-  local f="$1" url
+  local f="$1" url rc=0 out
   if [ -z "$TS_ENGINE" ]; then ts_smoke_unavailable "$f"; return 2; fi
   url="$(to_file_url "$f")"
   if [ "$TS_ENGINE" = "bun" ]; then
-    bun -e "import('$url').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })" >/dev/null 2>&1
-    return $?
+    out="$(bun -e "import('$url').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })" 2>&1)" || rc=$?
+  else
+    out="$("$TS_NODE" "$(to_native "$TS_RUN_MJS")" "$(to_file_url "$TS_HOOK_MJS")" "$url" 2>&1)" || rc=$?
   fi
-  "$TS_NODE" "$(to_native "$TS_RUN_MJS")" "$(to_file_url "$TS_HOOK_MJS")" "$url" >/dev/null 2>&1
-  return $?
+  if [ "$rc" -ne 0 ]; then
+    # 引擎原始输出此前被吞（>/dev/null 2>&1），远程排障只剩「加载即崩」四个字（macOS 无工具链时无法定位）；
+    # 失败才回显（成功保持零噪音），前 15 行足够定位语法/依赖/引擎错
+    echo "[INSTALL] 冒烟引擎原始输出（$f，前 15 行）：" >&2
+    [ -n "$out" ] && printf '%s\n' "$out" | sed -n '1,15p' >&2
+  fi
+  return "$rc"
 }
 
 # vE2 工厂模拟（仅 plugin/*.ts）：模拟 kilo.exe vE2/iE2/kE2——把每个导出函数（引用去重）
@@ -393,7 +436,7 @@ smoke_ts() { # $1 = 源文件；返回 0=通过，2=无引擎（放行+告警）
 # 文件形式与 install.ps1 同款、已验证。Map 迭代解构是 [fn, name]（键=函数引用，值=名字）。
 # node22 引擎：vE2 脚本先 register hook 再 import 目标（目标 .ts 的裸相对导入也要过 hook）。
 smoke_ts_ve2() { # $1 = 源文件；返回值语义与 smoke_ts 相同
-  local f="$1" url tmpmjs rc smoke_xdg
+  local f="$1" url tmpmjs rc out smoke_xdg
   if [ -z "$TS_ENGINE" ]; then ts_smoke_unavailable "$f"; return 2; fi
   url="$(to_file_url "$f")"
   # 红线（2026-10-11 记忆核心闭环改造实证）：vE2 冒烟以假 ctx 真实调用插件工厂，
@@ -402,7 +445,7 @@ smoke_ts_ve2() { # $1 = 源文件；返回值语义与 smoke_ts 相同
   # 绝不允许部署冒烟触碰真实 ~/.local/share/kilo。
   smoke_xdg="$(mktemp -d /tmp/kilo-smoke-data-XXXXXX)"
   if [ "$TS_ENGINE" = "bun" ]; then
-    tmpmjs="$(mktemp /tmp/kilo-ve2-smoke-XXXXXX.mjs)"
+    tmpmjs="$smoke_xdg/ve2-smoke.mjs"
     cat > "$tmpmjs" <<'VE2JS'
 const target = process.argv[2];
 const mod = await import(target);
@@ -429,13 +472,16 @@ for (const [fn, name] of fnByRef) {
   }
 }
 VE2JS
-    ( export XDG_DATA_HOME="$smoke_xdg"; bun "$(to_native "$tmpmjs")" "$url" >/dev/null 2>&1 )
-    rc=$?
+    rc=0; out="$( export XDG_DATA_HOME="$smoke_xdg"; bun "$(to_native "$tmpmjs")" "$url" 2>&1 )" || rc=$?
     rm -f "$tmpmjs"
     rm -rf "$smoke_xdg"
-    return $rc
+    if [ "$rc" -ne 0 ]; then
+      echo "[INSTALL] vE2 模拟引擎原始输出（$f，前 15 行）：" >&2
+      [ -n "$out" ] && printf '%s\n' "$out" | sed -n '1,15p' >&2
+    fi
+    return "$rc"
   fi
-  tmpmjs="$(mktemp /tmp/kilo-ve2-smoke-XXXXXX.mjs)"
+  tmpmjs="$smoke_xdg/ve2-smoke.mjs"
   cat > "$tmpmjs" <<'VE2JS'
 const { register } = await import("node:module");
 register(process.argv[3], import.meta.url);
@@ -464,11 +510,14 @@ for (const [fn, name] of fnByRef) {
   }
 }
 VE2JS
-  ( export XDG_DATA_HOME="$smoke_xdg"; "$TS_NODE" "$(to_native "$tmpmjs")" "$url" "$(to_file_url "$TS_HOOK_MJS")" >/dev/null 2>&1 )
-  rc=$?
+  rc=0; out="$( export XDG_DATA_HOME="$smoke_xdg"; "$TS_NODE" "$(to_native "$tmpmjs")" "$url" "$(to_file_url "$TS_HOOK_MJS")" 2>&1 )" || rc=$?
   rm -f "$tmpmjs"
   rm -rf "$smoke_xdg"
-  return $rc
+  if [ "$rc" -ne 0 ]; then
+    echo "[INSTALL] vE2 模拟引擎原始输出（$f，前 15 行）：" >&2
+    [ -n "$out" ] && printf '%s\n' "$out" | sed -n '1,15p' >&2
+  fi
+  return "$rc"
 }
 
 # provider dist 冒烟：dist/index.js 是 server 启动时加载的模块，语法错/半写同样让 provider 注册失败。
@@ -505,8 +554,14 @@ smoke_provider_js() { # $1 = 源文件；返回 0=通过/降级放行，1=硬失
     echo "[INSTALL] FAIL: provider dist 无 node>=18 冒烟引擎且指纹未锚定（无指纹/失配），拒绝盲下发：$f —— 在 provider/hx-failover 跑 npm run build 重建后再下发" >&2
     return 1
   fi
-  local url; url="$(to_file_url "$f")"
-  "$NODE_SMOKE" --input-type=module -e "import('$url').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })" >/dev/null 2>&1
+  local url rc=0 out
+  url="$(to_file_url "$f")"
+  out="$("$NODE_SMOKE" --input-type=module -e "import('$url').then(() => process.exit(0)).catch(e => { console.error(String(e && e.message || e)); process.exit(1); })" 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "[INSTALL] provider 冒烟引擎原始输出（$f，前 15 行）：" >&2
+    [ -n "$out" ] && printf '%s\n' "$out" | sed -n '1,15p' >&2
+  fi
+  return "$rc"
 }
 
 # 预检：任何写入之前完成全量冒烟，否则第 N 个失败时前 N-1 个已落盘 → 半套部署。
@@ -521,11 +576,11 @@ while IFS=$'\t' read -r src dst; do
   tmpchk="$(mktemp)"
   case "$src" in
     *.tmpl)
-      sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$src" \
+      subst_placeholders < "$src" \
         | sed -e '/^[[:space:]]*\/\//d' | strip_tc > "$tmpchk" ;;
     *)
       if needs_subst "$src"; then
-        sed -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" -e "s|__KILO_HOME__|$HOME_SLASH|g" "$src" > "$tmpchk"
+        subst_placeholders < "$src" > "$tmpchk"
       else
         cp -f "$src" "$tmpchk"
       fi ;;
@@ -595,7 +650,16 @@ if [ "$DRY_RUN" = "0" ] && [ "$CHECK" = "0" ] && [ "$DIFF_COUNT" -gt 0 ] && [ -d
     echo "[BACKUP] WARN: KILO_KEEP_BACKUPS 非法（$KEEP_BACKUPS，需 ≥1 整数），按默认 2 处理" >&2
     KEEP_BACKUPS=2
   fi
-  find "$BK_PARENT" -maxdepth 1 -name "$(basename "$TARGET_DIR").backup-*" -type f -printf '%T@\t%p\n' 2>/dev/null \
+  # BSD/macOS find 没有 -printf（GNU 专有）：mtime 改用 stat 取（GNU -c %Y / BSD -f %m）。
+  # 必须按能力探测而非 `stat -f ... || stat -c ...`——GNU stat -f 是「文件系统信息」，
+  # 会往 stdout 打整段报告且不报错，污染 mtime 字段（实测），故先探测再定实现。
+  if stat -c %Y / >/dev/null 2>&1; then
+    file_mtime() { stat -c %Y "$1" 2>/dev/null || printf '0'; }
+  else
+    file_mtime() { stat -f %m "$1" 2>/dev/null || printf '0'; }
+  fi
+  find "$BK_PARENT" -maxdepth 1 -name "$(basename "$TARGET_DIR").backup-*" -type f 2>/dev/null \
+    | while IFS= read -r f; do printf '%s\t%s\n' "$(file_mtime "$f")" "$f"; done \
     | sort -rn | cut -f2- | tail -n +"$KEEP_BACKUPS" \
     | while IFS= read -r old; do
         [ -n "$old" ] || continue
@@ -682,12 +746,10 @@ if [ "$CHECK" = "1" ]; then
   if [ "$CHANGED" -gt 0 ] || [ "$STRAYS" -gt 0 ]; then
     echo ""
     echo "[check] 漂移：内容差异 $CHANGED 处 + 多余文件 $STRAYS 个 —— 执行 ./install.sh 同步（多余文件需人工确认后删除）。"
-    [ -n "$TS_HOOK_MJS" ] && rm -f "$TS_HOOK_MJS"
-    [ -n "$TS_RUN_MJS" ] && rm -f "$TS_RUN_MJS"
+    [ -n "$TS_SMOKE_DIR" ] && rm -rf "$TS_SMOKE_DIR"
     exit 1
   fi
 fi
-# TS 冒烟引擎临时文件清理（mktemp 在 /tmp，残留无害但显式回收；exit 1 路径不经过这里属已知）
-[ -n "$TS_HOOK_MJS" ] && rm -f "$TS_HOOK_MJS"
-[ -n "$TS_RUN_MJS" ] && rm -f "$TS_RUN_MJS"
+# TS 冒烟引擎临时目录清理（mktemp -d 在 /tmp，残留无害但显式回收；exit 1 路径不经过这里属已知）
+[ -n "$TS_SMOKE_DIR" ] && rm -rf "$TS_SMOKE_DIR"
 exit 0

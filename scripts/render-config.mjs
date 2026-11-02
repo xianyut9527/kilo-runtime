@@ -12,6 +12,8 @@ import { fileURLToPath } from "node:url";
 const REPO = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const HOME = os.homedir().replace(/\\/g, "/");
 const CFG = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "kilo").replace(/\\/g, "/");
+// provider.npm 的 file:// 基址：恰好三斜杠（POSIX 自带前导 /，Windows 盘符路径没有）
+const CFG_URL = CFG.startsWith("/") ? `file://${CFG}` : `file:///${CFG}`;
 const TMPL = path.join(REPO, "kilo.json.tmpl");
 const DEPLOYED = path.join(CFG, "kilo.json");
 const DRY = process.argv.includes("--dry");
@@ -19,6 +21,7 @@ const DRY = process.argv.includes("--dry");
 // 1) 渲染
 const raw = fs.readFileSync(TMPL, "utf8");
 const substituted = raw
+  .replace(/__KILO_CONFIG_URL__/g, CFG_URL)
   .replace(/__KILO_CONFIG__/g, CFG)
   .replace(/__KILO_HOME__/g, HOME);
 // 去整行注释（与 install.sh 的 sed '/^[[:space:]]*\/\//d' 同义）

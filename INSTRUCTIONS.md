@@ -142,7 +142,7 @@
 - `kilo.json` **不接受任何自定义键**（含 `"//"` 注释键）：会让整份配置报 `Unrecognized keys` 失效。
 - **权限规则最后一条匹配者生效**：兜底 `*` 必须写在最前，例外（尤其 `deny`）写在后面。
 - **Kilo 不展开 `~`**：路径必须写绝对形式；仓库模板用占位符由安装脚本替换。
-- **`provider.npm` 必须 `file:///`（三斜杠）**。
+- **`provider.npm` 必须 `file:///`（三斜杠）**：模板用专门的 URL 基址占位符（installer 按平台计算），勿把路径占位符手拼在 `file:///` 后——POSIX 绝对路径会叠成四斜杠。
 - **自研 provider 必须声明 LanguageModel spec `v3`**：声明 `v2` 会走兼容桥丢掉 finishReason/usage，表现为 UI 报「模型未提供结束原因」。
 - 本地 `plugin/*.ts` 自动加载，不必登记进 `plugin` 数组。
 - **插件模块只导出工厂函数**：kilo vE2 加载器会把模块里**每个导出函数**都当插件工厂用 `(ctx, options)` 调用——非工厂导出抛错即 `"failed to load plugin"`、返回 undefined 即 `"plugin config hook failed"`，级联炸掉 provider 列表/模型选择器（2026-09-22 复盘实证）。工具函数一律经 `_export` 命名空间对象暴露（对象无 `server` 属性即被跳过）；`*Impl` 不得导出（钩子双重注册）。install.ps1/sh 冒烟 + test-plugin-contract.mjs 会强制拦截。

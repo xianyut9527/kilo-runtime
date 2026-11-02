@@ -26,6 +26,10 @@ $HomeSlash = ($HOME -replace '\\', '/').TrimEnd('/')
 # 部署目录的原生正斜杠路径（供 provider.npm 的 file:// URL 使用）。
 # Kilo 是原生程序：file:///C:/... 有效，file:///c/... 与 ~ 均无效（实测）。
 $TargetNative = ($TargetDir -replace '\\', '/').TrimEnd('/')
+# provider.npm 的 file:// 基址：必须恰好三斜杠。
+# 盘符路径（C:/...）→ file:///C:/...；POSIX 绝对路径（/Users/...，pwsh on macOS）→ file:///Users/...
+$TargetUrl = 'file:///' + $TargetNative
+if ($TargetNative.StartsWith('/')) { $TargetUrl = 'file://' + $TargetNative }
 
 if (-not (Test-Path $Manifest)) { Write-Error "[INSTALL] FAIL: 清单缺失 $Manifest"; exit 1 }
 
@@ -133,6 +137,7 @@ function Render-Content([string]$SrcPath) {
         # 尾随逗号在注释剥离之后去除（注释行可能含未配对引号，会干扰状态机）；
         # 仅 *.tmpl 走此分支，INSTRUCTIONS.md 等文档绝不能做逗号剥离。
         $text = Remove-TrailingCommas $text
+        $text = $text.Replace('__KILO_CONFIG_URL__', $TargetUrl)
         $text = $text.Replace('__KILO_CONFIG__', $TargetNative)
         $text = $text.Replace('__KILO_HOME__', $HomeSlash)
     }
@@ -140,6 +145,7 @@ function Render-Content([string]$SrcPath) {
         # 归一 LF：与 install.sh 对齐（Git Bash sed 输出 LF），否则两端部署副本行尾漂移、
         # check 永远报差异互相打架（2026-09-25 实测：ps1 透传 CRLF vs sh LF）。
         $text = $text -replace "`r`n", "`n"
+        $text = $text.Replace('__KILO_CONFIG_URL__', $TargetUrl)
         $text = $text.Replace('__KILO_CONFIG__', $TargetNative)
         $text = $text.Replace('__KILO_HOME__', $HomeSlash)
     }
@@ -155,7 +161,7 @@ catch {
     Write-Error "[INSTALL] FAIL: kilo.json 渲染后不是合法 JSON（占位符替换可能破坏结构）：$($_.Exception.Message)"
     exit 1
 }
-if ($rendered -match '__KILO_(HOME|CONFIG)__') {
+if ($rendered -match '__KILO_[A-Z_]+__') {
     Write-Error "[INSTALL] FAIL: kilo.json 渲染后仍残留占位符（provider 将初始化失败）。"
     exit 1
 }
@@ -197,9 +203,9 @@ foreach ($p in $pairs) {
 $bunCmd = Get-Command bun -ErrorAction SilentlyContinue
 $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
 # 冒烟引擎选择（2026-09-28）：TS 冒烟不再「bun 独占、缺失即跳过」——bun 缺失会让全部
-# plugin/*.ts 未验证即下发（本机 7 条警告实证）。node>=22 原生可跑 TS（--experimental-strip-types
-# 稳定化），但 import '../lib/hx-client' 无扩展名时解析不到 .ts，需要 register loader hook
-# 补全扩展名（与 Kilo/bun 的解析语义对齐）。引擎优先级：bun → node>=22+hook → 放行告警。
+# plugin/*.ts 未验证即下发（本机 7 条警告实证）。node 原生可跑 TS，但 import '../lib/hx-client'
+# 无扩展名时解析不到 .ts，需要 register loader hook 补全扩展名（与 Kilo/bun 的解析语义对齐）。
+# 引擎优先级：bun → node（版本窗内）+hook → 放行告警。
 # dist 冒烟需要 node>=18（Web Streams 全局：TransformStream/Headers/TextDecoderStream）。
 # 默认 PATH 上的 node 可能是老版本（本机实证 v14 冒烟必炸 "TransformStream is not defined"，
 # 而 dist 本身在 node18+/bun/kilo 运行时全部正常）——探测失败则回退 hermes node22。
@@ -221,22 +227,31 @@ if ($nodeCmd -and -not $nodeSmokeCmd) {
     Write-Warning "[INSTALL] 无 node>=18 可用（PATH node 与 hermes 均缺 Web Streams 全局），dist 冒烟跳过"
 }
 # TS 冒烟引擎：bun 可用则用 bun（原生 TS + 宽松解析，历史路径）；
-# 否则用 node>=22 + register loader hook（无扩展名相对导入解析到 .ts/.js）。
+# 否则用版本窗内的 node + register loader hook（无扩展名相对导入解析到 .ts/.js）。
 # 两引擎同一断言语义（import 不抛 + vE2 工厂模拟），脚本本体共用（见 $ve2SmokeMjs）。
-# node<22 无 TS 支持会语法崩，故 TS 引擎复用 dist 冒烟的探测结果之外还需 >=22。
+# 版本窗（2026-11-02 与 install.sh ts_node_supported 同口径）：node 原生 strip-types
+# 默认开启自 23.6 / 22.18 起；22.6–22.17 需实验旗（与 hook 组合未证，窗外 node 的冒烟会
+# 假报「加载即崩」中止下发）——窗外不选引擎，走软门禁告警放行（假失败比跳过危害大）。
+function Test-NodeTsWindow([string]$Version) {
+    if ($Version -notmatch '^(\d+)\.(\d+)') { return $false }
+    $major = [int]$Matches[1]; $minor = [int]$Matches[2]
+    if ($major -ge 24) { return $true }
+    if ($major -eq 23 -and $minor -ge 6) { return $true }
+    if ($major -eq 22 -and $minor -ge 18) { return $true }
+    return $false
+}
 $tsSmokeCmd = $null; $tsSmokeKind = $null; $tsSmokeHookUrl = $null
 if ($bunCmd) { $tsSmokeCmd = 'bun'; $tsSmokeKind = 'bun' }
 elseif ($nodeSmokeCmd) {
-    $vMajor = 0
-    $verOut = (& $nodeSmokeCmd -p "process.versions.node.split('.')[0]" 2>$null) -as [string]
-    if ($LASTEXITCODE -eq 0 -and $verOut -match '^\d+$') { $vMajor = [int]$verOut }
-    if ($vMajor -ge 22) {
+    $verOut = (& $nodeSmokeCmd -p "process.versions.node" 2>$null) -as [string]
+    if ($LASTEXITCODE -eq 0 -and (Test-NodeTsWindow $verOut)) {
         # loader hook：无扩展名相对导入补 .ts 再解析（node 严格解析器找不到 '../lib/hx-client'，
         # Kilo/bun 能——hook 拉平语义）。hook 写入临时 .mjs，register() 形式挂载。
+        # 仅 resolve、不接管 load：.ts 的类型剥离交给 node 原生默认 loader（版本窗内默认开启）。
+        # 不能 short-circuit 返回原始源码——那会绕过类型剥离，任何带注解的 .ts 都会炸
+        # 「Missing initializer」类语法错（2026-11-02 实证；现存 .ts 恰好免注解才没暴露）。
         $hookPath = Join-Path ([System.IO.Path]::GetTempPath()) "kilo-ts-smoke-hook-$PID.mjs"
         Set-Content -LiteralPath $hookPath -Encoding UTF8 -Value @'
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 // resolve：裸相对导入（如 ../lib/hx-client）依次补 .ts/.js 重试
 export async function resolve(specifier, context, next) {
   if (specifier.startsWith(".") && !/\.[a-zA-Z0-9]+$/.test(specifier)) {
@@ -245,14 +260,6 @@ export async function resolve(specifier, context, next) {
     }
   }
   return next(specifier, context);
-}
-// load：.ts 源码直接交给 node 原生 strip-types 转译（format: module）
-export async function load(url, context, next) {
-  if (url.endsWith(".ts")) {
-    const source = await readFile(fileURLToPath(url), "utf8");
-    return { format: "module", shortCircuit: true, source };
-  }
-  return next(url, context);
 }
 '@
         $tsSmokeCmd = $nodeSmokeCmd; $tsSmokeKind = 'node22'

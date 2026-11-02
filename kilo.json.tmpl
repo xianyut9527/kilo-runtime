@@ -54,6 +54,8 @@
   // ── 每会话注入的策略文件（认知中心/风险分级/一次性交付/硬约束）──
   // __KILO_CONFIG__ 由 installer 替换为实际部署目录（Kilo 不展开 ~，必须绝对路径）；
   // 用部署目录而非写死 $HOME/.config/kilo，-Target 自定义目录时注入路径才不会分叉。
+  // __KILO_CONFIG_URL__ 是同一目录的 file:// 基址（installer 计算，POSIX/Windows 都恰好三斜杠），
+  // 仅 URL 场景（provider.npm）使用；普通路径仍用 __KILO_CONFIG__。
   // GLOBAL-NOTES.md 是全自动生长的全局经验层：由 memory-store 从 store（notes.jsonl）编译生成，
   // agent 写入走 mem_add（勿手工直写），不进下发清单、install 不清理清单外文件；/evolve 定期修剪并升格成熟条目
   "instructions": [
@@ -568,11 +570,12 @@
 
   // ── 自研 provider：openllamas（带四级故障降级）──────────────────
   // npm 指向本地自包含包（dist 已打包全部依赖，无 node_modules 依赖）
-  // __KILO_CONFIG__ 由 installer 替换为部署目录（file:/// 三斜杠必须）
+  // __KILO_CONFIG_URL__ 由 installer 替换为部署目录的 file:// 基址（三斜杠必须；
+  // 不要写成 "file:///__KILO_CONFIG__/..."——POSIX 绝对路径会叠成四斜杠）
   "provider": {
     "openllamas": {
       "name": "openllamas",
-      "npm": "file:///__KILO_CONFIG__/provider/hx-failover",
+      "npm": "__KILO_CONFIG_URL__/provider/hx-failover",
       "options": {
         // 上游端点（SSOT 唯一真源）。
         // ⚠️ 改动前必须先用当前 key curl 探针验证：endpoint 失效是「极慢」的直接放大器——

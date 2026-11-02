@@ -27,12 +27,21 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // XDG_DATA_HOME 指向一次性 tmp，绝不允许测试触碰真实 DATA_DIR（~/.local/share/kilo）。
 process.env.XDG_DATA_HOME = fs.mkdtempSync(path.join(os.tmpdir(), `kilo-contract-data-${process.pid}-`));
 
-// 引擎自适应（2026-09-28）：bun 直接跑 TS；node>=22 用 register loader hook 拉平语义
-// （裸相对导入 '../lib/hx-client' 补 .ts 解析 + .ts 源码走原生 strip-types）。
-// node<22 无 TS 支持，会 7 条断言假失败——仍提示装 bun。
-const nodeMajor = Number(process.versions.node.split(".")[0]);
-if (typeof Bun === "undefined" && nodeMajor < 22) {
-  console.error("需要 bun 运行（node<22 无法直接 import .ts，会产生假失败）：bun scripts/test-plugin-contract.mjs");
+// 引擎自适应（2026-09-28；2026-11-02 三轮修正）：bun 直接跑 TS；版本窗内的 node 用
+// register loader hook 拉平语义（裸相对导入 '../lib/hx-client' 补 .ts 解析）。
+// hook 只做 resolve、不接管 load：.ts 类型剥离交给 node 原生默认 loader——
+// short-circuit 返回原始源码会绕过剥离，带注解的 .ts 必炸「Missing initializer」
+// （node 22.23 实证；现存 .ts 恰好全部免注解才未暴露）。
+// 版本窗：strip-types 默认开启自 23.6/22.18；22.6–22.17 仅实验旗（假失败）——窗外退出 2。
+const nodeV = process.versions.node.split(".").map(Number);
+const inWindow =
+  nodeV[0] >= 24 ||
+  (nodeV[0] === 23 && nodeV[1] >= 6) ||
+  (nodeV[0] === 22 && nodeV[1] >= 18);
+if (typeof Bun === "undefined" && !inWindow) {
+  console.error(
+    "需要 bun 或版本窗内的 node（TS 类型剥离默认开启自 node 23.6/22.18；22.6–22.17 仅实验旗会假失败）：bun scripts/test-plugin-contract.mjs"
+  );
   process.exit(2);
 }
 if (typeof Bun === "undefined") {
@@ -42,22 +51,13 @@ if (typeof Bun === "undefined") {
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const hookPath = join(tmpdir(), `kilo-contract-hook-${process.pid}.mjs`);
-  await writeFile(hookPath, `import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-export async function resolve(specifier, context, next) {
+  await writeFile(hookPath, `export async function resolve(specifier, context, next) {
   if (specifier.startsWith(".") && !/\\.[a-zA-Z0-9]+$/.test(specifier)) {
     for (const cand of [specifier + ".ts", specifier + ".js"]) {
       try { return await next(cand, context); } catch {}
     }
   }
   return next(specifier, context);
-}
-export async function load(url, context, next) {
-  if (url.endsWith(".ts")) {
-    const source = await readFile(fileURLToPath(url), "utf8");
-    return { format: "module", shortCircuit: true, source };
-  }
-  return next(url, context);
 }
 `, "utf8");
   register(pathToFileURL(hookPath), import.meta.url);
