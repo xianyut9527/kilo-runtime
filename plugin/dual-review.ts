@@ -153,13 +153,14 @@ async function runDualReview(subject, overrides = null) {
 
   // 模型唯一真源 = kilo.json provider.openllamas.options.dual_review（改模型只改配置文件，代码不留兜底默认值）
   const dr = cfg.options?.dual_review ?? {};
-  const posModel = typeof overrides?.positive_model === "string" && overrides.positive_model ? overrides.positive_model : dr.positive;
-  const negModel = typeof overrides?.negative_model === "string" && overrides.negative_model ? overrides.negative_model : dr.negative;
-  const aggModel = typeof overrides?.aggregator === "string" && overrides.aggregator ? overrides.aggregator : dr.aggregator;
+  const pin = cfg.singleModel || "";
+  const posModel = pin || (typeof overrides?.positive_model === "string" && overrides.positive_model ? overrides.positive_model : dr.positive);
+  const negModel = pin || (typeof overrides?.negative_model === "string" && overrides.negative_model ? overrides.negative_model : dr.negative);
+  const aggModel = pin || (typeof overrides?.aggregator === "string" && overrides.aggregator ? overrides.aggregator : dr.aggregator);
   // per-call 覆盖视为精确指定，不再套配置 fallback；自动审查走配置路由，启用兜底。
-  const posModels = modelRoutes(posModel, typeof overrides?.positive_model === "string" && overrides.positive_model ? [] : dr.positive_fallbacks);
-  const negModels = modelRoutes(negModel, typeof overrides?.negative_model === "string" && overrides.negative_model ? [] : dr.negative_fallbacks);
-  const aggModels = modelRoutes(aggModel, typeof overrides?.aggregator === "string" && overrides.aggregator ? [] : dr.aggregator_fallbacks);
+  const posModels = modelRoutes(posModel, typeof overrides?.positive_model === "string" && overrides.positive_model ? [] : dr.positive_fallbacks, pin);
+  const negModels = modelRoutes(negModel, typeof overrides?.negative_model === "string" && overrides.negative_model ? [] : dr.negative_fallbacks, pin);
+  const aggModels = modelRoutes(aggModel, typeof overrides?.aggregator === "string" && overrides.aggregator ? [] : dr.aggregator_fallbacks, pin);
   if (!posModel || !negModel || !aggModel) {
     return "dual_review: 审查模型未配置——请在 kilo.json 的 provider.openllamas.options.dual_review 配置 positive/negative/aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
   }

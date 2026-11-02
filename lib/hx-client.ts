@@ -306,6 +306,16 @@ function cbAllowRequest() {
 
 let cfgCache = null;
 let cfgCacheAt = 0;
+let singleModelCache = "";
+
+function singleModelOf(options) {
+  const raw = options?.singleModel;
+  const id = typeof raw === "string" ? raw : raw?.model;
+  if (typeof id !== "string") return "";
+  const value = id.trim();
+  if (!value) return "";
+  return value.startsWith("openllamas/") ? value.slice("openllamas/".length) : value;
+}
 
 // ── 失败遥测（2026-09-22 glm-5.2 四连失败专项）──────────────────
 // moa/dual-review 走本客户端直连，不经过 provider 降级链也不写 failover-events.jsonl——
@@ -472,7 +482,8 @@ export async function loadCfg() {
   const key = auth?.openllamas?.key ?? auth?.hx?.key;
   if (!opts.baseURL) throw new Error("hx-client: provider.openllamas.options.baseURL 未配置");
   if (!key) throw new Error("hx-client: auth.json 缺少 openllamas.key（请先登录/配置 openllamas provider）");
-  cfgCache = { baseURL: String(opts.baseURL).replace(/\/+$/, ""), key, options: opts };
+  singleModelCache = singleModelOf(opts);
+  cfgCache = { baseURL: String(opts.baseURL).replace(/\/+$/, ""), key, options: opts, singleModel: singleModelCache };
   cfgCacheAt = Date.now();
   return cfgCache;
 }
@@ -491,8 +502,9 @@ export const AGG_MIN_BUDGET_MS = (() => {
 // fallback 只在首选失败时启用；调用方显式覆盖模型时传空 fallback 表示精确指定。
 // 保持无类型注解的 JS 语法：test-plugin-contract 用 Node 原生 strip-types 直接加载本文件，
 // 新增 TS 专有语法会绕过该回归入口（实测 Node 22 在此处报 Unexpected token ':'）。
-export function modelRoutes(primary, fallbacks) {
-  const list = [primary, ...(Array.isArray(fallbacks) ? fallbacks : [])]
+export function modelRoutes(primary, fallbacks, singleModel) {
+  const pin = typeof singleModel === "string" ? singleModel.trim() : "";
+  const list = [pin || primary, ...(!pin && Array.isArray(fallbacks) ? fallbacks : [])]
     .filter((m) => typeof m === "string" && m.trim().length > 0)
     .map((m) => m.trim());
   return [...new Set(list)];
@@ -702,8 +714,11 @@ function sleepWithSignal(ms, signal) {
 //   - 「总时长超时」类失败不重试——剩余预算已装不下一次完整尝试，重试只是再烧 timeoutMs；
 //   - 已耗时 ≥ timeoutMs 不再发起新尝试。
 //   单次 ask 最坏墙钟从 ~3×timeout 收敛到 ~2×timeout（快速失败类仍有重试保护）。
-export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, attempts, signal }) {
+export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, attempts, signal, singleModel }) {
   if (signal?.aborted) throw cancellationReason(signal);
+  const explicitPin = typeof singleModel === "string" ? singleModel.trim() : "";
+  const pin = explicitPin || singleModelCache;
+  if (pin) model = pin.startsWith("openllamas/") ? pin.slice("openllamas/".length) : pin;
   const maxAttempts = Number.isInteger(attempts) && attempts > 0 ? attempts : MAX_ATTEMPTS;
   const budgetMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : FALLBACK_TIMEOUT_MS;
   const t0 = Date.now();

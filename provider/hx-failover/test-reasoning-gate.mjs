@@ -256,7 +256,7 @@ function toolInputOf(parts) {
     name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch,
     failover: { chain: { models: [] } }, reasoningGate: true,
   });
-  const result = await provider.languageModel("deepseek-v4.1-flash").doGenerate({
+  const result = await provider.languageModel("deepseek-v4.1-flash-1017").doGenerate({
     prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
   });
   check("nostream-death-rescued  :", call === 2 && result.content.some((c) => c.type === "text" && c.text.includes("[json-rescued]")));

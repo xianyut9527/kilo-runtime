@@ -914,7 +914,19 @@ function configuredModelsOf(options) {
     .filter((m) => typeof m === "string" && m);
 }
 
+function singleModelOf(options) {
+  const raw = options?.singleModel;
+  const id = typeof raw === "string" ? raw : raw?.model;
+  if (typeof id !== "string") return "";
+  const value = id.trim();
+  if (!value) return "";
+  return value.startsWith("openllamas/") ? value.slice("openllamas/".length) : value;
+}
+
 function chainOf(options, currentModelId) {
+  const pinned = singleModelOf(options);
+  if (pinned) return [pinned];
+
   const models = configuredModelsOf(options);
 
   // 主模型永远排第一；去掉重复与嵌套（禁止嵌套：链内不得再含 failover 配置）
@@ -1355,7 +1367,7 @@ export function createHxFailover(options) {
 
   // Kilo/自研扩展键不可透传给 @ai-sdk/openai-compatible（SDK 只读已知键，未知键静默丢弃——
   // 但留在 settings 里易被误当 SDK 能力排查，统一剥除；timeout/dual_review 由 plugin 侧直读 kilo.json）
-  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "reasoningGate", "timeout", "dual_review"];
+  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "reasoningGate", "timeout", "dual_review", "singleModel"];
   // thinking 模式 reasoning_content 回传兜底（kilo.json options.reasoningEcho；缺省 = 关闭）
   const reasoningEcho = options?.reasoningEcho === true;
   // 推理门控（kilo.json options.reasoningGate = true | {holdMs,retries,minTokens,maxTokens,toolHoldMs,bufferLimitBytes}；缺省 = 关闭）。
@@ -1731,7 +1743,8 @@ export function createHxFailover(options) {
     return stream.pipeThrough(watch);
   }
 
-  function wrap(modelId) {
+  function wrap(requestedModelId) {
+    const modelId = singleModelOf(options) || requestedModelId;
     const inner = provider.chatModel(modelId);
     return {
       specificationVersion: "v3",

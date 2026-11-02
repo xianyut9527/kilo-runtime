@@ -1,4 +1,4 @@
-// kilo-build: src-sha256=5beea142cd81f697b047497ae7937cd73c7d56b01ec8739f0a8b50d3ada5a11e
+// kilo-build: src-sha256=e395b997453facbf3920cbd5610488a988d1fe8e7f0018e503ccafdac6b9e5e4
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)
@@ -29103,7 +29103,17 @@ function configuredModelsOf(options) {
   }
   return list.map((p) => typeof p === "string" ? p : p?.model ?? p?.id).filter((m) => typeof m === "string" && m);
 }
+function singleModelOf(options) {
+  const raw = options?.singleModel;
+  const id = typeof raw === "string" ? raw : raw?.model;
+  if (typeof id !== "string") return "";
+  const value = id.trim();
+  if (!value) return "";
+  return value.startsWith("openllamas/") ? value.slice("openllamas/".length) : value;
+}
 function chainOf(options, currentModelId) {
+  const pinned = singleModelOf(options);
+  if (pinned) return [pinned];
   const models = configuredModelsOf(options);
   const seen = /* @__PURE__ */ new Set();
   const ordered = [currentModelId, ...models].filter((m) => {
@@ -29389,7 +29399,7 @@ function createHxFailover(options) {
   if (failoverOpts?.nested === true || Array.isArray(failoverOpts?.nested)) {
     throw new Error("\u7981\u6B62\u5D4C\u5957 failover \u914D\u7F6E\uFF08legacy \u8BED\u4E49\uFF0C\u9632\u5FAA\u73AF\u4F9D\u8D56\uFF09");
   }
-  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "reasoningGate", "timeout", "dual_review"];
+  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "reasoningGate", "timeout", "dual_review", "singleModel"];
   const reasoningEcho = options?.reasoningEcho === true;
   const gateCfg = options?.reasoningGate === true ? {} : options?.reasoningGate && typeof options.reasoningGate === "object" ? options.reasoningGate : null;
   let fetchFn = withQueuedAckGuard(customFetch);
@@ -29670,7 +29680,8 @@ function createHxFailover(options) {
     });
     return stream.pipeThrough(watch);
   }
-  function wrap(modelId) {
+  function wrap(requestedModelId) {
+    const modelId = singleModelOf(options) || requestedModelId;
     const inner = provider.chatModel(modelId);
     return {
       specificationVersion: "v3",

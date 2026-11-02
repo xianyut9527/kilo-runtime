@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+sh install.sh --check

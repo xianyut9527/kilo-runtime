@@ -49,20 +49,22 @@ const MoaImpl = async (_ctx = {}) => {
           // 模型唯一真源 = kilo.json provider.openllamas.options.moa（改模型只改配置文件，代码不留兜底默认值）
           const cfgMoa = cfg.options?.moa ?? {};
           // 去重后再截断：["m","m","m"] 这类重复配置/参数不得绕过 MAX_REFS 成本红线（审查必须项）
-          const refs = [...new Set(
+          const pin = cfg.singleModel || "";
+          const refs = pin ? [pin] : [...new Set(
             (Array.isArray(args?.references) && args.references.length
               ? args.references
               : (Array.isArray(cfgMoa.references) ? cfgMoa.references : [])
             )
               .filter((m) => typeof m === "string" && m)
           )].slice(0, MAX_REFS);
-          const aggregator = typeof args?.aggregator === "string" && args.aggregator
+          const aggregator = pin || (typeof args?.aggregator === "string" && args.aggregator
             ? args.aggregator
-            : (typeof cfgMoa.aggregator === "string" ? cfgMoa.aggregator : "");
+            : (typeof cfgMoa.aggregator === "string" ? cfgMoa.aggregator : ""));
           // per-call 覆盖视为精确指定，不再套配置 fallback。
           const aggModels = modelRoutes(
             aggregator,
             typeof args?.aggregator === "string" && args.aggregator ? [] : cfgMoa.aggregator_fallbacks,
+            pin,
           );
 
           if (refs.length === 0 || !aggregator) {
