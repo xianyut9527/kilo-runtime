@@ -856,18 +856,37 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
 // 带硬墙钟的 ask：到点 abort 底层 fetch（不再只 race 一个结果无人消费），并统一错误文案。
 // 调用方传绝对截止时间；每个候选模型独立计时，路由层仍可按剩余预算续试。
 export async function askWithDeadline(args, deadlineMs, tag) {
-  const remaining = Math.max(1, deadlineMs - Date.now());
+  // 预算已尽：直接失败，不再发出「1ms 后必然被取消」的请求（浪费一次连接与重试计数）。
+  const left = deadlineMs - Date.now();
+  if (left <= 0) throw new Error(`${tag} 墙钟预算已耗尽`);
+  const remaining = left;
   const controller = new AbortController();
   const reason = new Error(`${tag} 墙钟预算 ${Math.round(remaining / 1000)}s 到期`);
-  const timer = setTimeout(() => controller.abort(reason), remaining);
+  let deadlineHit = false;
+  const timer = setTimeout(() => { deadlineHit = true; controller.abort(reason); }, remaining);
   timer.unref?.();
+  // 组合调用方的 signal 与墙钟 signal：旧实现用 controller.signal 直接覆盖 args.signal，
+  // 外层取消（用户中止/会话结束）会被静默吞掉，只剩墙钟侧生效。
+  const outer = args?.signal;
+  let onOuterAbort = null;
+  if (outer) {
+    if (outer.aborted) { clearTimeout(timer); throw cancellationReason(outer); }
+    onOuterAbort = () => controller.abort(outer.reason ?? new Error("请求已取消"));
+    outer.addEventListener?.("abort", onOuterAbort, { once: true });
+  }
   try {
     return await ask({ ...args, signal: controller.signal });
   } catch (e) {
-    if (controller.signal.aborted) throw reason;
+    if (deadlineHit) {
+      // 墙钟到期：附上原始错误，避免底层真实错误被墙钟文案掩盖（可诊断性）。
+      const cause = e?.message ? `；原始错误：${e.message}` : "";
+      throw new Error(`${reason.message}${cause}`);
+    }
+    if (outer?.aborted) throw cancellationReason(outer);
     throw e;
   } finally {
     clearTimeout(timer);
+    if (onOuterAbort) outer.removeEventListener?.("abort", onOuterAbort);
   }
 }
 

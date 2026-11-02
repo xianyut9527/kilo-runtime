@@ -5,6 +5,7 @@
     .\install.ps1              下发（改动前对目标做一次性备份）
     .\install.ps1 -DryRun      只打印将发生的变更，不写盘
     .\install.ps1 -Check       只检测漂移，有漂移则退出码 1
+    .\install.ps1 -Force       跳过 provider dist 完整性闸门（仅在人工确认 dist 可用时用）
     .\install.ps1 -Target D:\x 覆盖目标目录（默认 $HOME\.config\kilo）
 
   设计要点：与 install.sh 相同 —— 清单驱动、__KILO_HOME__ 占位符替换、
@@ -14,6 +15,7 @@
 param(
     [switch]$DryRun,
     [switch]$Check,
+    [switch]$Force,
     [string]$Target
 )
 
@@ -28,8 +30,24 @@ $HomeSlash = ($HOME -replace '\\', '/').TrimEnd('/')
 $TargetNative = ($TargetDir -replace '\\', '/').TrimEnd('/')
 # provider.npm 的 file:// 基址：必须恰好三斜杠。
 # 盘符路径（C:/...）→ file:///C:/...；POSIX 绝对路径（/Users/...，pwsh on macOS）→ file:///Users/...
-$TargetUrl = 'file:///' + $TargetNative
-if ($TargetNative.StartsWith('/')) { $TargetUrl = 'file://' + $TargetNative }
+# file:// URL 的路径段必须百分号编码（RFC 3986）：只保留 unreserved（A-Za-z0-9-._~）
+# 与路径分隔符 '/'、盘符 ':'，其余（空格 / & / | / # / ? / % / 非 ASCII）一律编码。
+# 空格是 macOS 用户目录常态（"John Doe"）——裸空格会让 file:// URL 非法，
+# provider 初始化失败 = Kilo 起不来（与 install.sh 同口径）。
+function ConvertTo-FileUrlPath([string]$Path) {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Path)
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($b in $bytes) {
+        if ($b -eq 0x2F -or $b -eq 0x3A) { [void]$sb.Append([char]$b); continue }
+        if (($b -ge 0x41 -and $b -le 0x5A) -or ($b -ge 0x61 -and $b -le 0x7A) -or
+            ($b -ge 0x30 -and $b -le 0x39) -or $b -eq 0x2D -or $b -eq 0x2E -or
+            $b -eq 0x5F -or $b -eq 0x7E) { [void]$sb.Append([char]$b); continue }
+        [void]$sb.AppendFormat('%{0:X2}', $b)
+    }
+    return $sb.ToString()
+}
+$TargetUrl = 'file:///' + (ConvertTo-FileUrlPath $TargetNative)
+if ($TargetNative.StartsWith('/')) { $TargetUrl = 'file://' + (ConvertTo-FileUrlPath $TargetNative) }
 
 # 单模型模式活动期间禁止覆盖配置：install 会把 kilo.json 恢复成模板，但状态文件仍在，
 # 形成「配置已恢复、QG 仍旁路/restore 指向旧备份」的不一致。必须先 restore。
@@ -127,12 +145,24 @@ if ((Test-Path $srcJs) -and (Test-Path $distJs)) {
     # 严格整行匹配：^// kilo-build: src-sha256=<64hex>（末尾不得有其他字符）
     $m = [regex]::Match($firstLine, '^//\s*kilo-build:\s*src-sha256=([0-9a-f]{64})\s*$')
     if (-not $m.Success) {
-        Write-Warning "[INSTALL] WARN: provider dist/index.js 首行无有效构建指纹（旧版产物/首行被改动）—— 在 provider/hx-failover 跑 npm run build 重建后再下发"
+        # 完整性闸门（2026-11-02 三模型审查必修项）：src 已改未重建 → 旧逻辑只 WARN 仍照常
+        # 下发，等于完整性检查形同虚设。改为默认硬失败，人工确认 dist 可用时用 -Force 豁免。
+        if ($Force) {
+            Write-Warning "[INSTALL] WARN: provider dist/index.js 首行无有效构建指纹 —— 已用 -Force 跳过完整性闸门"
+        } else {
+            Write-Warning "[INSTALL] FAIL: provider dist/index.js 首行无有效构建指纹（旧版产物/首行被改动）—— 在 provider/hx-failover 跑 npm run build 重建后再下发（确认可跳过时加 -Force）"
+        }
         if ($Check) { Write-Error "[check] 漂移：provider dist 缺构建指纹"; exit 1 }
+        elseif (-not $Force) { exit 1 }
     }
     elseif ($m.Groups[1].Value -ne $srcHash) {
-        Write-Warning "[INSTALL] WARN: provider src/index.js 已改但 dist 指纹不匹配 —— 先在 provider/hx-failover 跑 npm run build 再下发"
+        if ($Force) {
+            Write-Warning "[INSTALL] WARN: provider src/index.js 已改但 dist 指纹不匹配 —— 已用 -Force 跳过完整性闸门"
+        } else {
+            Write-Warning "[INSTALL] FAIL: provider src/index.js 已改但 dist 指纹不匹配 —— 先在 provider/hx-failover 跑 npm run build 再下发（确认可跳过时加 -Force）"
+        }
         if ($Check) { Write-Error "[check] 漂移：provider dist 过期（src 已改未重建）"; exit 1 }
+        elseif (-not $Force) { exit 1 }
     }
     else { $distFpOk = $true }
 }
@@ -237,11 +267,13 @@ if ($nodeCmd -and -not $nodeSmokeCmd) {
     Write-Warning "[INSTALL] 无 node>=18 可用（PATH node 与 hermes 均缺 Web Streams 全局），dist 冒烟跳过"
 }
 # TS 冒烟引擎：bun 可用则用 bun（原生 TS + 宽松解析，历史路径）；
-# 否则用版本窗内的 node + register loader hook（无扩展名相对导入解析到 .ts/.js）。
+# 否则按版本窗遍历 node 候选（PATH node → hermes node22 兜底）取第一个窗内的——
+# PATH node 窗外（如 22.10）时不再直接无引擎告警，与 install.sh 同口径。
 # 两引擎同一断言语义（import 不抛 + vE2 工厂模拟），脚本本体共用（见 $ve2SmokeMjs）。
 # 版本窗（2026-11-02 与 install.sh ts_node_supported 同口径）：node 原生 strip-types
-# 默认开启自 23.6 / 22.18 起；22.6–22.17 需实验旗（与 hook 组合未证，窗外 node 的冒烟会
-# 假报「加载即崩」中止下发）——窗外不选引擎，走软门禁告警放行（假失败比跳过危害大）。
+# 默认开启自 23.6 / 22.18 起（官方 changelog 实证）；22.6–22.17 需实验旗（与 hook 组合
+# 未证，选它会让冒烟假报「加载即崩」中止下发）——窗外不选引擎，走软门禁告警放行
+# （假失败比跳过危害大）。
 function Test-NodeTsWindow([string]$Version) {
     if ($Version -notmatch '^(\d+)\.(\d+)') { return $false }
     $major = [int]$Matches[1]; $minor = [int]$Matches[2]
@@ -250,11 +282,27 @@ function Test-NodeTsWindow([string]$Version) {
     if ($major -eq 22 -and $minor -ge 18) { return $true }
     return $false
 }
+# 冒烟临时文件陈旧清扫（2026-11-02 四轮）：hook/run/ve2 脚本按 PID 命名、smoke-data 按
+# PID+随机命名——exit 1 路径不经过末尾清理，强杀路径不经过 finally；旧注释「下次运行
+# 同 PID 覆盖」是错的（PID 每次不同，会无限累积）。启动期清扫 >24h 陈旧项兜底
+# （不碰 24h 内的，防并发运行互删正在使用的文件）。
+$smokeCutoff = (Get-Date).AddHours(-24)
+$smokeTmp = [System.IO.Path]::GetTempPath()
+foreach ($smokePat in @('kilo-ts-smoke-hook-*.mjs', 'kilo-ts-smoke-run-*.mjs', 'kilo-ve2-smoke-*.mjs')) {
+    Get-ChildItem -LiteralPath $smokeTmp -Filter $smokePat -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt $smokeCutoff } |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+}
+Get-ChildItem -LiteralPath $smokeTmp -Filter 'kilo-smoke-data-*' -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.LastWriteTime -lt $smokeCutoff } |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 $tsSmokeCmd = $null; $tsSmokeKind = $null; $tsSmokeHookUrl = $null
 if ($bunCmd) { $tsSmokeCmd = 'bun'; $tsSmokeKind = 'bun' }
-elseif ($nodeSmokeCmd) {
-    $verOut = (& $nodeSmokeCmd -p "process.versions.node" 2>$null) -as [string]
-    if ($LASTEXITCODE -eq 0 -and (Test-NodeTsWindow $verOut)) {
+else {
+    foreach ($tsCand in @($nodePath, (Join-Path $env:LOCALAPPDATA "hermes\node\node.exe"))) {
+        if (-not $tsCand -or -not (Test-Path -LiteralPath $tsCand)) { continue }
+        $verOut = (& $tsCand -p "process.versions.node" 2>$null) -as [string]
+        if ($LASTEXITCODE -ne 0 -or -not (Test-NodeTsWindow $verOut)) { continue }
         # loader hook：无扩展名相对导入补 .ts 再解析（node 严格解析器找不到 '../lib/hx-client'，
         # Kilo/bun 能——hook 拉平语义）。hook 写入临时 .mjs，register() 形式挂载。
         # 仅 resolve、不接管 load：.ts 的类型剥离交给 node 原生默认 loader（版本窗内默认开启）。
@@ -272,8 +320,9 @@ export async function resolve(specifier, context, next) {
   return next(specifier, context);
 }
 '@
-        $tsSmokeCmd = $nodeSmokeCmd; $tsSmokeKind = 'node22'
+        $tsSmokeCmd = $tsCand; $tsSmokeKind = 'node22'
         $tsSmokeHookUrl = 'file:///' + ($hookPath -replace '\\', '/')
+        break
     }
 }
 # TS 冒烟统一运行器（node22 用）：register hook 后 import 目标；bun 直接 -e import。
@@ -597,7 +646,8 @@ if ($Check -and ($changed -gt 0 -or $strayList.Count -gt 0)) {
     exit 1
 }
 
-# TS 冒烟引擎的临时文件清理（hook / runner；exit 路径残留无害——下次运行覆盖同 PID 名）
+# TS 冒烟引擎的临时文件清理（hook / runner；成功路径快速回收——
+# exit 1/强杀路径的残留由启动期 24h 陈旧清扫兜底）
 if ($tsSmokeKind -eq 'node22' -and $tsSmokeHookUrl) {
     Remove-Item -LiteralPath ($tsSmokeHookUrl -replace '^file:///', '' -replace '/', '\') -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $tsSmokeRunMjs -Force -ErrorAction SilentlyContinue

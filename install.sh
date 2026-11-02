@@ -5,6 +5,7 @@
 #   ./install.sh              下发（改动前对目标做一次性备份）
 #   ./install.sh --dry-run    只打印将发生的变更，不写盘
 #   ./install.sh --check      只检测漂移（仓库 vs 部署），有漂移则退出码 1
+#   ./install.sh --force      跳过 provider dist 完整性闸门（仅在人工确认 dist 可用时用）
 #   ./install.sh --target DIR 覆盖目标目录（默认 ~/.config/kilo）
 #
 # 设计要点：
@@ -20,11 +21,13 @@ MANIFEST="$SCRIPT_DIR/install.manifest"
 TARGET_DIR="${KILO_SYNC_TARGET:-$HOME/.config/kilo}"
 DRY_RUN=0
 CHECK=0
+FORCE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --check)   CHECK=1 ;;
+    --force)   FORCE=1 ;;
     --target)  shift; TARGET_DIR="$1" ;;
     -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "[INSTALL] FAIL: 未知参数 $1" >&2; exit 2 ;;
@@ -52,12 +55,34 @@ fi
 case "$TARGET_NATIVE" in
   /[a-zA-Z]/*) TARGET_NATIVE="$(echo "$TARGET_NATIVE" | sed 's|^/\([a-zA-Z]\)/|\1:/|')" ;;
 esac
+# file:// URL 的路径段必须百分号编码（RFC 3986）：只保留 unreserved（A-Za-z0-9-._~）
+# 与路径分隔符 '/'、盘符 ':'，其余（空格 / & / | / # / ? / % / 非 ASCII）一律编码。
+# 空格是 macOS 用户目录常态（"John Doe"）——裸空格会让 file:// URL 非法，
+# provider 初始化失败 = Kilo 起不来；'&' '|' 还会打穿下面的 sed 替换
+# （& = 匹配文本、| = s 命令分隔符），故一并编码。
+url_encode_path() {
+  printf '%s' "$1" | od -An -tx1 -v | tr -s ' ' '\n' | grep -v '^$' | while read -r b; do
+    case "$b" in
+      2f) printf -- '/' ;;
+      3a) printf -- ':' ;;
+      2d|2e|5f|7e) printf "\\x$b" ;;
+      3[0-9]|4[1-9a-f]|5[0-9a]|6[1-9a-f]|7[0-9a]) printf "\\x$b" ;;
+      *)  printf '%%%02X' "$((0x$b))" ;;
+    esac
+  done
+}
+
+# sed 替换串转义：& 会被替换成匹配文本、| 会截断 s 命令、\ 是转义前缀。
+sed_escape_replacement() {
+  printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
+}
+
 # provider.npm 用的 file:// 基址：必须恰好三斜杠。
 # POSIX 绝对路径自带前导斜杠（/Users/x）→ file:// + 路径 = file:///Users/x；
 # Windows 盘符路径（C:/Users/x）→ file:/// + 路径 = file:///C:/Users/x。
 case "$TARGET_NATIVE" in
-  /*) TARGET_URL="file://$TARGET_NATIVE" ;;
-  *)  TARGET_URL="file:///$TARGET_NATIVE" ;;
+  /*) TARGET_URL="file://$(url_encode_path "$TARGET_NATIVE")" ;;
+  *)  TARGET_URL="file:///$(url_encode_path "$TARGET_NATIVE")" ;;
 esac
 
 # 单模型模式活动期间禁止覆盖配置（与 install.ps1 对等）。
@@ -167,9 +192,9 @@ needs_subst() {
 # 占位符替换（stdin -> stdout）：所有渲染点共用，避免各自漏掉 URL 基址。
 # __KILO_CONFIG_URL__ 必须先于 __KILO_CONFIG__ 替换（虽然前者不含后者的完整字面量）。
 subst_placeholders() {
-  sed -e "s|__KILO_CONFIG_URL__|$TARGET_URL|g" \
-      -e "s|__KILO_CONFIG__|$TARGET_NATIVE|g" \
-      -e "s|__KILO_HOME__|$HOME_SLASH|g"
+  sed -e "s|__KILO_CONFIG_URL__|$(sed_escape_replacement "$TARGET_URL")|g" \
+      -e "s|__KILO_CONFIG__|$(sed_escape_replacement "$TARGET_NATIVE")|g" \
+      -e "s|__KILO_HOME__|$(sed_escape_replacement "$HOME_SLASH")|g"
 }
 
 # 把源文件渲染到目标（含占位符替换 + 模板注释剥离），并返回是否发生变化
@@ -206,7 +231,9 @@ render_file() { # $1=src $2=dst
 
 # ---------- 展开清单 -> 文件对列表 ----------
 PAIRS="$(mktemp)"
-trap 'rm -f "$PAIRS"' EXIT
+# EXIT trap 兜底所有退出路径（含冒烟失败中止）：PAIRS 临时清单 + TS 冒烟引擎临时目录。
+# if 形式避免 set -e 下 `[ ] &&` 的非零返回；变量此时可能未定义，用 :- 防 set -u。
+trap 'if [ -n "${PAIRS:-}" ]; then rm -f "$PAIRS"; fi; if [ -n "${TS_SMOKE_DIR:-}" ]; then rm -rf "$TS_SMOKE_DIR"; fi' EXIT
 
 while IFS= read -r raw; do
   line="${raw%%#*}"
@@ -262,15 +289,30 @@ if [ -f "$SRC_JS" ] && [ -f "$DIST_JS" ]; then
   fi
   DIST_FP="$(printf '%s\n' "$first_line" | sed -n -E 's|^//[[:space:]]*kilo-build:[[:space:]]*src-sha256=([0-9a-f]{64})[[:space:]]*$|\1|p')"
   if [ -z "$DIST_FP" ]; then
-    echo "[INSTALL] WARN: provider dist/index.js 首行无有效构建指纹（旧版产物/首行被改动）—— 在 provider/hx-failover 跑 npm run build 重建后再下发" >&2
+    # 完整性闸门（2026-11-02 三模型审查必修项）：src 已改未重建 → 旧逻辑只 WARN 仍照常
+    # 下发，等于完整性检查形同虚设（出问题时无法定位是哪份产物）。改为默认硬失败，
+    # 人工确认 dist 可用时用 --force 显式豁免。
+    if [ "$FORCE" = "1" ]; then
+      echo "[INSTALL] WARN: provider dist/index.js 首行无有效构建指纹 —— 已用 --force 跳过完整性闸门" >&2
+    else
+      echo "[INSTALL] FAIL: provider dist/index.js 首行无有效构建指纹（旧版产物/首行被改动）—— 在 provider/hx-failover 跑 npm run build 重建后再下发（确认可跳过时加 --force）" >&2
+    fi
     if [ "$CHECK" = "1" ]; then
       echo "[check] 漂移：provider dist 缺构建指纹" >&2
       exit 1
+    elif [ "$FORCE" != "1" ]; then
+      exit 1
     fi
   elif [ "$DIST_FP" != "$SRC_HASH" ]; then
-    echo "[INSTALL] WARN: provider src/index.js 已改但 dist 指纹不匹配 —— 先在 provider/hx-failover 跑 npm run build 再下发" >&2
+    if [ "$FORCE" = "1" ]; then
+      echo "[INSTALL] WARN: provider src/index.js 已改但 dist 指纹不匹配 —— 已用 --force 跳过完整性闸门" >&2
+    else
+      echo "[INSTALL] FAIL: provider src/index.js 已改但 dist 指纹不匹配 —— 先在 provider/hx-failover 跑 npm run build 再下发（确认可跳过时加 --force）" >&2
+    fi
     if [ "$CHECK" = "1" ]; then
       echo "[check] 漂移：provider dist 过期（src 已改未重建）" >&2
+      exit 1
+    elif [ "$FORCE" != "1" ]; then
       exit 1
     fi
   else
@@ -341,10 +383,14 @@ to_native() { # $1 = MSYS 路径 → 原生路径
 # node 候选：PATH 上的 node（本机实证可能 v14）→ hermes node 兜底（Windows 专属，
 # $LOCALAPPDATA/hermes/node/node.exe；PATH node 缺失或窗外时才试，同一版本窗校验；
 # MSYS PATH 需要 /c/ 形式，Windows 形式的 C:\... 追加进 PATH 会被 which 忽略——本机实证）。
-ts_node_supported() { # $1 = 完整版本串（如 22.23.4）；空/畸形 → 不支持
-  local v="$1" major minor rest
-  case "$v" in ''|*[!0-9.]*) return 1 ;; esac
-  major="${v%%.*}"; rest="${v#*.}"; minor="${rest%%.*}"
+ts_node_supported() { # $1 = 完整版本串（如 22.23.4 / 23.0.0-nightly）；空/畸形 → 不支持
+  local v="$1" major minor rest numeric
+  # 只取前两段数字并忽略其后的一切（-nightly / 23.0.0-nightly 等）：与 install.ps1 的
+  # ^(\d+)\.(\d+) 口径一致（两端不能一边接受一边拒绝同一版本串，2026-11-02 三模型审查必修项）。
+  # 注意：不能对整串做字符白名单校验——"22.18.0-nightly" 含字母会被误判非法。
+  numeric="$(printf '%s' "$v" | sed -n -E 's/^([0-9]+\.[0-9]+).*$/\1/p')"
+  case "$numeric" in ''|*[!0-9.]*) return 1 ;; esac
+  major="${numeric%%.*}"; rest="${numeric#*.}"; minor="${rest%%.*}"
   case "$major" in ''|*[!0-9]*) return 1 ;; esac
   case "$minor" in ''|*[!0-9]*) return 1 ;; esac
   [ "$major" -ge 24 ] && return 0
@@ -758,6 +804,6 @@ if [ "$CHECK" = "1" ]; then
     exit 1
   fi
 fi
-# TS 冒烟引擎临时目录清理（mktemp -d 在 /tmp，残留无害但显式回收；exit 1 路径不经过这里属已知）
+# TS 冒烟引擎临时目录清理（成功路径的快速回收；exit 1/异常路径由顶部 EXIT trap 兜底，2026-11-02）
 [ -n "$TS_SMOKE_DIR" ] && rm -rf "$TS_SMOKE_DIR"
 exit 0

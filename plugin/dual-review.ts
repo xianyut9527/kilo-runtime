@@ -41,7 +41,9 @@ const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
 // dr-2026-10-27.2：fallback 席位显式标注「降级复核」；跨族轮换后再 1017 保底。
 // dr-2026-10-27.3：裁决席 fallback 饿死修复——共享墙钟耗尽后补一次 90s 保底窗口（armFloor），
 // kimi 裁决超时后 glm/1017 兜底得以执行（本轮实证「已试 1 个模型」饿死场景）。
-const REVIEWER_VERSION = "dr-2026-10-27.3";
+// dr-2026-11-02.1：新增同源复核标注——三席同模型（单模型模式钉扎/配置同族）时显式标注，
+// 不计为三族独立交叉验证；输出协议变更 → 旧裁决缓存全部失效（指纹含版本）。
+const REVIEWER_VERSION = "dr-2026-11-02.1";
 
 // 审查素材的最终截断单点（离线测试经 _export 验证：20K 尾部不被二次砍掉）。
 function reviewSubjectForPrompt(subject) {
@@ -65,6 +67,19 @@ function degradedReviewLine(seats) {
   return seats.length
     ? `> 降级复核：${seats.join("；")}（至少一席使用 fallback，不计为完整三族独立交叉验证）`
     : "";
+}
+
+// 同源复核标注（2026-11-02 三模型审查建议项）：单模型模式（singleModel 钉扎）或配置里
+// 正/反/裁决三席指向同一模型时，本次审查不再是三族独立交叉验证——必须显式标注，
+// 否则「同源自证」会被当成独立异源票计入质量门禁。
+function sameSourceLine(posModel, negModel, aggModel, pin) {
+  const p = typeof posModel === "string" ? posModel.trim() : "";
+  const n = typeof negModel === "string" ? negModel.trim() : "";
+  const a = typeof aggModel === "string" ? aggModel.trim() : "";
+  if (!p || !n || !a) return "";
+  if (!(p === n && n === a)) return "";
+  const why = pin ? "单模型模式钉扎" : "配置三席同模型";
+  return `> 同源复核：正/反/裁决均为 ${p}（${why}，不计为三族独立交叉验证）`;
 }
 
 // 模型路由列表由 lib/hx-client 单点维护（与 moa 共用）；fallback 只在首选失败时启用，
@@ -271,6 +286,7 @@ async function runDualReview(subject, overrides = null) {
       `dual_review: 一路审查失败，无法裁决。幸存方原始结论：`,
       failures.join("\n"),
       degradedReviewLine(posNegSeats),
+      sameSourceLine(pos?.model ?? posModel, neg?.model ?? negModel, aggModel, pin),
       fallbackNotes.length ? `> 路由兜底：${fallbackNotes.join("；")}` : "",
       "",
       pos ? `### 正向审查（${pos.model}）\n${pos.text}` : "",
@@ -293,6 +309,7 @@ async function runDualReview(subject, overrides = null) {
       `dual_review: ${e.message}`,
       "",
       degradedReviewLine(posNegSeats),
+      sameSourceLine(pos.model, neg.model, aggModel, pin),
       `### 正向审查（${pos.model}）\n${pos.text}`,
       "",
       `### 反向审查（${neg.model}）\n${neg.text}`,
@@ -304,6 +321,7 @@ async function runDualReview(subject, overrides = null) {
   return [
     `## 双向审查裁决（${pos.model} 正向 × ${neg.model} 反向 → ${agg.model} 裁决）`,
     degradedReviewLine(allSeats),
+    sameSourceLine(pos.model, neg.model, agg.model, pin),
     fallbackNotes.length ? `> 路由兜底：${fallbackNotes.join("；")}` : "",
     agg.text,
     "",

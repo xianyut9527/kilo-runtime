@@ -68,7 +68,10 @@ assert.equal(out.memory_model, "openllamas/kimi-k3.1-pro");
 assert.equal(out.default_agent, "single");
 assert.deepEqual(out.enabled_providers, ["openllamas"]);
 assert.deepEqual(out.instructions, []);
-assert.deepEqual(out.skills, []);
+// skills 形状不变式（2026-11-02 三模型审查必修项）：Kilo 的配置 schema 里 skills 是
+// 对象 {paths:[...]}，改成数组会破坏形状不变式，可能导致整份配置被拒载（启动失败）。
+assert.equal(Array.isArray(out.skills), false, "skills 不得被改成数组");
+assert.deepEqual(out.skills.paths, [], "skills.paths 必须清空");
 assert.equal(out.permission.task, "deny");
 assert.equal(out.permission.moa, "deny");
 assert.equal(out.permission.dual_review, "deny");
@@ -174,6 +177,18 @@ const missingBuiltIn = structuredClone(out);
 delete missingBuiltIn.agent.ask;
 assert.throws(() => validatePinnedConfig(missingBuiltIn, { model: "kimi-k3.1-pro", variant: "max" }), /agent\.ask 必须显式存在/);
 
+// skills 的其他键必须保留（只清 paths，不重建整个对象）
+const skillsWithExtra = structuredClone(base);
+skillsWithExtra.skills = { paths: ["skills"], extra: { keep: true } };
+const skillsOut = applySingleModelConfig(skillsWithExtra, { model: "kimi-k3.1-pro", variant: "max" });
+assert.deepEqual(skillsOut.skills.paths, []);
+assert.deepEqual(skillsOut.skills.extra, { keep: true }, "skills 的其他键必须保留");
+
+// 校验必须挡住数组形状的 skills（回归护栏：防止再次写回破坏性不变式）
+const arraySkills = structuredClone(out);
+arraySkills.skills = [];
+assert.throws(() => validatePinnedConfig(arraySkills, { model: "kimi-k3.1-pro", variant: "max" }), /skills/);
+
 console.log("PASS single-model-config: 配置变换、内置 agent 隐藏、注册表收敛、恢复前校验");
 
 const scriptPath = fileURLToPath(new URL("./single-model.mjs", import.meta.url));
@@ -239,6 +254,46 @@ try {
   result = runSingle(["enter", "--model", "kimi-k3.1-pro", "--dry-run"]);
   assert.notEqual(result.status, 0);
   assert.match(result.output, /配置已存在 singleModel/);
+
+  // ── 锁语义（2026-11-02 三模型审查必修项）──
+  // 建锁与写 pid 必须原子：读到半截/空锁的并发进程不得直接接管（否则并发多写 kilo.json）；
+  // 属主进程已退出或锁损坏时，默认拒绝接管，必须 --force 人工确认。
+  const lockPath = path.join(dataHome, "kilo", "single-model.lock");
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(configPath, originalText, "utf8");
+  fs.writeFileSync(
+    lockPath,
+    JSON.stringify({ pid: 999999, token: "stale", action: "enter", at: new Date().toISOString() }),
+    "utf8",
+  );
+  result = runSingle(["enter", "--model", "kimi-k3.1-pro"]);
+  assert.notEqual(result.status, 0, "残留锁必须拒绝接管");
+  assert.match(result.output, /残留锁/);
+  result = runSingle(["enter", "--model", "kimi-k3.1-pro", "--force"]);
+  assert.equal(result.status, 0, result.output);
+  result = runSingle(["restore", "--force"]);
+  assert.equal(result.status, 0, result.output);
+  assert.equal(fs.readFileSync(configPath, "utf8"), originalText);
+
+  fs.writeFileSync(lockPath, "{", "utf8");
+  result = runSingle(["restore"]);
+  assert.notEqual(result.status, 0, "坏锁必须拒绝接管");
+  assert.match(result.output, /锁内容损坏/);
+  fs.rmSync(lockPath, { force: true });
+
+  // ── 备份丢失 + --force：放弃恢复、保留当前配置并解除状态 ──
+  // 否则状态文件会永久挡住 install 的单模型守卫与后续 enter（死锁）。
+  result = runSingle(["enter", "--model", "kimi-k3.1-pro"]);
+  assert.equal(result.status, 0, result.output);
+  const enterState = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  fs.rmSync(enterState.backupPath, { force: true });
+  result = runSingle(["restore"]);
+  assert.notEqual(result.status, 0, "备份缺失且无 --force 必须拒绝");
+  result = runSingle(["restore", "--force"]);
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /放弃恢复/);
+  assert.equal(fs.existsSync(statePath), false, "状态必须被解除");
+  fs.writeFileSync(configPath, originalText, "utf8");
 } finally {
   fs.rmSync(tempRoot, { recursive: true, force: true });
 }

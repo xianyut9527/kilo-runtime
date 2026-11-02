@@ -69,6 +69,14 @@ function atomicWrite(file, text) {
     try { fs.unlinkSync(tmp); } catch { /* ignore cleanup failure */ }
     throw e;
   }
+  // POSIX 上 rename 的持久性需要父目录 fsync（掉电时目录项可能丢）；
+  // Windows 无此语义（MoveFileEx 已落盘），跳过。
+  if (process.platform !== "win32") {
+    try {
+      const dirFd = fs.openSync(path.dirname(file), "r");
+      try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+    } catch { /* 部分文件系统不支持目录 fsync */ }
+  }
 }
 
 function writeState(state) {
@@ -95,24 +103,42 @@ function isPidAlive(pid) {
 
 function acquireLock(action, force) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+  const token = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const payload = JSON.stringify({ pid: process.pid, token, action, at: nowIso() });
   for (let attempt = 0; attempt < 2; attempt++) {
+    // 先把完整内容写到临时文件，再原子占位：openSync(wx) 后再写 pid 存在窗口，
+    // 并发进程可能读到空/半截锁并当成「陈旧锁」接管 → 双写同一份 kilo.json。
+    const tmp = `${LOCK_PATH}.tmp-${token}`;
     try {
-      const fd = fs.openSync(LOCK_PATH, "wx", 0o600);
-      try {
-        fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, action, at: nowIso() }), "utf8");
-      } finally {
-        fs.closeSync(fd);
-      }
-      return;
+      fs.writeFileSync(tmp, payload, { mode: 0o600, flag: "wx" });
     } catch (e) {
+      if (e?.code === "EEXIST") { try { fs.unlinkSync(tmp); } catch { /* ignore */ } }
+      throw e;
+    }
+    try {
+      try {
+        fs.linkSync(tmp, LOCK_PATH); // 原子且不覆盖：EEXIST = 锁已被占
+      } catch (e) {
+        if (e?.code === "EEXIST") throw e;
+        // 不支持硬链接（FAT/exFAT 等）：退化为排他复制，同样不会覆盖既有锁。
+        fs.copyFileSync(tmp, LOCK_PATH, fs.constants.COPYFILE_EXCL);
+      }
+      return token;
+    } catch (e) {
+      try { fs.unlinkSync(tmp); } catch { /* ignore */ }
       if (e?.code !== "EEXIST") throw e;
       let info = null;
       try { info = JSON.parse(readText(LOCK_PATH)); } catch { /* malformed lock */ }
       if (info && Number.isInteger(info.pid) && isPidAlive(info.pid)) {
         throw new Error(`另一个单模型操作正在运行（pid=${info.pid}, action=${info.action ?? "?"}）`);
       }
-      if (!force && info && !Number.isInteger(info.pid)) {
-        throw new Error(`锁文件损坏：${LOCK_PATH}；确认无进程运行后加 --force`);
+      // 属主进程已退出（崩溃残留）或锁内容损坏：默认拒绝接管，必须 --force 人工确认，
+      // 避免「读到半截锁就删锁」造成并发多写。
+      if (!force) {
+        const why = info && Number.isInteger(info.pid)
+          ? `残留锁（pid=${info.pid} 已退出）`
+          : "锁内容损坏或不可读";
+        throw new Error(`检测到${why}：${LOCK_PATH}；确认没有单模型操作在运行后加 --force 接管。`);
       }
       try { fs.unlinkSync(LOCK_PATH); } catch { /* stale lock already gone */ }
     }
@@ -120,7 +146,12 @@ function acquireLock(action, force) {
   throw new Error(`无法获取单模型操作锁：${LOCK_PATH}`);
 }
 
-function releaseLock() {
+function releaseLock(token) {
+  if (!token) return;
+  let info = null;
+  try { info = JSON.parse(readText(LOCK_PATH)); } catch { /* unreadable lock */ }
+  // 属主校验：不是自己持有的锁一律不删（否则会删掉后来者的锁 → 第三方可并发进入）。
+  if (!info || !info.token || info.token !== token) return;
   try { fs.unlinkSync(LOCK_PATH); } catch { /* already released */ }
 }
 
@@ -138,13 +169,30 @@ function createBackup() {
     const file = path.join(CONFIG_DIR, `kilo.json.bak-single-${stamp}-${process.pid}${suffix}`);
     try {
       fs.copyFileSync(CONFIG_PATH, file, fs.constants.COPYFILE_EXCL);
-      try { fs.chmodSync(file, 0o600); } catch { /* Windows ACL */ }
+      try { fs.chmodSync(file, 0o600); } catch (e) {
+        // POSIX 上备份含配置内容，权限收紧失败必须报错（不能留宽权限副本）；
+        // Windows 由 ACL 管权限，chmod 语义有限，忽略。
+        if (process.platform !== "win32") {
+          throw new Error(`备份文件权限收紧失败（内容含配置，勿留宽权限）：${file}：${e?.message ?? e}`);
+        }
+      }
       return file;
     } catch (e) {
       if (e?.code !== "EEXIST") throw e;
     }
   }
   throw new Error(`无法创建唯一备份文件：${CONFIG_DIR}`);
+}
+
+// 备份保留策略：只留最近 N 份（文件名按时间戳升序 = 最旧在前），避免无限累积。
+// 当前活动备份必为最新一份，不会被裁掉。
+function pruneBackups(keep = 5) {
+  const files = listBackups();
+  const stale = files.slice(0, Math.max(0, files.length - keep));
+  for (const file of stale) {
+    try { fs.unlinkSync(file); } catch { /* ignore */ }
+  }
+  return stale.length;
 }
 
 function normalizeModelId(id) {
@@ -195,7 +243,13 @@ function applySingleModelConfig(base, { model, variant } = {}) {
   cfg.enabled_providers = [PROVIDER_ID];
   // 纯模型能力测试：去掉全局工程原则、全局经验与技能注入，避免规划/检查脚手架影响结果。
   cfg.instructions = [];
-  cfg.skills = [];
+  // skills 必须保持对象形状（模板与部署副本都是 { "paths": [...] }）：改成数组会破坏
+  // Kilo 的 schema 形状不变式，整份配置可能被判不合法而拒载（= Kilo 启动失败）。
+  // 只清空 paths，效果等价（无技能可注入）且不改变类型。
+  cfg.skills = {
+    ...(cfg.skills && typeof cfg.skills === "object" && !Array.isArray(cfg.skills) ? cfg.skills : {}),
+    paths: [],
+  };
   cfg.permission = {
     ...(cfg.permission && typeof cfg.permission === "object" ? cfg.permission : {}),
     ...SINGLE_DENY_PERMISSIONS,
@@ -300,7 +354,11 @@ function validatePinnedConfig(cfg, { model, variant } = {}) {
     fail(`enabled_providers 必须仅含 ${PROVIDER_ID}`);
   }
   if (!Array.isArray(cfg?.instructions) || cfg.instructions.length !== 0) fail("instructions 必须清空");
-  if (!Array.isArray(cfg?.skills) || cfg.skills.length !== 0) fail("skills 必须清空");
+  const skillsPaths = cfg?.skills && typeof cfg.skills === "object" && !Array.isArray(cfg.skills)
+    ? cfg.skills.paths : null;
+  if (!Array.isArray(skillsPaths) || skillsPaths.length !== 0) {
+    fail("skills.paths 必须清空（skills 保持对象形状，不改成数组）");
+  }
   for (const key of SINGLE_DENY_TOOLS) {
     same(cfg?.permission?.[key], "deny", `permission.${key}`);
   }
@@ -405,7 +463,7 @@ function enter(args) {
     return;
   }
 
-  acquireLock("enter", args.force);
+  const lockToken = acquireLock("enter", args.force);
   try {
     const { text: originalText, value: original } = readEnterConfig();
     const next = applySingleModelConfig(original, { model: bare, variant });
@@ -456,9 +514,11 @@ function enter(args) {
     audit("enter", { model: bare, variant: variant || null, backup: backupPath });
     console.log(`[single-model] 已进入单模型模式：${fullModel(bare)}${variant ? ` @ ${variant}` : ""}`);
     console.log(`[single-model] 备份：${backupPath}`);
+    const pruned = pruneBackups(5);
+    if (pruned) console.log(`[single-model] 旧备份清理：${pruned} 份（保留最近 5 份）`);
     console.log("[single-model] 请重载 VS Code 窗口/Kilo，新建会话后使用。");
   } finally {
-    releaseLock();
+    releaseLock(lockToken);
   }
 }
 
@@ -488,8 +548,8 @@ function planRestore(args) {
     throw new Error(`备份文件哈希与状态不一致，拒绝恢复：${backupPath}`);
   }
   const originalHash = state.originalSha256 || backupHash;
-  if (!backupText && currentHash !== originalHash) {
-    throw new Error(`备份文件缺失，且当前配置不是原始配置：${backupPath}`);
+  if (!backupText && currentHash !== originalHash && !args.force) {
+    throw new Error(`备份文件缺失，且当前配置不是原始配置：${backupPath}；确认要放弃恢复（保留当前配置）并解除单模型状态时加 --force。`);
   }
   if (currentHash !== originalHash && currentHash !== state.appliedSha256 && !args.force) {
     throw new Error("配置在 enter 之后被修改，restore 默认拒绝覆盖；确认要丢弃这些修改时加 --force。");
@@ -509,15 +569,22 @@ function restore(args) {
     return;
   }
 
-  acquireLock("restore", args.force);
+  const lockToken = acquireLock("restore", args.force);
   try {
     const { state, backupPath, backupText, currentHash, originalHash } = planRestore(args);
-    if (backupText && currentHash !== originalHash) {
+    // 备份缺失 + --force：放弃恢复、保留当前配置，仅解除单模型状态
+    // （否则状态文件会永久挡住 install 的单模型守卫与后续 enter）。
+    const abandon = !backupText && !!args.force;
+    if (!abandon && backupText && currentHash !== originalHash) {
       atomicWrite(CONFIG_PATH, backupText);
     }
-    const afterHash = sha256Text(readText(CONFIG_PATH));
-    if (originalHash && afterHash !== originalHash) {
-      throw new Error("恢复后哈希与备份不一致，已保留状态文件供排查。");
+    if (abandon) {
+      console.error("[single-model] 警告：备份文件缺失，已按 --force 放弃恢复；保留当前配置并解除单模型状态。");
+    } else {
+      const afterHash = sha256Text(readText(CONFIG_PATH));
+      if (originalHash && afterHash !== originalHash) {
+        throw new Error("恢复后哈希与备份不一致，已保留状态文件供排查。");
+      }
     }
     fs.unlinkSync(STATE_PATH);
     if (!args.keepBackup && backupPath) {
@@ -525,11 +592,11 @@ function restore(args) {
         console.error(`[single-model] 警告：备份未能删除：${backupPath}：${e?.message ?? e}`);
       }
     }
-    audit("restore", { model: state.model, variant: state.variant ?? null, backup: backupPath, force: !!args.force });
-    console.log("[single-model] 已恢复原始配置。");
+    audit("restore", { model: state.model, variant: state.variant ?? null, backup: backupPath, force: !!args.force, abandoned: abandon });
+    console.log(abandon ? "[single-model] 已解除单模型状态（配置未回滚）。" : "[single-model] 已恢复原始配置。");
     console.log("[single-model] 请重载 VS Code 窗口/Kilo 使配置生效。");
   } finally {
-    releaseLock();
+    releaseLock(lockToken);
   }
 }
 
