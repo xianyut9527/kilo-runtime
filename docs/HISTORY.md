@@ -96,7 +96,9 @@ macOS / Linux（bash）：
 | `.vscode/settings.json` | 仓库级编辑器体验 | 把 `kilo.json.tmpl` 关联为 `jsonc`——模板获得语法高亮 / 括号匹配 / 语法错误红线（VS Code 打开本仓库即生效）；非运行时资产，不进 `install.manifest` |
 | `db-maintain.sh` | kilo.db 在线瘦身 | 清事件溯源/过期会话（实测 14.2GB→1.1GB），不碰记忆与凭证；分批短事务（统一 rowid 分批）+ 显式回收孤儿子表（part/todo/session_share/session_context_epoch/session_input/session_message/kilo_board_message/kilo_board，`--batch-part`；kbm→board 顺序且 kbm 失败跳过 board）+ VACUUM 阈值门控（空闲占比 ≥25% 且无写者，否则降级跳过）+ auto_vacuum=2 同连接转换 + incremental_vacuum 增量回收（`--ivac`）+ WAL checkpoint；体检含「可回收 X GB 空闲页」行（`--no-vacuum` 只 DELETE 不缩文件，2026-09-27 加；PRAGMA 读取失败静默跳过该行——体检信息不得反过来变成 --status 的单点故障） |
 | `cleanup.sh` | 运行痕迹清理 | Kilo 托管临时目录内过期条目 + `%TEMP%` 下 `kilo*` 兄弟项 + `~/.config/kilo.backup-*` 保留上限；**默认 dry-run** |
-| `scripts/kilo-maintenance.ps1` | 维护调度入口 | 组合上面两个脚本 + 到期判断 + 登录自启/计划任务（每日 12:30 `-CleanupOnly`、12:45 `-RunOnce`，`DbEveryDays=1`）；VACUUM 按阈值自动（无需人工） |
+| `scripts/kilo-maintenance.ps1` | 维护调度入口 | 组合上面两个脚本 + 到期判断 + 登录自启/计划任务（每日 12:30 `-CleanupOnly`、12:45 `-RunOnce`，`DbEveryDays=1`）；VACUUM 按阈值自动（无需人工）；**2026-11-04**：检测 `vacuum-needed.flag` 自动安装登录自愈快捷方式（哨兵 opt-out / sqlite3 绝对路径固化 / 回读校验），`-Status` 显示 flag+自愈状态，`-VacuumNow` 优先仓库内 `scripts/vacuum-boot.ps1` |
+| `scripts/vacuum-boot.ps1` | 引导死锁登录自愈（2026-11-04 入库） | 登录时执行一次：双采样写者检查（>0 静默退出待下次登录，非常驻）→ 空间门禁 ≥2.5×库大小 → `busy_timeout=60000 + auto_vacuum=2 + VACUUM`（10 分钟硬超时）→ 实测回读 `auto_vacuum=2` 才算成功 → 删 flag + 删自身快捷方式；日志 `maintenance/vacuum-boot.log` |
+| `plugin/maintenance-heartbeat.ts` | 维护链路心跳（2026-11-04 入 SSOT） | 证据链告警替代裸 12GB 尺寸：state 过期/error.log 48h/flag 自愈三态/日增 >2GB/空闲页未收敛/flag 丢失；单工厂导出 + `_export`、never-throw、仅 `node:` 内建；离线回归 `test-maintenance-heartbeat.mjs` |
 
 ## 记忆与进化架构（2026-09-15 专项）
 
@@ -173,7 +175,40 @@ macOS / Linux（bash）：
 安全边界：`cleanup.sh` 绝不删 `$TEMP/kilo` 本身（Kilo 运行时还在往里写），也绝不碰 `~/.local/share/kilo`（会话/记忆/凭证）与 `~/.config/kilo`（配置本体）；判定只看 mtime 且逐条打印。
 **VACUUM 已按阈值自动化（2026-10-07 改）**：`db-maintain.sh` 自带门槛——「空闲页占比 ≥ `VACUUM_MIN_PCT`（默认 25%）且当前无 kilo 写者」才执行 VACUUM，否则自动跳过；`--no-vacuum` 可显式关闭，`--force` 可强制。背景：此前自动化无条件只跑 `--no-vacuum`，**文件永不缩**——实测 7.34GB 文件里 5.4GB（74%）是历史 DELETE 留下的 freelist 空洞（扫描变慢 + 白占盘），一次阈值触发即回收为 1.49GB（约 150s）。更早还有第二层停摆：原实现在检测到写者时 `exit 1` **中止整个脚本**，而 `kilo.exe` 常驻（后台进程 runner）使 writers 恒 >0 —— DELETE 清理与 WAL checkpoint **自 2026-09-27 起从未执行过**（`state.json` 的 `lastDb` 为证）。现改为**降级跳过 VACUUM、继续做完 DELETE + checkpoint**。自动化入口：登录自启 `-AutoIfDue`（清理 >1 天、DB >1 天）已装；系统计划任务已由管理员 `-Register` 注册（每日 12:30 清理、12:45 清理+DB，`StartWhenAvailable` 补跑）。**`--status` 会显示「可回收: X GB 空闲页 / Y GB 有效页（空闲占比 Z%）」并给出「维护建议」行**（2026-09-27 加：`--no-vacuum` 只 DELETE 不缩文件，不显示这一行会让人误以为瘦身没生效；2026-10-07 阈值化后改为有效页+占比+当前是否值得 VACUUM 的建议）。
 维护日志落在 `~/.local/state/kilo/maintenance/*.log`，自身保留最近 14 份；到期状态记在 `state.json`（`cleanup.sh` 无状态，到期判断由包装脚本负责）。
+
+**维护全自动闭环（2026-11-04，消灭最后的半自动步骤）**：此前仍有三处需要人工——① VACUUM 只按阈值「碰运气」执行（Kilo 常驻 ⇒ 写者恒 >0 ⇒ 引导死锁永不自解，只能人工关全部 Kilo 跑 `-VacuumNow`）；② 引导死锁的离线脚本只存在于机器本地 `state` 目录、未入仓库（新机器直接 FAIL）；③ 心跳插件只存在于部署副本并用「裸 12GB 文件尺寸」告警，维护完全健康时也误报，逼用户手动 `-Status`。现闭环为：
+
+- **db-maintain.sh**：增量回收改为最多 `--ivac-rounds`（默认 20）趟有界循环（每趟 2 万页，实测一轮可回收 ≈1.6GB，Kilo 运行中安全）；run 模式结束写 `db-stats.txt`（key=value：更新时间/库大小/空闲页字节与占比/auto_vacuum/写者数，内嵌上一轮快照 `prevBytes`/`prevUpdatedAt`）；引导死锁（`auto_vacuum≠2` 且有写者）写 `vacuum-needed.flag` —— **`unresolvedSince` 只记首次未解决时间、绝不刷新**（否则「多日未自愈」判定永不触发），重复运行只追加 `lastAttempt`；库为 `auto_vacuum=2` 时幂等清除 flag。所有辅助文件均为原子写且失败静默，不影响清理主流程；`--status` 严格只读。
+- **kilo-maintenance.ps1**：每次 RunOnce/AutoIfDue 结束检测 flag，存在则**自动安装登录自愈快捷方式**（目标 `scripts/vacuum-boot.ps1`，安装前校验脚本存在 + 探测并固化 sqlite3 绝对路径；用户可放 `vacuum-bootstrap.disabled` 哨兵显式 opt-out）。**2026-11-04 起双通道**：flag 存在时机会升格 SYSTEM 开机任务（`kilo-vacuum-boot`，AtStartup，管理员流程 `-Register` 时无 flag 也注册；未提权失败属预期、登录通道兜底；EFS 加密库自动让位登录通道）；登录 `lnk` **永久保留**作非提权兜底（flag 解决后只清 flag，不再自删快捷方式——`vacuum-boot.ps1` 无 flag 秒退）。`-Status` 增加 flag/自愈状态、开机通道任务状态、最近收割记录、状态目录体量四组行；`-VacuumNow` 走 `-Trigger manual`（无 flag 也可手动兜底）且优先使用仓库内脚本（state 目录遗留副本仅作兼容兜底，>30 天自动清理）。
+- **scripts/vacuum-boot.ps1（新，入库）**：双通道常备（`-Trigger boot|login|manual`）——`Global\kilo-vacuum` 全局互斥（WaitOne 零等待 + AbandonedMutexException 按获得处理，`-VacuumNow` 与 SYSTEM 任务并发同库时后到者秒退）；无 flag 且非 manual 秒退（<2s）；`-Trigger boot` 且库被 EFS 加密 → 明确 ABORT 让位登录通道；双采样写者检查（间隔 2s 均为 0 才继续，写者 >0 静默退出待下次触发，**不做常驻 watcher**：后台 kilo.exe 自计数会永远等不到空窗）；磁盘空间门禁（临时空间 ≥2.5×库大小，不足留 flag 下次重试）；`PRAGMA busy_timeout=60000; PRAGMA auto_vacuum=2; VACUUM;` 单连接执行 + 10 分钟硬超时；**成功标准 = 退出码 0 且实测回读 `auto_vacuum=2`**，随后只删 flag（快捷方式保留兜底）。残余风险：写者检查与 VACUUM 拿锁之间仍有毫秒级窗口，恰在此刻启动的 Kilo 写入会撞独占锁（其 `busy_timeout=5s`）；缓解为登录路径兜底 + 维护窗口优先，彻底消除需 Kilo 侧配合延长超时。
+- **plugin/maintenance-heartbeat.ts（入仓库 SSOT）**：删除裸文件尺寸告警（回归钉死：大库 + 维护健康 = 不告警），改按证据链告警——`state.json` 缺失或清理/瘦身 >7 天；`error.log` 48h 内有报错；flag 三态（POSIX 无自愈需手动 / 自愈被 opt-out / 自愈快捷方式缺失 / 自愈排队 >3 天未成功，≤3 天静默，文案明示「重启≠关机：Fast Startup 下关机不触发自愈」）；`db-stats.txt` 日增 >2GB（写入超回收上限）与空闲页连续多日 ≥2GB 未收敛；`auto_vacuum≠2` 但 flag 丢失；维护状态目录 >200MB（轮转/卫生失效证据）。日增超限时另**原子下发 `reclaim-intent.json`**（`{issuedAt, rounds:40}` 白名单 schema，tmp+rename，已有未消费意图不覆盖；绝不携带路径/命令）。插件保持单工厂导出 + `_export` 命名空间、never-throw、仅 `node:` 内建。
+- **db-maintain.sh 意图消费（2026-11-04）**：run 模式开始增量回收前消费 `reclaim-intent.json`——24h 新鲜度（过期/非法忽略）、`rounds` 硬夹 20..40（伪造文件最坏效果=多耗 IO）、单次消费（`rename` 成 `.consumed-<stamp>` 审计副本，并发下只一方拿到）；`--status` 严格只读不消费。
+- **离线回归**：`test-db-maintain.mjs` 92 项（新增节 7 意图消费 12 项：无意图静默/新鲜消费/过期忽略/单次 rename/0→20 与 99→40 clamp/`--status` 只读）；`test-maintenance-heartbeat.mjs` 31 项（新增 intent 纯函数判定 7 项 + 状态目录体量 3 项 + Fast Startup 文案 1 项）；新增 `test-orphan-reap.mjs` 17 项（10 项静态护栏钉死 + win32 只读干跑/`-Status` 可见性）；均由 `run-all-tests.mjs` 自动发现。
 **失败可观测**：登录自启是隐藏进程，任何未捕获异常都会写入 `maintenance/error.log`（`-Status` 会带出最近 3 条）——自启「看起来没跑」时先看这里，常见原因：仓库被移动（快捷方式指向绝对路径）或 Git Bash 缺失。
+
+**孤儿进程收割 + 状态目录卫生（2026-11-04，第二处「结束后不释放」根因）**：Windows 不级联收割被中止命令的子进程树——实测残留 2× `kilo.exe __background-process-runner` 整树（powershell→npm→vite dev）、`npm run dev`×2、`start:test`、`npx jest`，父进程早已退出、node 累计烧 117 CPU 小时（「越用越卡」的直接来源之一；浏览器自动化测试的 chrome 进程父进程仍活，**不是**孤儿）。`kilo-maintenance.ps1` 新增 `Invoke-OrphanReap`（RunOnce/AutoIfDue/CleanupOnly 自动执行，`-ListOrphans` 只读干跑、`-ReapOrphans` 立即执行）：
+
+- **安全模型（deny 优先 + 三条件 AND）**：候选只收 `node.exe`/`kilo.exe`；命令行含 chrome/msedge 一律跳过；父 PID 仍在存活集 = 活跃会话/用户自启，天然豁免；父死 **且** 年龄 >24h **且** 命中泄漏签名（runner / npm run dev / start:test / npx / npx 缓存 MCP / jest / **Playwright / Puppeteer / vitest / mocha**，2026-11-05 扩面）才杀；未命中签名只报告；`pm2` 只报告绝不杀（可能托管用户业务）。
+- **杀前复验（PID 复用防线）**：`taskkill` 前重查该 PID 的 `CreationDate` 与快照一致才动手，变化即跳过；树杀只对「父死的最上层根」执行 `taskkill /PID <id> /T /F`；杀后 `WaitForExit(5s)` 等真实退出再记结果（否则「终止中」的进程被误报 KILL-FAILED——2026-11-04 首跑 5/7 实测）。
+- **日志惰性落盘**：有孤儿根才写 `yyyyMMdd-HHmmss-reap.log`（匹配既有轮转模式，随 KeepLogs/年龄门回收）；健康态零文件。`-Status` 显示最近一次收割摘要。
+- **状态目录卫生**：实测 3 天堆 12 个日志 + 10-25 旧脚本副本 + 10-26 `vacuum-at-logon` 遗留 + 10-27 `vacuum-boot.done` 哨兵——日志只增不删本身就是新的泄漏面。现时间戳日志年龄 >30 天强制删；`vacuum-boot.log`/`error.log` 追加式长文件 >256KB 滚动成时间戳名；遗留物与 `reclaim-intent.json.consumed-*` 幂等清理；总量 >200MB 告警（心跳独立复查）。
+- **静默验证**：`-ListOrphans` 干跑首日命中 7 个孤儿根（6 WOULD-KILL + 1 REPORT-PM2），与实测泄漏清单逐条吻合；`test-orphan-reap.mjs` 钉死 10 条静态护栏 + 干跑/`-Status` 只读断言。
+
+**2026-11-05 性能复查（多模型分析；kimi 缺席，glm+deepseek 2/3）**：实测「到阈值要手动执行命令」根因是**插件热加载缺口**——4 个 `kilo serve`（48.6h/48.2h/25.1h/5.6h）全部启动于 v2 下发（16:11）之前，运行中仍执行 v1 的裸 12GB 告警；DB 实际健康（10.29GB、freelist 0%、AV=2、WAL 11MB、integrity ok）。「后台很多浏览器」被证伪：无 Kilo 派生的 headless/Playwright/Puppeteer；chrome/msedge/msedgewebview2 属用户浏览器、微信与 VS Code/Copilot 助手。本轮补强：① 心跳可自愈路径文案去命令化（state/快捷方式缺失只提示「下次自动补跑/补装」，不再要求 `-RunOnce`/`-Register`/`-VacuumNow`；`test-maintenance-heartbeat` 35 项含 4 条文案红线）；② `db-maintain.sh` 校验分级——每日 `quick_check`（10GB 实测 11.6s）+ 每周日全量 `integrity_check`（26.8s），异常即升级全量；维护后 `analysis_limit=400` 采样 `ANALYZE part/message` + `PRAGMA optimize`（实测亚秒级，失败只告警）；③ 孤儿签名扩面 Playwright/Puppeteer/vitest/mocha（浏览器子进程随 `taskkill /T` 树杀释放；chrome/msedge 仍绝对 deny）。`test-db-maintain` 94 项、`test-orphan-reap` 18 项全绿。
+
+**2026-11-05 查漏补缺（第三轮复查）**：① 修复「空闲页不收敛」检测**死链**——`write_stats` 此前只内嵌 `prevBytes/prevUpdatedAt`、从不写 `prevFreeBytes`（心跳空闲页收敛判定读该键，生产环境恒缺 → 检测永不触发；测试手工喂该键所以全绿，属测试/生产口径脱节），且插件要求 prev 间隔 ≥2 天（stats 只内嵌上一轮快照、日维护间隔恒 ≈1 天，条件永不满足）；现 `db-maintain.sh` 同链内嵌 `prevFreeBytes`，心跳阈值对齐日节拍（连续两轮 ≥2GB 即告警，间隔 <1 天的同日双跑不误报）；② `scripts/kilo-metrics.mjs`（2026-10-18 会话语料画像工具，node:sqlite 只读）此前只存在于部署目录、仓库无副本——`install.ps1 -Check` 恒报多余文件 exit 1 的根因；现入库并进 `install.manifest`（install.sh/install.ps1 共用清单，POSIX 侧同步覆盖）。`test-maintenance-heartbeat` 37 项、`test-db-maintain` 95 项。
+
+**2026-11-05 查漏补缺（第四轮：告警链本身）**：换角度审「维护异常时人怎么知道」，发现心跳插件 v2 整条链在生产中**从未工作过**，四处缺陷全部修复并由 56 项回归钉死（含 19 项新增）：
+1. **P0 事件形态死链**：心跳 `event` 钩子读 `ev.name`/`ev.sessionID`，而 Kilo 实际分发 `{ event: { id, type, properties } }`（`memory-bootstrap.ts`、`memory-store.ts`、`quality-gate.ts` 三处一致，会话 id 在 `properties.sessionID`/`properties.info.id`）→ `session.created` 分支恒不触发、告警缓存恒空，插件对维护链断裂完全无感知。已改为 `type`/`properties` 为准、旧形态兜底兼容；新增**工厂钩子端到端**回归（此前只测纯函数 + 源码红线，所以死链测不出来）：真实事件形态驱动 `session.created` → `todowrite` 输出必须出现告警。
+2. **告警时效（`until` 是死字段）**：v2 只在 `session.created` 算一次文案，`until` 写入后从不读取 → 陈旧告警可能数小时后照注，创建之后才出现的故障本会话永不告警。v3 改为 `recheckAt`（5 分钟）到期必重估、恢复健康即丢弃文案；每次 `tool.execute.after` 都刷新缓存，健康也写负缓存，重估窗口内零磁盘 IO。
+3. **缓存无界增长（常驻进程内存面）**：v2 `warned` Map 只在 `todowrite` 后 `delete`，不调用 todowrite 的会话条目永久驻留。v3 改为 24h 无活动 GC + 128 条硬上限淘汰最久未活动（插入后即收，上限即时成立）。
+4. **注入通道覆盖 + 吞告警防护**：新增 `session.idle` 兜底（`client.session.promptAsync`，仅该会话首条告警，无 `client` 时 fail-open 不影响 todowrite 通道），纯问答会话也收得到；`refresh`/`consume` 分离——只有真正把文案注入对话才标记 `delivered` 并推进 TTL，`promptAsync` 发送失败回滚标记与节流锚点供补发，输出载体非字符串时不消费。TTL 到期后同一故障可再次提醒（不再是每会话永久沉默）。
+
+**2026-11-05 查漏补缺（第五轮：跨平台证据链 + 生产实证）**：
+1. **POSIX 活性证据错配（假告警 + 虚假承诺）**：`state.json` 唯一的写入者是 Windows 的 `kilo-maintenance.ps1`，`install.sh` 也没有任何 cron/launchd/systemd 调度——心跳在 POSIX 上拿 `state.json` 当活性证据会**恒报「维护尚未跑过」**，且文案承诺的「登录自启/每日任务自动补跑」在 POSIX 根本不存在。现按平台分流：win32 仍读 `state.json`，POSIX 改读 `db-maintain.sh` 每轮自产的 `db-stats.txt` 新鲜度（从未运行/超过 7 天未运行才告，文案如实指向 cron 或 systemd timer 的一次性调度配置，不再承诺自动补跑）。`db-stats.txt` 读取前移，与速率/收敛判定共用同一次磁盘读。**已知边界**：POSIX 的自动维护调度本身仍未实现（本机无法验证 cron，不臆造未验证能力）。
+2. **告警天数放大 1000 倍（单位 bug）**：三处文案用 `Math.floor((nowMs - t) / 86400)`，而 `nowMs` 是毫秒、`86400` 是秒——维护 8 天没跑会显示「已 8000 天没跑」、自愈排队 4 天显示「自愈排队 4000 天」。全部改 `/ 86400000`，并把原先只匹配 `\d+` 的弱断言改成精确天数（8 天/4 天）钉死。该 bug 由新增 POSIX 用例暴露。
+3. **生产实证（不再只靠沙箱）**：esbuild 打包真实插件后对**本机真实维护目录**跑 `computeMaintReasons`，结果 `WIN32_PROD_REASONS=[]`——修复后的判定在真实环境零误报（state/stats 均在窗口内、无 error.log、无 flag、目录体量正常）。同期复核两个疑似缺口并证伪：收割日志的 `DRY-RUN` 来自人工 `-ListOrphans` 只读干跑（代码默认 EXECUTE）；`db-maintain.sh`/`kilo-maintenance.ps1` 不在 `install.manifest` 属正确设计（按 `$RepoDir` 从仓库路径直接运行，不经 `~/.config/kilo` 下发）。
+`test-maintenance-heartbeat` 62 项全绿（新增 POSIX 6 项 + 精确天数断言）。
 
 **本次清理实测**：删除 195 项、释放约 **2.7GB**（其中 `%TEMP%\kilo\fktest\kilo.db` 单文件 1.33GB，是一次 DB 演练留下的副本沙箱），`kilo.db` 事件表 2.3 万行 → 71 行。
 
@@ -189,6 +224,54 @@ macOS / Linux（bash）：
 - **压缩位模型必须能收敛**：`agent.compaction.model` 当日被改成 `kimi-k3`，但该模型在压缩尺寸负载下实测**空响应**（`Compaction worker returned an empty response`，content_len=0、reasoning 打满 max_tokens）；同一 400KB 压缩负载对照跑：`deepseek-v4.1-flash` 195 字 / 9.9s、`glm-5.3-flash` 16.1s、`kimi-k3` 21.9s 且空输出。压缩位空响应 = 会话不收敛 = 每步重传全量负载，故已回滚为 `deepseek-v4.1-flash@low`（也是全库最大分母的零空响应模型）。
 - **kilo.db 未做 VACUUM 的膨胀**：文件 **7.34GB**，有效页仅 ≈1.65GB、**空闲页 5.4GB（74%）**——历史 DELETE 只把页放进 freelist，文件不缩，扫描变慢且占盘。回收需**独占锁**：此前需关掉全部 Kilo 人工跑；现按阈值自动（空闲占比 ≥25% 且无写者时执行，见上文「VACUUM 已按阈值自动化」段），且 2026-10-08 起首次 VACUUM 同连接转 auto_vacuum=2，此后常态由 incremental_vacuum 短锁增量回收。
 - **数据目录回收**：`storage-maintain.mjs` 已接进 `db-maintain.sh`（session_diff/log/tsc-cache 30 天窗 + tool-output 失控大文件看门狗）；当前待回收约 `snapshot` 423MB + `storage` 179MB + `tool-output` 28MB + `log` 6MB。
+
+**Compaction 失败取证与处置口径（2026-11-05 三模型审查；截至 2026-11-06 六轮本机复核；计数均为滚动快照）**：
+
+- `Compaction exhausted` = 自动压缩 3 次仍超窗，在轮次前的压缩阶段中止主回合。kilo.db message 层 `error.name="ContextOverflowError"` 可统计：`$.error.data.message` 前缀为 `Compaction exhausted:`（不是 `$.error.message`）；2026-11-05 UTC 四轮快照 66 行/47 会话、10-07 起，code 51/general 12/verify 2/explore 1，压缩行无 COE；66 条 COE → exhausted 前缀、66 条前缀 → COE，双向闭合。首轮 811k part 与当前日志保留范围内未见该错误直录，故只说**本机查询快照未见**，不作永久全称断言；part 对话视图不可见不等于 message 无记录。日志 `payload still large after pruning` WARN（当时 25k 行/92 会话）与 exhausted 会话交集仅 14/47，另 78 个 WARN 会话从未 exhausted——**非可靠前兆**。单条超大内容与固有开销近上限是风险来源，未逐例统计成因占比。
+- `Compaction did not run`（空摘要）按库与日志并集共 6 次：库 5（10-08×2、10-19、10-26、10-28）∩ 日志 4（10-19、10-26、10-27、10-28）交集 3；10-27 有日志无失败库行，10-08×2 有库无 `compaction failed` 日志。当前日志实际覆盖 10-08（32 行），但旧版措辞、采集路径或保留差异均未被证明，**原因未证**，不再断言「旧版无该措辞」。两存储各不完备，取证须并查；part 检索用 `{"type":"text","text":"...` 前缀排除研究会话污染。库内空摘要签名全局恰 5 行：`$.error.data.message` 前缀 `Compaction did not run: the model returned an empty summary`。**五例 part 级机制已分清**：① 10-08×2 有 9.5 万/6.0 万字符 reasoning part，`step-finish=length`，可见输出几乎全在 reasoning，归为**推理长度截断**（区别于 `Compaction exhausted` 的压缩次数耗尽）；② 10-26/10-28 `step-finish=stop`，摘要形态文本落在 reasoning part，唯一 text part 是错误文案而非摘要，**高度符合通道错位**（下游读取机制未单独审码），不是预算烧干；③ 10-19 为 9ms `content-filter`、output=0；10-27 仅日志，机制未证。故 `output=0` 不是签名；五例 `tokens.reasoning` 字段全为 0，但四例实际存在 reasoning part，**该字段不能用于否定推理**，须看 part。另有 20 行其他压缩调用错误（流中断/502/连接重置/invalid key/内容过滤/用户中止等），`finish=null` 且无 `compaction failed` 日志；**未逐例证明恢复**，尤其 invalid key、内容过滤、用户中止不得称为「run 内重试消化」，只不得混入上述 6 次空摘要。
+- 压缩 model/variant 钉选（2292 条 `agent="compaction"` 消息快照，随留存窗漂移）：**model 钉选生效**（modelID 全 deepseek 系：旧名 1193、新名 1099）；配置虽为 low，实际 variant 为 max 1382 / high 842 / low 40 / null 23 / default 4 / medium 1，故**压缩位 variant 未按钉选执行**。explore 位 low 3513 仅作旁证，不用来证明压缩位因果。空摘要库 5 行直证 @max×2/@high×3；10-27 只有日志失败行，10.9 秒后同会话 @high 成功重试行（out=4370）只能支持**推定**，所以口径是「5 例直证 high/max + 1 例推断」，不是「6 次全闭合」。后续同会话压缩成功至少有三例直证：10-19 失败消息后 3.4 秒 @high `finish=stop`、out=3732；10-27 日志失败后 10.9 秒 @high `finish=stop`、out=4370；10-28 失败消息后 112.1 秒 @high `finish=stop`、out=3141（第六轮补记；只证明这些后续调用成功，不全称其他失败均已恢复）。保留 model+variant 现值；日常避免 max 跑 code 主要为延迟/成本，low 样本少，不据此比较各档失败率。
+- 7.8.18 扩展 dist 字符串与 did-not-run 错误文案可证实 `/compact` 命令入口及「Retry with /compact」建议存在，**未单独实测其对两类故障的疗效**；自动压缩开关为 kilo.json `compaction.auto` / `threshold_percent`（85——调低阈值已证伪，勿再动）。
+- 窗口面审计：failover 链三模型注册窗口一致（200k/32k），链内无小窗口降级面；`kilo models openllamas` 实探网关仅返回注册表 7 模型在册、无窗口元数据——`limit.context` 维持 200k（上游不透窗口元数据，改数字须先有实测依据，2026-10-07 教训在案）。
+- 处置已分流并同步进 INSTRUCTIONS/GUIDE：`exhausted` 已自动重试 3 次仍超窗，**直接开新会话**，按「目标/已改文件/验证结果/剩余事项」恢复，勿 resume；`did-not-run` 可 `/compact` 重试一次，成功续用原会话，仍失败再开新会话。预防为大文件分段读、长输出落盘再摘要、避免内联大 diff。取证先认 `$.error.data.message` 前缀；`compaction failed` 日志并查主要服务 did-not-run，exhausted 当前日志无直录。
+- 2026-11-06 第六轮复核：COE 当前为 67 行/48 会话（code 52/general 12/verify 2/explore 1），67 条双向闭合；较上轮新增的一行是 11-05 18:57:20Z 的 code 主回合，不改变机制或处置。did-not-run 仍为库 5 + 日志 4、并集 6；其他压缩调用错误当前 19 行（APIError 11/MessageAbortedError 5/UnknownError 3，`finish` 均 null），较 11-05 少 1。compaction 消息当前 2280 条，model 旧名 1141/新名 1139，variant 为 max 1338/high 874/low 40/其余 28；总数较上轮少 12。下降数字只按滚动快照记录，不归因新机制，也不改写 11-05 历史快照值。
+
+复核 SQL（`message` 实际列名为 `session_id`，不是 ORM 风格 `sessionID`；配合日志 `compaction failed` 行并查）：
+
+```sql
+-- COE -> exhausted 前缀，同时取当前行数/会话数
+SELECT COUNT(*) AS rows, COUNT(DISTINCT session_id) AS sessions,
+       SUM(CASE WHEN json_extract(data, '$.error.data.message') LIKE 'Compaction exhausted:%'
+                THEN 1 ELSE 0 END) AS with_prefix
+FROM message
+WHERE json_extract(data, '$.error.name') = 'ContextOverflowError';
+
+-- exhausted 前缀 -> COE，完成反向闭合
+SELECT COUNT(*) AS rows, COUNT(DISTINCT session_id) AS sessions,
+       SUM(CASE WHEN json_extract(data, '$.error.name') = 'ContextOverflowError'
+                THEN 1 ELSE 0 END) AS with_coe
+FROM message
+WHERE json_extract(data, '$.error.data.message') LIKE 'Compaction exhausted:%';
+
+-- did-not-run 库内签名（不能用 output=0 代替）
+SELECT id, session_id, time_created, json_extract(data, '$.variant') AS variant
+FROM message
+WHERE json_extract(data, '$.error.data.message') LIKE 'Compaction did not run:%';
+
+-- compaction model/variant 当前快照
+SELECT COALESCE(json_extract(data, '$.variant'), '<null>') AS variant, COUNT(*) AS rows
+FROM message
+WHERE json_extract(data, '$.agent') = 'compaction'
+GROUP BY variant;
+
+-- 其他压缩调用错误及 finish 分布
+SELECT json_extract(data, '$.error.name') AS error_name,
+       json_extract(data, '$.finish') AS finish, COUNT(*) AS rows
+FROM message
+WHERE json_extract(data, '$.agent') = 'compaction'
+  AND json_extract(data, '$.error.name') IS NOT NULL
+  AND COALESCE(json_extract(data, '$.error.data.message'), '') NOT LIKE 'Compaction did not run:%'
+GROUP BY error_name, finish;
+```
 
 **维护链自身的两个缺口（2026-10-07 二次查漏）**：
 

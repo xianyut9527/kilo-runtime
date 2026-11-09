@@ -13,16 +13,18 @@
          且无 kilo 写者时才跑（实测 7.34GB→1.49GB 约 150s）；否则自动跳过，绝不打断会话
 
   用法：
-    .\kilo-maintenance.ps1 -RunOnce       立即执行一次（清理 + 数据目录回收 + DB 瘦身）
+    .\kilo-maintenance.ps1 -RunOnce       立即执行一次（清理 + 数据目录回收 + DB 瘦身 + 孤儿收割）
     .\kilo-maintenance.ps1 -CleanupOnly   只清理，不碰 DB
     .\kilo-maintenance.ps1 -DbStatus      只打印 kilo.db 体检（只读）
     .\kilo-maintenance.ps1 -VacuumNow     关闭全部 Kilo 后立即离线 VACUUM（含 auto_vacuum=2 引导）
     .\kilo-maintenance.ps1 -AutoIfDue     按到期规则执行（登录自启用；清理 >1 天、DB >1 天）
+    .\kilo-maintenance.ps1 -ReapOrphans   立即收割泄漏孤儿进程树（安全判定见 Invoke-OrphanReap）
+    .\kilo-maintenance.ps1 -ListOrphans   只读干跑：列出会收割/只报告的孤儿（不杀任何进程）
     .\kilo-maintenance.ps1 -InstallStartup    安装登录自启（免管理员）
     .\kilo-maintenance.ps1 -UninstallStartup  移除登录自启
     .\kilo-maintenance.ps1 -Register      注册系统计划任务（登录时清理 / 登录时清理+DB，需管理员）
     .\kilo-maintenance.ps1 -Unregister    删除系统计划任务
-    .\kilo-maintenance.ps1 -Status        查看计划任务/自启与最近日志
+    .\kilo-maintenance.ps1 -Status        查看计划任务/自启/自愈通道与最近日志
 
   日志：$HOME\.local\state\kilo\maintenance\*.log（只保留最近 14 份，自身不产生垃圾）
   状态：$HOME\.local\state\kilo\maintenance\state.json（记录上次清理/瘦身时间，供 -AutoIfDue 判定）
@@ -34,12 +36,15 @@ param(
     [switch]$DbStatus,
     [switch]$VacuumNow,
     [switch]$AutoIfDue,
+    [switch]$ReapOrphans,
+    [switch]$ListOrphans,
     [switch]$InstallStartup,
     [switch]$UninstallStartup,
     [switch]$Register,
     [switch]$Unregister,
     [switch]$Status,
-    [int]$KeepLogs = 14
+    [int]$KeepLogs = 14,
+    [int]$ReapMinAgeHours = 24
 )
 
 $ErrorActionPreference = 'Stop'
@@ -67,6 +72,24 @@ $CleanupEveryDays = 1
 # 2026-10-18：event 表约 1.3GB/天（message.updated 单类 3.35GB/3 天），7 天间隔会让事件表
 # 涨到 ~9GB。改为每日清事件（DELETE 分批短锁，Kilo 运行中也安全；VACUUM 仍按阈值+无写者门槛）。
 $DbEveryDays      = 1
+
+# 引导死锁自愈闭环（2026-11-04，MoA 升级双通道）：db-maintain.sh 检测到 auto_vacuum≠2
+# 且有写者时写 vacuum-needed.flag；本脚本据此自动装两路自愈通道：
+#   · 登录通道（Startup lnk，免管理员，保底常备，不再成功后自删——MoA 裁决：永久保留
+#     作 boot 任务被组策略禁用/损坏时的唯一非提权退路；vacuum-boot.ps1 无 flag 秒退）
+#   · 开机通道（SYSTEM AtStartup 计划任务，管理员注册后升格；开机未登录窗口即可跑）
+# flag 解决后仅清 flag，通道保留兜底。全程无人工步骤；用户可放 vacuum-bootstrap.disabled
+# 哨兵显式 opt-out（尊重手动删除快捷方式的意图）。
+$FlagFile          = Join-Path $LogDir 'vacuum-needed.flag'
+$BootstrapLnk      = Join-Path $StartupDir 'kilo-vacuum-bootstrap.lnk'
+$BootstrapDisabled = Join-Path $LogDir 'vacuum-bootstrap.disabled'
+$VacuumBootScript  = Join-Path $RepoDir 'scripts\vacuum-boot.ps1'
+# 开机通道（MoA P0-2）：SYSTEM AtStartup 任务在「开机未登录」窗口跑离线 VACUUM；注册需
+# 管理员（-Register 管理员流程装；日常用户态尝试失败属预期，登录 lnk 兜底常备）。
+$BootTaskName      = 'kilo-vacuum-boot'
+# 状态目录卫生门限（MoA P0-3）：时间戳日志年龄上限；追加式长文件滚动阈值 256KB；总量告警 200MB。
+$LogMaxAgeDays     = 30
+$StateDirMaxBytes  = 200MB
 
 # 全局兜底：登录自启是 -WindowStyle Hidden 的隐藏进程，任何未捕获异常都会**静默消失**。
 # trap 把错误落盘到 error.log，保证自动化可观测（下次 -Status / 人工都能看到失败原因）。
@@ -179,6 +202,251 @@ function Invoke-DbMaintain {
     return Invoke-RepoScript -Script 'db-maintain.sh' -ScriptArgs $a -Label 'db'
 }
 
+# sqlite3 探测（安装期固化绝对路径进快捷方式，防登录时 PATH 差异/劫持）
+function Resolve-Sqlite3 {
+    $c = Get-Command sqlite3.exe -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
+    foreach ($p in @("$env:ProgramFiles\SQLite\sqlite3.exe",
+                     "${env:ProgramFiles(x86)}\SQLite\sqlite3.exe",
+                     "$env:LOCALAPPDATA\Programs\SQLite\sqlite3.exe")) {
+        if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+    }
+    return $null
+}
+
+# ── 状态目录卫生（MoA P0-3，2026-11-04 实证：3 天堆 12 个日志、10-25 旧脚本副本、──
+# ── 10-26 vacuum-at-logon 遗留、10-27 done 哨兵——只增不删就是新的泄漏面）────────
+# 规则：时间戳日志年龄 >30 天强制删（数量门仍在 Invoke-RepoScript 既有轮转）；
+# vacuum-boot.log / error.log 追加式长文件 >256KB 滚动成时间戳名进轮转；
+# 遗留物幂等清理；reclaim-intent 消费副本 >30 天删；总量 >200MB 告警（心跳侧独立复查）。
+function Invoke-StateDirHygiene {
+    if (-not (Test-Path -LiteralPath $LogDir)) { return }
+    $now = Get-Date
+    Get-ChildItem -LiteralPath $LogDir -File -Filter '*.log' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^\d{8}-\d{6}-.+\.log$' -and $now.Subtract($_.LastWriteTime).TotalDays -gt $LogMaxAgeDays } |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+    foreach ($n in @('vacuum-boot.log', 'error.log')) {
+        $f = Join-Path $LogDir $n
+        if (Test-Path -LiteralPath $f) {
+            $item = Get-Item -LiteralPath $f
+            if ($item.Length -gt 256KB) {
+                $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+                try { Move-Item -LiteralPath $f -Destination (Join-Path $LogDir "$stamp-rotated-$n") -Force } catch { }
+            }
+        }
+    }
+    # 遗留物：vacuum-at-logon.*（10-25 起被 vacuum-boot.ps1 取代）、vacuum-boot.done（旧一次性哨兵）
+    foreach ($n in @('vacuum-at-logon.ps1', 'vacuum-at-logon.log', 'vacuum-boot.done')) {
+        Remove-Item -LiteralPath (Join-Path $LogDir $n) -Force -ErrorAction SilentlyContinue
+    }
+    # 状态目录里的旧脚本副本（-VacuumNow 过渡兼容兜底）：仓库 SSOT 存在且副本 >30 天即清
+    $stateCopy = Join-Path $LogDir 'vacuum-boot.ps1'
+    if (Test-Path -LiteralPath $stateCopy) {
+        $item = Get-Item -LiteralPath $stateCopy
+        if ($now.Subtract($item.LastWriteTime).TotalDays -gt $LogMaxAgeDays -and (Test-Path -LiteralPath $VacuumBootScript)) {
+            Remove-Item -LiteralPath $stateCopy -Force -ErrorAction SilentlyContinue
+            Write-Host '[MAINT] 已清理状态目录陈旧脚本副本（>30 天，仓库 SSOT 优先）'
+        }
+    }
+    # reclaim-intent 消费副本（db-maintain.sh 单次消费 rename 产物）>30 天清理
+    Get-ChildItem -LiteralPath $LogDir -File -Filter 'reclaim-intent.json.consumed-*' -ErrorAction SilentlyContinue |
+        Where-Object { $now.Subtract($_.LastWriteTime).TotalDays -gt $LogMaxAgeDays } |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+    # 总量观测（>200MB 说明轮转/卫生链路本身失效，交给心跳告警闭环）
+    $files = @(Get-ChildItem -LiteralPath $LogDir -File -ErrorAction SilentlyContinue)
+    $bytes = ($files | Measure-Object -Property Length -Sum).Sum
+    if ($bytes -gt $StateDirMaxBytes) {
+        Write-Warning ("[MAINT] 状态目录 {0:N1}MB 超 200MB 上限（{1} 个文件）——轮转/卫生是否停摆？" -f ($bytes / 1MB), $files.Count)
+    }
+}
+
+# ── 孤儿进程收割（MoA P0-1：deny 优先 + 签名 allowlist + 父死 + 年龄 + 杀前复验）──
+# 根因：Windows 不级联收割被中止命令的子进程树。实证泄漏：2× kilo.exe __background-process-runner
+# 整树 powershell→npm→vite dev（10-29/11-03）、npm run dev ×2、start:test、npx jest、npx MCP——
+# node 累计烧 117 CPU 小时。2026-11-05 扩面：Playwright/Puppeteer/vitest/mocha 驱动也收割
+# （浏览器子进程随 taskkill /T 树杀；chrome/msedge 自身仍绝对 deny，永不按名字碰）。安全模型：
+#   deny 优先   —— 候选只收 node.exe/kilo.exe（chrome/用户 shell 不在列）；命令行含 chrome/edge
+#                  一律跳过；父进程仍活 = 活跃会话/用户自启，天然豁免。
+#   三条件 AND  —— 父 PID 不在存活集 + 年龄 > $ReapMinAgeHours + 命中泄漏签名才杀；
+#                  未命中签名只报告（含 pm2：可能托管用户业务，默认绝不杀）。
+#   杀前复验   —— PID 复用防线：taskkill 前重查该 PID 的 CreationDate 与快照一致才动手。
+#   树杀根层   —— 只对父死的最上层根 taskkill /T /F（内部父仍活的整树随根收割）。
+# 日志：yyyyMMdd-HHmmss-reap.log（匹配既有轮转模式，随 KeepLogs/年龄门自动回收）。
+function Invoke-OrphanReap {
+    param([switch]$ListOnly)
+
+    $null = New-Item -ItemType Directory -Force -Path $LogDir
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $reapLog = Join-Path $LogDir "$stamp-reap.log"
+    # 惰性落盘：无孤儿时只输出控制台摘要、不写文件（否则每日两趟干跑会把日志堆爆，
+    # KeepLogs=14 的轮转窗口被无信息量记录挤占）。有孤儿根才留下完整记录。
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    $say = { param($m) Write-Host $m; $lines.Add($m) }
+
+    $killSigs = @(
+        '__background-process-runner',                  # kilo 后台 runner 泄漏（实证）
+        'npm-cli\.js.*\srun\s+dev',                     # npm run dev（vite dev server 实证）
+        'npm-cli\.js.*\srun\s+start:test',              # llamas-api start:test 实证
+        'npx-cli\.js',                                  # npx 拉起的 MCP/jest（实证 10-28/11-01）
+        'node_modules[\\/].*(mcp|modelcontextprotocol)',# npx 缓存里的 MCP server
+        '[\\/]jest([\\/]|\.js)',                        # jest 残留
+        'playwright[\\/]',                              # Playwright 驱动残留（其浏览器子进程随树杀）
+        'puppeteer[\\/]',                               # Puppeteer 驱动残留
+        'node_modules[\\/].*(vitest|mocha)[\\/]'        # 测试 runner 残留
+    )
+    $reportOnlySigs = @('pm2')                          # pm2 daemon：只报告（P1 再条件化）
+
+    $all = @(Get-CimInstance Win32_Process)
+    $live = New-Object 'System.Collections.Generic.HashSet[uint32]'
+    foreach ($p in $all) { [void]$live.Add([uint32]$p.ProcessId) }
+    $cut = (Get-Date).AddHours(-1 * $ReapMinAgeHours)
+
+    $considered = 0; $killed = 0; $reported = 0; $protected = 0
+    foreach ($p in $all) {
+        if ($p.Name -ne 'node.exe' -and $p.Name -ne 'kilo.exe') { continue }
+        $cl = [string]$p.CommandLine
+        if ($cl -match 'chrome|msedge') { continue }                     # deny：浏览器绝不碰
+        if ($live.Contains([uint32]$p.ParentProcessId)) { continue }    # 父活=非孤儿（活跃会话/用户自启）
+        if ($p.CreationDate -ge $cut) { continue }                       # 留 24h 观察窗
+        $considered++
+        $isPm2 = $false
+        foreach ($s in $reportOnlySigs) { if ($cl -match $s) { $isPm2 = $true; break } }
+        $clShort = if ($cl.Length -gt 140) { $cl.Substring(0, 140) } else { $cl }
+        $age = [int]((Get-Date) - $p.CreationDate).TotalDays
+        if ($isPm2) {
+            & $say ("[REAP][REPORT-PM2] pid={0} ppid={1} age={2}d {3}" -f $p.ProcessId, $p.ParentProcessId, $age, $clShort)
+            $reported++
+            continue
+        }
+        $isKill = $false
+        foreach ($s in $killSigs) { if ($cl -match $s) { $isKill = $true; break } }
+        if (-not $isKill) {
+            & $say ("[REAP][REPORT] pid={0} ppid={1} age={2}d {3}" -f $p.ProcessId, $p.ParentProcessId, $age, $clShort)
+            $reported++
+            continue
+        }
+        if ($ListOnly) {
+            & $say ("[REAP][WOULD-KILL] pid={0} ppid={1} age={2}d {3}" -f $p.ProcessId, $p.ParentProcessId, $age, $clShort)
+            continue
+        }
+        # 杀前复验（PID 复用防线）：PID 仍在且 CreationDate 与快照一致才动手
+        $again = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ProcessId)" -ErrorAction SilentlyContinue
+        if (-not $again -or $again.CreationDate -ne $p.CreationDate) {
+            & $say ("[REAP][SKIP-REVALIDATE] pid={0}（PID 已变化/退出，跳过防误杀）" -f $p.ProcessId)
+            $protected++
+            continue
+        }
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $null = & taskkill.exe /PID $p.ProcessId /T /F 2>&1
+            $rc = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $prevEap }
+        # 退出判定必须等：taskkill /F 返回 0 后进程可能仍在「终止中」，立刻 Get-Process
+        # 会误报 KILL-FAILED（2026-11-04 实测 5/7 误报）。等进程真正退出（上限 5s）。
+        $gone = $true
+        $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue
+        if ($proc) {
+            try { $gone = $proc.WaitForExit(5000) } catch { $gone = $false }
+        }
+        if ($rc -eq 0 -and $gone) {
+            & $say ("[REAP][KILLED] pid={0} ppid={1} age={2}d {3}" -f $p.ProcessId, $p.ParentProcessId, $age, $clShort)
+            $killed++
+        } else {
+            & $say ("[REAP][KILL-FAILED] pid={0} rc={1} gone={2}（权限不足/仍在退出，下轮复扫）" -f $p.ProcessId, $rc, $gone)
+        }
+    }
+    $mode = if ($ListOnly) { 'DRY-RUN' } else { 'EXECUTE' }
+    & $say ("[REAP] {0} 完成：孤儿根 {1} 个（收割成功 {2}），只报告 {3}，复验保护 {4}（minAge={5}h）" -f `
+        $mode, $considered, $killed, $reported, $protected, $ReapMinAgeHours)
+    if ($considered -gt 0) {
+        try { $lines | Out-File -LiteralPath $reapLog -Append -Encoding utf8 } catch { }
+    }
+    return 0
+}
+
+# 开机通道注册（MoA P0-2/P1-6）：SYSTEM AtStartup 任务。注册需管理员——日常用户态尝试失败
+# 属预期（保持登录通道兜底，不算故障）；-Register（管理员流程）时无 flag 也注册（boot 通道
+# 常备，死锁 flag 一出现即可在下次开机自愈）。显式设置电池/补跑参数（schtasks 默认值会静默
+# 跳过电池供电场景）。EFS 库 SYSTEM 读不了——注册前检测，让位登录通道。
+function Ensure-BootTask {
+    param([switch]$EvenWithoutFlag)
+
+    if (-not $EvenWithoutFlag) {
+        if (-not (Test-Path -LiteralPath $FlagFile)) { return }
+        if (Test-Path -LiteralPath $BootstrapDisabled) { return }
+    }
+    $existing = Get-ScheduledTask -TaskName $BootTaskName -ErrorAction SilentlyContinue
+    if ($existing) { Write-Host "[BOOT] 开机通道已注册（$BootTaskName）"; return }
+    $sqlite = Resolve-Sqlite3
+    if (-not $sqlite -or -not (Test-Path -LiteralPath $VacuumBootScript)) { return }
+    try {
+        $dbPath = Join-Path $HOME '.local\share\kilo\kilo.db'
+        if ((Test-Path -LiteralPath $dbPath) -and ((Get-Item -LiteralPath $dbPath).Attributes -band [IO.FileAttributes]::Encrypted)) {
+            Write-Host '[BOOT] db 被 EFS 加密：跳过开机通道注册（SYSTEM 读不了 EFS；登录通道照常）'
+            return
+        }
+    } catch { }
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+        -Argument ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "{0}" -SqlitePath "{1}" -Trigger boot' -f $VacuumBootScript, $sqlite) `
+        -WorkingDirectory $RepoDir
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    # 显式 AllowStartIfOnBatteries（schtasks/计划任务默认 DisallowStartIfOnBatteries=true 会
+    # 静默跳过电池场景，MoA 审计点）；StartWhenAvailable 补跑错过的触发；15min 硬时限防挂死。
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -MultipleInstances IgnoreNew
+    try {
+        Register-ScheduledTask -TaskName $BootTaskName -Action $action -Trigger $trigger -Principal $principal `
+            -Settings $settings -Description 'Kilo 引导死锁自愈（开机未登录窗口离线 VACUUM；无 flag 时秒退兜底）' -Force | Out-Null
+        Write-Host "[BOOT] 开机通道已注册：$BootTaskName（SYSTEM，AtStartup）"
+    } catch {
+        Write-Host "[BOOT] 开机通道注册失败（未提权属预期，$($_.Exception.GetType().Name)）——登录通道兜底"
+    }
+}
+
+# 引导死锁自愈：flag 存在 → 装登录快捷方式；flag 已解决 → 清掉遗留快捷方式（幂等自清洁）。
+# 装配前校验目标脚本与 sqlite3 真实存在（回读校验），避免「装了但静默失败」的假自愈。
+function Ensure-VacuumBootstrap {
+    if (-not (Test-Path -LiteralPath $FlagFile)) {
+        # MoA 裁决修正：引导已解决后【保留】lnk 作永久兜底（boot 任务被组策略禁用/损坏时的
+        # 唯一非提权退路）；vacuum-boot.ps1 无 flag 秒退（<2s），常备开销可忽略。
+        if (Test-Path -LiteralPath $BootstrapLnk) { Write-Host '[BOOT] 引导已解决；自愈快捷方式保留作兜底（无 flag 时秒退）' }
+        return
+    }
+    if (Test-Path -LiteralPath $BootstrapDisabled) {
+        Write-Warning "[BOOT] 自愈被用户禁用（$BootstrapDisabled 存在）——引导死锁需人工 -VacuumNow 处理"
+        return
+    }
+    # 机会升格：boot 通道（需管理员；未提权失败属预期，登录通道兜底，双通道并存）
+    Ensure-BootTask
+    if (Test-Path -LiteralPath $BootstrapLnk) { Write-Host '[BOOT] 登录自愈快捷方式已就绪（下次登录无写者时自动离线 VACUUM）'; return }
+    if (-not (Test-Path -LiteralPath $VacuumBootScript)) {
+        Write-Warning "[BOOT] 缺 $VacuumBootScript —— 无法自动安装自愈（仓库不完整？）"
+        return
+    }
+    $sqlite = Resolve-Sqlite3
+    if (-not $sqlite) {
+        Write-Warning '[BOOT] 找不到 sqlite3.exe —— 无法自动安装自愈；安装 sqlite3 后下次维护自动补装（详见 -Status）'
+        return
+    }
+    $ps = (Get-Command powershell.exe).Source
+    $args = '-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -SqlitePath "{1}"' -f $VacuumBootScript, $sqlite
+    $shell = New-Object -ComObject WScript.Shell
+    $lnk = $shell.CreateShortcut($BootstrapLnk)
+    $lnk.TargetPath = $ps
+    $lnk.Arguments = $args
+    $lnk.WorkingDirectory = $RepoDir
+    $lnk.Description = 'Kilo 引导死锁自愈（登录时无 kilo 写者则离线 VACUUM 转 auto_vacuum=2；常备兜底，无 flag 秒退）'
+    $lnk.Save()
+    $check = $shell.CreateShortcut($BootstrapLnk)
+    if (-not (Test-Path -LiteralPath $BootstrapLnk) -or $check.Arguments -notmatch [regex]::Escape($VacuumBootScript)) {
+        Write-Warning "[BOOT] 自愈快捷方式校验失败（Arguments=$($check.Arguments)）"
+        return
+    }
+    Write-Host "[BOOT] 已自动安装登录自愈：$BootstrapLnk（下次登录无写者时离线 VACUUM，无需人工）"
+}
+
 function Get-MaintenanceTask {
     param([string]$Name)
     Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
@@ -269,6 +537,47 @@ if ($Status) {
         $(if ($st.lastCleanup) { $st.lastCleanup } else { '从未' }), $(if (Test-Due $st.lastCleanup $CleanupEveryDays) { '已到期' } else { '未到期' }), `
         $(if ($st.lastDb) { $st.lastDb } else { '从未' }), $(if (Test-Due $st.lastDb $DbEveryDays) { '已到期' } else { '未到期' }))
     Write-Host "[AUTO] DB 瘦身：VACUUM 按阈值自动（空闲占比 ≥25% 且无写者才执行，无需人工；详见 -DbStatus）"
+    # 引导死锁自愈状态（2026-11-04 全自动闭环）
+    if (Test-Path -LiteralPath $FlagFile) {
+        $since = (Select-String -LiteralPath $FlagFile -Pattern '^unresolvedSince=(.+)$' | Select-Object -Last 1).Matches.Groups[1].Value
+        $bootState = '未安装（下次维护 RunOnce 自动补装）'
+        if (Test-Path -LiteralPath $BootstrapDisabled) { $bootState = '被用户禁用（vacuum-bootstrap.disabled）' }
+        elseif (Test-Path -LiteralPath $BootstrapLnk) {
+            $bootState = '已安装（下次登录无写者时自动离线 VACUUM）'
+            try {
+                $sh = New-Object -ComObject WScript.Shell
+                $m = [regex]::Match($sh.CreateShortcut($BootstrapLnk).Arguments, '-File\s+"([^"]+)"')
+                if (-not $m.Success -or -not (Test-Path -LiteralPath $m.Groups[1].Value)) { $bootState = '已安装·失效（目标脚本不存在）' }
+            } catch { $bootState = "已安装·校验异常（$($_.Exception.Message)）" }
+        }
+        elseif (-not (Test-Path -LiteralPath $VacuumBootScript)) { $bootState = "无法安装（缺 $VacuumBootScript）" }
+        elseif (-not (Resolve-Sqlite3)) { $bootState = '无法安装（找不到 sqlite3.exe，安装后下次维护自动补装）' }
+        Write-Host ("[BOOT] 引导死锁 flag：存在（{0} 起）  登录自愈：{1}" -f $(if ($since) { $since } else { '?' }), $bootState)
+    } else {
+        Write-Host '[BOOT] 引导死锁 flag：无（库健康或自愈已完成）'
+    }
+    # 开机通道状态（MoA P0-2 双通道可见性：boot 任务 + 登录 lnk 兜底）
+    $bt = Get-ScheduledTask -TaskName $BootTaskName -ErrorAction SilentlyContinue
+    if ($bt) {
+        $bi = $bt | Get-ScheduledTaskInfo
+        Write-Host ("[BOOT] 开机通道：{0}  状态={1}  上次={2}  结果={3}" -f $BootTaskName, $bt.State, $bi.LastRunTime, $bi.LastTaskResult)
+    } else {
+        Write-Host "[BOOT] 开机通道：未注册（可选升级；登录 lnk 兜底已常备，日常无需操作）"
+    }
+    # 最近一次孤儿收割记录（无记录=无孤儿，健康态不落盘）
+    $lastReap = @(Get-ChildItem -LiteralPath $LogDir -File -Filter '*-reap.log' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+    if ($lastReap.Count) {
+        Write-Host "[REAP] 最近收割（$($lastReap[0].Name)）："
+        Get-Content -LiteralPath $lastReap[0].FullName -Encoding UTF8 | Select-Object -Last 3 | ForEach-Object { Write-Host "       $_" }
+    } else {
+        Write-Host '[REAP] 孤儿收割：尚无记录（健康；-ListOrphans 可只读干跑）'
+    }
+    if (Test-Path $LogDir) {
+        $dirFiles = @(Get-ChildItem -LiteralPath $LogDir -File)
+        $dirBytes = ($dirFiles | Measure-Object -Property Length -Sum).Sum
+        Write-Host ("[DIR ] {0}  {1} 个文件  {2:N1} MB（卫生上限 200MB）" -f $LogDir, $dirFiles.Count, ($dirBytes / 1MB))
+    }
     Write-Host "[LOG ] $LogDir"
     if (Test-Path $LogDir) {
         Get-ChildItem -LiteralPath $LogDir -File | Sort-Object LastWriteTime -Descending |
@@ -291,11 +600,21 @@ if ($UninstallStartup) {
 
 if ($InstallStartup) { Install-StartupShortcut; exit 0 }
 
+if ($ListOrphans) { Invoke-OrphanReap -ListOnly | Out-Null; exit 0 }
+if ($ReapOrphans) { Invoke-OrphanReap | Out-Null; exit 0 }
+
 if ($Unregister) {
     foreach ($t in @($TaskDaily, $TaskWeekly)) {
         if (Get-MaintenanceTask $t) { Unregister-ScheduledTask -TaskName $t -Confirm:$false; Write-Host "[TASK] 已删除 $t" }
         else { Write-Host "[TASK] 未注册 $t（跳过）" }
     }
+    # 开机通道一并移除（SYSTEM 任务删除需管理员；失败不阻断其余清理）
+    try {
+        if (Get-ScheduledTask -TaskName $BootTaskName -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $BootTaskName -Confirm:$false
+            Write-Host "[TASK] 已删除 $BootTaskName"
+        }
+    } catch { Write-Warning "[TASK] $BootTaskName 删除失败（需管理员）：$($_.Exception.Message)" }
     exit 0
 }
 
@@ -335,6 +654,9 @@ if ($Register) {
         Write-Warning "[TASK] 免管理员替代方案：以管理员身份重开 PowerShell 后重跑本命令，或改用 -InstallStartup（登录自启 + 到期判断）。"
         exit 2
     }
+    # 开机自愈通道（MoA P0-2）：管理员流程里无 flag 也注册——boot 任务常备，死锁 flag
+    # 一出现即可在下次开机（未登录窗口）自愈；EFS 库自动让位登录通道。
+    Ensure-BootTask -EvenWithoutFlag
     Write-Host "[TASK] 已注册：$TaskDaily（登录时 + 每日 12:30 清理）、$TaskWeekly（登录时 + 每日 12:45 清理 + DB 瘦身）"
     Write-Host "[TASK] 触发器=登录时 + 每日 12:30/12:45；StartWhenAvailable 补跑；state.json 到期判断保持幂等"
     Write-Host "[TASK] bash: $bash  node: $node"
@@ -347,9 +669,11 @@ if ($DbStatus) { exit (Invoke-DbMaintain -StatusOnly) }
 if ($VacuumNow) {
     # 手动兜底：不依赖受保护的 kilo-vacuum-once 计划任务。关闭全部 Kilo 后执行，
     # vacuum-boot.ps1 自身会拒绝在有 kilo 写者时启动，避免独占锁打断会话。
-    $vacuumScript = Join-Path $LogDir 'vacuum-boot.ps1'
+    # 优先仓库内脚本（SSOT；随仓库更新）；state 目录遗留副本仅作过渡兼容兜底。
+    $vacuumScript = $VacuumBootScript
+    if (-not (Test-Path -LiteralPath $vacuumScript)) { $vacuumScript = Join-Path $LogDir 'vacuum-boot.ps1' }
     if (-not (Test-Path -LiteralPath $vacuumScript)) { throw "FAIL: 缺少离线 VACUUM 脚本 $vacuumScript" }
-    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $vacuumScript
+    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $vacuumScript -SqlitePath (Resolve-Sqlite3) -Trigger manual
     exit $LASTEXITCODE
 }
 
@@ -357,6 +681,9 @@ if ($CleanupOnly) {
     $rc = Invoke-Cleanup
     $st = Read-MaintState
     if ($rc -eq 0) { $st.lastCleanup = Get-Date; Write-MaintState $st }
+    Invoke-StateDirHygiene
+    Invoke-OrphanReap | Out-Null
+    Ensure-VacuumBootstrap
     exit $rc
 }
 
@@ -367,6 +694,9 @@ if ($RunOnce) {
     if ($rc1 -eq 0) { $st.lastCleanup = Get-Date }
     if ($rc2 -eq 0) { $st.lastDb = Get-Date }
     Write-MaintState $st
+    Invoke-StateDirHygiene
+    Invoke-OrphanReap | Out-Null
+    Ensure-VacuumBootstrap
     if ($rc1 -ne 0 -or $rc2 -ne 0) { exit 1 } else { exit 0 }
 }
 
@@ -381,6 +711,9 @@ if ($AutoIfDue) {
         if ((Invoke-DbMaintain) -eq 0) { $st.lastDb = Get-Date; $did += 'db' }
     }
     Write-MaintState $st
+    Invoke-StateDirHygiene
+    Invoke-OrphanReap | Out-Null
+    Ensure-VacuumBootstrap
     if ($did.Count -eq 0) { Write-Host '[AUTO] 均未到期，跳过（-Status 可看到期时间）' }
     else { Write-Host "[AUTO] 已执行：$($did -join ' + ')" }
     exit 0

@@ -22,6 +22,7 @@ scripts/memory-sync.mjs
 scripts/storage-maintain.mjs
 scripts/render-config.mjs
 scripts/single-model.mjs
+scripts/kilo-metrics.mjs
 provider/hx-failover/src/
 provider/hx-failover/dist/
 provider/hx-failover/package.json

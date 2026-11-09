@@ -134,6 +134,7 @@ Documentation-only changes do not trigger the code-test gate or automatic delive
 | Enable project memory in a non-git directory | Run `/memory-setup` in Kilo |
 | Review, correct and retain experience | Run `/evolve` in Kilo |
 | Inspect failover events | `~/.local/share/kilo/failover-events.jsonl` |
+| Locate compaction failures (`Compaction exhausted` / `Compaction did not run`) | Exhausted: start a new session; do not resume. Did-not-run: retry `/compact` once; continue if it succeeds, otherwise start a new session. Inspect `$.error.data.message` in kilo.db message rows; for did-not-run also inspect `compaction failed` lines in `~/.local/share/kilo/log/opencode.log` (neither store is complete; no direct exhausted record was found in the current log snapshot). See “Compaction 失败取证与处置口径” in HISTORY for SQL and evidence limits |
 | Cleanup and database maintenance | See the maintenance section in [HISTORY](HISTORY.md) |
 
 ## 4. Models, failover and reviews

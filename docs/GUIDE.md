@@ -134,6 +134,7 @@ Key 只存在运行时数据目录，不进入 git。修改 Key 不需要重新 
 | 启用非 git 目录的项目记忆 | 在 Kilo 中运行 `/memory-setup` |
 | 定期复盘、修正和沉淀经验 | 在 Kilo 中运行 `/evolve` |
 | 查看故障切换记录 | `~/.local/share/kilo/failover-events.jsonl` |
+| 压缩失败定位（`Compaction exhausted` / `Compaction did not run`） | exhausted：直接开新会话，勿 resume；did-not-run：先 `/compact` 一次，成功可续用、仍失败开新会话。查 kilo.db message 层 `$.error.data.message`；did-not-run 还须并查 `~/.local/share/kilo/log/opencode.log` 的 `compaction failed` 行（库/日志各不完整；当前日志快照未见 exhausted 直录）。SQL 与证据边界见 HISTORY 的「Compaction 失败取证与处置口径」 |
 | 清理与数据库维护 | 见 [HISTORY 的维护章节](HISTORY.md#磁盘垃圾与维护2026-09-15-专项) |
 
 ## 4. 模型、降级与审查

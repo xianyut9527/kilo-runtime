@@ -101,7 +101,11 @@ function run(args, env = {}) {
     cwd: sand,
     // KSQLITE3 缺省指向 sqlite3 桩（覆盖 command -v sqlite3 探测）；要模拟「sqlite3
     // 缺失/损坏」时给 KSQLITE3 传 ""（脚本按 `${KSQLITE3-...}` 无冒号展开取显式空串）。
-    env: { ...process.env, KILO_DB: DB, KILO_EXE: STUB, KSQLITE3: S3STUB, STUB_LOG: LOG, S3_LOG: S3LOG, ORPHAN_FILE: ORPHAN, XDG_DATA_HOME: DATA, ...env },
+    // HOME/USERPROFILE 沙箱：db-maintain 把 db-stats.txt / vacuum-needed.flag 写进
+    // $HOME/.local/state/kilo/maintenance，绝不能碰真实维护目录（红线同 XDG_DATA_HOME）。
+    // KILO_MAINT_STATS=1：stats 写入对非 live 库（KILO_DB 覆盖）也开启，供下方闭环断言。
+    env: { ...process.env, KILO_DB: DB, KILO_EXE: STUB, KSQLITE3: S3STUB, STUB_LOG: LOG, S3_LOG: S3LOG, ORPHAN_FILE: ORPHAN, XDG_DATA_HOME: DATA,
+      HOME: path.join(sand, "home"), USERPROFILE: path.join(sand, "home"), KILO_MAINT_STATS: "1", ...env },
   });
   return { status: r.status, out: (r.stdout || "") + (r.stderr || "") };
 }
@@ -159,6 +163,11 @@ function run(args, env = {}) {
   t("走 sqlite3 同连接转换", s3log().includes("s3convert"), firstLine(/s3[^\n]*/, conv.out));
   t("输出宣告转换成功", /auto_vacuum=2 已转换/.test(conv.out));
   t("不再跑 kilo-CLI 旧 VACUUM（避免重复整库重写）", !log().includes("vacuum"), `log=${log().join(",")}`);
+  const convS3 = s3log();
+  t("维护后 ANALYZE 采样统计（part/message，亚秒级）", convS3.some((l) => l.includes("ANALYZE part")));
+  const dsrc = fs.readFileSync(DBMT, "utf8");
+  t("校验分级：每日 quick_check + 周日全量 integrity_check",
+    /PRAGMA quick_check/.test(dsrc) && /date \+%u/.test(dsrc) && /PRAGMA integrity_check/.test(dsrc));
 
   // 库已是 auto_vacuum=2 → 直接 VACUUM，不再转换（S3_AV/STUB_AV 同置 2：
   // 库真实转换后两条连接看到的都是 2）
@@ -489,6 +498,122 @@ const sqlLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8").sp
     `status=${good.status}`);
   const bad = spawnSync("node", ["/d/work/kilo-runtime/scripts/storage-maintain.mjs", "--status"], { encoding: "utf8" });
   t("（反证）未转换的 /d/... 确实 MODULE_NOT_FOUND", /MODULE_NOT_FOUND|Cannot find module/.test(bad.stderr || ""));
+}
+
+// ── 6) 引导死锁 flag / db-stats 闭环（2026-11-04 全自动化）──
+{
+  console.log("== 6) flag/stats 闭环 ==");
+  const homeDir = path.join(sand, "home");
+  const maintDir = path.join(homeDir, ".local", "state", "kilo", "maintenance");
+  const flagFile = path.join(maintDir, "vacuum-needed.flag");
+  const statsFile = path.join(maintDir, "db-stats.txt");
+
+  // 6a) 健康态（AV=2）：写 stats、不写 flag；幂等清掉手工遗留的 flag
+  fs.rmSync(maintDir, { recursive: true, force: true });
+  let r = run(["--days", "30"], { STUB_PC: "2000", STUB_FC: "100", STUB_AV: "2", KILO_WRITERS: "3" });
+  t("健康态 run 退出码 0", r.status === 0, `status=${r.status} ${r.out.slice(-400)}`);
+  let stats = fs.existsSync(statsFile) ? fs.readFileSync(statsFile, "utf8") : "";
+  t("stats 产出（updatedAt/dbBytes/freeBytes/freePct/autoVacuum=2）",
+    /^updatedAt=\S+$/m.test(stats) && /^dbBytes=\d+$/m.test(stats) && /^freeBytes=\d+$/m.test(stats)
+      && /^freePct=\d+$/m.test(stats) && /^autoVacuum=2$/m.test(stats),
+    stats.replace(/\n/g, " | "));
+  t("健康态不写 flag", !fs.existsSync(flagFile));
+  const firstDbBytes = (/^dbBytes=(\d+)$/m.exec(stats) || [])[1];
+  const firstFreeBytes = (/^freeBytes=(\d+)$/m.exec(stats) || [])[1];
+  r = run(["--days", "30"], { STUB_PC: "2000", STUB_FC: "100", STUB_AV: "2", KILO_WRITERS: "3" });
+  stats = fs.readFileSync(statsFile, "utf8");
+  t("stats prev 链：第二轮内嵌 prevBytes=第一轮 dbBytes",
+    new RegExp(`^prevBytes=${firstDbBytes}$`, "m").test(stats) && /^prevUpdatedAt=\S+$/m.test(stats),
+    stats.split("\n").slice(0, 2).join(" | "));
+  t("stats prevFree 链：第二轮内嵌 prevFreeBytes=第一轮 freeBytes（心跳空闲页收敛判定读它）",
+    new RegExp(`^prevFreeBytes=${firstFreeBytes}$`, "m").test(stats),
+    stats.split("\n").slice(0, 3).join(" | "));
+  fs.writeFileSync(flagFile, "unresolvedSince=2020-01-01T00:00:00Z\n");
+  r = run(["--days", "30"], { STUB_PC: "2000", STUB_FC: "100", STUB_AV: "2", KILO_WRITERS: "3" });
+  t("AV=2 run 幂等清掉遗留 flag（自愈闭环另一半）", !fs.existsSync(flagFile));
+
+  // 6b) 引导死锁（AV≠2 + 有写者 + live 库默认路径）：写 flag 且 unresolvedSince 不刷新
+  const lockHome = path.join(sand, "lock-home");
+  const lockDbDir = path.join(lockHome, ".local", "share", "kilo");
+  fs.mkdirSync(lockDbDir, { recursive: true });
+  fs.copyFileSync(DB, path.join(lockDbDir, "kilo.db"));
+  const lockEnv = { ...process.env, HOME: lockHome, USERPROFILE: lockHome, KILO_EXE: STUB, KSQLITE3: S3STUB,
+    STUB_LOG: LOG, S3_LOG: S3LOG, ORPHAN_FILE: ORPHAN, XDG_DATA_HOME: DATA,
+    STUB_PC: "2000", STUB_FC: "1000", STUB_AV: "0", KILO_WRITERS: "3" };
+  delete lockEnv.KILO_DB;
+  delete lockEnv.KILO_MAINT_STATS;
+  const lockFlag = path.join(lockHome, ".local", "state", "kilo", "maintenance", "vacuum-needed.flag");
+  r = spawnSync(BASH, [DBMT, "--days", "30"], { encoding: "utf8", cwd: sand, env: lockEnv });
+  t("死锁态 run 退出码 0（门禁降级不中止）", r.status === 0, `status=${r.status}`);
+  const out = (r.stdout || "") + (r.stderr || "");
+  t("死锁态提示已写 flag（不再让用户手动关 Kilo）", /已写 vacuum-needed\.flag/.test(out), firstLine(/已写[^\n]*/, out));
+  t("flag 已写入", fs.existsSync(lockFlag));
+  const flag1 = fs.readFileSync(lockFlag, "utf8");
+  t("flag 含 unresolvedSince + reason（首帧固定）",
+    /^unresolvedSince=\S+$/m.test(flag1) && /^reason=auto_vacuum=0/m.test(flag1), flag1.replace(/\n/g, " | "));
+  r = spawnSync(BASH, [DBMT, "--days", "30"], { encoding: "utf8", cwd: sand, env: lockEnv });
+  const flag2 = fs.readFileSync(lockFlag, "utf8");
+  t("第二轮不刷新 unresolvedSince（裁决阻断项：按 mtime 判超时会永久卡死）",
+    (/^unresolvedSince=(\S+)$/m.exec(flag1) || [])[1] === (/^unresolvedSince=(\S+)$/m.exec(flag2) || [])[1]
+      && /^lastAttempt=/m.test(flag2), flag2.split("\n").filter(Boolean).join(" | "));
+
+  // 6c) --status 保持只读：不写 stats、不写 flag
+  fs.rmSync(maintDir, { recursive: true, force: true });
+  r = run(["--status"], { STUB_PC: "2000", STUB_FC: "1000", STUB_AV: "0", KILO_WRITERS: "3" });
+  t("--status 不写 stats/flag（只读红线）", !fs.existsSync(statsFile) && !fs.existsSync(flagFile));
+}
+
+// ── 7) reclaim-intent 意图消费（MoA P0-4，2026-11-04）──
+// 心跳发现「日增 > 回收上限」时原子写 {issuedAt, rounds}；db-maintain 消费侧钉死：
+// clamp 20..40、24h 新鲜度、单次消费（rename 出 consumed-<stamp> 审计副本）。
+{
+  console.log("== 7) reclaim-intent 意图消费 ==");
+  const homeDir = path.join(sand, "home");
+  const maintDir = path.join(homeDir, ".local", "state", "kilo", "maintenance");
+  const intentFile = path.join(maintDir, "reclaim-intent.json");
+  const RUNENV = { STUB_PC: "2000", STUB_FC: "100", STUB_AV: "2", KILO_WRITERS: "3" };
+  const resetIntent = (payload) => {
+    fs.rmSync(maintDir, { recursive: true, force: true });
+    fs.mkdirSync(maintDir, { recursive: true });
+    if (payload) fs.writeFileSync(intentFile, JSON.stringify(payload) + "\n");
+  };
+
+  // 7a) 无意图：不影响主流程、无提示
+  resetIntent(null);
+  let r = run(["--days", "30"], RUNENV);
+  t("无意图 run 正常退出", r.status === 0, `status=${r.status}`);
+  t("无意图不提示 intent", !/intent/.test(r.out));
+
+  // 7b) 新鲜意图 rounds=40：消费 + 提示 + rename 单次消费
+  resetIntent({ issuedAt: new Date().toISOString(), rounds: 40 });
+  r = run(["--days", "30"], RUNENV);
+  t("新鲜意图被消费（rounds=40 提示）", /intent: 消费 reclaim-intent（rounds=40/.test(r.out), firstLine(/intent:[^\n]*/, r.out));
+  t("退出码 0", r.status === 0, `status=${r.status}`);
+  t("原意图文件已消费（rename 单次消费）", !fs.existsSync(intentFile));
+  const consumed = fs.readdirSync(maintDir).filter((f) => f.startsWith("reclaim-intent.json.consumed-"));
+  t("留下 consumed-<stamp> 审计副本", consumed.length === 1, consumed.join(","));
+
+  // 7c) 过期意图（3 天前）：忽略 + 消费掉，不留原地重复消费
+  resetIntent({ issuedAt: new Date(Date.now() - 3 * 86400000).toISOString(), rounds: 40 });
+  r = run(["--days", "30"], RUNENV);
+  t("过期意图被忽略提示", /intent: reclaim-intent 过期\/非法已忽略/.test(r.out), firstLine(/intent:[^\n]*/, r.out));
+  t("过期意图也被消费（不留原地）", !fs.existsSync(intentFile));
+  t("过期场景退出码 0", r.status === 0, `status=${r.status}`);
+
+  // 7d) rounds=0（非法低值）：硬夹到 20（伪造文件最坏效果=多耗 IO）
+  resetIntent({ issuedAt: new Date().toISOString(), rounds: 0 });
+  r = run(["--days", "30"], RUNENV);
+  t("rounds=0 clamp 到 20", /intent: 消费 reclaim-intent（rounds=20/.test(r.out), firstLine(/intent:[^\n]*/, r.out));
+
+  // 7e) rounds=99（非法高值）：硬夹到 40
+  resetIntent({ issuedAt: new Date().toISOString(), rounds: 99 });
+  r = run(["--days", "30"], RUNENV);
+  t("rounds=99 clamp 到 40", /intent: 消费 reclaim-intent（rounds=40/.test(r.out), firstLine(/intent:[^\n]*/, r.out));
+
+  // 7f) --status 只读红线：不消费意图
+  resetIntent({ issuedAt: new Date().toISOString(), rounds: 40 });
+  r = run(["--status"], RUNENV);
+  t("--status 不消费意图（只读红线）", fs.existsSync(intentFile), `status=${r.status}`);
 }
 
 fs.rmSync(sand, { recursive: true, force: true });

@@ -52,7 +52,10 @@ const summaryLine = (s) => {
 
 let pass = 0;
 const failed = [];
-const TEST_TIMEOUT_MS = 180_000; // 单套件硬上限：防某个测试挂死拖住整轮（原无 timeout）
+// 单套件硬上限：防某个测试挂死拖住整轮。2026-11-04 由 180s 上调至 600s——
+// test-db-maintain 加入真实 SQLite 金标准组（真 VACUUM/转换）后单跑可达数分钟，
+// 180s 会把「慢但正确」误判为挂死；上限是兜底不是期望时长，其余套件仍在秒级完成。
+const TEST_TIMEOUT_MS = 600_000;
 console.log(`== 统一离线测试：${jobs.length} 个（node ${process.versions.node}）==`);
 for (const j of jobs) {
   const r = spawnSync(NODE, j.args, { cwd: j.cwd, encoding: "utf8", timeout: TEST_TIMEOUT_MS });

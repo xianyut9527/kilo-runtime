@@ -16,6 +16,7 @@
 #   ./db-maintain.sh --batch-msg N 调整 message 每批删除行数（默认 2000，级联 part 更重）
 #   ./db-maintain.sh --batch-part N 调整所有孤儿子表每批删除行数（默认 2000，part 表达式索引最重）
 #   ./db-maintain.sh --ivac N      调整 incremental_vacuum 每次回收页数（默认 20000=80MB）
+#   ./db-maintain.sh --ivac-rounds N 调整单轮最多回收趟数（默认 20；auto_vacuum=2 时循环短锁回收）
 #
 # 集成（2026-10-07，2026-10-08 补 session_share/snapshot）：DB 清理完成后自动跑
 # storage-maintain（session_diff/log/tsc-cache 30 天窗 + session_share 60 天独立窗 +
@@ -44,6 +45,17 @@ fi
 # KILO_DB 覆盖时视为「离线/副本」目标：不套用 VACUUM 写者门禁（便于演练与迁移）
 DB="${KILO_DB:-$HOME/.local/share/kilo/kilo.db}"
 IS_LIVE=1; [ -n "${KILO_DB:-}" ] && IS_LIVE=0
+# 维护状态目录（与 scripts/kilo-maintenance.ps1、plugin/maintenance-heartbeat.ts 三方共用；
+# 路径口径统一为 $HOME/.local/state/kilo/maintenance，任一侧改动必须同步另两侧）：
+#   db-stats.txt         —— run 模式结束时写（key=value），心跳插件据此做增长/收敛判定（零依赖读文本）
+#   vacuum-needed.flag   —— auto_vacuum≠2 且有写者（引导死锁）时写，登录自愈脚本成功后删
+MAINT_DIR="$HOME/.local/state/kilo/maintenance"
+STATS_FILE="$MAINT_DIR/db-stats.txt"
+FLAG_FILE="$MAINT_DIR/vacuum-needed.flag"
+# reclaim-intent.json：心跳插件发现「日增 > 回收上限」时原子写的声明式意图（MoA P0-4）。
+# 白名单 schema {issuedAt, rounds}——不携带路径/命令（红线）；这里单次消费（rename 防
+# 并发重复），新鲜度 24h 防陈旧回放，rounds 硬夹 20..40（伪造文件最坏效果=多耗 IO）。
+INTENT_FILE="$MAINT_DIR/reclaim-intent.json"
 DAYS=30
 MODE=run
 DO_VACUUM=1
@@ -52,8 +64,9 @@ BATCH_EVENT=20000  # 每批 DELETE 行数：控制单次写锁时长（Kilo busy
 BATCH_MSG=2000     # message 每行可能级联大量 part，批次要更小
 BATCH_PART=2000    # 所有孤儿子表每批行数：recall_part_search_idx 是大表达式索引，part 批次仍是最重约束
 IVAC_PAGES=20000   # incremental_vacuum 每次回收页数（4096B×20000≈80MB/趟）
+IVAC_ROUNDS=20     # 单轮最多回收趟数（20×80MB≈1.6GB/天；每趟短锁，Kilo 运行中也安全）
 
-usage() { sed -n '/^# 用法：/,/^#   .\/db-maintain.sh --ivac/p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '/^# 用法：/,/^#   .\/db-maintain.sh --ivac-rounds/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -65,6 +78,7 @@ while [ $# -gt 0 ]; do
     --batch-msg) [ $# -ge 2 ] || { echo "FAIL: --batch-msg 需要参数（如 --batch-msg 1000）" >&2; exit 2; }; shift; BATCH_MSG="$1" ;;
     --batch-part) [ $# -ge 2 ] || { echo "FAIL: --batch-part 需要参数（如 --batch-part 1000）" >&2; exit 2; }; shift; BATCH_PART="$1" ;;
     --ivac)      [ $# -ge 2 ] || { echo "FAIL: --ivac 需要参数（如 --ivac 10000）" >&2; exit 2; }; shift; IVAC_PAGES="$1" ;;
+    --ivac-rounds) [ $# -ge 2 ] || { echo "FAIL: --ivac-rounds 需要参数（如 --ivac-rounds 20）" >&2; exit 2; }; shift; IVAC_ROUNDS="$1" ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -79,6 +93,7 @@ validate_int "$BATCH_EVENT" 1 || { echo "FAIL: --batch 必须是 ≥1 的整数"
 validate_int "$BATCH_MSG" 1   || { echo "FAIL: --batch-msg 必须是 ≥1 的整数" >&2; exit 2; }
 validate_int "$BATCH_PART" 1 || { echo "FAIL: --batch-part 必须是 ≥1 的整数" >&2; exit 2; }
 validate_int "$IVAC_PAGES" 1  || { echo "FAIL: --ivac 必须是 ≥1 的整数" >&2; exit 2; }
+validate_int "$IVAC_ROUNDS" 1 || { echo "FAIL: --ivac-rounds 必须是 ≥1 的整数" >&2; exit 2; }
 
 [ -x "$EXT" ] || { echo "FAIL: kilo.exe not found at $EXT" >&2; exit 1; }
 [ -f "$DB" ] || { echo "FAIL: $DB not found" >&2; exit 1; }
@@ -149,7 +164,9 @@ size_bytes() { stat -c %s "$1" 2>/dev/null || echo 0; }
 gb() { awk -v b="$1" 'BEGIN{printf "%.2f", b/1073741824}'; }
 
 # 写者检测：VACUUM 在 Kilo 存活时执行会长时间占锁、打断并发会话
+# KILO_WRITERS 显式注入：仅供离线回归桩使用（测试机可能没有 kilo 进程，无法稳定触发门禁）
 writers() {
+  if [ -n "${KILO_WRITERS:-}" ]; then echo "$KILO_WRITERS"; return; fi
   if command -v pgrep >/dev/null 2>&1 && pgrep -x -c kilo >/dev/null 2>&1; then
     pgrep -x -c kilo || true
   elif command -v tasklist >/dev/null 2>&1; then
@@ -192,6 +209,85 @@ if [ "$PAGE_COUNT" -gt 0 ] && [ "$PAGE_SIZE" -gt 0 ]; then
 fi
 echo "  auto_vacuum: ${AV_MODE:-?}  $([ "${AV_MODE:-0}" = "2" ] && echo '(incremental：空闲页可短锁增量回收)' || echo '(none：空闲页永不自动归还，需一次性 VACUUM 引导为 2)')"
 
+# ── 引导死锁 flag / 维护 stats（2026-11-04 全自动化闭环）──────────────────────
+# 写 flag：只在不存在时创建（unresolvedSince 固定为首次未解决时间，绝不刷新——
+# 心跳按它判「自愈多日未成功」；每日重写 mtime 会让超时判定永不触发）；已存在时仅追加
+# lastAttempt 供人工诊断。全部失败静默（|| true / return 0）：辅助文件写失败绝不影响清理主流程。
+write_bootstrap_flag() {
+  mkdir -p "$MAINT_DIR" 2>/dev/null || return 0
+  if [ -f "$FLAG_FILE" ]; then
+    printf 'lastAttempt=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$FLAG_FILE" 2>/dev/null || true
+  else
+    { printf 'unresolvedSince=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      printf 'reason=auto_vacuum=%s 空闲占比%s%%(%s GB)，有 kilo 写者，需离线 VACUUM 引导\n' \
+        "${AV_MODE:-0}" "${FREE_PCT:-?}" "${FREE_GB:-?}"; } > "$FLAG_FILE.tmp" 2>/dev/null \
+      && mv "$FLAG_FILE.tmp" "$FLAG_FILE" 2>/dev/null || true
+  fi
+  return 0
+}
+clear_bootstrap_flag() { rm -f "$FLAG_FILE" 2>/dev/null || true; }
+
+# 写 stats：key=value 文本（避免 bash 拼 JSON 的转义脆性），原子写（tmp+mv）。
+# prevBytes/prevUpdatedAt/prevFreeBytes 内嵌上一轮快照，心跳据此算「日增长速率」与
+# 「空闲页连续多轮未收敛」（2026-11-05 查漏：prevFreeBytes 此前从未写入，且旧 stats
+# 文件里也没有它，空闲页收敛判定在生产是死代码）——
+# 裸文件尺寸告警（旧版心跳 12GB 阈值）在维护健康时也误报，已由速率/收敛指标取代。
+# 只在真实库（IS_LIVE=1）写；离线演练（KILO_DB 指副本）不污染真实 stats。
+# KILO_MAINT_STATS=1 显式开启（离线回归注入用）。
+write_stats() {
+  mkdir -p "$MAINT_DIR" 2>/dev/null || return 0
+  local prev_bytes prev_at prev_free
+  prev_bytes=$(sed -n 's/^dbBytes=//p' "$STATS_FILE" 2>/dev/null | tail -1 | tr -d '\r' || true)
+  prev_at=$(sed -n 's/^updatedAt=//p' "$STATS_FILE" 2>/dev/null | tail -1 | tr -d '\r' || true)
+  prev_free=$(sed -n 's/^freeBytes=//p' "$STATS_FILE" 2>/dev/null | tail -1 | tr -d '\r' || true)
+  case "$prev_bytes" in ''|*[!0-9]*) prev_bytes=""; prev_at="" ;; esac
+  case "$prev_free"   in ''|*[!0-9]*) prev_free="" ;; esac
+  local bytes pc fc ps av w
+  bytes=$(size_bytes "$DB")
+  pc=$(read_pragma 'PRAGMA page_count') || true
+  fc=$(read_pragma 'PRAGMA freelist_count') || true
+  ps=$(read_pragma 'PRAGMA page_size') || true
+  av=$(read_pragma 'PRAGMA auto_vacuum') || true
+  w=$(writers)
+  { [ -n "$prev_bytes" ] && printf 'prevBytes=%s\nprevUpdatedAt=%s\n' "$prev_bytes" "$prev_at"
+    [ -n "$prev_free" ] && printf 'prevFreeBytes=%s\n' "$prev_free"
+    printf 'updatedAt=%s\ndbBytes=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$bytes"
+    printf 'freeBytes=%s\nfreePct=%s\nautoVacuum=%s\nwriters=%s\n' \
+      $(( fc * ps )) \
+      "$(awk -v f="$fc" -v c="$pc" 'BEGIN{printf "%d",(c>0?100*f/c:0)}')" \
+      "$av" "$w"
+  } > "$STATS_FILE.tmp" 2>/dev/null && mv "$STATS_FILE.tmp" "$STATS_FILE" 2>/dev/null \
+    || echo "  ⚠ db-stats.txt 写失败（不影响清理结果）" >&2
+  return 0
+}
+
+# 消费 reclaim-intent：心跳证据链判定「日增超回收上限」时下发；本轮临时提升 IVAC_ROUNDS
+# 让增量回收追上写入速度。失败/过期一律忽略并消费掉（不留原地重复消费，不污染主流程）。
+# 与 write_stats 同门（IS_LIVE=1 才真消费；KILO_MAINT_STATS=1 离线回归注入）。
+consume_reclaim_intent() {
+  [ -f "$INTENT_FILE" ] || return 0
+  local rounds issued fresh=0 iss now
+  issued=$(sed -n 's/.*"issuedAt"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$INTENT_FILE" | head -1)
+  rounds=$(sed -n 's/.*"rounds"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$INTENT_FILE" | head -1)
+  if [ -n "$issued" ]; then
+    iss=$(node -e 'console.log(Math.floor((Date.parse(process.argv[1])||0)/1000))' "$issued" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    if [ "${iss:-0}" -gt 0 ] && [ $(( now - iss )) -lt 86400 ]; then fresh=1; fi
+  fi
+  if [ "$fresh" = "1" ] && [ -n "$rounds" ]; then
+    if [ "$rounds" -lt 20 ]; then rounds=20; fi
+    if [ "$rounds" -gt 40 ]; then rounds=40; fi
+    IVAC_ROUNDS="$rounds"
+    echo "  intent: 消费 reclaim-intent（rounds=$IVAC_ROUNDS，issuedAt=$issued）"
+  else
+    echo "  intent: reclaim-intent 过期/非法已忽略（issuedAt=${issued:-?}）"
+  fi
+  # 单次消费：同卷 rename；失败退化为删除，绝不留在原地
+  mv -f "$INTENT_FILE" "${INTENT_FILE}.consumed-$(date +%Y%m%d%H%M%S)" 2>/dev/null \
+    || rm -f "$INTENT_FILE" 2>/dev/null || true
+  return 0
+}
+
 # VACUUM 门槛（2026-10-07）：维护自动化此前只跑 --no-vacuum，是「文件永不缩」的根因——
 # 实测 7.34GB 文件里 5.4GB（74%）是历史 DELETE 留下的 freelist 空洞：扫描变慢且占盘。
 # 空闲占比达阈值（默认 25%）且无 Kilo 写者时才值得付一次独占锁（实测 7.34GB→1.49GB
@@ -200,7 +296,13 @@ echo "  auto_vacuum: ${AV_MODE:-?}  $([ "${AV_MODE:-0}" = "2" ] && echo '(increm
 VACUUM_MIN_PCT="${VACUUM_MIN_PCT:-25}"
 
 if [ "$MODE" = "status" ]; then
-  echo "  integrity:  $(q 'PRAGMA integrity_check' | tail -n1 | tr -d '\r')"
+  # 体检先用 quick_check（10GB 库实测 11.6s vs 全量 26.8s）；仅异常时升级全量并给出明细。
+  QC_OUT="$(q 'PRAGMA quick_check' | tail -n1 | tr -d '\r')" || QC_OUT=''
+  if [ "$QC_OUT" = "ok" ]; then
+    echo "  integrity:  ok (quick)"
+  else
+    echo "  integrity:  $(q 'PRAGMA integrity_check' | tail -n1 | tr -d '\r')"
+  fi
   # 引导死锁自诊断（2026-10-08，附加告警，不替换下方维护建议）：auto_vacuum≠2 + 空闲占比达阈值
   # = 空闲页永远收不回。机理：增量回收(incremental_vacuum)需 auto_vacuum=2；0→2 转换只能靠
   # 一次独占 VACUUM；而 VACUUM 被「有 kilo 写者就跳过」门禁挡住，Kilo 常驻 → 引导永不发生
@@ -208,11 +310,17 @@ if [ "$MODE" = "status" ]; then
   # 时自动回收 + 转 auto_vacuum=2，此后增量回收自动维持，无需再离线）。
   if [ "${AV_MODE:-0}" != "2" ] && [ "${FREE_PCT:-0}" -ge "$VACUUM_MIN_PCT" ]; then
     echo "  ⚠ 引导死锁:  auto_vacuum=${AV_MODE:-0}(none) 且空闲占比 ${FREE_PCT}%（${FREE_GB:-0} GB 空洞）——空闲页永不自动归还，库越用越大越慢。"
-    echo "               一次性修复：关闭全部 Kilo 后跑 ./db-maintain.sh（自动 VACUUM 回收 + 转 auto_vacuum=2，此后增量回收自动维持）。"
+    echo "               自动修复：维护 RunOnce 会写 flag 并安装登录自愈，下次登录无写者时离线 VACUUM 引导（无需人工）；急用可关闭全部 Kilo 后手动跑。"
+  fi
+  # 只读显示自愈排队状态（--status 不写任何文件）
+  if [ -f "$FLAG_FILE" ]; then
+    echo "  自愈 flag:   vacuum-needed.flag 存在（$(sed -n 's/^unresolvedSince=//p' "$FLAG_FILE" | tail -1) 起）——登录自愈将自动离线引导"
   fi
   if [ "$DO_VACUUM" = "1" ] && [ "$IS_LIVE" = "1" ]; then
-    if [ "$(writers)" -gt 0 ]; then
-      echo "  维护建议:   Kilo 有写者 → VACUUM 自动跳过（关闭全部 Kilo 后跑 ./db-maintain.sh 即回收）"
+    if [ "$(writers)" -gt 0 ] && [ "${AV_MODE:-0}" = "2" ]; then
+      echo "  维护建议:   Kilo 有写者 → 全量 VACUUM 跳过；auto_vacuum=2 已启用，每日维护会在线增量回收（无需关闭 Kilo）"
+    elif [ "$(writers)" -gt 0 ]; then
+      echo "  维护建议:   Kilo 有写者 → VACUUM 自动跳过；auto_vacuum≠2，引导死锁将由登录自愈自动处理（无需人工）"
     elif [ "${FREE_PCT:-0}" -ge "$VACUUM_MIN_PCT" ]; then
       echo "  维护建议:   空闲占比 ${FREE_PCT}% ≥ ${VACUUM_MIN_PCT}% 且无写者 → 现在跑 ./db-maintain.sh 可回收 ${FREE_GB} GB"
     else
@@ -237,12 +345,18 @@ if [ "$DO_VACUUM" = "1" ] && [ "$FORCE" != "1" ] && [ "$IS_LIVE" = "1" ] && [ "$
   # 则下方 incremental_vacuum 短锁增量回收，Kilo 开着也安全，无需离线。
   if [ "${AV_MODE:-0}" != "2" ]; then
     echo "  ⚠ 引导死锁：auto_vacuum=${AV_MODE:-0}(none) → 增量回收不生效，这些空闲页永远不会被自动归还，库会越用越大越慢。" >&2
-    echo "     一次性修复：关闭全部 Kilo 后重跑本脚本（无写者时自动 VACUUM 回收 + 转 auto_vacuum=2，此后增量回收自动维持）。" >&2
+    echo "     已写 vacuum-needed.flag：kilo-maintenance.ps1 将自动安装登录自愈（下次登录无写者时离线 VACUUM 转 auto_vacuum=2），无需人工。" >&2
+    write_bootstrap_flag
   else
-    echo "  auto_vacuum=2：空闲页将由下方 incremental_vacuum 短锁增量回收，Kilo 开着也安全，无需离线。" >&2
+    echo "  auto_vacuum=2：空闲页将由下方 incremental_vacuum 短锁循环回收，Kilo 开着也安全，无需离线。" >&2
   fi
-  echo "  想强制回收：关掉全部 Kilo 后重跑本脚本（或加 --force）。" >&2
   SKIP_VACUUM=1
+fi
+
+# run 模式下库已是 auto_vacuum=2：引导死锁不存在，幂等清掉遗留的 vacuum-needed.flag
+#（自愈闭环的另一半——flag 只该在「确实无人能解决」时存在）
+if [ "$MODE" = "run" ] && [ "${AV_MODE:-0}" = "2" ]; then
+  clear_bootstrap_flag
 fi
 
 CUTOFF=$(node -e "console.log(Date.now() - $DAYS*86400000)")
@@ -400,22 +514,42 @@ elif [ "$DO_VACUUM" = "1" ]; then
   fi
 fi
 
-# 增量回收闭环（2026-10-08）：DELETE 释放的页在 auto_vacuum=2 下靠 incremental_vacuum
-# 归还磁盘——无独占锁（整库重写），Kilo 在跑也安全；free modes: 0=none 1=full(=VACUUM
-# 语义) 2=incremental。仅在本轮没做全量 VACUUM（freelist 已被重写清零）时才值得跑；
-# freelist<IVAC_PAGES 时收益太小，不白付锁。
+# 增量回收闭环（2026-10-08，2026-11-03 改为有界循环）：DELETE 释放的页在 auto_vacuum=2
+# 下靠 incremental_vacuum 归还磁盘——无独占锁（整库重写），Kilo 在跑也安全。
+# 旧版每轮只回收 IVAC_PAGES 一趟（默认 20k 页≈80MB），而每日清理可能释放 GB 级空闲页，
+# 回收速度永远追不上，导致「必须关掉 Kilo 手动 VACUUM」的错觉。现按 IVAC_ROUNDS 循环，
+# 每趟仍是短锁；freelist 降到 IVAC_PAGES 以下、无进展或达趟数上限即停。
+# free modes: 0=none 1=full(=VACUUM 语义) 2=incremental。仅在本轮没做全量 VACUUM
+# （freelist 已被重写清零）时才值得跑。
 if [ "$VACUUM_DONE" = "0" ]; then
+  # 意图消费窗口与 write_stats 同门（真实库 or 离线回归注入）
+  if [ "${KILO_MAINT_STATS:-0}" = "1" ] || { [ "$IS_LIVE" = "1" ] && [ "$MODE" = "run" ]; }; then
+    consume_reclaim_intent
+  fi
   AV_MODE="$(q 'PRAGMA auto_vacuum' | tail -n1 | tr -d '\r' | awk '{print $1+0}')" || AV_MODE=0
   FL_NOW="$(q 'PRAGMA freelist_count' | tail -n1 | tr -d '\r' | awk '{print $1+0}')" || FL_NOW=0
   if [ "${AV_MODE:-0}" = "2" ] && [ "${FL_NOW:-0}" -ge "$IVAC_PAGES" ]; then
+    FL_START="$FL_NOW"
+    TOTAL_PAGES=0
+    ROUND=0
     echo ""
-    echo "== incremental_vacuum（auto_vacuum=2，每趟回收 ${IVAC_PAGES} 页，短锁）=="
-    if q "PRAGMA incremental_vacuum($IVAC_PAGES)" >/dev/null; then
-      FL_AFTER="$(q 'PRAGMA freelist_count' | tail -n1 | tr -d '\r' | awk '{print $1+0}')"
-      echo "  ok（freelist $FL_NOW -> $FL_AFTER 页）"
-    else
-      echo "  ⚠ incremental_vacuum 失败（下轮重试，不影响清理结果）" >&2
-    fi
+    echo "== incremental_vacuum（auto_vacuum=2，每趟 ${IVAC_PAGES} 页，最多 ${IVAC_ROUNDS} 趟，短锁）=="
+    while [ "$ROUND" -lt "$IVAC_ROUNDS" ] && [ "${FL_NOW:-0}" -ge "$IVAC_PAGES" ]; do
+      ROUND=$((ROUND + 1))
+      BEFORE="$FL_NOW"
+      if ! q "PRAGMA incremental_vacuum($IVAC_PAGES)" >/dev/null; then
+        echo "  ⚠ 第 $ROUND 趟 incremental_vacuum 失败（下轮重试，不影响清理结果）" >&2
+        break
+      fi
+      FL_NOW="$(q 'PRAGMA freelist_count' | tail -n1 | tr -d '\r' | awk '{print $1+0}')" || FL_NOW="$BEFORE"
+      RECLAIMED=$((BEFORE - FL_NOW))
+      if [ "$RECLAIMED" -le 0 ]; then
+        echo "  note: freelist 未下降（并发写入中），停止本轮增量回收" >&2
+        break
+      fi
+      TOTAL_PAGES=$((TOTAL_PAGES + RECLAIMED))
+    done
+    echo "  ok（freelist $FL_START -> $FL_NOW 页，回收 $TOTAL_PAGES 页 / 约 $(awk -v p="$TOTAL_PAGES" -v s="${PAGE_SIZE:-4096}" 'BEGIN{printf "%.2f", p*s/1073741824}') GB，$ROUND 趟）"
   fi
 fi
 
@@ -423,7 +557,33 @@ fi
 echo ""
 echo "== WAL checkpoint + 校验 =="
 q "PRAGMA wal_checkpoint(TRUNCATE)" >/dev/null && echo "  checkpoint ok" || FAILED=1
-echo "  integrity: $(q 'PRAGMA integrity_check' | tail -n1 | tr -d '\r')"
+# 校验分级（2026-11-05）：10GB 库实测 quick_check 11.6s / integrity_check 26.8s。
+# 每日全量扫描是纯 IO 浪费（大库冷缓存可达分钟级），改为每日 quick_check + 每周日全量；
+# quick_check 异常时立即升级全量，避免真实损坏被「快检」掩盖。
+if [ "$(date +%u 2>/dev/null || echo 1)" = "7" ]; then
+  CHECK_SQL='PRAGMA integrity_check'; CHECK_TAG='full'
+else
+  CHECK_SQL='PRAGMA quick_check'; CHECK_TAG='quick'
+fi
+CHECK_OUT="$(q "$CHECK_SQL" | tail -n1 | tr -d '\r')" || CHECK_OUT=''
+if [ "$CHECK_OUT" = "ok" ]; then
+  echo "  integrity: ok ($CHECK_TAG)"
+else
+  echo "  ⚠ 校验异常（$CHECK_OUT），升级全量 integrity_check ..." >&2
+  echo "  integrity: $(q 'PRAGMA integrity_check' | tail -n1 | tr -d '\r')"
+fi
+
+# 查询统计（2026-11-05）：kilo serve 连接长存 + 表达式索引，sqlite_stat1 容易陈旧；
+# analysis_limit 采样把 10GB 库的 ANALYZE 压到亚秒级（实测 ~0.3s），失败只告警不改变清理结果。
+if [ -n "$SQLITE3_BIN" ] && [ "$MODE" = "run" ]; then
+  echo ""
+  echo "== 查询统计（ANALYZE 采样 + optimize）=="
+  if qs "PRAGMA busy_timeout=5000; PRAGMA analysis_limit=400; ANALYZE part; ANALYZE message; PRAGMA optimize;" >/dev/null 2>&1; then
+    echo "  ok"
+  else
+    echo "  ⚠ 统计信息更新失败（不影响清理结果；sqlite_stat1 陈旧只影响查询计划）" >&2
+  fi
+fi
 
 # 4) 存储垃圾回收（session_diff/log/tsc-cache 30 天窗 + tool-output 失控看门狗）
 #    独立工具：失败只告警，不影响本脚本的退出码（DB 清理状态仍以 FAILED 为准）
@@ -450,6 +610,12 @@ else
 fi
 
 echo ""
+
+# 维护 stats：心跳插件的速率/收敛判定数据源（真实库才写；KILO_MAINT_STATS=1 供离线回归注入）
+if [ "${KILO_MAINT_STATS:-0}" = "1" ] || { [ "$IS_LIVE" = "1" ] && [ "$MODE" = "run" ]; }; then
+  write_stats
+fi
+
 echo "== 完成 =="
 echo "  文件: $(gb "$(size_bytes "$DB")") GB (WAL $(gb "$(size_bytes "$DB-wal")") GB)"
 echo "  event:      $(cnt event) rows"

@@ -159,10 +159,11 @@
       "variant": "low",
     },
     "compaction": {
-      // 压缩是摘要任务，不需要深度推理，钉 low 档（max 档思考预算深、纯推理打满则
-      // 0 输出 → "Compaction worker returned an empty response"，kilo.db 30 条实测；
+      // 压缩是摘要任务，不需要深度推理，钉 low 档。空摘要不是单一成因：
+      // 2026-11-05 五例 part 直录 = length×2 / 摘要落 reasoning、text 仅错误文案×2 /
+      // content-filter×1，不能统称「纯推理打满」（历史 kimi-k3 直连复现见下）。
       // schema 约束：variant 仅在 agent 用「自己配置的 model」时生效——必须同时钉死
-      // model，否则 compaction 继承会话当前模型+variant，覆盖不生效）。
+      // model。7.8.18 实测：model 钉选生效，variant 钉选仍不生效（见下方 2026-11-05 实证）。
       // 2026-10-07 kimi-k3 → deepseek-v4.1-flash（本行当日被改过两次，此处回滚到实测
       // 站得住的选项；2026-10-23 旧名生产下架，同名替换 deepseek-v4.1-flash-1017，
       // 同族同窗口登记 200k/32k，压缩位实测口径沿用）：
@@ -178,9 +179,12 @@
       // 窗口口径：压缩模型窗口 = 会话负载的回收上限；deepseek-v4.1-flash 登记
       // 200k/32k（与上游实际一致，见 models 表）。越窗的极端会话由「tool_output
       // 8KB 限流 + failover 换路」兜底，不再靠改这一个数字解决。
-      // 2026-10-26 观察（待证实，非已修项）：kilo.db 近 3 天 compaction 记录多为 max/high
-      //（46.4s/34.4s），low 仅 11 次（19.5s），疑似扩展按会话档位记录或执行；
-      // 在证实前不改本处 model+variant，日常避免用 max 跑 code 即可降低压缩开销。
+      // 2026-11-05 已证实（agent="compaction" 消息直录，快照随留存窗滚动漂移）：
+      // model 钉选生效（modelID 直录全 deepseek 系）；variant 未按配置 low 执行——
+      // 2292 条快照实际为 max 1382 / high 842 / low 40，余 null/default/medium 28；
+      // explore 对照仅作旁证，不作压缩位因果证明。保留 model+variant 现值（未来版本
+      // 修好即自动受益）；日常避免 max 跑 code 主要为延迟/成本，low 样本少，不据此
+      // 比较各档失败率。空摘要档位为库 5 直证 + 10-27 一例推断，详见 HISTORY。
       "model": "openllamas/deepseek-v4.1-flash-1017",
       "variant": "low",
     },
