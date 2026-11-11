@@ -925,6 +925,33 @@
             "output": 32000,
           },
         },
+        "qwen4-max": {
+          "reasoning": true,
+          // 路由引用仅规划席一处（用户定案「K3 只用于规划」；2026-10-24 plan 位由
+          // kimi-k3 换型至本档，上游 /v1/models 实探在册）。官方仅支持 low/high/max
+          // 三档（默认 max），无 medium——多声明会产生
+          // 无效选择项，且 reasoningGate 死亡重试降档链（high→medium）会向 K3 发出
+          // 非法 reasoning_effort → 重试 400，救活路径落空。故只声明三档，降档链
+          // 对 K3 的落点为 high（合法值中比 max 低一档的最近值）。
+          "variants": {
+            "low": { "reasoningEffort": "low" },
+            "high": { "reasoningEffort": "high" },
+            "max": { "reasoningEffort": "max" },
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"],
+          },
+          "limit": {
+            // 2026-10-07 还原 600k→200k：600k 是本机从未有渠道验证过的数字（当日
+            // 与压缩换岗一起写入，随后实测 kimi-k3 在压缩位直接空响应，见
+            // agent.compaction 注释）。registry 里的 context 会参与上下文占用计算，
+            // 一个未经验证的大窗数字会让「何时该压缩」的判断失真。回到与上游实际
+            // 一致的 200k；K3 若日后确有更大窗可用，按实测再放宽。
+            "context": 200000,
+            "output": 32000,
+          },
+        },
       },
     },
   },
