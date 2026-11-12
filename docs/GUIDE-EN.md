@@ -165,7 +165,7 @@ Register a new model in `provider.openllamas.models` before referencing it. This
 | `orchestrator` | Task breakdown and delegation |
 | `compaction` | Session compaction and summaries |
 | `verify` | Independent, read-only cross-family verification |
-| `single` | Single-model capability testing entry (not for delivery; see section 5) |
+| `single` | Single-model quality loop entry (task and review seats use only the chosen model; see section 5) |
 
 ### 4.2 What the failover list means
 
@@ -180,31 +180,32 @@ Failed models enter cooldown. During a sustained failure, later requests can ski
 - Current seat models and fallback order come from configuration. A fallback can put a seat in the same family as the audited implementation; that result must be labeled a degraded review rather than full independent cross-family validation.
 - Reviews consume extra upstream calls and time, so simple, low-risk changes do not trigger them mechanically.
 
-## 5. Single-model capability mode
+## 5. Single-model quality loop mode
 
-Use this mode to evaluate **one model completing a task end to end without assistance**. It is not intended for normal delivery. There are two ways in: the mode picker for everyday use, and a command-line lockdown when strict isolation is required.
+Use this mode to let **one chosen model complete a task end to end under the full quality loop**: planning, execution, review, and adjudication all use the model selected in the model picker. There are two ways in: the mode picker for everyday use, and the command-line strict mode when background jobs must also be pinned.
 
 ### 5.1 Mode picker (everyday)
 
 1. Select `single` in the Kilo mode picker;
-2. pick the model and reasoning effort to test in the model picker;
+2. pick the model and reasoning effort to use in the model picker;
 3. send the task — the session runs on that model, with no config change or reload.
 
 Isolation boundaries and residual effects of this path:
 
-- The `single` agent permission denies task delegation, moa/dual_review, Agent Manager, todo/goal, skill and memory tools; quality-gate skips its exit nudge for `single` sessions, and layers 1/2/3 never fire because the todo tool is denied;
-- model and effort follow the model picker, so switching models switches the test subject;
-- global instructions and project memory are still injected, and the failover chain stays active — if the chosen model fails, the response starts with a visible "⚠️ [failover]" marker and switches to a backup model; discard any test run that shows that marker;
-- background jobs such as session title/summary and auto-compaction use the configured light models and do not execute the task.
+- `single` still denies task delegation, MoA aggregation, Agent Manager, skill and memory tools; todo/goal/dual_review remain available, and quality-gate's three layers plus exit nudge stay active;
+- for complex/high-risk delivery, quality-gate automatically runs dual_review with positive, negative, and adjudication seats all pinned to the chosen model; the output is labeled same-source review and does not count as independent cross-family validation. Manual dual_review calls are pinned the same way and never mix other models; if the chosen model is not a routable OpenLlamas model, automatic review is not silently skipped: the delivery is blocked as unreviewed until a human reviews the diff or explicitly accepts the risk with `echo "review-accepted: <reason>"`, while manual dual_review refuses outright;
+- model and effort follow the model picker, so switching models switches the execution subject;
+- the task path (including review/adjudication) uses only the chosen model; background session title/summary/auto-compaction still use the configured light models and are not part of task execution. Use strict mode in 5.2 to pin those too;
+- the failover chain stays active — if the chosen model fails, the response starts with a visible "⚠️ [failover]" marker and switches to a backup model; any result showing that marker has mixed models and must be rerun.
 
 ### 5.2 Command-line lockdown (strict isolation)
 
-Use the lockdown mode when you need to empty the failover chain, collapse the model registry to a single model, clear instructions/skills, and bypass quality-gate entirely. Entering the mode:
+Use strict mode when you need to empty the failover chain, collapse the model registry to a single model, and pin background title/summary/auto-compaction as well. Entering the mode:
 
 - pins the main model, light tasks, subagents, project memory, every agent, failover, MoA and dual_review to the same model;
 - turns other primary agents into hidden subagents, including built-ins such as `ask/debug/summary/title` that are absent from `kilo.json`, leaving only `single` in the main picker;
-- clears additional `instructions` and `skills`, and denies task delegation, multi-model review, Agent Manager, todo/goal, skill and memory tools;
-- disables automatic compaction, `task_model_selection` and reasoningGate.
+- clears additional `instructions` and `skills`, and still denies task delegation, MoA, Agent Manager, skill and memory tools; todo/goal/dual_review and quality-gate's three layers remain enabled;
+- keeps automatic compaction on and disables `task_model_selection` and reasoningGate.
 
 These commands work in both PowerShell and bash:
 
@@ -221,7 +222,7 @@ node "$HOME/.config/kilo/scripts/single-model.mjs" enter --model MODEL_ID --vari
 # 4. Reload VS Code/Kilo, start a new session and check status
 node "$HOME/.config/kilo/scripts/single-model.mjs" status
 
-# 5. Restore the original configuration after testing, then reload again
+# 5. Restore the original configuration when done, then reload again
 node "$HOME/.config/kilo/scripts/single-model.mjs" restore
 ```
 

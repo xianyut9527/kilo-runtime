@@ -194,6 +194,18 @@ for (const { plugin, tool, args } of STREAM_TOOLS) {
   }
 }
 
+// ── 断言 7：dual_review 成功输出头 ↔ quality-gate 手动补审判定的跨插件契约 ──
+// quality-gate.manualReviewOutcome 以「## 双向审查裁决」为首行判定手动补审是否有效：
+// 改头文案会让所有成功审查被判 invalid（永远不豁免、反复重审），两处字面量必须同存亡。
+assert(
+  "跨插件契约：dual-review.ts 保留成功输出头「## 双向审查裁决」",
+  fs.readFileSync(path.join(PLUGIN_DIR, "dual-review.ts"), "utf8").includes("## 双向审查裁决"),
+);
+assert(
+  "跨插件契约：quality-gate.ts 手动补审判定引用同一输出头",
+  fs.readFileSync(path.join(PLUGIN_DIR, "quality-gate.ts"), "utf8").includes("## 双向审查裁决"),
+);
+
 console.log(results.join("\n"));
 const failed = results.filter((r) => r.startsWith("FAIL")).length;
 console.log(`\n${results.length - failed}/${results.length} 通过${failed ? `，${failed} 失败` : ""}`);

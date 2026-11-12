@@ -119,6 +119,24 @@ function Resolve-Node {
     throw 'FAIL: 找不到 node.exe（storage-maintain.mjs 数据目录回收需要 Node）'
 }
 
+# 变更类入口跨进程单飞（2026-11-12 维护并发专项，error.log 05:35:06 实锤）：
+# 计划任务（AtLogOn 触发 + 12:30/12:45 定时，StartWhenAvailable 负责错过补跑）与登录
+# 自启 lnk（-AutoIfDue）是**三个独立进程**，MultipleInstances=IgnoreNew 只防同名任务
+# 自叠——补跑窗口会让「任务 + lnk」同秒并发清理：撞同名日志中止 + 并发写 state.json。
+# 实现用独占锁文件（FileShare.None 跨进程/跨会话生效），进程结束由 OS 自动释放，
+# 无需 try/finally 兜底（异常/被杀也不留死锁）。拿不到锁 → 静默跳过（另一实例正在维护）。
+function Enter-MaintRunLock {
+    $lockPath = Join-Path $LogDir 'run.lock'
+    $null = New-Item -ItemType Directory -Force -Path $LogDir
+    try {
+        return [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    } catch {
+        Write-Host '[SKIP] 另一维护实例正在运行（单飞锁占用），本次跳过'
+        return $null
+    }
+}
+
 # 跑一个仓库内脚本：传原生正斜杠路径，避免 Git Bash 对反斜杠/盘符的歧义。
 # -Node 开关：用 node 跑 .mjs（storage-maintain）；默认走 Git Bash（.sh）。
 function Invoke-RepoScript {
@@ -130,9 +148,12 @@ function Invoke-RepoScript {
 
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $null = New-Item -ItemType Directory -Force -Path $LogDir
-    $log = Join-Path $LogDir "$stamp-$Label.log"
+    # 日志名带 PID 唯一化（2026-11-12）：并发入口同秒启动时同秒时间戳会撞同名日志，
+    # Out-File -Append 撞上对方独占写 → IOException 直接中止整轮维护（error.log 有据）。
+    # 格式仍匹配轮转/卫生正则 ^\d{8}-\d{6}-.+\.log$。
+    $log = Join-Path $LogDir "$stamp-$PID-$Label.log"
 
-    $header = "== $stamp  $Script $($ScriptArgs -join ' ') =="
+    $header = "== $stamp  pid=$PID  $Script $($ScriptArgs -join ' ') =="
     Write-Host $header
     $header | Out-File -LiteralPath $log -Append -Encoding utf8
 
@@ -676,6 +697,11 @@ if ($VacuumNow) {
     & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $vacuumScript -SqlitePath (Resolve-Sqlite3) -Trigger manual
     exit $LASTEXITCODE
 }
+
+# 变更类入口（-CleanupOnly / -RunOnce / -AutoIfDue）单飞互斥：只读入口（-Status /
+# -DbStatus / -ListOrphans）不加锁，维护运行中仍可诊断。锁随进程存活（OS 释放）。
+$script:MaintRunLock = Enter-MaintRunLock
+if ($null -eq $script:MaintRunLock) { exit 0 }
 
 if ($CleanupOnly) {
     $rc = Invoke-Cleanup

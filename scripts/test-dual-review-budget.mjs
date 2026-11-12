@@ -116,13 +116,21 @@ try {
   const opts = cfg.provider.openllamas.options;
   t("dual_review 三席异源：positive/negative/aggregator 两两不同",
     () => new Set([opts.dual_review.positive, opts.dual_review.negative, opts.dual_review.aggregator]).size === 3);
-  t("dual_review 聚合席为 kimi-k3.1-pro（qwen3.8-max 实测无路由）",
-    () => opts.dual_review.aggregator === "kimi-k3.1-pro");
+  const mainId = String(cfg.model || "").replace(/^[^/]+\//, "");
+  t("审查三席均不与主编码模型同模（防自审；锁结构不锁型号，换型只改模板）",
+    () => {
+      if (!mainId) return false;
+      const seats = [opts.dual_review.positive, opts.dual_review.negative, opts.dual_review.aggregator];
+      return !seats.includes(mainId) && opts.moa.aggregator !== mainId;
+    });
   t("moa 聚合席不与任一参考席同族",
-    () => opts.moa.aggregator === "kimi-k3.1-pro" && !opts.moa.references.includes(opts.moa.aggregator));
-  t("聚合 fallback 保留 1017 降级路径",
-    () => opts.dual_review.aggregator_fallbacks.includes("deepseek-v4.1-flash-1017") &&
-      opts.moa.aggregator_fallbacks.includes("deepseek-v4.1-flash-1017"));
+    () => !opts.moa.references.includes(opts.moa.aggregator));
+  t("聚合 fallback 终极保底锚定主模型（末位策略，非具体型号）",
+    () => {
+      const a = opts.dual_review.aggregator_fallbacks || [];
+      const m = opts.moa.aggregator_fallbacks || [];
+      return a.length > 0 && m.length > 0 && a[a.length - 1] === mainId && m[m.length - 1] === mainId;
+    });
   t("三席 fallback 首选跨族轮换，不全部落到 1017",
     () => {
       const first = [
@@ -130,7 +138,33 @@ try {
         opts.dual_review.negative_fallbacks[0],
         opts.dual_review.aggregator_fallbacks[0],
       ];
-      return new Set(first).size === 3 && !first.includes("deepseek-v4.1-flash-1017");
+      return new Set(first).size === 3 && !first.includes(mainId);
+    });
+
+  t("引用模型合计 ≤5（模板 82-83 行用户约束，防手改静默破约；注册表条目不计入）",
+    () => {
+      const reg = cfg.provider.openllamas.models;
+      const regIds = Array.isArray(reg)
+        ? reg.map((m) => m?.id ?? m?.model ?? m)
+        : reg && typeof reg === "object" ? Object.keys(reg) : [];
+      const rest = JSON.stringify({ ...cfg.provider.openllamas, models: undefined });
+      // 边界匹配防前缀误报：kimi-k3 ⊂ kimi-k3.1-pro、glm-5.3 ⊂ glm-5.3-flash
+      const used = regIds.filter(
+        (id) => typeof id === "string" &&
+          new RegExp(`(?<![\\w.\\-])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w.\\-])`).test(rest),
+      );
+      return used.length <= 5;
+    });
+
+  t("agent 路由 variant 均在注册表声明（防换型静默失配；锁结构不锁型号）",
+    () => {
+      const reg = cfg.provider.openllamas.models || {};
+      return Object.values(cfg.agent).every((a) => {
+        if (!a.model || !a.variant) return true;
+        const id = String(a.model).replace(/^[^/]+\//, "");
+        const vs = reg[id] && reg[id].variants ? Object.keys(reg[id].variants) : [];
+        return vs.includes(a.variant);
+      });
     });
 
   // ── moa 降级复核标注：聚合席落到 fallback → 输出必须带「降级复核」（对齐 kilo.json.tmpl 注释）──
@@ -258,6 +292,63 @@ try {
     () => Date.now() - drStart < 10_000);
   drServer.closeAllConnections?.();
   await new Promise((resolve) => drServer.close(resolve));
+
+  // ── single_model 全席钉扎（2026-11-11 单模型质量闭环）：正/反/裁决三席全部只用指定模型，
+  //    不套配置 fallback；输出必须标注「同源复核」，杜绝 single 会话混入其他模型。──
+  const drPinSeen = [];
+  const drPinServer = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", () => {
+      let parsed = {};
+      try { parsed = JSON.parse(body); } catch { /* 忽略 */ }
+      drPinSeen.push(parsed?.model ?? "");
+      const prompt = JSON.stringify(parsed?.messages ?? "");
+      const content = prompt.includes("你是审查裁决者") ? "## 裁决\n通过\n\n## 必须修复项\n无"
+        : prompt.includes("你是代码/方案审查中的「正向审查者」") ? "正向无遗漏"
+          : prompt.includes("反向审查者") ? "反向无错误" : "结论";
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+    });
+  });
+  await new Promise((resolve) => drPinServer.listen(0, "127.0.0.1", resolve));
+  const drPinPort = drPinServer.address().port;
+  const tmpCfgDir4 = path.join(tmpData, "cfg-dr-pin");
+  fs.mkdirSync(tmpCfgDir4, { recursive: true });
+  fs.writeFileSync(path.join(tmpCfgDir4, "kilo.json"), JSON.stringify({
+    provider: { openllamas: { options: {
+      baseURL: `http://127.0.0.1:${drPinPort}`,
+      timeout: 20000,
+      chunkTimeout: 5000,
+      singleModel: "strict-model",
+      dual_review: {
+        positive: "p1", negative: "n1", aggregator: "agg-primary",
+        positive_fallbacks: ["p-fb"], negative_fallbacks: ["n-fb"], aggregator_fallbacks: ["agg-fallback"],
+      },
+    } } },
+  }));
+  process.env.KILO_CONFIG_DIR = tmpCfgDir4;
+  const drPinMod = await bundle(path.join(ROOT, "plugin", "dual-review.ts"));
+  const drPinOut = await drPinMod._export.runDualReview(
+    "单模型钉扎回归 subject：调用方指定 single_model 后，正向、反向与裁决三席必须全部使用该模型，且不得套用配置 fallback（含关键改动摘要与场景描述以满足最小长度）。",
+    { single_model: "chosen-model" },
+  );
+  t("single_model 全席钉扎：三次上游调用全部为 chosen-model（配置 fallback 不生效）",
+    () => drPinSeen.length === 3 && drPinSeen.every((m) => m === "chosen-model"));
+  const drCfgOut = await drPinMod._export.runDualReview(
+    "config fallback pin regression: without single_model override, all three seats must use cfg.singleModel (strict-model) and never fall back to configured positive/negative/aggregator or their fallbacks. This subject is intentionally long enough for the review minimum length guard.",
+    null,
+  );
+  t("single_model 配置兜底：overrides 缺失时三席全部为 cfg.singleModel（strict-model）",
+    () => drPinSeen.length === 6 && drPinSeen.slice(3).every((m) => m === "strict-model"));
+  t("single_model 配置兜底：输出同源复核模型为 strict-model",
+    () => /同源复核：正\/反\/裁决均为 strict-model/.test(drCfgOut) && /## 裁决\n通过/.test(drCfgOut));
+  t("single_model 全席钉扎：输出标注同源复核并通过裁决",
+    () => /同源复核：正\/反\/裁决均为 chosen-model/.test(drPinOut) && /## 裁决\n通过/.test(drPinOut));
+  drPinServer.closeAllConnections?.();
+  await new Promise((resolve) => drPinServer.close(resolve));
 } finally {
   for (const f of bundles) fs.rmSync(f, { force: true });
   fs.rmSync(tmpData, { recursive: true, force: true });

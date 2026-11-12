@@ -17,6 +17,7 @@
 // 详见 lib/hx-client.ts 契约注释）——进度机制已整体拆除，可观测性由结果字符串自带。
 
 import { loadCfg, askWithDeadline, cbShouldFailFast, timeoutsOf, clipText, modelRoutes, AGG_MIN_BUDGET_MS } from "../lib/hx-client";
+import { normalizeModelPin, singleSessionInfoOf } from "../lib/session-model";
 import { randomUUID } from "node:crypto";
 
 // 超时统一走配置：kilo.json provider.openllamas.options.timeout / chunkTimeout（timeoutsOf 单点解析，
@@ -43,7 +44,9 @@ const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
 // kimi 裁决超时后 glm/1017 兜底得以执行（本轮实证「已试 1 个模型」饿死场景）。
 // dr-2026-11-02.1：新增同源复核标注——三席同模型（单模型模式钉扎/配置同族）时显式标注，
 // 不计为三族独立交叉验证；输出协议变更 → 旧裁决缓存全部失效（指纹含版本）。
-const REVIEWER_VERSION = "dr-2026-11-02.1";
+// dr-2026-11-11.1：单模型质量闭环——runDualReview 支持 overrides.single_model 全席钉扎；
+// 手动工具在 agent=single 会话自动解析选定模型并拒绝混用其他模型。审查器指纹新增 sm= 段。
+const REVIEWER_VERSION = "dr-2026-11-11.1";
 
 // 审查素材的最终截断单点（离线测试经 _export 验证：20K 尾部不被二次砍掉）。
 function reviewSubjectForPrompt(subject) {
@@ -85,16 +88,20 @@ function sameSourceLine(posModel, negModel, aggModel, pin) {
 // 模型路由列表由 lib/hx-client 单点维护（与 moa 共用）；fallback 只在首选失败时启用，
 // 用于兜住单模型 400/404/503/超时导致的「一路阵亡」或「裁决缺失」。
 
-// 审查器指纹：审查器版本 + 配置的模型路由（含 fallback）。quality-gate 把它掺进审查
-// 素材缓存键：改 prompt（版本变）或换模型/兜底路由 → 指纹变 → 缓存失效，绝不为同一份
-// diff 复用异构模型的旧裁决（2026-09-22 三模型裁决必须项）。cfg 可注入（离线测试用），
-// 缺省读真实配置；配置读失败由调用方决定降级方向（quality-gate 选择不命中缓存）。
-async function reviewerFingerprint(cfg) {
+// 审查器指纹：审查器版本 + 配置的模型路由（含 fallback）+ 可选单模型钉扎。quality-gate
+// 把它掺进审查素材缓存键：改 prompt（版本变）或换模型/兜底路由 → 指纹变 → 缓存失效，
+// 绝不为同一份 diff 复用异构模型的旧裁决（2026-09-22 三模型裁决必须项）。cfg 可注入
+//（离线测试用），缺省读真实配置；配置读失败由调用方决定降级方向（quality-gate 选择不命中缓存）。
+// singleModel：UI single 会话的选定模型（overrides.single_model），与 cfg.singleModel 同源，
+// 必须参与缓存键——换选定模型后同素材也不能复用旧模型的裁决。
+async function reviewerFingerprint(cfg, singleModel) {
   const c = cfg ?? await loadCfg();
   const dr = c.options?.dual_review ?? {};
   const one = (v) => (typeof v === "string" ? v.trim() : "");
   const fb = (v) => (Array.isArray(v) ? v.map(one).filter(Boolean).join(",") : "");
-  return `v=${REVIEWER_VERSION}|p=${one(dr.positive)}|pf=${fb(dr.positive_fallbacks)}|n=${one(dr.negative)}|nf=${fb(dr.negative_fallbacks)}|a=${one(dr.aggregator)}|af=${fb(dr.aggregator_fallbacks)}`;
+  const pin = normalizeModelPin(singleModel) || normalizeModelPin(c.singleModel);
+  const base = `v=${REVIEWER_VERSION}|p=${one(dr.positive)}|pf=${fb(dr.positive_fallbacks)}|n=${one(dr.negative)}|nf=${fb(dr.negative_fallbacks)}|a=${one(dr.aggregator)}|af=${fb(dr.aggregator_fallbacks)}`;
+  return pin ? `${base}|sm=${pin}` : base;
 }
 
 const TAG = "[dual-review] ";
@@ -168,7 +175,10 @@ async function runDualReview(subject, overrides = null) {
 
   // 模型唯一真源 = kilo.json provider.openllamas.options.dual_review（改模型只改配置文件，代码不留兜底默认值）
   const dr = cfg.options?.dual_review ?? {};
-  const pin = cfg.singleModel || "";
+  // 全席钉扎优先级：会话选定模型（overrides.single_model）> 配置严格锁（scripts/single-model.mjs
+  // enter）。会话选择器是用户当前意图，配置 pin 只作兜底；否则旧 strict 配置会压过 UI 选择，
+  // 造成审查模型≠执行模型。钉扎时 per-call 的 positive_model/negative_model/aggregator 一律不生效。
+  const pin = normalizeModelPin(overrides?.single_model) || normalizeModelPin(cfg.singleModel);
   const posModel = pin || (typeof overrides?.positive_model === "string" && overrides.positive_model ? overrides.positive_model : dr.positive);
   const negModel = pin || (typeof overrides?.negative_model === "string" && overrides.negative_model ? overrides.negative_model : dr.negative);
   const aggModel = pin || (typeof overrides?.aggregator === "string" && overrides.aggregator ? overrides.aggregator : dr.aggregator);
@@ -223,7 +233,7 @@ async function runDualReview(subject, overrides = null) {
       if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
       try {
         const text = await askWithDeadline(
-          { baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs, idleMs, attempts: undefined },
+          { baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs, idleMs, attempts: undefined, singleModel: pin || undefined },
           effDeadline,
           `${label}(${model})`,
         );
@@ -334,26 +344,70 @@ async function runDualReview(subject, overrides = null) {
   ].join("\n");
 }
 
+// 手动工具在 single 会话中的模型解析：工具 execute 的 context 提供 sessionID/agent
+//（Kilo/opencode 插件 ToolContext 契约）。先读消息列表判定 agent=single 并提取选定模型
+//（不依赖 context.agent 字段一定存在）；消息不可得但 context.agent=single 时退回 session.get。
+// 返回 null=普通会话（走配置三席）；""=single 但模型不可解析/不可路由（调用方必须显式拒绝）；
+// 非空=全席钉扎模型。绝不回退多模型。
+async function resolveSingleContextPin(ctx, context) {
+  const sid = String(context?.sessionID ?? "");
+  const client = ctx?.client;
+  if (!sid || !client) {
+    // 上下文残缺时无法判定会话类型；若调用方声称 single，宁可拒绝也不回退多模型。
+    return String(context?.agent ?? "").toLowerCase() === "single" ? "" : null;
+  }
+  const cfgPin = normalizeModelPin((await loadCfg().catch(() => ({}))).singleModel);
+  let messagesSingle = false;
+  let messagesFailed = false;
+  try {
+    const res = await client.session.messages({ path: { id: sid } });
+    const info = singleSessionInfoOf(res);
+    messagesSingle = info.isSingle;
+    if (info.pin) return info.pin;
+    if (info.blocked) return ""; // 已知非网关模型 → 拒绝，不回落配置
+  } catch { messagesFailed = true; /* 消息接口不可用 → 看 session.get / context.agent 兜底 */ }
+  const ctxSingle = String(context?.agent ?? "").toLowerCase() === "single";
+  if (!messagesFailed && !messagesSingle && !ctxSingle) return null;
+  try {
+    const sg = await client.session.get({ path: { id: sid } });
+    const data = sg?.data ?? sg ?? {};
+    // 消息/上下文已判定 single 时，session.get 缺 agent 字段也要按 single 解析，
+    // 否则其中的非网关模型会被漏判成普通模型并回落到配置 pin。
+    const info = singleSessionInfoOf([{ info: messagesSingle || ctxSingle ? { ...data, agent: "single" } : data }]);
+    if (!info.isSingle && !messagesSingle && !ctxSingle) return null;
+    if (info.blocked) return "";
+    return info.pin || cfgPin;
+  } catch {
+    return (messagesSingle || ctxSingle) ? cfgPin : null;
+  }
+}
+
 // tool 注册：模型仍可主动发起（传入自定义 subject，如审查某个具体方案而非本次改动）
-const DualReviewImpl = async (_ctx = {}) => {
+const DualReviewImpl = async (ctx = {}) => {
   return {
     tool: {
       dual_review: {
         description:
-          "双向异源审查：对指定改动/方案并行发起正向（查遗漏）与反向（红队找错）两路独立模型审查，再由第三族裁决席终审（任一席使用 fallback 时标注降级复核）。" +
+          "双向审查：对指定改动/方案并行发起正向（查遗漏）与反向（红队找错）两路独立模型审查，再由裁决席终审（任一席使用 fallback 时标注降级复核）。" +
+          "默认三席异源；single 会话自动把三席全部钉扎到当前选定模型（输出标注同源复核），不接受混用其他模型。" +
           "仅在复杂任务交付前调用（多模块改动/公共契约/核心逻辑），简单任务不要调用（成本敏感）。" +
           "复杂任务的交付节点由 quality-gate 自动执行，通常无需手动调用。",
         args: {
           subject: { type: "string", description: "审查对象：改动摘要+关键 diff 片段，或方案全文（含必要上下文）" },
-          positive_model: { type: "string", description: "正向审查模型（可选，默认取配置）" },
-          negative_model: { type: "string", description: "反向审查模型（可选，默认取配置）" },
-          aggregator: { type: "string", description: "裁决模型（可选，默认取配置）" },
+          positive_model: { type: "string", description: "正向审查模型（可选，默认取配置；single 会话会被当前选定模型覆盖）" },
+          negative_model: { type: "string", description: "反向审查模型（可选，默认取配置；single 会话会被当前选定模型覆盖）" },
+          aggregator: { type: "string", description: "裁决模型（可选，默认取配置；single 会话会被当前选定模型覆盖）" },
         },
         // ⚠️ execute 契约（2026-09-22 两次工具路径崩溃实证钉死，详见 lib/hx-client.ts
         // 契约注释）：必须返回 Promise<string>——async 函数原生满足。runDualReview 的
         // 快速失败路径（缺 subject/断路器 open）返回的也是 string，同样合规。
-        async execute(args) {
-          return await runDualReview(args?.subject, args);
+        async execute(args, context) {
+          const pin = await resolveSingleContextPin(ctx, context);
+          if (pin === null) return await runDualReview(args?.subject, args);
+          if (!pin) {
+            return "dual_review: 单模型会话的选定模型无法解析或不在 openllamas 网关，已拒绝本次审查（避免混用其他模型）。交付节点由 quality-gate 自动审查；如需手动审查，请切换到网关内模型。";
+          }
+          return await runDualReview(args?.subject, { ...args, single_model: pin });
         },
       },
     },

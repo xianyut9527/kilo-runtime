@@ -68,6 +68,7 @@ import fs from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { singleSessionInfoOf } from "../lib/session-model";
 // runDualReview 走 hook 内动态 import——模块级爆炸半径隔离（非注册表原因：
 // vE2 只迭代各插件文件自身的导出，import 链不参与注册，静态 import 不会"污染"什么）。
 // 真实价值：静态 import 会把 dual-review 及其依赖链（lib/hx-client）的模块求值提前到
@@ -92,20 +93,14 @@ try {
   }
 }
 
-// 单模型模式判定与 provider 同源：直接读部署配置的 provider.openllamas.options.singleModel，
-// 不依赖独立状态文件（状态文件只负责 restore/审计）。配置被恢复后 QG 必须立即恢复门禁，
-// 不能出现「配置已恢复、QG 仍旁路」的不一致。
-// 第二检测路径（2026-10-30 UI 选择模式）：single 已是常驻可选 primary，不再改写配置——
-// 此类会话靠出口门禁的 agent=single 豁免（exitGateVerdict reason=single-mode）隔离，
-// 层 1/2/3 天然不触发（single 的 agent permission 全 deny todowrite，无清单可钩）。
-let CONFIG_DIR;
-try {
-  CONFIG_DIR = process.env.KILO_CONFIG_DIR ||
-    path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), "kilo");
-} catch {
-  CONFIG_DIR = null;
-}
-
+// 单模型模式（2026-11-11 用户裁定「Single 也要走编排优化循环，只是都用选择的模型」）：
+// 不再旁路 quality-gate。single 会话照常走三层门禁与出口注入；层 3 自动审查从会话消息
+// 提取选定模型，经 runDualReview overrides.single_model 把正/反/裁决全席钉到该模型
+//（同一模型三席，输出标注「同源复核」）。严格锁定模式（scripts/single-model.mjs enter）
+// 已在配置层把所有模型路由钉死，本插件仍以会话消息读到的 pin 为准；读不到时按未审阻断。
+// 选定模型不属于 openllamas 网关时无法路由：自动路径要求显式接受未审风险（不静默跳过），
+// 手动 dual_review 直接拒绝，绝不混用配置里的多模型席位。
+// 纯函数：归一化配置/session 的 singleModel 形态（离线回归用；运行时 pin 由 session-model 提取）。
 function singleModelOf(options) {
   const raw = options?.singleModel;
   const id = typeof raw === "string" ? raw : raw?.model;
@@ -113,16 +108,6 @@ function singleModelOf(options) {
   const value = id.trim();
   if (!value) return "";
   return value.startsWith("openllamas/") ? value.slice("openllamas/".length) : value;
-}
-
-function singleModelPinFromConfig() {
-  if (!CONFIG_DIR) return "";
-  try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, "kilo.json"), "utf8"));
-    return singleModelOf(cfg?.provider?.openllamas?.options);
-  } catch {
-    return "";
-  }
 }
 
 // ⑥ 部署≠生效检测（2026-09-24 查漏补缺）：Kilo 不热加载插件——install.ps1 下发新版后，
@@ -660,24 +645,25 @@ async function persistLineSafe(line) {
 // 连续审查失败（不可解析/执行异常）达到上限后的收口：不再静默放行。
 // 置 reviewPending 让 before 钩子阻断交付，直到用户显式 review-accepted 或人工补审；
 // dualReviewed 仍置位，避免同一素材继续自动重烧。
-async function requireUnreviewedAcceptance(s, fb, bv) {
+async function requireUnreviewedAcceptance(s, fb, bv, why = "审查连续失败，未能获得可解析裁决") {
   const fixSection =
-    "审查连续失败，未能获得可解析裁决；本次改动未经审查。\n" +
+    `${why}；本次改动未经审查。\n` +
     "请人工复核本次 diff，或执行 echo \"review-accepted: <原因>\" 显式接受未审风险后重试交付。";
   s.dualReviewed = true;
   s.dualReviewedAtCodeEditV = bv;
   // kind=unreviewed：连续失败达上限的阻断不随新代码编辑解除（重审资格已被 reviewEntryDue
   // 的 count 闸停止，随版本放行=每次编辑静默未审交付）——解除只有 review-accepted 或
   // 人工 dual_review 补审（清 pending + 重置失败计数）。
-  s.reviewPending = { kind: "unreviewed", editVersion: s.editVersion, codeEditV: bv, verdictLine: "审查连续失败（未审交付）", fixSection };
-  const marker = unreviewedMarkerLine();
+  s.reviewPending = { kind: "unreviewed", editVersion: s.editVersion, codeEditV: bv, verdictLine: why, fixSection };
+  const marker = unreviewedMarkerLine(why);
   const marked = await persistLineSafe(marker);
+  const prefix = Number(s?.reviewFailedCount) > 0 ? reviewFailPrefix(s) : "";
   recordDegradation(
     s,
-    "审查连续失败，交付需显式接受未审风险",
-    `${reviewFailPrefix(s)}review-accepted 或人工补审；unreviewed 留痕${marked ? "已沉淀项目记忆 Open Questions" : "沉淀失败（人工须记录）"}`,
+    `${why}，交付需显式接受未审风险`,
+    `${prefix}review-accepted 或人工补审；unreviewed 留痕${marked ? "已沉淀项目记忆 Open Questions" : "沉淀失败（人工须记录）"}`,
   );
-  fb(`\n${TAG} ⛔ 审查连续失败，已停止自动重试。本次交付需人工复核 diff，或执行 echo "review-accepted: <原因>" 显式接受未审风险。`);
+  fb(`\n${TAG} ⛔ ${why}。本次交付需人工复核 diff，或执行 echo "review-accepted: <原因>" 显式接受未审风险。`);
   if (!marked) fb(`\n${TAG} 📌 ${marker}`);
 }
 
@@ -947,9 +933,9 @@ function reviewPendingBlocks(s) {
 
 // F 修复：连续失败达上限时的持久层留痕（写法与 residualFixupLine 同构，走同一沉淀通道）。
 // 幂等性由 insertUnderHeading 的 seg.includes(line) 提供——同会话重复触发只追加一次。
-function unreviewedMarkerLine() {
+function unreviewedMarkerLine(reason = "审查连续失败") {
   const date = new Date().toISOString().slice(0, 10);
-  return `- review_unreviewed_${date} :: 本会话复杂交付审查连续失败未复审（层 3 待显式接受/人工补审）:: 建议对当日 diff 跑一次 dual_review 确认，或 review-accepted 留痕后交付`;
+  return `- review_unreviewed_${date} :: 本会话复杂交付${reason}未复审（层 3 待显式接受/人工补审）:: 建议对当日 diff 跑一次 dual_review 确认，或 review-accepted 留痕后交付`;
 }
 
 // F 修复：失败放行/阻断明细的概况前缀——显式判空（不用 `?? 0`：无记录与「第 0 轮」语义
@@ -1032,8 +1018,12 @@ function parseReviewVerdict(text) {
   };
   const verdictSection = sectionAfter("## 裁决");
   const fixSection = sectionAfter("## 必须修复项") ?? "";
-  // 「必须修复项」段剥掉「无/none」与列表符号后仍有实质内容 → 有必须修复项
-  const stripped = fixSection.replace(/^(无|none)[.。]?/i, "").replace(/[-*•\s]+/g, "");
+  // 「必须修复项」段剥掉「无/none」与列表符号后仍有实质内容 → 有必须修复项；
+  // 先剥行首列表符号再剥「无/none」——「- 无」这类列表形态的空段不得误判为有修复项。
+  const stripped = fixSection
+    .replace(/^[-*•\s]+/, "")
+    .replace(/^(无|none)[.。]?/i, "")
+    .replace(/[-*•\s]+/g, "");
   const mustFixEmpty = stripped.length === 0;
   // 模型把选项原样回显（含「三选一」提示）时裁决段不可信，只按「必须修复项」段判定
   const echoOptions = /三选一/.test(verdictSection ?? "");
@@ -1615,6 +1605,19 @@ function extractTool(input) {
   return String(input?.tool ?? input?.toolName ?? "");
 }
 
+// 手动 dual_review 只有“完整审查头 + 可解析且通过”的结果才计入补审；拒绝/缺参/
+// 两路失败/裁决不通过都不得清除 reviewPending（否则单模型非网关模型的拒绝可被当成补审）。
+function manualReviewOutcome(output) {
+  const text = typeof output === "string"
+    ? output
+    : typeof output?.output === "string" ? output.output : "";
+  // 成功输出首行即裁决头；错误串（拒绝/失败）以 `dual_review:` 开头，正文即使回显标题也不得误判。
+  if (!text.trimStart().startsWith("## 双向审查裁决")) return "invalid";
+  const v = parseReviewVerdict(text);
+  if (v.inconclusive) return "inconclusive";
+  return v.fail ? "fail" : "pass";
+}
+
 // ── 层 3 全自动：审查对象自动构建 ─────────────────────────────
 // 范围对齐「本会话改动」而非「整个工作区未提交改动」：git diff 只取本会话编辑过的代码文件
 // （git diff HEAD -- <pathspec>）。多会话共享工作区且 HEAD 不动时，git diff HEAD 会把所有
@@ -1912,11 +1915,7 @@ function exitNudgeFingerprint(todos, children) {
 // 是「小任务随手做完但漏一项」的最大入口。独立 cap（noListNudged，1 次/会话），
 // 不占 hasOwn/kids 的指纹/封顶矩阵（互不烧额度）；豁免链（no-work/child/aborted/askingUser）
 // 照常生效——顺序上置于 cap/cooldown 之后、与 child-unsettled 同级的末端分派。
-function exitGateVerdict(s, { now, hasWork, isChild, aborted, errored, askingUser, undone, children, fingerprint, noList, agentSingle }) {
-  // 单模型能力测试会话（UI 选 single 模式）：不注入出口提示——合成提示会污染
-  // 「纯模型能力」的观察对象。agentSingle 只在 session.get 明确返回 agent=single 时为 true，
-  // 字段缺失/不可得时保持 false（fail-open：维持常规门禁行为，绝不因契约漂移漏管正常会话）。
-  if (agentSingle === true) return { act: false, reason: "single-mode" };
+function exitGateVerdict(s, { now, hasWork, isChild, aborted, errored, askingUser, undone, children, fingerprint, noList }) {
   const hasOwn = !!undone && undone.length > 0;
   const hasKids = Array.isArray(children) && children.length > 0;
   const p2 = !!noList && !s.noListNudged && !hasOwn && !hasKids;
@@ -1983,12 +1982,6 @@ function exitNudgeText(undone, n, reason, total, children, now = Date.now(), ask
 }
 
 const QualityGateImpl = async ({ directory, client } = {}) => {
-  const singleModel = singleModelPinFromConfig();
-  if (singleModel) {
-    console.error(TAG, `单模型模式已启用（${singleModel}）：quality-gate 整体旁路`);
-    return {};
-  }
-
   // 工作区根由 Kilo 注入（同 compaction-anchor/memory-bootstrap 契约）；
   // 用它而非 process.cwd()，否则 worktree/monorepo 场景下 tsconfig 探测必败、检查静默关闭
   if (directory) projectRoot = directory;
@@ -2073,14 +2066,10 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
       }
       let isChild = false;
       let parentID = "";
-      let agentSingle = false;
       try {
         const sg = await client.session.get({ path: { id: sid } });
         parentID = String(sg?.data?.parentID ?? "");
         isChild = !!parentID;
-        // 会话表有 agent 列（kilo.db 实证：code/plan/.../single）；session.get 响应
-        // 未带该字段时按非 single 处理（fail-open，见 exitGateVerdict 注释）。
-        agentSingle = String(sg?.data?.agent ?? sg?.agent ?? "") === "single";
         s.parentIDCache = parentID; // 定案缓存：parentID 会话生命周期内不变，供本地预检早退
       } catch (e) {
         isChild = true; // parentID 不可得 → 保守当子代理（子代理收口归父会话衔接，注入会引发文件竞争）
@@ -2102,7 +2091,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
       }
       // 本地预检以实际输入即可定案的路径不变（isChild 已在上方提前返回，此处恒 false 为纵深防御）
       const fingerprint = exitNudgeFingerprint(own, kids);
-      const v = exitGateVerdict(s, { now: Date.now(), hasWork, isChild: false, aborted, errored, askingUser, undone, children: kids, fingerprint, noList, agentSingle });
+      const v = exitGateVerdict(s, { now: Date.now(), hasWork, isChild: false, aborted, errored, askingUser, undone, children: kids, fingerprint, noList });
       if (!v.act) {
         if (v.reason === "nudge-cap") recordExitCap(s, undone, kids);
         return;
@@ -2287,6 +2276,16 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
         // 手动补审后继续编辑代码（codeEditV 前进）→ 交付节点版本不对齐 → 自动审查照常触发，
         // 「审查时点之后的新改动」绝不静默跳审（subject 可能窄于全量 diff，旧裁决不覆盖新 diff）。
         if (tool === "dual_review") {
+          const outcome = manualReviewOutcome(output);
+          if (outcome !== "pass") {
+            // 失败裁决要撤销旧豁免：否则同一代码版本的 FAIL 会挡住下一次自动重审。
+            if (outcome === "fail" && (s.codeEditV ?? 0) > 0) {
+              s.dualReviewed = false;
+              s.dualReviewedAtCodeEditV = -1;
+            }
+            recordDegradation(s, `手动 dual_review 未计入补审（${outcome}）`, "reviewPending/失败计数保持原状，交付门禁继续生效");
+            return;
+          }
           if ((s.codeEditV ?? 0) > 0) {
             s.dualReviewed = true;
             s.dualReviewedAtCodeEditV = s.codeEditV;
@@ -2406,6 +2405,8 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
               // 层0 需求真源（P1a，2026-10-13）：审查素材并入用户原始请求。拉取失败 fail-open 退回纯清单锚点。
               // 2026-10-16 补 5s 超时（原无界 HTTP 阻塞可挂在交付节点，kimi-k3 审查 catch）。
               let userAsks = [];
+              const agentHintSingle = String(input?.agent ?? "").toLowerCase() === "single";
+              let singleInfo = { isSingle: agentHintSingle, pin: "", providerID: "", routable: false, blocked: false };
               try {
                 if (client && typeof client.session?.messages === "function" && input?.sessionID) {
                   const timer = new Promise((_, rej) => {
@@ -2417,11 +2418,47 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
                     timer,
                   ]);
                   userAsks = extractUserAsks(res);
+                  const info = singleSessionInfoOf(res);
+                  singleInfo = { ...info, isSingle: info.isSingle || agentHintSingle };
+                  if (singleInfo.isSingle && !singleInfo.pin && !singleInfo.providerID &&
+                    typeof client.session?.get === "function") {
+                    try {
+                      const sg = await client.session.get({ path: { id: String(input.sessionID) } });
+                      // 消息已判定 single：session.get 缺 agent 字段也按 single 解析，
+                      // 否则其中的模型字段会丢（pin 空 → 被误判不可路由）。
+                      const sgData = sg?.data ?? sg ?? {};
+                      const info2 = singleSessionInfoOf([{ info: { ...sgData, agent: "single" } }]);
+                      if (info2.pin || info2.providerID) {
+                        singleInfo = { ...singleInfo, pin: info2.pin, providerID: info2.providerID, routable: info2.routable };
+                      }
+                    } catch { /* 消息已给出 single 但缺模型；session.get 失败 → 后续按不可路由处理 */ }
+                  }
+                } else if (client && typeof client.session?.get === "function" && input?.sessionID) {
+                  // 消息接口不可用：用 session.get 的 agent/model 兜底判定 single，避免混模型。
+                  try {
+                    const sg = await client.session.get({ path: { id: String(input.sessionID) } });
+                    // 与 dual-review 同口径：agent 提示已知 single 时，session.get 缺 agent
+                    // 字段也强制按 single 解析，防模型字段丢失被误判不可路由。
+                    const sgData = sg?.data ?? sg ?? {};
+                    const info = singleSessionInfoOf([{ info: agentHintSingle ? { ...sgData, agent: "single" } : sgData }]);
+                    if (info.isSingle || agentHintSingle) singleInfo = { ...info, isSingle: true };
+                  } catch { /* 按普通会话处理（fail-open） */ }
                 }
-              } catch { /* fail-open：退回纯清单锚点 */ }
+              } catch {
+                /* fail-open：退回纯清单锚点；但 single 判定不能丢——消息接口失败时用
+                   session.get 的 agent/model 兜底，避免把单模型会话误当普通会话混用其他模型。 */
+                try {
+                  if (client && typeof client.session?.get === "function" && input?.sessionID) {
+                    const sg = await client.session.get({ path: { id: String(input.sessionID) } });
+                    const sgData = sg?.data ?? sg ?? {};
+                    const info = singleSessionInfoOf([{ info: agentHintSingle ? { ...sgData, agent: "single" } : sgData }]);
+                    if (info.isSingle || agentHintSingle) singleInfo = { ...info, isSingle: true };
+                  }
+                } catch { /* 两者都不可得：按普通会话处理（fail-open） */ }
+              }
               const subj = await reviewSubject(projectRoot, s, editedList, userAsks);
               subjectTookMs = Date.now() - subjectT0;
-              return subj;
+              return { subject: subj, singleInfo };
             })();
           }
           // C 修复：完成过半的漂移自检（一次性）——对照验收清单自查方向，
@@ -2533,7 +2570,13 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
             // 被旧裁决豁免」的缺陷
             const startAttemptV = s.codeEditV ?? 0;
             try {
-            const subject = await subjectP;
+            const prefetched = await subjectP;
+            const subject = String(
+              prefetched && typeof prefetched === "object" ? prefetched.subject ?? "" : prefetched ?? "",
+            );
+            const singleInfo = prefetched && typeof prefetched === "object" && prefetched.singleInfo
+              ? prefetched.singleInfo
+              : { isSingle: false, pin: "", providerID: "", routable: false, blocked: false };
             // ⑦ 补口：git 失败降级为会话证据池——审查视野缩水必须可见
             if (subject.includes("会话内执行过的命令")) {
               recordDegradation(s, "审查素材降级（git diff 不可得）", "退化为会话证据池，审查视野受限——建议人工核对 diff");
@@ -2542,12 +2585,22 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
             let reviewerFp = "";
             try {
               drExport = (await import("./dual-review"))._export;
-              reviewerFp = await drExport.reviewerFingerprint();
+              reviewerFp = await drExport.reviewerFingerprint(undefined, singleInfo.pin);
             } catch (e) {
               reviewerFp = `fp-unavailable-${Date.now()}`;
               console.error(TAG, "审查器指纹不可得（缓存本次不复用）:", e?.message ?? e);
             }
             const subjectKey = createHash("sha1").update(`${reviewerFp}\n${subject}`).digest("hex");
+            const singleUnroutable = !!singleInfo.isSingle && !singleInfo.pin;
+            if (singleUnroutable) {
+              await requireUnreviewedAcceptance(
+                s,
+                (t) => appendToResult(output, t),
+                startAttemptV,
+                "单模型选定模型无法经 openllamas 网关路由",
+              );
+            } else {
+            // 单模型可路由或普通会话：照常消费/启动审查（下方保持原有缩进以减少 diff）。
             // 在途审查消费（查漏补缺 2026-10-16）：等待上限 600s 与 before 钩子同口径——
             // 覆盖 runDualReview 最坏墙钟（480s 扇出 + 90s 聚合保底 + 结算带宽）；
             // 超时不清指针、不重启（防与未落地审查双烧）；下次交付动作继续等待/闭环。
@@ -2618,7 +2671,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
                 const bgPromise = (async () => {
                   let r;
                   try {
-                    r = { ok: true, v: await runner.runDualReview(subject) };
+                    r = { ok: true, v: await runner.runDualReview(subject, singleInfo.pin ? { single_model: singleInfo.pin } : null) };
                   } catch (e2) {
                     r = { ok: false, e: e2 };
                   }
@@ -2641,13 +2694,14 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
                 s.reviewInFlight = { key: subjectKey, gen, promise: bgPromise, startedAt: reviewT0 };
                 appendToResult(
                   output,
-                  `\n${TAG} 层 3 双向审查已后台启动（正反异源模型+裁决，典型 2~4min${subjectTookMs >= 100 ? `，素材预取 ${(subjectTookMs / 1000).toFixed(1)}s` : ""}）——` +
+                  `\n${TAG} 层 3 双向审查已后台启动（${singleInfo.pin ? `三席同模型 ${singleInfo.pin}（同源复核）` : "正反异源模型+裁决"}，典型 2~4min${subjectTookMs >= 100 ? `，素材预取 ${(subjectTookMs / 1000).toFixed(1)}s` : ""}）——` +
                     `本次交付按未审先放行，下次交付动作前裁决必达（未通过将阻断并回注必修项）。`
                 );
               } catch (e) {
                 console.error(TAG, "auto dual review start failed:", e?.message ?? e);
                 await settleReviewError(s, e, output, startAttemptV);
               }
+            }
             }
             } finally {
               s.reviewStarting = false;
@@ -2766,7 +2820,7 @@ export const _export = {
   eslintConfigIn, reviewRetryAllowed, reviewEntryDue, reviewPendingBlocks, todoAnchorLines, unreviewedMarkerLine, driftCheckDue,
   diagRunFailureOf, isDelegateCall, reviewFailPrefix,
   todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText, extractUserAsks,
-  singleModelOf, singleModelPinFromConfig,
+  singleModelOf, singleSessionInfoOf, manualReviewOutcome,
   pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel,
   bucketOf, // 离线回归测试缝：断言钩子对会话桶的登记副作用（如 s.highRisk/s.delegated），只读使用
   setFileCheck, addHighRisk, // 有界化辅助（体检 2026-10-07）：上限驱逐语义离线回归

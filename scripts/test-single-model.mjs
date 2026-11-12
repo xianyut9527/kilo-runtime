@@ -7,6 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _export } from "./single-model.mjs";
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
 const {
   applySingleModelConfig,
   validatePinnedConfig,
@@ -72,21 +74,16 @@ assert.deepEqual(out.instructions, []);
 // 对象 {paths:[...]}，改成数组会破坏形状不变式，可能导致整份配置被拒载（启动失败）。
 assert.equal(Array.isArray(out.skills), false, "skills 不得被改成数组");
 assert.deepEqual(out.skills.paths, [], "skills.paths 必须清空");
-assert.equal(out.permission.task, "deny");
-assert.equal(out.permission.moa, "deny");
-assert.equal(out.permission.dual_review, "deny");
-assert.equal(out.permission.agent_manager, "deny");
-assert.equal(out.permission.todowrite, "deny");
-assert.equal(out.permission.todoread, "deny");
-assert.equal(out.permission.goal, "deny");
-assert.equal(out.permission.goal_report, "deny");
-assert.equal(out.permission.skill, "deny");
-assert.equal(out.permission.kilo_memory_save, "deny");
-assert.equal(out.permission.kilo_memory_recall, "deny");
+for (const name of ["task", "moa", "agent_manager", "skill", "kilo_memory_save", "kilo_memory_recall"]) {
+  assert.equal(out.permission[name], "deny");
+}
 for (const name of ["mem_add", "mem_search", "mem_get", "mem_cite", "mem_flag"]) {
   assert.equal(out.permission[name], "deny");
 }
-assert.equal(out.compaction.auto, false);
+for (const name of ["dual_review", "todowrite", "todoread", "goal", "goal_report"]) {
+  assert.equal(out.permission[name], undefined, `质量闭环工具不得被全局禁用：${name}`);
+}
+assert.equal(out.compaction.auto, true);
 assert.equal(out.compaction.prune, true);
 assert.equal(out.experimental.task_model_selection, false);
 for (const agent of Object.values(out.agent)) {
@@ -102,17 +99,26 @@ for (const name of ["ask", "code", "compaction", "debug", "explore", "general", 
   assert.equal(out.agent[name].hidden, true, `非 single agent 未隐藏：${name}`);
 }
 assert.equal(out.agent.single.mode, "primary");
-assert.equal(out.agent.single.permission.task, "deny");
-assert.equal(out.agent.single.permission.moa, "deny");
-assert.equal(out.agent.single.permission.dual_review, "deny");
-assert.equal(out.agent.single.permission.agent_manager, "deny");
-assert.equal(out.agent.single.permission.todowrite, "deny");
-assert.equal(out.agent.single.permission.todoread, "deny");
-assert.equal(out.agent.single.permission.goal, "deny");
-assert.equal(out.agent.single.permission.goal_report, "deny");
-assert.equal(out.agent.single.permission.skill, "deny");
-assert.equal(out.agent.single.permission.kilo_memory_recall, "deny");
-assert.equal(out.agent.single.permission.mem_search, "deny");
+for (const name of ["task", "moa", "agent_manager", "skill", "kilo_memory_save", "kilo_memory_recall", "mem_add", "mem_search", "mem_get", "mem_cite", "mem_flag"]) {
+  assert.equal(out.agent.single.permission[name], "deny");
+}
+for (const name of ["dual_review", "todowrite", "todoread", "goal", "goal_report"]) {
+  assert.equal(out.agent.single.permission[name], undefined, `single 质量闭环工具不得被禁用：${name}`);
+}
+// 历史部署配置迁移：旧版 enter 写下的 deny 必须在再次 enter 时被清除，
+// 否则升级后 single 仍会绕过 todo/质量门禁。
+{
+  const old = structuredClone(base);
+  old.permission = { ...(old.permission ?? {}), todowrite: "deny", dual_review: "deny", goal: "deny" };
+  old.agent = { ...old.agent, single: { mode: "primary", permission: { todowrite: "deny", dual_review: "deny" } } };
+  const migrated = applySingleModelConfig(old, { model: "kimi-k3.1-pro", variant: "max" });
+  for (const name of ["dual_review", "todowrite", "goal"]) {
+    assert.equal(migrated.permission[name], undefined, `历史全局 deny 未清除：${name}`);
+  }
+  for (const name of ["dual_review", "todowrite"]) {
+    assert.equal(migrated.agent.single.permission[name], undefined, `历史 single deny 未清除：${name}`);
+  }
+}
 assert.equal(out.provider.openllamas.options.singleModel, "kimi-k3.1-pro");
 assert.deepEqual(out.provider.openllamas.options.failover.chain.models, []);
 assert.equal(out.provider.openllamas.options.reasoningGate, false);
@@ -149,13 +155,13 @@ const normalWithHiddenSingle = structuredClone(base);
 normalWithHiddenSingle.agent.single = {
   mode: "subagent",
   hidden: true,
-  description: "单模型能力测试入口",
+  description: "单模型质量闭环入口",
   permission: { task: "deny" },
 };
 const promoted = applySingleModelConfig(normalWithHiddenSingle, { model: "kimi-k3.1-pro", variant: "max" });
 assert.equal(promoted.agent.single.mode, "primary");
 assert.equal(promoted.agent.single.hidden, undefined);
-assert.equal(promoted.agent.single.permission.todowrite, "deny");
+assert.equal(promoted.agent.single.permission.todowrite, undefined);
 
 assert.throws(() => applySingleModelConfig(base, { model: "missing" }), /未注册/);
 assert.throws(() => applySingleModelConfig(base, { model: "kimi-k3.1-pro", variant: "high" }), /不存在 variant/);
@@ -294,6 +300,18 @@ try {
   assert.match(result.output, /放弃恢复/);
   assert.equal(fs.existsSync(statePath), false, "状态必须被解除");
   fs.writeFileSync(configPath, originalText, "utf8");
+
+  // UI single 入口文件必须保留质量闭环工具；只读静态断言，防止提示词/权限回退到旧“纯测试”口径。
+  const md = fs.readFileSync(path.join(ROOT, "agent", "single.md"), "utf8");
+  const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(md)?.[1] ?? "";
+  assert.match(fm, /description:\s*.*单模型质量闭环/);
+  for (const name of ["task", "moa", "agent_manager", "skill", "kilo_memory_save", "kilo_memory_recall"]) {
+    assert.match(fm, new RegExp(`${name}:\\s*deny`), `UI single 应禁用 ${name}`);
+  }
+  for (const name of ["dual_review", "todowrite", "todoread", "goal", "goal_report"]) {
+    assert.doesNotMatch(fm, new RegExp(`${name}:\\s*deny`), `UI single 不得禁用质量闭环工具 ${name}`);
+  }
+  assert.match(md, /quality-gate/);
 } finally {
   fs.rmSync(tempRoot, { recursive: true, force: true });
 }

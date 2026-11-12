@@ -85,7 +85,7 @@ API Key 不进入仓库。修改 Key 不需要重新 install；共享分析客�
 | 换主模型或角色模型 | 修改 `kilo.json.tmpl`，Dry Run 后重新 install |
 | 换 API Key | 修改运行时 `auth.json` 的 `openllamas.key`，不重新 install |
 | 复盘并沉淀经验 | 在 Kilo 中运行 `/evolve` |
-| 单独测试一个模型 | 模式选择器选「单模型测试」（single）+ 模型选择器选定模型即可；严格隔离用[命令行锁定](docs/GUIDE.md#52-命令行锁定严格隔离) |
+| 单模型质量闭环 | 模式选择器选「单模型」（single）+ 模型选择器选定模型即可；所有任务与审查裁决只用该模型，严格隔离用[命令行锁定](docs/GUIDE.md#52-命令行锁定严格隔离) |
 
 ## 安装后多了什么
 
@@ -153,6 +153,6 @@ Kilo GUI / VS Code 扩展 / CLI ──▶ OpenLlamas 网关 ──▶ 模型
 
 ## 继续阅读
 
-- [完整使用指南](docs/GUIDE.md)：详细安装、任务流程、单模型测试、配置与故障排查
+- [完整使用指南](docs/GUIDE.md)：详细安装、任务流程、单模型模式、配置与故障排查
 - [English Guide](docs/GUIDE-EN.md)
 - [维护者文档与架构历史](docs/HISTORY.md)：资产清单、性能基线、维护、隐私边界和验收命令

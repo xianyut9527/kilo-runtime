@@ -39,7 +39,7 @@ try {
 const { parseReviewVerdict, VERIFY_CMD_RE, HIGH_RISK_RE, reviewSubject, exitCodeOf, exitMasked, hasVerified, verifyFailureOf, hasSkipMarker, hasAcceptMarker, isComplexDelivery, diagCoversLastEdit, providerEditsOf, distStaleOf, residualFixupLine, insertUnderHeading, degradationSummary, staleDeployOf, moduleBasenamesOf, hasTestRefFor, eslintConfigIn, reviewRetryAllowed, reviewEntryDue, reviewPendingBlocks, todoAnchorLines, unreviewedMarkerLine, driftCheckDue, diagRunFailureOf, isDelegateCall, reviewFailPrefix, todosIncomplete, asksUser, errorSettleDue, exitNudgeFingerprint, exitGateVerdict, exitNudgeText, extractUserAsks,
     pendingChildrenOf, childUnsettledText, registerChildUnsettled, removeChildUnsettled, childAgeLabel,
     setFileCheck, addHighRisk, rememberCommand, MAX_FILE_CHECKS, MAX_HIGH_RISK, SLEEP_CMD_RE,
-    singleModelOf } = mod._export ?? mod;
+    singleModelOf, singleSessionInfoOf, manualReviewOutcome } = mod._export ?? mod;
 let pass = 0, fail = 0;
 const failed = [];
 // t 双模（层 3 必修项②）：cond 传函数则在其内部捕获异常记为 fail（含错误信息），
@@ -69,10 +69,79 @@ t("singleModel provider 前缀形态", singleModelOf({ singleModel: "openllamas/
 t("singleModel 对象形态", singleModelOf({ singleModel: { model: "kimi-k3.1-pro" } }) === "kimi-k3.1-pro");
 t("singleModel 缺省为空", singleModelOf({}) === "");
 
+// ── singleSessionInfoOf：UI single 会话从消息提取选定模型（层 3 同模型钉扎依据）──
+t("single 消息 + openllamas 模型 → 可路由 pin（user 消息 model 对象）", (() => {
+  const r = singleSessionInfoOf([
+    { info: { role: "user", agent: "single", model: { providerID: "openllamas", modelID: "kimi-k3.1-pro" } }, parts: [] },
+  ]);
+  return r.isSingle === true && r.pin === "kimi-k3.1-pro" && r.routable === true && r.blocked === false;
+})());
+t("single 消息 + assistant 扁平字段 + 前缀归一化", (() => {
+  const r = singleSessionInfoOf([
+    { info: { role: "user", agent: "single" }, parts: [] },
+    { info: { role: "assistant", mode: "single", providerID: "openllamas", modelID: "openllamas/glm-5.3-flash" } },
+  ]);
+  return r.isSingle === true && r.pin === "glm-5.3-flash";
+})());
+t("single 空 agent + mode 字段 → 仍识别为单模型会话", (() => {
+  const r = singleSessionInfoOf([
+    { info: { role: "user", agent: "", mode: "single", model: { providerID: "openllamas", modelID: "glm-5.3-flash" } }, parts: [] },
+  ]);
+  return r.isSingle === true && r.pin === "glm-5.3-flash";
+})());
+t("session.get 行缺 agent、调用方已知 single → 强制注入 agent 后模型可提取", (() => {
+  const data = { model: { providerID: "openllamas", id: "glm-5.3-flash" } };
+  const r = singleSessionInfoOf([{ info: { ...data, agent: "single" } }]);
+  return r.isSingle === true && r.pin === "glm-5.3-flash";
+})());
+t("普通会话 → 不钉扎", (() => {
+  const r = singleSessionInfoOf([{ info: { role: "user", agent: "code", model: { providerID: "openllamas", modelID: "a" } } }]);
+  return r.isSingle === false && r.pin === "" && r.routable === false;
+})());
+t("中途切走 single → 以最近用户消息为准，不误钉旧模型", (() => {
+  const r = singleSessionInfoOf([
+    { info: { role: "user", agent: "single", model: { providerID: "openllamas", modelID: "old" } } },
+    { info: { role: "user", agent: "code", model: { providerID: "openllamas", modelID: "new" } } },
+  ]);
+  return r.isSingle === false && r.pin === "";
+})());
+t("最近用户消息缺 agent → 不翻更早 user 的 single 旧值", (() => {
+  const r = singleSessionInfoOf([
+    { info: { role: "user", agent: "single", model: { providerID: "openllamas", modelID: "old" } } },
+    { info: { role: "user", model: { providerID: "openllamas", modelID: "new" } } },
+    { info: { role: "assistant", agent: "code" } },
+  ]);
+  return r.isSingle === false && r.pin === "";
+})());
+t("非 openllamas provider → isSingle 但 pin 空（调用方须显式阻断，不混用配置模型）", (() => {
+  const r = singleSessionInfoOf([
+    { info: { role: "user", agent: "single", model: { providerID: "anthropic", modelID: "claude-x" } } },
+  ]);
+  return r.isSingle === true && r.pin === "" && r.routable === false && r.blocked === true;
+})());
+t("manualReviewOutcome：完整审查头 + 通过才计补审；拒绝/失败/不通过均不计", (() => {
+  const ok = { output: "## 双向审查裁决（a 正向 × b 反向 → c 裁决）\n## 裁决\n通过" };
+  const failed = { output: "## 双向审查裁决（a 正向 × b 反向 → c 裁决）\n## 裁决\n不通过\n## 必须修复项\n- 修 X" };
+  const inconclusive = { output: "## 双向审查裁决（a 正向 × b 反向 → c 裁决）\n聚合输出无裁决段" };
+  const refused = { output: "dual_review: 单模型会话的选定模型无法解析或不在 openllamas 网关，已拒绝本次审查。" };
+  const oneWay = { output: "dual_review: 一路审查失败，无法裁决。幸存方原始结论：" };
+  const noisy = { output: "前置噪音文本\n## 双向审查裁决（a 正向 × b 反向 → c 裁决）\n## 裁决\n通过" };
+  return manualReviewOutcome(ok) === "pass" && manualReviewOutcome(failed) === "fail" &&
+    manualReviewOutcome(inconclusive) === "inconclusive" &&
+    manualReviewOutcome(refused) === "invalid" && manualReviewOutcome(oneWay) === "invalid" &&
+    manualReviewOutcome(noisy) === "invalid" &&
+    manualReviewOutcome({ output: "" }) === "invalid";
+})());
+
 // ── parseReviewVerdict ──
 t("通过+必须修复项为空 → fail=false", (() => {
   const v = parseReviewVerdict("## 裁决\n通过 ✅\n\n## 必须修复项\n无");
   return v.fail === false && v.inconclusive === false;
+})());
+t("必须修复项为列表形态「- 无 / * none.」→ 空段不误判 fail", (() => {
+  const a = parseReviewVerdict("## 裁决\n通过\n\n## 必须修复项\n- 无");
+  const b = parseReviewVerdict("## 裁决\n通过\n\n## 必须修复项\n* none.");
+  return a.fail === false && b.fail === false;
 })());
 t("裁决不通过 → fail=true", parseReviewVerdict("## 裁决\n不通过 ❌\n\n## 必须修复项\n无").fail === true);
 t("必须修复项非空 → fail=true（即便裁决写通过）", parseReviewVerdict("## 裁决\n通过\n\n## 必须修复项\n- 修复空指针").fail === true);
@@ -523,6 +592,10 @@ t("diagCovers：文档编辑不数（editVersion 变但 codeEditV 不变）→ �
     fpA !== (await drT.reviewerFingerprint(fpCfg({ positive: "m-a", positive_fallbacks: ["m-f"], negative: "m-b", aggregator: "m-c" }))));
   t("配置缺 dual_review → 指纹稳定（空路由，不抛错）",
     /^v=\S+\|p=\|pf=\|n=\|nf=\|a=\|af=$/.test(await drT.reviewerFingerprint(fpCfg(undefined))));
+  const fpNoPin = await drT.reviewerFingerprint(fpCfg({ positive: "m-a", negative: "m-b", aggregator: "m-c" }));
+  const fpPinned = await drT.reviewerFingerprint(fpCfg({ positive: "m-a", negative: "m-b", aggregator: "m-c" }), "chosen-model");
+  t("单模型钉扎进入指纹：sm= 段 + 与未钉扎指纹不同（换选定模型即失效）",
+    /\|sm=chosen-model$/.test(fpPinned) && fpPinned !== fpNoPin);
   t("modelRoutes：去空/trim/去重/保留顺序",
     JSON.stringify(drT.modelRoutes(" m-a ", ["m-b", "m-a", "", null, " m-c "])) === JSON.stringify(["m-a", "m-b", "m-c"]));
 }
@@ -841,6 +914,10 @@ t("unreviewedMarkerLine：review_unreviewed_<date> 前缀 + 补审指引", (() =
     /dual_review/.test(line);
 })());
 t("unreviewedMarkerLine：同毫秒内两次调用相同（幂等沉淀前提）", unreviewedMarkerLine() === unreviewedMarkerLine());
+t("unreviewedMarkerLine：自定义原因进入留痕（非路由模型阻断可读）", (() => {
+  const line = unreviewedMarkerLine("单模型选定模型无法经 openllamas 网关路由");
+  return line.includes("单模型选定模型无法经 openllamas 网关路由") && /review_unreviewed_/.test(line);
+})());
 
 // ── 修复 B：todoAnchorLines（验收清单压缩锚点，纯函数）──
 {
@@ -1155,7 +1232,8 @@ t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/revi
     (sC1a?.codeEditV ?? 0) === 1);
   // 手动补审（codeEditV>0 → 置 dualReviewed + 绑定版本）
   await hooks3["tool.execute.after"](
-    { tool: "dual_review", sessionID: sessC1, args: { subject: "交付审查" } }, { output: "" });
+    { tool: "dual_review", sessionID: sessC1, args: { subject: "交付审查" } },
+    { output: "## 双向审查裁决（a 正向 × b 反向 → c 裁决）\n## 裁决\n通过" });
   const sC1b = mod._export.bucketOf({ sessionID: sessC1 });
   t("C1：手动补审置 dualReviewed 并绑定 dualReviewedAtCodeEditV（=1）",
     sC1a?.dualReviewed === true && (sC1b?.dualReviewedAtCodeEditV ?? 0) === 1);
@@ -1171,12 +1249,30 @@ t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/revi
   await hooks3["tool.execute.after"](
     { tool: "edit", sessionID: sessC1b, args: { filePath: "src/auth/login.ts" } }, { output: "" });
   await hooks3["tool.execute.after"](
-    { tool: "dual_review", sessionID: sessC1b, args: { subject: "交付审查" } }, { output: "" });
+    { tool: "dual_review", sessionID: sessC1b, args: { subject: "交付审查" } },
+    { output: "## 双向审查裁决（a 正向 × b 反向 → c 裁决）\n## 裁决\n通过" });
   await hooks3["tool.execute.after"](
     { tool: "edit", sessionID: sessC1b, args: { filePath: "README.md" } }, { output: "" });
   const sC1c = mod._export.bucketOf({ sessionID: sessC1b });
   t("C1：补审后纯文档编辑不触发重审（codeEditV 不前进，豁免维持）",
     (sC1c?.codeEditV ?? 0) === 1 && (sC1c?.dualReviewedAtCodeEditV ?? 0) === 1);
+  // 拒绝/失败的手动审查不得被当成补审（单模型非网关模型的拒绝串不能清 pending）
+  const sessRefused = "t-c1-refused";
+  await hooks3["tool.execute.after"](
+    { tool: "edit", sessionID: sessRefused, args: { filePath: "src/auth/login.ts" } }, { output: "" });
+  await hooks3["tool.execute.after"](
+    { tool: "dual_review", sessionID: sessRefused, args: { subject: "交付审查" } },
+    { output: "dual_review: 单模型会话的选定模型无法解析或不在 openllamas 网关，已拒绝本次审查。" });
+  const sRefused = mod._export.bucketOf({ sessionID: sessRefused });
+  t("C1：拒绝/失败的手动 dual_review 不计为补审（不清 pending、不置 dualReviewed）",
+    sRefused?.dualReviewed !== true);
+  // 已通过的手动补审若后续被 FAIL 裁决否定，必须撤销旧豁免以便自动重审
+  await hooks3["tool.execute.after"](
+    { tool: "dual_review", sessionID: sessC1, args: { subject: "交付复审" } },
+    { output: "## 双向审查裁决（a 正向 × b 反向 → c 裁决）\n## 裁决\n不通过\n## 必须修复项\n- 修 X" });
+  const sAfterFail = mod._export.bucketOf({ sessionID: sessC1 });
+  t("C1：手动 FAIL 裁决撤销旧 dualReviewed，交付节点可重新自动审查",
+    sAfterFail?.dualReviewed === false);
 }
 
 // ── 回合出口门禁（2026-10-03 收口审计专项）：纯函数矩阵 + 假 client 集成 ──
@@ -1202,12 +1298,8 @@ t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/revi
     const y = mkS({ exitNudges: 2, exitNudgeFp: "fp-old", exitGateCapped: true });
     return exitGateVerdict(y, base).act === true && y.exitGateCapped === false;
   })());
-  t("verdict：agentSingle → single-mode 豁免（UI 单模型会话不注入）",
-    exitGateVerdict(mkS({}), { ...base, agentSingle: true }).act === false &&
-    exitGateVerdict(mkS({}), { ...base, agentSingle: true }).reason === "single-mode");
-  t("verdict：agentSingle 未传/假值 → 维持常规判定（契约漂移不漏管）",
-    exitGateVerdict(mkS({}), base).act === true &&
-    exitGateVerdict(mkS({}), { ...base, agentSingle: false }).act === true);
+  t("verdict：agentSingle 不再豁免（单模型同样走出口门禁）",
+    exitGateVerdict(mkS({}), { ...base, agentSingle: true }).act === true);
   t("verdict：undone=null → all-settled", exitGateVerdict(mkS({}), { ...base, undone: null }).reason === "all-settled");
   t("verdict：同快照 cap=2 → nudge-cap", exitGateVerdict(mkS({ exitNudges: 2, exitNudgeFp: base.fingerprint }), base).reason === "nudge-cap");
   t("verdict：15s 内 → cooldown", exitGateVerdict(mkS({ exitNudgeAt: 10 ** 12 - 1, exitNudgeFp: base.fingerprint }), base).reason === "cooldown");
@@ -1553,11 +1645,11 @@ t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/revi
   t("层0 兜底：纯调研（无编辑无委派）不触发（低风险口径改完即交付）",
     injected.length === 11 && sQ.noListNudged !== true);
 
-  // 单模型会话豁免（2026-10-30 UI 选择模式）：agent=single 的会话出口不注入——
-  // 合成提示会污染「纯模型能力」的观察对象；未落定清单与层0兜底两条注入路径均须被盖住
+  // 单模型质量闭环（2026-11-11 用户裁定）：agent=single 不再豁免出口门禁——
+  // 未落定清单与层0兜底两条注入路径都必须生效，否则 Single 会绕过收口纪律。
   const sidSgl = "t-exit-single";
   const sSgl = mod._export.bucketOf({ sessionID: sidSgl });
-  sSgl.lastTodos = [{ content: "甲", status: "pending" }];
+  sSgl.lastTodos = [{ content: "甲", status: "completed" }, { content: "乙", status: "pending" }];
   sSgl.edited.add("src/s.ts");
   msgs.set(sidSgl, plainAssistant("测试执行到一半"));
   const origGetSgl = fakeClient.session.get;
@@ -1568,8 +1660,8 @@ t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/revi
   };
   await idle(sidSgl);
   fakeClient.session.get = origGetSgl;
-  t("出口门禁：agent=single（UI 单模型模式）→ single-mode 豁免不注入",
-    injected.length === 11 && sSgl.exitNudges === 0 && sSgl.noListNudged !== true);
+  t("出口门禁：agent=single（单模型质量闭环）→ 未落定清单照常注入",
+    injected.length === 12 && sSgl.exitNudges === 1 && sSgl.noListNudged !== true);
 
   const sidSgl2 = "t-exit-single2";
   const sSgl2 = mod._export.bucketOf({ sessionID: sidSgl2 });
@@ -1583,8 +1675,8 @@ t("vE2 契约：_export 含 F/B/C/G 修复新纯函数（reviewRetryAllowed/revi
   };
   await idle(sidSgl2);
   fakeClient.session.get = origGetSgl2;
-  t("出口门禁：agent=single 层0兜底路径同样豁免（无清单+有编辑不注入）",
-    injected.length === 11 && sSgl2.noListNudged !== true);
+  t("出口门禁：agent=single 层0兜底路径同样生效（无清单+有编辑 → 注入）",
+    injected.length === 13 && sSgl2.noListNudged === true);
 
   const hooksY = await qgExit({ directory: ROOT });
   let threw = false;

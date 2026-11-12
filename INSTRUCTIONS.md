@@ -44,17 +44,25 @@
 - **日常执行只用 `deepseek-v4.1-flash-1017@high`**；高风险实现才由 `general@max` 升级。近 3 天 code 单步实测：
   deepseek@high 16.6s，kimi-k3.1-pro@max 44.7s（近 24h 68.4s）。不要在 code 里换 kimi/glm 跑执行，
   用户当场指定场景除外。
-- **kimi-k3.1-pro 只用于 plan**（规划/方案）。近 3 天 plan 0 次、kimi code 1993 次＝只付了它的慢、
-  没用上它的规划价值；需要规划时切 plan 模式，而不是给 code 换模型。
-- **复核必须异源**：verify 用配置的 glm-5.3-flash@high，不要用 task 的 model/provider/variant 覆盖成
-  与主执行同族；failover 导致同族降级时，复核结论必须标注「降级复核」，不计为独立异源票。
+- **kimi-k3.1-pro 只用于 plan 与审查聚合席**（规划/方案 + moa/dual_review 裁决，2026-11-13 强化定稿）。
+  近 3 天 plan 0 次、kimi code 1993 次＝只付了它的慢、没用上它的规划价值；需要规划时切 plan 模式，
+  而不是给 code 换模型。
+- **复核必须异源**：verify 用配置的 glm-5.3@high（2026-11-13 由 glm-5.3-flash 升格旗舰档），不要用 task 的
+  model/provider/variant 覆盖成与主执行同族；failover 导致同族降级时，复核结论必须标注「降级复核」，
+  不计为独立异源票。审查面板三族为 qwen4-max（正向）/glm-5.3（红队）/kimi-k3.1-pro（裁决）；
+  single 模式例外——三席钉选定模型做同源对抗（见下方 single 节），不套用此三族。
 - **注册表中仍在网关 `/v1/models` 的候选模型是手动选择池**：零路由引用 ≠ 冗余，不要以
   「清理/优化」为名删除（glm-5.3、kimi-k3 等保留）；已从网关下线的模型可移除。优化只动实际执行路径与使用方式。
   本节只快照高频岗位（执行/规划/复核），其余角色档位以 `kilo.json.tmpl` 为准；换型时随路由一并更新。
-- **`single` 模式仅用于纯单模型能力测试，不用于交付**：模式选择器选 `single` + 模型选择器选定模型即进入；
-  该模式禁用 task/moa/dual_review/agent_manager/todo/goal/技能/记忆工具，quality-gate 出口对 single 会话豁免；
-  failover 链仍生效，回复流首出现「⚠️ [failover]」的测试结果作废。需要严格隔离（failover 清空 + 注册表收敛
-  + instructions 清空 + quality-gate 整体旁路）时用 `scripts/single-model.mjs enter/restore`。
+- **`single` 模式 = 单模型质量闭环，可正常交付**：模式选择器选 `single` + 模型选择器选定模型即进入；
+  所有模型调用（规划/执行/审查/裁决）只用该选定模型，但 todo/goal/quality-gate 三层门禁照常生效，
+  复杂交付由 quality-gate 自动调用 dual_review——正/反/裁决三席全部钉扎同一模型，输出标注「同源复核」，
+  不计为异源独立票；仍禁用 task/moa/agent_manager/技能/记忆工具（避免引入其他模型或增强注入）。
+  选定模型不属于 openllamas 网关时，自动审查与手动 dual_review 都不会静默跳过：自动路径按未审交付阻断
+  （人工复核或 `review-accepted` 显式接受），手动路径直接拒绝。
+  failover 链仍生效，回复流首出现「⚠️ [failover]」即已换模型，结果按混模型处理、需重跑。需要严格隔离
+  （failover 清空 + 注册表收敛 + instructions 清空）时用 `scripts/single-model.mjs enter/restore`；
+  严格档保留质量闭环与自动压缩。
 
 ## 自我进化（原生记忆，越用越强）
 - **检索优先，先查记忆**：项目问题（怎么跑/为什么这样设计/之前踩过什么坑）先用 `kilo_memory_recall`
@@ -162,7 +170,7 @@
 - **不要**在内置 agent 名下写同名 `.md`（会整体覆盖内置提示词）；`verify` 这类非内置 agent 才用 `.md`。
 
 ## 版本口径
-- 本机日常实际使用的是 VS Code 扩展内嵌 CLI（7.8.18），配置校验以它为准（`kilo.exe debug config`，
+- 本机日常实际使用的是 VS Code 扩展内嵌 CLI（写作时 7.8.27，随扩展自动更新），配置校验以它为准（`kilo.exe debug config`，
   扩展路径解析见 docs/HISTORY.md 验收命令节）。旧版全局 npm `kilo`（7.4.16，现已不在 PATH）曾对
   `privacy_mode` / `web_search` / `subagent_depth` 报不识别 —— 那是旧版本读取同一份配置，不代表配置坏了。
 

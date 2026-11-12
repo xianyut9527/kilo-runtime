@@ -21,16 +21,29 @@ const BUILT_IN_AGENTS = [
   "ask", "code", "compaction", "debug", "explore",
   "general", "orchestrator", "plan", "summary", "title",
 ];
-// verify 来自本仓库 agent/verify.md，不是内置 agent；single 是测试入口，单独提升为 primary。
+// verify 来自本仓库 agent/verify.md，不是内置 agent；single 是质量闭环入口，单独提升为 primary。
 // 自定义 agent 文件即使未在 kilo.json 配键也会被 Kilo 加载，因此 verify 同样必须显式补写。
 const CUSTOM_HIDDEN_AGENTS = ["verify"];
 const HIDDEN_AGENTS = [...BUILT_IN_AGENTS, ...CUSTOM_HIDDEN_AGENTS];
+// 严格档仍保留质量闭环：todo/goal/dual_review 不再禁用（层 1/2/3 门禁与同模型自动审查
+// 依赖 todowrite；dual_review 在 singleModel 钉扎下三席同模型，不会混入其他模型）。
+// 仍禁用会引入其他模型或增强注入的入口：task/agent_manager（子代理模型不保证同模型）、
+// moa（多模型聚合）、skill/记忆工具（保持严格隔离口径）。
 const SINGLE_DENY_TOOLS = [
-  "task", "moa", "dual_review", "agent_manager", "todowrite", "todoread", "goal", "goal_report", "skill",
+  "task", "moa", "agent_manager", "skill",
   "kilo_memory_save", "kilo_memory_recall",
   "mem_add", "mem_search", "mem_get", "mem_cite", "mem_flag",
 ];
 const SINGLE_DENY_PERMISSIONS = Object.fromEntries(SINGLE_DENY_TOOLS.map((name) => [name, "deny"]));
+// 历史配置迁移：旧版严格档把以下工具写成 deny；新版保留质量闭环，必须在 enter 时清除
+//（否则同一份部署配置升级后仍会绕过 todo/质量门禁）。只清 deny，不覆盖用户自定义 allow。
+const SINGLE_QUALITY_TOOLS = ["dual_review", "todowrite", "todoread", "goal", "goal_report"];
+function clearQualityLoopDenies(permission) {
+  if (!permission || typeof permission !== "object") return;
+  for (const key of SINGLE_QUALITY_TOOLS) {
+    if (permission[key] === "deny") delete permission[key];
+  }
+}
 
 function sha256Text(text) {
   return createHash("sha256").update(String(text), "utf8").digest("hex");
@@ -241,7 +254,7 @@ function applySingleModelConfig(base, { model, variant } = {}) {
   cfg.memory_model = full;
   cfg.default_agent = AGENT_NAME;
   cfg.enabled_providers = [PROVIDER_ID];
-  // 纯模型能力测试：去掉全局工程原则、全局经验与技能注入，避免规划/检查脚手架影响结果。
+  // 单模型质量闭环：去掉全局工程原则、全局经验与技能注入，避免额外模型/技能/记忆增强；质量纪律由 agent/single.md 承担。
   cfg.instructions = [];
   // skills 必须保持对象形状（模板与部署副本都是 { "paths": [...] }）：改成数组会破坏
   // Kilo 的 schema 形状不变式，整份配置可能被判不合法而拒载（= Kilo 启动失败）。
@@ -254,9 +267,10 @@ function applySingleModelConfig(base, { model, variant } = {}) {
     ...(cfg.permission && typeof cfg.permission === "object" ? cfg.permission : {}),
     ...SINGLE_DENY_PERMISSIONS,
   };
+  clearQualityLoopDenies(cfg.permission);
   cfg.compaction = {
     ...(cfg.compaction && typeof cfg.compaction === "object" ? cfg.compaction : {}),
-    auto: false,
+    auto: true,
   };
   cfg.experimental = {
     ...(cfg.experimental && typeof cfg.experimental === "object" ? cfg.experimental : {}),
@@ -283,14 +297,15 @@ function applySingleModelConfig(base, { model, variant } = {}) {
   cfg.agent.single = {
     ...singleAgent,
     mode: "primary",
-    description: singleAgent.description ||
-      "单模型能力测试入口；只使用当前配置的唯一模型，禁止委派、多模型审查与规划代理切换。",
+    description:
+      "单模型质量闭环入口；质量门禁与同模型双审照常，所有模型调用只用当前唯一模型，禁止委派与多模型聚合。",
     model: full,
     permission: {
       ...(singleAgent.permission && typeof singleAgent.permission === "object" ? singleAgent.permission : {}),
       ...SINGLE_DENY_PERMISSIONS,
     },
   };
+  clearQualityLoopDenies(cfg.agent.single.permission);
   if (selectedVariant) cfg.agent.single.variant = selectedVariant;
   else delete cfg.agent.single.variant;
   delete cfg.agent.single.hidden;
@@ -362,7 +377,7 @@ function validatePinnedConfig(cfg, { model, variant } = {}) {
   for (const key of SINGLE_DENY_TOOLS) {
     same(cfg?.permission?.[key], "deny", `permission.${key}`);
   }
-  same(cfg?.compaction?.auto, false, "compaction.auto");
+  same(cfg?.compaction?.auto, true, "compaction.auto");
   same(cfg?.experimental?.task_model_selection, false, "experimental.task_model_selection");
 
   for (const name of HIDDEN_AGENTS) {
@@ -383,6 +398,10 @@ function validatePinnedConfig(cfg, { model, variant } = {}) {
   if (cfg?.agent?.single?.hidden === true) fail("agent.single.hidden 不应为 true");
   for (const key of SINGLE_DENY_TOOLS) {
     same(cfg?.agent?.single?.permission?.[key], "deny", `agent.single.permission.${key}`);
+  }
+  for (const key of SINGLE_QUALITY_TOOLS) {
+    if (cfg?.permission?.[key] === "deny") fail(`permission.${key} 不应为 deny（质量闭环需要）`);
+    if (cfg?.agent?.single?.permission?.[key] === "deny") fail(`agent.single.permission.${key} 不应为 deny（质量闭环需要）`);
   }
 
   const provider = cfg?.provider?.[PROVIDER_ID];
@@ -430,8 +449,8 @@ function describeDiff(before, after, { model, variant }) {
     `failover.chain.models: ${JSON.stringify(before.provider?.[PROVIDER_ID]?.options?.failover?.chain?.models ?? [])} -> []`,
     `singleModel: ${singleModelOfOptions(before.provider?.[PROVIDER_ID]?.options) || "(none)"} -> ${bare}`,
     `agents: 其余 primary agent -> hidden subagent，仅保留 ${AGENT_NAME}`,
-    `permission: task/moa/dual_review/agent_manager/todo/goal/skill/记忆工具 deny`,
-    `compaction.auto: false`,
+    `permission: task/moa/agent_manager/skill/记忆工具 deny；todo/goal/dual_review 保持可用（质量闭环）`,
+    `compaction.auto: true`,
     `experimental.task_model_selection: false`,
   ];
   return lines;
@@ -676,8 +695,8 @@ function usage() {
 
 说明：
   - enter 会备份当前部署配置，并把主模型、small/subagent/memory、全部 agent、failover、moa、dual_review 全部钉到同一模型。
-  - enter 把其余 agent（含未写入配置的内置 agent）降为 hidden subagent，清空 instructions/skills，禁止 task/moa/dual_review/agent_manager/todo/goal/skill/记忆工具，并关闭自动压缩与 task_model_selection。
-  - 进入后必须重载 Kilo 窗口；测试结束执行 restore 并再次重载。
+  - enter 把其余 agent（含未写入配置的内置 agent）降为 hidden subagent，清空 instructions/skills；保留 todo/goal/dual_review 与自动压缩以维持质量闭环，禁止 task/moa/agent_manager/skill/记忆工具，并关闭 task_model_selection。
+  - 进入后必须重载 Kilo 窗口；使用结束执行 restore 并再次重载。
   - install 在单模型模式活动期间会拒绝覆盖配置。`);
 }
 

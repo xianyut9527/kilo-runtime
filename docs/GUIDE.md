@@ -165,7 +165,7 @@ Key 只存在运行时数据目录，不进入 git。修改 Key 不需要重新 
 | `orchestrator` | 任务拆解与分派 |
 | `compaction` | 会话压缩与摘要 |
 | `verify` | 异源、只读独立复核 |
-| `single` | 单模型能力测试入口（不用于交付，见第 5 节） |
+| `single` | 单模型质量闭环入口（任务与审查裁决只用选定模型，见第 5 节） |
 
 ### 4.2 故障切换的正确口径
 
@@ -180,31 +180,32 @@ Key 只存在运行时数据目录，不进入 git。修改 Key 不需要重新 
 - 三席的当前模型与回退顺序以配置为准。回退可能导致席位与被审主体同族，此时结果应标注“降级复核”，不能算作完整的独立异源审查。
 - 审查会额外消耗上游调用与时间，因此简单、低风险改动不会机械触发。
 
-## 5. 单模型能力测试模式
+## 5. 单模型质量闭环模式
 
-该模式用于观察**一个模型从头到尾独立完成任务**的能力，不用于正常交付。有两种进入方式：日常用模式选择器直接进入；需要严格隔离时用命令行锁定。
+该模式用于让**一个选定模型在完整质量闭环下从头到尾独立完成任务**：规划、执行、审查、裁决都只用模型选择器选定的当前模型。有两种进入方式：日常用模式选择器直接进入；需要把后台任务也钉死时用命令行严格档。
 
 ### 5.1 模式选择器进入（日常）
 
-1. 在 Kilo 模式选择器中选择「单模型测试」（`single`）；
-2. 在模型选择器中选定要测试的模型与思考档位；
+1. 在 Kilo 模式选择器中选择「单模型」（`single`）；
+2. 在模型选择器中选定要使用的模型与思考档位；
 3. 直接下达任务——会话由该模型执行，不需要改配置或重载。
 
 该路径的隔离边界与残余影响：
 
-- `single` 模式的权限禁用 task 委派、moa/dual_review 多模型审查、Agent Manager、todo/goal、技能与记忆工具；quality-gate 的回合出口兜底对 `single` 会话不注入提示，层 1/2/3 门禁因 todo 工具被禁而天然不触发；
-- 模型与档位跟随模型选择器的当前选择，换模型即换测试对象；
-- 全局 instructions 与项目记忆仍会注入，failover 链仍然生效——所选模型故障时回复流首会出现「⚠️ [failover]」并切换到备用模型，出现该提示的测试结果作废；
-- 会话标题/摘要与自动压缩等后台任务使用配置中的轻量模型，不参与任务执行。
+- `single` 模式的权限仍禁用 task 委派、moa 多模型聚合、Agent Manager、技能与记忆工具；todo/goal/dual_review 保持可用，quality-gate 三层门禁与回合出口兜底照常生效；
+- 复杂/高风险交付由 quality-gate 自动调用 dual_review：正/反/裁决三席全部钉扎当前选定模型，输出标注「同源复核」，不计为异源独立票；手动调用 dual_review 同样自动钉扎，不接受混用其他模型；选定模型不属于 openllamas 网关时，自动审查不会静默跳过，而是按未审交付阻断，需人工复核 diff 或显式执行 `echo "review-accepted: <原因>"`，手动 dual_review 则直接拒绝；
+- 模型与档位跟随模型选择器的当前选择，换模型即换执行对象；
+- 任务链路（含审查裁决）只用选定模型；后台会话标题/摘要/自动压缩仍使用配置中的轻量模型，不属于任务执行。需要连这些后台调用也钉死时，用 5.2 严格档；
+- failover 链仍然生效——所选模型故障时回复流首会出现「⚠️ [failover]」并切换到备用模型，出现该提示的结果已混入其他模型，需重跑。
 
 ### 5.2 命令行锁定（严格隔离）
 
-需要清空 failover、把注册表收敛到单一模型、清空 instructions/skills 并让 quality-gate 整体旁路时，使用锁定模式。进入后：
+需要把 failover 清空、注册表收敛到单一模型、连后台标题/摘要/自动压缩也钉死时，使用严格档。进入后：
 
 - 主模型、轻任务、子代理、项目记忆、全部 agent、failover、moa 和 dual_review 都固定到同一模型；
 - 其他 primary agent 变为 hidden subagent，包括未写入 `kilo.json` 的内置 `ask/debug/summary/title` 等，主界面只保留 `single`；
-- 清空附加 `instructions` 与 `skills`，禁止 task 委派、多模型审查、Agent Manager、todo/goal、技能和记忆工具；
-- 关闭自动压缩、`task_model_selection` 与 reasoningGate。
+- 清空附加 `instructions` 与 `skills`，仍禁止 task 委派、moa、Agent Manager、技能和记忆工具；todo/goal/dual_review 与 quality-gate 三层门禁保留；
+- 保持自动压缩开启，关闭 `task_model_selection` 与 reasoningGate。
 
 以下命令在两平台都可执行（PowerShell 与 bash 都支持 `$HOME` 和正斜杠路径）：
 
@@ -221,7 +222,7 @@ node "$HOME/.config/kilo/scripts/single-model.mjs" enter --model MODEL_ID --vari
 # 4. 重载 VS Code 窗口/Kilo，新建会话后检查状态
 node "$HOME/.config/kilo/scripts/single-model.mjs" status
 
-# 5. 测试结束恢复原始配置，并再次重载
+# 5. 使用结束恢复原始配置，并再次重载
 node "$HOME/.config/kilo/scripts/single-model.mjs" restore
 ```
 
