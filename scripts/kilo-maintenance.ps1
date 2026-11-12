@@ -91,15 +91,32 @@ $BootTaskName      = 'kilo-vacuum-boot'
 $LogMaxAgeDays     = 30
 $StateDirMaxBytes  = 200MB
 
+# 2026-11-12 查漏补缺：error.log 是跨进程共享的追加文件，两个进程同时 trap 时
+# Out-File -Append 仍会撞独占写（与 05:35 的清理日志同类，只是发生在最后一级证据上）。
+# 重试 3 次通常足以跨过毫秒级占用；仍失败则落唯一名错误文件（匹配轮转正则，证据不丢）。
+function Add-MaintErrorLog {
+    param([string]$Text)
+    $null = New-Item -ItemType Directory -Force -Path $LogDir -ErrorAction SilentlyContinue
+    $errLog = Join-Path $LogDir 'error.log'
+    for ($i = 0; $i -lt 3; $i++) {
+        try {
+            $Text | Out-File -LiteralPath $errLog -Append -Encoding utf8 -ErrorAction Stop
+            return $true
+        } catch { [System.Threading.Thread]::Sleep(150) }
+    }
+    try {
+        $fallback = Join-Path $LogDir ("{0}-{1}-error.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'), $PID)
+        $Text | Out-File -LiteralPath $fallback -Append -Encoding utf8 -ErrorAction Stop
+        return $true
+    } catch { return $false }
+}
+
 # 全局兜底：登录自启是 -WindowStyle Hidden 的隐藏进程，任何未捕获异常都会**静默消失**。
 # trap 把错误落盘到 error.log，保证自动化可观测（下次 -Status / 人工都能看到失败原因）。
 trap {
     $msg = "[ERROR] $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $($_.Exception.GetType().Name): $($_.Exception.Message)"
     if ($_.ScriptStackTrace) { $msg += "`n" + (($_.ScriptStackTrace -split "`n") | Select-Object -First 3) }
-    try {
-        $null = New-Item -ItemType Directory -Force -Path $LogDir
-        $msg | Out-File -LiteralPath (Join-Path $LogDir 'error.log') -Append -Encoding utf8
-    } catch { $msg += "`n[ERROR] (error.log 写入也失败：$($_.Exception.Message))" }
+    if (-not (Add-MaintErrorLog $msg)) { $msg += "`n[ERROR] (error.log 写入也失败：已重试并降级唯一名文件)" }
     Write-Host $msg
     exit 1
 }
@@ -191,10 +208,14 @@ function Invoke-RepoScript {
     # 日志自身也要封顶：只留最近 N 份。
     # 只轮转 Invoke-RepoScript 生成的 yyyyMMdd-HHmmss-*.log；error.log / vacuum-boot.log
     # 是长期故障/离线 VACUUM 证据，不能被日常轮转误删。
-    Get-ChildItem -LiteralPath $LogDir -File -Filter '*.log' |
+    # 2026-11-12 并发专项补漏：只读入口（-DbStatus）按设计不拿单飞锁、却也走本函数，
+    # 可能与本轮维护同时轮转——两个进程同时 Remove-Item 同一份超期日志时，后到者会因
+    # 「文件不存在」抛错，在全局 EAP=Stop 下 trap 直接中止整轮维护。轮转是幂等清理，
+    # 目标消失即视为已完成，一律 SilentlyContinue（不让删除竞态升级为维护失败）。
+    Get-ChildItem -LiteralPath $LogDir -File -Filter '*.log' -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -match '^\d{8}-\d{6}-.+\.log$' } |
         Sort-Object LastWriteTime -Descending | Select-Object -Skip $KeepLogs |
-        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
     return $rc
 }
 
@@ -529,6 +550,13 @@ if ($Status) {
         if ($task) {
             $info = $task | Get-ScheduledTaskInfo
             Write-Host "[TASK] $t  状态=$($task.State)  上次=$($info.LastRunTime)  结果=$($info.LastTaskResult)  下次=$($info.NextRunTime)"
+            # 2026-11-12：非 0 结果可见化（12:45 周任务曾被外部终止 0xC000013A，只因后一次清理
+            # 刷新了 state.json 就被心跳判「健康」——计划任务层面的失败不能再靠人翻结果码发现）。
+            # 0x41301=运行中 / 0x41303=从未运行，其余非 0 都点名；下个触发点会自动重跑，无需人工。
+            $res = [int64]$info.LastTaskResult
+            if ($res -ne 0 -and $res -ne 267009 -and $res -ne 267011) {
+                Write-Host ("[WARN] {0} 上次运行未成功（0x{1:X8}）——外部终止/失败；下个触发点会自动重跑，连续出现再看维护日志" -f $t, $res)
+            }
         } else {
             Write-Host "[TASK] $t  未注册"
         }

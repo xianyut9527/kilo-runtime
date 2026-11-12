@@ -41,6 +41,8 @@ t("杀前 PID+CreationDate 复验（PID 复用防线）", /SKIP-REVALIDATE/.test
 t("树杀：taskkill /PID <id> /T /F", /taskkill\.exe \/PID \$p\.ProcessId \/T \/F/.test(src));
 t("收割日志 yyyyMMdd-HHmmss-reap.log（匹配既有轮转模式）", /\$stamp-reap\.log/.test(src));
 t("惰性落盘：无孤儿不写文件", /considered -gt 0/.test(src));
+t("日志轮转幂等：并发删除不抛错（无锁 -DbStatus 路径）",
+  /Remove-Item -LiteralPath \$_.FullName -Force -ErrorAction SilentlyContinue/.test(src));
 
 console.log("== 2) win32 只读干跑 ==");
 if (process.platform === "win32") {

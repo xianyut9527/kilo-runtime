@@ -49,7 +49,10 @@ const t = (name, cond) => {
 
 // ── 沙箱：每个场景独立 tmp 目录 + 全套路径注入 ──────────────────────────
 const DAY = 86400 * 1000;
-const NOW = Date.parse("2026-11-04T04:00:00.000Z");
+// 2026-11-12 修：曾硬编码 2026-11-04 作 NOW，而工厂钩子端到端路径读真实 Date.now()——
+// 僵死时间随真实时间流逝必然过期（跑一次多 8 天，E2E「健康会话零输出」必红、error.log
+// 3 天前 fixture 落到 NOW 之后）。这里取真实时钟，沙箱 fixture 与插件同源。
+const NOW = Date.now();
 function sandbox(setup, opts) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mh-sandbox-"));
   const p = maintPathsFor(dir);
@@ -88,6 +91,21 @@ t(`STALE_DAYS=${STALE_DAYS} 常量`, STALE_DAYS === 7);
 console.log("== 3) error.log 证据链 ==");
 t("error.log 1 小时前告警", sandbox((p) => { freshState(p); touch(p.errorLog, 1); }).some((r) => /error\.log/.test(r)));
 t("error.log 3 天前不告警", sandbox((p) => { freshState(p); touch(p.errorLog, 72); }).length === 0);
+t("error.log 48h 内但已被后续清理+DB 双成功覆盖 → 不告警（修复后历史证据）", sandbox((p) => {
+  fs.writeFileSync(p.stateFile, `{"lastCleanup":"${iso(0.02)}","lastDb":"${iso(0.02)}"}`);
+  touch(p.errorLog, 6);
+}).length === 0);
+t("error.log 只被单侧成功覆盖（DB 仍旧）→ 仍告警（防漏报）", sandbox((p) => {
+  fs.writeFileSync(p.stateFile, `{"lastCleanup":"${iso(0.02)}","lastDb":"${iso(2)}"}`);
+  touch(p.errorLog, 6);
+}).some((r) => /error\.log/.test(r)));
+t("error.log 48h 内但 state 缺失 → 仍告警（无覆盖证据，不抑制）", sandbox((p) => {
+  touch(p.errorLog, 6);
+}).some((r) => /error\.log/.test(r)));
+t("state 时间戳在未来（时钟回拨/格式异常）→ 不抑制，仍告警", sandbox((p) => {
+  fs.writeFileSync(p.stateFile, `{"lastCleanup":"${iso(-0.1)}","lastDb":"${iso(-0.1)}"}`);
+  touch(p.errorLog, 6);
+}).some((r) => /error\.log/.test(r)));
 
 console.log("== 4) 引导死锁 flag 三态 ==");
 const flagWith = (p, sinceDays) => fs.writeFileSync(p.flagFile,

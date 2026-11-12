@@ -16,7 +16,8 @@
 // 完全健康（当日 state、error.log 干净、空闲页已增量回收）时照样喊停摆，逼用户手动 -Status。
 // 尺寸本身不是病，病是「证据链断了」。v2 只按证据告警：
 //   1. state.json 缺失或 lastCleanup/lastDb > STALE_DAYS(7 天)     → 维护任务停摆
-//   2. error.log 48h 内有报错                                      → 执行在跑但有失败
+//   2. error.log 48h 内有报错，且未被后续「清理+DB 瘦身」双成功覆盖   → 执行在跑但有失败
+//      （2026-11-12：已修复的历史错误不再刷 48h 告警；单侧成功/state 缺失仍告警，证据不删）
 //   3. vacuum-needed.flag 存在（auto_vacuum≠2 引导死锁）：
 //      - POSIX：无登录自愈机制，如实提示需手动引导
 //      - win32 + 哨兵（vacuum-bootstrap.disabled）：用户主动 opt-out → 提示手动 -VacuumNow
@@ -105,6 +106,9 @@ function computeMaintReasons(
     // POSIX：state.json 没有任何写入者（kilo-maintenance.ps1 不能跑），拿它当证据会**恒报
     // 「维护尚未跑过」**，且原文案承诺的「登录自启/每日任务自动补跑」在 POSIX 根本不存在——
     // 假告警 + 虚假承诺。POSIX 唯一由维护自身产出的证据是 db-maintain.sh 每轮写的 db-stats.txt。
+    // error.log 的「已被后续成功维护覆盖」判定需要 state 时间戳，先在外层声明。
+    let lastCleanupMs = NaN;
+    let lastDbMs = NaN;
     if (isWin32) {
       let stateRaw: string | null = null;
       try { stateRaw = fs.readFileSync(p.stateFile, "utf8"); } catch { stateRaw = null; }
@@ -113,6 +117,8 @@ function computeMaintReasons(
       } else {
         const lastCleanup = Date.parse((/"lastCleanup"\s*:\s*"([^"]+)"/.exec(stateRaw) || [""])[1]);
         const lastDb = Date.parse((/"lastDb"\s*:\s*"([^"]+)"/.exec(stateRaw) || [""])[1]);
+        lastCleanupMs = lastCleanup;
+        lastDbMs = lastDb;
         for (const [k, t] of [["清理", lastCleanup], ["DB 瘦身", lastDb]] as const) {
           if (Number.isNaN(t)) { reasons.push(`state.json 缺 ${k} 时间戳（维护注册后未完整跑过）`); break; }
           if (nowMs - t > STALE_DAYS * 86400 * 1000) reasons.push(`${k}已 ${Math.floor((nowMs - t) / 86400000)} 天没跑（下次登录自启会自动补跑；连续 2 天仍停摆再查看 -Status）`);
@@ -130,10 +136,21 @@ function computeMaintReasons(
     }
 
     // ── error.log：48h 内有失败 ──
+    // 2026-11-12：已修复的历史错误不再反复告警。判据=「清理」与「DB 瘦身」**两边**的最后成功
+    // 时间都晚于 error.log mtime（state.json 仅在 rc=0 后写入），说明该错误已被后续成功维护覆盖；
+    // 取 min 而非 max：任一侧未成功（如 cleanup 失败但 db 成功）仍保留告警，防漏报。
+    // state 缺失/时间戳非法时 resolvedMs=NaN → 不抑制，维持原有 48h 告警。
     try {
       const st = fs.statSync(p.errorLog);
       if (st.size > 0 && nowMs - st.mtimeMs < STALE_ERROR_HOURS * 3600 * 1000) {
-        reasons.push(`error.log ${STALE_ERROR_HOURS}h 内有报错（看 $HOME/.local/state/kilo/maintenance/error.log 尾部）`);
+        // 未来时间戳（时钟回拨/格式异常）绝不能当覆盖证据——否则会永久静默真实新错。
+        // 允许 5 分钟时钟抖动（NTP 校正），超出即按「无有效证据」处理。
+        const known = (t: number) => !Number.isNaN(t) && t <= nowMs + 5 * 60 * 1000;
+        const resolvedMs = (known(lastCleanupMs) && known(lastDbMs))
+          ? Math.min(lastCleanupMs, lastDbMs) : NaN;
+        if (!(resolvedMs > st.mtimeMs)) {
+          reasons.push(`error.log ${STALE_ERROR_HOURS}h 内有报错（看 $HOME/.local/state/kilo/maintenance/error.log 尾部）`);
+        }
       }
     } catch { /* 无 error.log = 没失败，健康 */ }
 
