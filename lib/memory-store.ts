@@ -285,16 +285,19 @@ export function bumpAffinity(entry, ws) {
   entry.aff[k] = (entry.aff[k] ?? 0) + 1;
 }
 
-// 亲和 key 上限 12：超出剪掉最小计数（并列剪字典序大者——保留序确定，同库多次编译结果稳定）
+// 亲和/searchLast 共用剪枝：key 上限 12，超出剪掉最小数值（aff 为计数、searchLast 为日号；
+// 并列剪字典序大者——保留序确定）
 const AFF_CAP = 12;
-export function projAffinity(entry) {
-  const aff = entry.aff ?? {};
-  const keys = Object.keys(aff);
-  if (keys.length > AFF_CAP) {
-    const sorted = keys.sort((a, b) => (aff[b] ?? 0) - (aff[a] ?? 0) || (a < b ? -1 : 1));
-    for (const k of sorted.slice(AFF_CAP)) delete aff[k];
-    entry.aff = aff;
+function pruneAffinityMap(map, cap = AFF_CAP) {
+  const keys = Object.keys(map);
+  if (keys.length > cap) {
+    const sorted = keys.sort((a, b) => (map[b] ?? 0) - (map[a] ?? 0) || (a < b ? -1 : 1));
+    for (const k of sorted.slice(cap)) delete map[k];
   }
+  return map;
+}
+export function projAffinity(entry) {
+  if (entry.aff) pruneAffinityMap(entry.aff);
   return entry.aff ?? {};
 }
 
@@ -319,21 +322,36 @@ export function density(entry, now, projectKey) {
   return effectiveScore(entry, now, projectKey) / Math.max(1, estTokens(entry.text ?? ""));
 }
 
-// ── A7 usage 回流（get+cite；按 (id,day) 批内日去重）───────
-// A7 usage 回流：仅 t∈{get,cite} 计分（search 浏览不计分，防热条目自证循环）；
-// 按 (id, UTC 日) 批内去重——同条同日多次读只计 1 分（防单会话循环刷分）；
+// ── A7 usage 回流（get/cite 计分 + search 弱反馈）───────────
+// get/cite：按 (id, UTC 日) 批内去重——同条同日多次读只计 1 分（防单会话循环刷分）；
 // lastUsed 取组内首个事件 ts（事件时间，非编译时间）；ws 累加项目亲和。
-// 返回 {applied, consumed, deduped}（v2 返回数字——统计口径升级）。
+// search：只计 searchHits/aff，不动 hits/lastUsed（防热条目自证循环）；按 (id, ws, UTC 日)
+// 持久去重（entry.searchLast），重放幂等——day 已固化，即使 cursor 失效也不双计。
+// 返回 {applied, consumed, deduped}（search 计入 applied/deduped）。
 export function applyUsage(entries, usageEvents, now) {
   const byId = new Map(entries.map((e) => [e.id, e]));
   const groups = new Map(); // key=id|day → {entry, firstTs, ws}
   let consumed = 0;
+  let searchApplied = 0;
   for (const ev of usageEvents) {
-    if (!ev || (ev.t !== "get" && ev.t !== "cite")) continue;
+    if (!ev || (ev.t !== "get" && ev.t !== "cite" && ev.t !== "search")) continue;
     const e = byId.get(ev.id);
     if (!e) continue;
     consumed++;
     const ts = Number.isFinite(ev.ts) ? ev.ts : now;
+    if (ev.t === "search") {
+      const day = Math.floor(ts / DAY_MS);
+      const ws = String(ev.ws || "global");
+      const last = e.searchLast ?? {};
+      if (day > (last[ws] ?? 0)) {
+        e.searchHits = (e.searchHits ?? 0) + 1;
+        last[ws] = day;
+        e.searchLast = pruneAffinityMap(last);
+        bumpAffinity(e, ws);
+        searchApplied++;
+      }
+      continue;
+    }
     const key = `${ev.id}|${Math.floor(ts / DAY_MS)}`;
     if (!groups.has(key)) groups.set(key, { entry: e, firstTs: ts, ws: ev.ws });
   }
@@ -342,7 +360,8 @@ export function applyUsage(entries, usageEvents, now) {
     g.entry.lastUsed = g.firstTs;
     bumpAffinity(g.entry, g.ws);
   }
-  return { applied: groups.size, consumed, deduped: consumed - groups.size };
+  const applied = groups.size + searchApplied;
+  return { applied, consumed, deduped: consumed - applied };
 }
 
 export function parseUsageLines(text) {
@@ -362,8 +381,9 @@ export function appendUsage(file, id, type, now, ws) {
   fs.appendFileSync(file, JSON.stringify(row) + "\n", "utf8");
 }
 
-// usage 轮转：主文件只保留近 7 日事件（重放窗口），更早行并入 .old（1 代，防 usage 无界膨胀）
-export function rotateUsage(file, now) {
+// 日志轮转（usage/injection/search 通用）：主文件只保留近 keepDays 日行，更早行并入 .old
+//（1 代，先 unlink 旧 .old 防跨轮累积）；tmp+rename 原子替换——读者永远看到完整文件。
+export function rotateLog(file, now, keepDays = 7) {
   let raw = "";
   try { raw = fs.readFileSync(file, "utf8"); } catch { return { kept: 0, rotated: 0 }; }
   const keep = [];
@@ -373,38 +393,51 @@ export function rotateUsage(file, now) {
     if (!t) continue;
     let ts = 0;
     try { ts = JSON.parse(t).ts ?? 0; } catch { ts = 0; }
-    (ts >= now - 7 * DAY_MS ? keep : old).push(t);
+    (ts >= now - keepDays * DAY_MS ? keep : old).push(t);
   }
   if (!old.length) return { kept: keep.length, rotated: 0 };
   try {
     const oldFile = `${file}.old`;
-    const prev = fs.existsSync(oldFile) ? fs.readFileSync(oldFile, "utf8") : "";
-    fs.writeFileSync(oldFile, prev + old.join("\n") + "\n", "utf8");
-    fs.writeFileSync(file, keep.join("\n") + (keep.length ? "\n" : ""), "utf8");
+    if (fs.existsSync(oldFile)) fs.unlinkSync(oldFile); // Windows 已存在时先删，失败由外层容错
+    fs.writeFileSync(oldFile, old.join("\n") + "\n", "utf8");
+    const tmp = `${file}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, keep.join("\n") + (keep.length ? "\n" : ""), "utf8");
+    renameWithRetry(tmp, file);
   } catch { return { kept: keep.length, rotated: 0 }; }
   return { kept: keep.length, rotated: old.length };
 }
 
+// usage 轮转兼容壳：保留 7 日事件（重放窗口），其余进 .old（1 代）
+export function rotateUsage(file, now) {
+  return rotateLog(file, now, 7);
+}
+
 // ── A8 生命周期 v3 ───────────────────────────────────────
 // A8 生命周期 v3（编译时原地改 status，调用方落盘）：
-//   trial→active：凭 hits≥1（被读过）或 source∈{user,evolve}（高可信来源直接转正）
-//   trial→archived：age≥30d 仍零回流（探索槽只在 14–30d 窗口给它曝光机会，过期即出清）
-//   active→archived：age>180d 零命中且非 pinned
+//   trial→active：凭 hits≥1 或 searchHits≥1（被读过/被检索命中）或 source∈{user,evolve}
+//   trial→archived：age≥90d 仍未转正（探索/试用窗口过期即出清）
+//   active→archived：age>180d 零 hits 且非 pinned 且 180d 时间窗内无 search 活动
+//     （用时间窗而非累计 searchHits==0——防早期被搜过但已僵尸的条目永不归档）
+//   顺序：先转正后归档（trial 本轮转正不参与归档判定）
 //   quarantine/flagged/archived：不自动转换——隔离与人工标记态只能由 flagEntry/人工复位流转
 export function recalcLifecycle(entries, now) {
   for (const e of entries) {
     const age = (now - (e.created ?? now)) / DAY_MS;
+    const searchHits = e.searchHits ?? 0;
+    const searchLastDayMax = Math.max(0, ...Object.values(e.searchLast ?? {}).filter((v) => Number.isFinite(v)));
     if (e.status === "trial") {
-      if ((e.hits ?? 0) > 0 || e.source === "user" || e.source === "evolve") e.status = "active";
-      else if (age >= 30) e.status = "archived";
+      if ((e.hits ?? 0) > 0 || searchHits > 0 || e.source === "user" || e.source === "evolve") e.status = "active";
+      else if (age >= 90) e.status = "archived";
     } else if (e.status === "active") {
-      if ((e.hits ?? 0) === 0 && age > 180 && !e.pinned) e.status = "archived";
+      if ((e.hits ?? 0) === 0 && age > 180 && !e.pinned
+        && (searchLastDayMax === 0 || now - searchLastDayMax * DAY_MS > 180 * DAY_MS)) e.status = "archived";
     }
   }
 }
 
 // ── A13 写管线 / flag / pending ──────────────────────────
 // A13 写管线（顺序硬约束）：脱敏 → lint（有 reject 不写）→ hash 精确 skip → Jaccard≥0.85 强化
+// （archived 命中走复活：重置 created/status=trial，不采纳新文本；新文本投毒命中则不合并）
 // → 新增（投毒命中 → quarantine，否则 trial）。violations 随返回值透传给工具层拼接提示。
 export function addWithPipeline(entries, { text, tags, date, source, ws, createdIn }, now) {
   const clean = normalizeText(redactSecrets(String(text ?? "")));
@@ -418,17 +451,25 @@ export function addWithPipeline(entries, { text, tags, date, source, ws, created
   let best = null;
   let bestJ = 0;
   for (const e of entries) {
-    // F（裁决三 #2）：合并目标仅限可注入态（trial/active）——相近文本撞上
-    // quarantine/flagged/archived 时不强化（防内容被静默吞进不进编译的条目），
-    // 接受重复代价新建条目；人工放行/复位后同文本再写会自然去重
-    if (e.status !== "trial" && e.status !== "active") continue;
+    // 合并目标：trial/active/archived（archived 走复活分支）；quarantine/flagged 不强化——
+    // 相近文本撞上隔离/人工标记态时不静默吞进不进编译的条目，接受重复代价新建，
+    // 人工放行/复位后同文本再写会自然去重
+    if (e.status !== "trial" && e.status !== "active" && e.status !== "archived") continue;
     const j = jaccard(tokens, tokenize(e.text ?? ""));
     if (j > bestJ) { bestJ = j; best = e; }
   }
-  if (best && bestJ >= 0.85) {
-    best.hits = (best.hits ?? 0) + 1;
+  // 投毒筛查先于合并：新文本命中投毒规则不得借已有条目洗白，fall through 走下方 quarantine 新建
+  if (best && bestJ >= 0.85 && !isQuarantineCandidate(clean)) {
     best.lastUsed = now;
     if (ws) bumpAffinity(best, ws);
+    if (best.status === "archived") {
+      // 复活：冻结旧文本（不采纳新内容，防借尸换内容）；重置观察时钟且不借 hits+1 绕过试用期
+      best.status = "trial";
+      best.created = now;
+      best.revivedAt = now;
+    } else {
+      best.hits = (best.hits ?? 0) + 1;
+    }
     return { action: "reinforced", id: best.id, violations };
   }
 
@@ -867,11 +908,13 @@ export function computeStats({ injectionRows = [], searchRows = [], entries = []
   const last = injectionRows[injectionRows.length - 1] ?? null;
   const d7 = now - 7 * DAY_MS;
   const d30 = now - 30 * DAY_MS;
+  const inj7 = injectionRows.filter((r) => (r.ts ?? 0) >= d7);
   const s7 = searchRows.filter((r) => (r.ts ?? 0) >= d7);
   const hit7 = s7.filter((r) => (r.n ?? 0) > 0).length;
   return {
     v: 3,
-    compiles: injectionRows.length,
+    // 滚动 7 日口径：injection-log 随 maintain 轮转，历史行已并入 .old（全时累计不可得）
+    compiles: inj7.length,
     lastBytes: last?.bytes ?? 0,
     lastSlots: { s: last?.slotIds?.s?.length ?? 0, t: last?.slotIds?.t?.length ?? 0, e: last?.slotIds?.e ? 1 : 0 },
     hitRate7d: s7.length ? hit7 / s7.length : null,
@@ -884,9 +927,11 @@ export function computeStats({ injectionRows = [], searchRows = [], entries = []
   };
 }
 
-export function makeSearchLogRow(q, n, now) {
+export function makeSearchLogRow(q, n, now, ids) {
   // q 脱敏（查询串本身可能带密钥/邮箱）+ 截 60：日志是长期文件，不成为二次泄漏源
-  return { ts: now, day: Math.floor(now / DAY_MS), q: redactSecrets(String(q ?? "")).slice(0, 60), n };
+  const row = { ts: now, day: Math.floor(now / DAY_MS), q: redactSecrets(String(q ?? "")).slice(0, 60), n };
+  if (Array.isArray(ids) && ids.length) row.ids = ids.slice(0, 20);
+  return row;
 }
 // ── 摄入 ─────────────────────────────────────────────────
 function readIfExists(file) {

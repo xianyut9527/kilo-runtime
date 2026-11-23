@@ -329,8 +329,11 @@
       // 层 3 自动审查从会话消息提取选定模型，经 runDualReview overrides.single_model 把正/反/裁决
       // 全席钉到该模型（输出标注「同源复核」），绝不混用配置里的多模型席位。
       // 仍禁用 task/agent_manager（子代理会引入非选定模型）、moa（多模型聚合）、技能/记忆增强。
-      // failover 链仍生效：流首出现 ⚠️ [failover] 即已换模型，该次结果按混模型处理；
-      // 需要严格隔离（failover 清空、注册表收敛、instructions 清空）时用 scripts/single-model.mjs enter/restore。
+      // failover 链仍生效：流首出现 ⚠️ [failover] 即已换模型，该次结果按混模型处理。
+      // 硬隔离的边界（2026-11-23 实测）：Kilo 7.8.32 无 chat.params / chat.message 钩子，
+      // provider 只拿到配置级 options、拿不到会话身份，因此「按会话关掉降级链」在代码层做不到
+      // （改成「链外模型不降级」会顺带打断 plan 的 kimi 首跳）。真硬隔离用唯一可执行路径：
+      // scripts/single-model.mjs enter/restore（整套配置收敛），入口见 /single-strict 命令。
       "mode": "primary",
       "description": "单模型质量闭环模式：任务链路模型调用（规划/执行/审查/裁决）只用模型选择器选定的当前模型，禁止委派与多模型聚合。",
       "permission": {
@@ -798,13 +801,24 @@
           "references": ["qwen4-max", "glm-5.3"],
           "aggregator": "kimi-k3.1-pro",
           "aggregator_fallbacks": ["deepseek-v4.1-flash-1017"],
+          // 主聚合席硬预留（ms）：与参考席消耗无关；上限 180s；fallback 保底另 90s；
+          // 审查最坏 480s 扇出 + 180s 预留 + 90s 保底 = 750s，quality-gate 等待 780s。
+          "aggregator_reserve_ms": 120000,
           // per-seat effort（2026-11-17 P2-4）：空串 = 网关默认（A/B 基线）；per-call
           // reference_effort/aggregator_effort 可覆盖。A/B 时只改一席，记录耗时/质量。
           "reference_effort": "",
           "aggregator_effort": "",
+          // 视角分工（2026-11-23 多模型视角互补）：diversify=true 时各参考席领不同分析
+          // 视角（正确性/风险边界/替代简化），聚合席保留分歧而非强行抹平——同题多视角
+          // 互补，防「多模型同问同答」的伪冗余。false = 旧行为（各席同题独立作答）。
+          "diversify": true,
+          // 自定义视角列表：非空时替代内置三视角（过滤空串/去重/单条 ≤300 字）；
+          // 空数组 = 用内置三视角；视角数 < 席数时循环复用并在输出标注「视角复用」。
+          "perspectives": [],
         },
         // dual_review 工具配置（plugin/dual-review.ts 读这里）：三层交付检查层 3，
-        // quality-gate 在交付节点由插件直调，正常单次审查共 3 次上游调用：
+        // quality-gate 在交付节点由插件直调，正常单次审查共 3 次上游调用
+        // （boundary 席启用时 +1，见下方 boundary 注释）：
         //   ① positive 与 negative 两路并行独立扇出（互不见对方报告）
         //   ② aggregator 读两份报告出终审结论（通过/不通过 + 必修项清单），
         //       裁决不通过则阻断交付 —— 正反找得到的、裁决必须闭环落地
@@ -835,11 +849,26 @@
           "negative_fallbacks": ["minimax-m3.1-flash", "deepseek-v4.1-flash-1017"],
           "aggregator": "kimi-k3.1-pro",
           "aggregator_fallbacks": ["glm-5.3", "deepseek-v4.1-flash-1017"],
+          // 主聚合席硬预留（ms）：与参考席消耗无关；上限 180s；fallback 保底另 90s；
+          // 审查最坏 480s 扇出 + 180s 预留 + 90s 保底 = 750s，quality-gate 等待 780s。
+          "aggregator_reserve_ms": 120000,
           // per-seat effort（2026-11-17 P2-4）：空串 = 网关默认（A/B 基线）；per-call
           // positive_effort/negative_effort/aggregator_effort 可覆盖。只改一席做 A/B。
           "positive_effort": "",
           "negative_effort": "",
           "aggregator_effort": "",
+          // 可选第三视角席（2026-11-23 多模型视角互补）：边界/安全/回归/兼容 lens，
+          // 与正向（查遗漏）/反向（找错）互补。缺省启用 deepseek-1017（第四族独立，
+          // 与 qwen 正向 / glm 反向 / kimi 裁决三族均不同源；已属 ≤5 引用集，不新增模型）；
+          // 空串 = 关闭（回退 3 次调用）。非空 = 并行附加席（首选全成功=4 次调用，
+          // 最坏=四席各自 Σ(1+len(fallbacks))）。尽力而为：独立短死线 boundary_timeout_ms
+          // （缺省 120s，钳制 [1s, 扇出预算]），失败/超时不短路正反裁决、缺席显式标注；
+          // 总墙钟上界不变（750s，与正反并行）。single 钉扎强制关闭（保单模型 3 次调用隔离）
+          // 并显式标注。启用后引用模型仍须满足 ≤5 约束（audit-config R9d/R9e 计入枚举）。
+          "boundary": "deepseek-v4.1-flash-1017",
+          "boundary_fallbacks": ["minimax-m3.1-flash"],
+          "boundary_effort": "high",
+          "boundary_timeout_ms": 120000,
         },
       },
       // 模型注册表（catalog：能力/上下文窗口/输出上限）

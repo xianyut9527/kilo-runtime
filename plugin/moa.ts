@@ -9,16 +9,41 @@
 // 可观测性由结果字符串自带（总耗时/每路字数与耗时/参与模型）。
 // 同日 execute 契约钉死：必须返回 Promise<string>——async 函数原生满足。
 
-import { loadCfg, askWithDeadline, cbShouldFailFast, timeoutsOf, clipText, modelRoutes, AGG_MIN_BUDGET_MS } from "../lib/hx-client";
+import { loadCfg, askWithDeadline, cbShouldFailFast, timeoutsOf, clipText, modelRoutes, aggReserveOf, AGG_MIN_BUDGET_MS } from "../lib/hx-client";
 
 const MAX_REFS = 3; // 成本上限（红线：单次最多 3 参考 + 1 聚合）
 const AGG_VIEW_LIMIT = 12_000; // 聚合 prompt 单路参考截断上限（字符）
 const MAX_TASK_CHARS = 50_000; // 任务输入上限：防无界文本多次灌入上游（成本/上下文）
+
+// 视角分工（2026-11-23 多模型视角互补增强）：≥2 参考席时各席领受不同指定视角，
+// 把「同一 prompt 多模型复读」升级为「分工互补 + 聚合保留分歧」。调用数不变（成本中性）。
+// 内置缺省 lens 是 prompt 文本而非模型——模型唯一真源仍在配置，不违反兜底禁令。
+// diversify:false 或单参考席 → 各席 prompt=task 逐字节同旧版（一键禁用通道）。
+const DEFAULT_LENSES = [
+  "正确性与可行性：结论/方案是否成立，逻辑与事实有无错误，关键假设是否可靠",
+  "风险与边界：失败模式、边界条件、安全隐患、回归与兼容性风险",
+  "替代与简化：有无更优或更简的路径，是否过度设计，被忽略的替代视角",
+];
+const LENS_CHAR_LIMIT = 300; // 单条 lens 入 prompt 上限（防病态配置撑爆扇出/聚合输入）
+
+// lens 解析（纯函数，经 _export 离线回归）：
+// - diversify===false 或 refCount<2 → null（旧行为）；
+// - perspectives 过滤非字符串/空串、trim、去重、限长；空数组回退内置三条（图纸必修①）；
+// - lens 数 < 席数时按 i%len 循环复用（输出显式标注），> 席数时多余项不使用。
+function lensesOf(cfgMoa, refCount) {
+  if (cfgMoa?.diversify === false || !(refCount >= 2)) return null;
+  const raw = Array.isArray(cfgMoa?.perspectives) ? cfgMoa.perspectives : [];
+  const cleaned = [...new Set(
+    raw.filter((x) => typeof x === "string" && x.trim()).map((x) => clipText(x.trim(), LENS_CHAR_LIMIT)),
+  )];
+  return cleaned.length ? cleaned : DEFAULT_LENSES;
+}
 // 墙钟预算（2026-10-08「巨卡」专项）：插件工具无 UI 进度通道（2026-09-22 三次证伪），
 // 最坏情形 = 扇出与聚合两阶段各等满一次 ask 预算（timeoutMs=480s）→ 单次 moa 卡 ~16min
 // 无反馈（遥测实证 timeout_total elapsedMs=480005 / stream_break_rewrap elapsedMs=585647）。
 // 修法：整个工具钉总墙钟 ≈ timeoutMs——扇出阶段共享剩余预算（超时路按普通失败处理，
-// allSettled 语义不变），聚合阶段保底 AGG_MIN_BUDGET_MS；聚合超时走既有 catch 降级
+// allSettled 语义不变），聚合阶段使用独立硬预留（aggregator_reserve_ms，缺省 120s、
+// 上限 180s）；fallback 另享 AGG_MIN_BUDGET_MS 90s 保底。聚合超时走既有 catch 降级
 //（返回原始视角清单），扇出全灭走既有「所有参考模型失败」路径。行为不新增依赖。
 
 const MoaImpl = async (_ctx = {}) => {
@@ -26,7 +51,7 @@ const MoaImpl = async (_ctx = {}) => {
     tool: {
       moa: {
         description:
-          "Mixture-of-Agents：把同一任务并发交给多个参考模型，再由聚合模型综合出一份结论。仅在需要多视角交叉判断（高风险决策、疑难排错、方案取舍）时按需调用；常规任务不要调用（成本敏感）。",
+          "Mixture-of-Agents：把同一任务并发交给多个参考模型，再由聚合模型综合出一份结论。≥2 参考席时各席默认按不同指定视角分工分析（moa.diversify/perspectives 可配），聚合保留分歧并裁决。仅在需要多视角交叉判断（高风险决策、疑难排错、方案取舍）时按需调用；常规任务不要调用（成本敏感）。",
         args: {
           task: { type: "string", description: "交给多模型分析的任务描述（含必要上下文与约束）" },
           references: {
@@ -75,6 +100,13 @@ const MoaImpl = async (_ctx = {}) => {
             return "moa: 参考模型/聚合模型未配置——请在 kilo.json 的 provider.openllamas.options.moa 配置 references 与 aggregator（模型唯一真源在配置文件，代码不留兜底默认值）";
           }
 
+          // 视角分工：lenses=null 时 refPrompt(i)===task（旧行为逐字节不变）。
+          const lenses = lensesOf(cfgMoa, refs.length);
+          const lensFor = (i) => lenses[i % lenses.length];
+          const refPrompt = (i) => lenses
+            ? `你在本次任务中的指定分析视角：${lensFor(i)}。\n请优先从该视角深入分析下面的任务（视角外的重大发现可以附带指出，但以视角内为主）。\n\n${task}`
+            : task;
+
           // 超时/空闲看门狗：timeoutsOf 单点解析（kilo.json provider.openllamas.options，缺省回退共享兜底）
           const { timeoutMs: totalMs, idleMs } = timeoutsOf(cfg.options);
 
@@ -90,16 +122,18 @@ const MoaImpl = async (_ctx = {}) => {
           // 墙钟预算（2026-10-08「巨卡」专项）：插件工具无 UI 进度通道（2026-09-22 三次证伪），
           // 最坏情形 = 扇出+聚合两阶段各等满一次 ask 预算 → 单次 moa 卡 ~16min 无反馈
           //（遥测实证 timeout_total elapsedMs=480005 / stream_break_rewrap elapsedMs=585647）。
-          // 整个工具钉总墙钟 ≈ timeoutMs：扇出共享剩余预算（超时路按普通失败处理，
-          // allSettled 语义不变；askWithDeadline 到点 abort 底层 fetch，不留迟到请求）
-          // 聚合保底 AGG_MIN_BUDGET_MS，聚合超时走既有 catch 降级（返回原始视角）。
+          // 整个工具钉总墙钟 ≈ timeoutMs：扇出共享完整配置预算（超时路按普通失败处理，
+          // allSettled 语义不变；askWithDeadline 到点 abort 底层 fetch，不留迟到请求）。
+          // 主聚合席另取独立硬预留 reserveMs（与参考席消耗无关）；fallback 仍享
+          // AGG_MIN_BUDGET_MS 90s 保底。聚合超时走既有 catch 降级（返回原始视角）。
           const wallStart = Date.now();
           const wallDeadline = wallStart + totalMs;
+          const reserveMs = aggReserveOf(cfgMoa, totalMs);
 
           // 聚合路由兜底：按 aggModels 顺序尝试，共享聚合墙钟；快速失败立即续试。
-          // 2026-10-27 终审追修（与 dual-review askRoute 同口径）：首选聚合耗尽共享墙钟后，
-          // fallback 补一段 AGG_MIN_BUDGET_MS 保底窗口（只补一次、剩余候选共享）——
-          // 防首选超时把 aggregator_fallbacks 饿死，总墙钟上界不变（480s+90s=570s）。
+          // 2026-10-27 终审追修（与 dual-review askRoute 同口径）：首选聚合耗尽预留后，
+          // fallback 补一段 AGG_MIN_BUDGET_MS 90s 保底窗口（只补一次、剩余候选共享）——
+          // 防首选超时把 aggregator_fallbacks 饿死（最坏 480s 扇出+180s 预留+90s 保底=750s）。
           const askAggregator = async (prompt, deadlineMs) => {
             const failed = [];
             let lastErr = null;
@@ -144,7 +178,7 @@ const MoaImpl = async (_ctx = {}) => {
             const t0m = Date.now();
             const p = askWithDeadline(
               {
-                baseURL: cfg.baseURL, key: cfg.key, model: m, prompt: task,
+                baseURL: cfg.baseURL, key: cfg.key, model: m, prompt: refPrompt(i),
                 timeoutMs: totalMs, idleMs, attempts: undefined, reasoningEffort: refEffort || undefined,
               },
               wallDeadline,
@@ -164,7 +198,7 @@ const MoaImpl = async (_ctx = {}) => {
           const perf = [];
           settled.forEach((r, i) => {
             if (r.status === "fulfilled") {
-              views.push({ model: refs[i], text: r.value });
+              views.push({ model: refs[i], text: r.value, lens: lenses ? lensFor(i) : "" });
               perf.push(`${refs[i]}：${r.value.length} 字 / ${(durations[i] / 1000).toFixed(1)}s`);
             } else {
               failures.push({ model: refs[i], reason: r.reason, durS: (durations[i] / 1000).toFixed(1) });
@@ -181,18 +215,24 @@ const MoaImpl = async (_ctx = {}) => {
           const clipped = views.map((v) => ({ ...v, text: clipText(v.text, AGG_VIEW_LIMIT) }));
 
           const aggregatePrompt = [
-            "你是聚合器。下面是同一任务由多个模型给出的独立分析。",
-            "综合它们，输出一份更可靠的结论：保留有共识的部分，指出分歧并给出你的取舍与理由；不要简单罗列各家观点。",
+            "你是聚合器。下面是同一任务由多个模型给出的独立分析" + (lenses ? "（各模型按指定视角分工，视角标注见各节标题）" : "") + "。",
+            "综合它们，输出一份更可靠的结论，按以下结构：",
+            "## 共识：各视角一致认可的要点（附理由）",
+            "## 分歧：视角间相互矛盾的判断——逐条保留双方立场与依据，给出你的取舍与理由；不得用折中抹平分歧",
+            "## 视角独有发现：仅单一视角提出的关键点——判断是否成立，成立的采纳，不成立的说明理由；不得因少数而直接丢弃",
+            "## 最终结论：综合后的整体结论与建议",
+            "不要简单罗列各家观点；某路参考缺失时基于现有视角综合并注明。",
             "",
             `## 任务\n${task}`,
             "",
-            ...clipped.map((v) => `## 参考模型 ${v.model}\n${v.text}`),
+            ...clipped.map((v) => `## 参考模型 ${v.model}${v.lens ? `（视角：${v.lens}）` : ""}\n${v.text}`),
           ].join("\n");
 
           let agg;
           try {
-            // 聚合阶段拿剩余墙钟（保底 AGG_MIN_BUDGET_MS，封顶 timeoutMs）；fallback 共享该预算
-            const aggDeadline = Math.max(wallDeadline, Date.now() + AGG_MIN_BUDGET_MS);
+            // 聚合阶段：主聚合席拿独立硬预留（reserveMs，与参考席消耗无关）；fallback 共享
+            // 该预留，耗尽后由 askAggregator 的 AGG_MIN_BUDGET_MS 90s 保底兜住
+            const aggDeadline = Math.max(wallDeadline, Date.now() + reserveMs);
             agg = await askAggregator(aggregatePrompt, aggDeadline);
           } catch (e) {
             // 聚合失败也要返回可用结果（不丢参考视角）
@@ -211,6 +251,7 @@ const MoaImpl = async (_ctx = {}) => {
           const aggDegraded = aggModels.length > 0 && agg.model !== aggModels[0];
           return [
             `## MoA 结论（聚合模型：${agg.model}，总耗时 ${elapsed}s）`,
+            lenses ? `> 视角分工：${refs.map((m, i) => `${m}→${lensFor(i)}`).join("；")}${lenses.length < refs.length ? `（视角复用：${refs.length} 席/${lenses.length} 视角）` : ""}` : "",
             aggDegraded ? `> 降级复核：聚合 ${aggModels[0]}→${agg.model}（使用 fallback 非首选聚合模型，交叉验证强度降级）` : "",
             agg.failed.length ? `> 路由兜底：${agg.failed.join("；")}` : "",
             agg.text,
@@ -237,3 +278,7 @@ export const Moa = async (ctx = {}) => {
     return {};
   }
 };
+
+// Kilo vE2 契约：工具函数经 _export 命名空间对象暴露（对象无 server 属性 → 加载器跳过，
+// 绝不会被当工厂调用）。离线回归经此访问 lensesOf/DEFAULT_LENSES。
+export const _export = { lensesOf, DEFAULT_LENSES, LENS_CHAR_LIMIT };

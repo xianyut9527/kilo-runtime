@@ -102,9 +102,12 @@ const dr = pv.options.dual_review, moa = pv.options.moa;
 const seats = [dr.positive, dr.negative, dr.aggregator];
 t("R9 审查三席全注册", seats.every((m) => reg[m]), seats.filter((m) => !reg[m]).join(","));
 t("R9b 审查三席互异（防自审）", new Set(seats).size === 3, seats.join("/"));
-const refs = [...(dr.positive_fallbacks ?? []), ...(dr.negative_fallbacks ?? []), ...(dr.aggregator_fallbacks ?? []), ...(moa.aggregator_fallbacks ?? []), ...moa.references, moa.aggregator];
+const refs = [...(dr.positive_fallbacks ?? []), ...(dr.negative_fallbacks ?? []), ...(dr.aggregator_fallbacks ?? []), ...(dr.boundary_fallbacks ?? []), ...(moa.aggregator_fallbacks ?? []), ...moa.references, moa.aggregator];
 t("R9c fallback/参考席全注册", [...new Set(refs)].every((m) => reg[m]), [...new Set(refs)].filter((m) => !reg[m]).join(","));
-const union = new Set([...seats, ...refs, ...chain, ...Object.values(cfg.agent ?? {}).map((a) => String(a.model ?? "").split("/").pop()).filter(Boolean)]);
+// 可选 boundary 第三视角席（2026-11-23）：非空时须注册且计入 ≤5 引用约束；空=关闭不计。
+const boundary = String(dr.boundary ?? "").trim();
+if (boundary) t("R9e boundary 席已注册", Boolean(reg[boundary]), boundary);
+const union = new Set([...seats, ...(boundary ? [boundary] : []), ...refs, ...chain, ...Object.values(cfg.agent ?? {}).map((a) => String(a.model ?? "").split("/").pop()).filter(Boolean)]);
 t("R9d 路由引用合计 ≤5", union.size <= 5, `${union.size}: ${[...union].join(",")}`);
 
 for (const k of ["small_model", "subagent_model"]) {

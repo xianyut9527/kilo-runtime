@@ -18,7 +18,7 @@ import {
   loadStore, saveStoreAtomic, renameWithRetry, appendCorruptUnique,
   addOrReinforce, addWithPipeline, applyUsage, parseUsageLines, appendUsage,
   flagEntry, resolveShortId, assignSid, ensureSids,
-  parsePendingOps, applyPendingOps, rotateUsage,
+  parsePendingOps, applyPendingOps, rotateUsage, rotateLog,
   score, density, tokenize, jaccard, parseLessonLines, extractUnfenced, isLineInFence,
   buildCompiled, recalcLifecycle, ingestSources, importOnce,
   normalizeText, hashText, makeId, redactSecrets, maskValue,
@@ -316,7 +316,9 @@ function maintain(now = Date.now()) {
         return;
       }
       if (compiled) writeCompiled(compiled, markdown);
-      // ⑦ 观测：injection-log 追加一行 + stats.json 全量重算（/evolve 步骤 5 审阅入口）
+      // ⑦ 观测：日志轮转（7 日窗口，更早行并入 .old 1 代）→ 追加本轮行 → stats 读有界日志
+      try { rotateLog(path.join(dir, "injection-log.jsonl"), now, 7); } catch (e) { report("injection-log-rotate", e?.message ?? e); }
+      try { rotateLog(path.join(dir, "search-log.jsonl"), now, 7); } catch (e) { report("search-log-rotate", e?.message ?? e); }
       try {
         fs.appendFileSync(
           path.join(dir, "injection-log.jsonl"),
@@ -435,7 +437,7 @@ const MemoryStoreImpl = async ({ directory } = {}) => {
       },
       mem_search: {
         description:
-          "本地检索全局记忆 store（BM25-lite：idf 加权 + 条目评分微调；零联网零成本）。零命中返回域目录与建议词。不写 usage（浏览不计分）。",
+          "本地检索全局记忆 store（BM25-lite：idf 加权 + 条目评分微调；正文与标签入索引；只检索 trial/active）。零命中返回域目录与建议词。命中条目记 t:search 弱反馈（只累计 searchHits/项目亲和，不计 hits/lastUsed）。",
         args: {
           query: { type: "string", description: "检索关键词（拉丁词或中文片段均可）" },
           tag: { type: "string", description: "按标签过滤（可选）" },
@@ -451,35 +453,47 @@ const MemoryStoreImpl = async ({ directory } = {}) => {
           if (!total) return "mem_search: 记忆库为空（共 0 条）";
           if (!query && !tag) return `mem_search: 缺少 query 参数（库共 ${total} 条；示例 mem_search {"query":"rename EPERM"}）`;
 
-          // BM25-lite 预备：df 一次算全（条目量千级内全扫成本可忽略，零依赖不引索引）
+          // BM25-lite 预备：df 一次算全（条目量千级内全扫成本可忽略，零依赖不引索引）；
+          // tags 一并入索引——标签是人工聚合的语义入口，只索引正文会漏「标签命中、正文不含词」的条目
           const now = Date.now();
           const qTokens = [...tokenize(query)];
-          const entryTokens = entries.map((e) => tokenize(e.text ?? ""));
+          const entryTokens = entries.map((e) => tokenize(`${e.text ?? ""} ${(e.tags ?? []).join(" ")}`));
           const df = new Map();
           for (const tokens of entryTokens) for (const t of tokens) df.set(t, (df.get(t) ?? 0) + 1);
 
           const hits = [];
           for (let i = 0; i < entries.length; i++) {
             const e = entries[i];
+            // 检索白名单：archived 是终态、quarantine/flagged 待人工流转——都不再被检索命中
+            if (e.status === "archived" || e.status === "quarantine" || e.status === "flagged") continue;
             if (tag && !(e.tags ?? []).includes(tag)) continue;
             const matched = qTokens.filter((t) => entryTokens[i].has(t));
-            if (qTokens.length && matched.length === 0) continue; // 词面零命中不算命中（评分加成不救场）
+            // 覆盖度阈值：长查询只撞一两个词是噪声（如 moa/聚合类查询撞无关条目），
+            // 要求 ≥40% 查询 token 命中；qTokens 空（纯 tag 检索）走评分序不加阈值
+            if (qTokens.length && matched.length / qTokens.length < 0.4) continue;
             let s = 0;
             for (const t of matched) s += Math.log(1 + total / Math.max(1, df.get(t) ?? 1));
             s += 0.1 * score(e, now);
             hits.push({ e, s });
           }
           hits.sort((a, b) => b.s - a.s);
+          const top = hits.slice(0, limit);
 
-          // ⑤ search-log 脱敏落盘（观测：q 经 makeSearchLogRow 脱敏截 60；零命中也记 n=0）
+          // ⑤ search-log 脱敏落盘（观测：q 经 makeSearchLogRow 脱敏截 60；零命中也记 n=0；
+          // 附命中 ids 供回放归因）
           try {
             fs.mkdirSync(storeDir(), { recursive: true });
             fs.appendFileSync(
               path.join(storeDir(), "search-log.jsonl"),
-              JSON.stringify(makeSearchLogRow(query, Math.min(hits.length, limit), now)) + "\n",
+              JSON.stringify(makeSearchLogRow(query, top.length, now, top.map(({ e }) => e.id))) + "\n",
               "utf8"
             );
           } catch { /* 观测可丢 */ }
+          // 弱反馈：返回的命中条目逐条记 t:search（(id,ws,日) 持久去重，重放幂等）
+          try {
+            const ws = currentProjectKey();
+            for (const { e } of top) appendUsage(path.join(storeDir(), "usage.jsonl"), e.id, "search", now, ws);
+          } catch { /* usage 可丢 */ }
 
           if (!hits.length) {
             // 零命中兜底：域目录 top8 + 计数 + 建议词（高频 tag 即库内语义地图）
@@ -492,11 +506,11 @@ const MemoryStoreImpl = async ({ directory } = {}) => {
               "建议：换用上述标签词或更短的关键词重试；或用 mem_add 直接沉淀新经验。",
             ].join("\n");
           }
-          const lines = hits.slice(0, limit).map(({ e }) => {
+          const lines = top.map(({ e }) => {
             const text = String(e.text ?? "");
             return `${e.id} [${(e.tags ?? []).join(",")}] hits ${e.hits ?? 0} · ${text.length > 140 ? text.slice(0, 140) + "…" : text}`;
           });
-          return [`命中 ${Math.min(hits.length, limit)} / 共 ${total} 条`, ...lines].join("\n");
+          return [`命中 ${top.length} / 共 ${total} 条`, ...lines].join("\n");
         },
       },
       mem_get: {
@@ -649,7 +663,7 @@ export const _export = {
   loadStore, saveStoreAtomic, renameWithRetry, appendCorruptUnique,
   addOrReinforce, addWithPipeline, flagEntry, parsePendingOps, applyPendingOps,
   assignSid, ensureSids, resolveShortId,
-  applyUsage, parseUsageLines, appendUsage, rotateUsage,
+  applyUsage, parseUsageLines, appendUsage, rotateUsage, rotateLog,
   score, density, estTokens, bumpAffinity, projAffinity, effectiveScore, buildCompiled, recalcLifecycle,
   ingestSources, importOnce,
   makeInjectionLogRow, makeSearchLogRow, snapshotNotes, computeStats,

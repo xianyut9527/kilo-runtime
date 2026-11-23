@@ -496,11 +496,30 @@ export async function loadCfg() {
   return cfgCache;
 }
 
-// 聚合/裁决阶段保底墙钟（moa/dual_review 共用口径）：扇出烧完全局预算后仍给聚合一次
-// 出结论的机会；两个工具此前各留一份同名常量，改一处漏一处会导致预算口径漂移。
+// 聚合/裁决阶段墙钟（moa/dual_review 共用口径）：
+// - 主聚合席硬预留：与参考席消耗无关，配置
+//   provider.openllamas.options.<moa|dual_review>.aggregator_reserve_ms（缺省 120s，
+//   上限 180s，且不超过本次 timeoutMs）；聚合 deadline = max(扇出 wallDeadline,
+//   now + reserve)。两个工具此前各留一份保底常量，改一处漏一处会导致预算口径漂移。
+// - fallback 保底（AGG_MIN_BUDGET_MS 90s）：首选聚合耗尽预留后，备用候选补一次 90s 窗口。
+// - 最坏审查 = 480s 扇出 + 180s 预留 + 90s 保底 = 750s；quality-gate 等待上限 780s。
 // KILO_AGG_FLOOR_MS 环境变量仅作离线测试注入（缩短保底窗以秒级复现「首选耗尽墙钟」
 // 场景，见 test-dual-review-budget.mjs）；夹取 ≤90s 保证任何注入都不能击穿
-// 570s 总墙钟上界（终审追修：防生产误配放大保底窗），生产不设此变量即默认 90s。
+// 保底窗上界（终审追修：防生产误配放大保底窗），生产不设此变量即默认 90s。
+export const DEFAULT_AGG_RESERVE_MS = 120_000;
+export const MAX_AGG_RESERVE_MS = 180_000;
+
+// 聚合硬预留解析：非法/缺失回退缺省；clamp 到 [0, min(MAX_AGG_RESERVE_MS, total)]，
+// 返回有限数、绝不抛错。保持无类型注解 JS 语法（test-plugin-contract 用 Node
+// strip-types 直接加载本文件，新增 TS 专有语法会绕过该回归入口）。
+export function aggReserveOf(options, totalMs) {
+  const total = Number(totalMs);
+  const totalCap = Number.isFinite(total) && total > 0 ? total : FALLBACK_TIMEOUT_MS;
+  const raw = Number(options?.aggregator_reserve_ms);
+  const reserve = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_AGG_RESERVE_MS;
+  return Math.min(Math.max(reserve, 0), Math.min(MAX_AGG_RESERVE_MS, totalCap));
+}
+
 export const AGG_MIN_BUDGET_MS = (() => {
   const v = Number(process.env.KILO_AGG_FLOOR_MS);
   return Number.isFinite(v) && v > 0 ? Math.min(v, 90_000) : 90_000;

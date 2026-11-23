@@ -148,6 +148,18 @@ t("必须修复项非空 → fail=true（即便裁决写通过）", parseReviewV
 t("无裁决段 → inconclusive（上游失败 fail-open）", parseReviewVerdict("dual_review: 正向模型失败").inconclusive === true);
 t("裁决回显选项（三选一）时只看必须修复项段", parseReviewVerdict("## 裁决\n三选一：① 通过 ② 不通过\n\n## 必须修复项\n无").fail === false);
 t("必须修复项段在 <details> 前截止", parseReviewVerdict("## 裁决\n通过\n\n## 必须修复项\n- 修 A\n<details><summary>细节</summary>").fixSection.includes("修 A"));
+// dr-2026-11-23.1 新增段序兼容：裁决/必须修复项/建议改进项/对质与覆盖/依据。
+// parseReviewVerdict 只认前两段，新增「对质与覆盖」「依据」不得污染 fixSection 或误判。
+t("新段序：必须修复项段在「建议改进项」前截止（不吞后续段）", (() => {
+  const v = parseReviewVerdict("## 裁决\n通过\n\n## 必须修复项\n- 修 A\n\n## 建议改进项\n- 改进 B\n\n## 对质与覆盖\n分歧裁决\n\n## 依据\n取舍");
+  return v.fail === true && v.fixSection.includes("修 A") && !v.fixSection.includes("改进 B") && !v.fixSection.includes("分歧裁决");
+})());
+t("新段序：必须修复项为「无」+ 后续段非空 → fail=false", (() => {
+  const v = parseReviewVerdict("## 裁决\n通过\n\n## 必须修复项\n无\n\n## 建议改进项\n- 改进 B\n\n## 对质与覆盖\n无分歧\n\n## 依据\n共识");
+  return v.fail === false && v.inconclusive === false;
+})());
+t("新段序：裁决不通过仍 fail=true（新增段不影响裁决判定）",
+  parseReviewVerdict("## 裁决\n不通过\n\n## 必须修复项\n- 修 A\n\n## 对质与覆盖\n分歧\n\n## 依据\n理由").fail === true);
 
 // ── VERIFY_CMD_RE ──
 t("npm test 命中", VERIFY_CMD_RE.test("npm test"));
@@ -525,7 +537,41 @@ t("hasAcceptMarker：2026-10-16 收紧——rg 查字面量不获接受语义", 
   const subjectHuge = await reviewSubject(tmp, { commands: ["x".repeat(30000)], edited: new Set() }, "");
   t("r2②：总预算 24K 截断标注可见（标记不被二次砍掉）",
     subjectHuge.length <= 24000 && subjectHuge.includes("审查素材超 24000 字符"));
+  // 盲区清单（dr-2026-11-23.1）：diff 截断处之后的文件改动未入素材 → 显式列出，
+  // 审查者只能标「不可判定」，不得因素材缺席推定覆盖。git diff 按路径字母序输出：
+  // big.ts(~40K) 排最前，shownDiff(20K) 只含 big 头部 → mine/tail 的 diff 都在截断处之后 → 入盲区。
+  const tail = path.join(tmp, "tail.ts");
+  fs.writeFileSync(tail, "export const tail = 7;\n");
+  git(["add", "tail.ts"]);
+  const sBlind = { commands: [], edited: new Set([mine, path.join(tmp, "big.ts"), tail]) };
+  const subjectBlind = await reviewSubject(tmp, sBlind, "mine.ts\nbig.ts\ntail.ts");
+  t("盲区清单：diff 截断处之后的文件（tail.ts）被显式列出",
+    subjectBlind.includes("盲区清单") && subjectBlind.includes("tail.ts") && subjectBlind.includes("不可判定"));
+  t("盲区清单：basename 已在 shownDiff 的文件（big.ts 头部）不重复列入",
+    !/^- .*big\.ts（未入/m.test(subjectBlind));
+  t("盲区清单：无盲区时不插入该段（单小文件 diff 全可见，输出与旧版一致）", !subject.includes("盲区清单"));
   fs.rmSync(outside, { force: true });
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// ── reviewSubject 盲区清单：>100 文件 diff 上限之外的文件 ──
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qg-rsj-cap-"));
+  const git = (args) => execFileSync("git", args, { cwd: tmp, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" }, stdio: ["ignore", "pipe", "pipe"] }).toString();
+  git(["init", "-q"]);
+  const files = [];
+  for (let i = 0; i < 105; i++) {
+    const f = path.join(tmp, `f${i}.ts`);
+    fs.writeFileSync(f, `export const v${i} = 0;\n`);
+    files.push(f);
+  }
+  git(["add", "."]);
+  git(["commit", "-q", "-m", "base"]);
+  for (let i = 0; i < 105; i++) fs.writeFileSync(files[i], `export const v${i} = 1;\n`);
+  const s = { commands: [], edited: new Set(files) };
+  const subject = await reviewSubject(tmp, s, files.map((f) => path.basename(f)).join("\n"));
+  t("盲区清单：超出 100 文件 diff 上限的文件被列出（f100+）",
+    subject.includes("超出 100 文件 diff 上限") && subject.includes("f104.ts"));
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
@@ -718,6 +764,60 @@ t("insertUnderHeading：CRLF 文件 → 追加不破坏结构（\\r\\n 归一化
   const md = "# P\r\n\r\n## Open Questions\r\n\r\n## Constraints\r\n";
   const next = insertUnderHeading(md, "## Open Questions", "- r :: x");
   return next.includes("## Open Questions") && next.includes("- r :: x") && next.includes("## Constraints");
+})());
+
+// ── ⑤-b 残余去重增强（Phase 1 智能自动化）：sha8 锚定跨日去重 / unreviewed 每日一条 / 前缀锚定 ──
+t("insertUnderHeading：同 body 不同 date 的残余 → sha8 命中不重复追加（跨日去重）", (() => {
+  const today = residualFixupLine("修复 A", "salt");
+  const old = today.replace(/review_residual_\d{4}-\d{2}-\d{2}_/, "review_residual_2020-01-01_");
+  const md = `## Open Questions\n${old}\n`;
+  return insertUnderHeading(md, "## Open Questions", today) === md;
+})());
+t("insertUnderHeading：旧行无 date（review_residual_<sha8>）同样按 sha8 去重", (() => {
+  const today = residualFixupLine("修复 B", "salt");
+  const old = today.replace(/review_residual_\d{4}-\d{2}-\d{2}_/, "review_residual_");
+  const md = `## Open Questions\n${old}\n`;
+  return insertUnderHeading(md, "## Open Questions", today) === md;
+})());
+t("insertUnderHeading：同 sha8 不同正文（碰撞 fallback 全文比对）→ 追加", (() => {
+  const h = "deadbeef";
+  const md = `## Open Questions\n- review_residual_2020-01-01_${h} :: 前缀 :: 体甲\n`;
+  const next = insertUnderHeading(md, "## Open Questions", `- review_residual_2026-11-23_${h} :: 前缀 :: 体乙`);
+  return next !== md && next.includes("体甲") && next.includes("体乙");
+})());
+t("insertUnderHeading：key 前缀锚定——正文提及同 sha8 不误判已沉淀", (() => {
+  const today = residualFixupLine("修复 C", "salt");
+  const sha = today.match(/review_residual_\d{4}-\d{2}-\d{2}_([0-9a-f]{8})/)[1];
+  const md = `## Open Questions\n- 备注：见 review_residual_2020-01-01_${sha} 历史线索\n`;
+  const next = insertUnderHeading(md, "## Open Questions", today);
+  return next !== md && next.includes(today);
+})());
+t("insertUnderHeading：10 位 hex 不作 sha8 命中（\\b 边界）", (() => {
+  const today = residualFixupLine("修复 D", "salt");
+  const sha = today.match(/review_residual_\d{4}-\d{2}-\d{2}_([0-9a-f]{8})/)[1];
+  const md = `## Open Questions\n- review_residual_2020-01-01_${sha}ff :: 前缀 :: 别的正文\n`;
+  const next = insertUnderHeading(md, "## Open Questions", today);
+  return next !== md;
+})());
+t("insertUnderHeading：unreviewed 同日不同 reason → 每日一条不重复追加", (() => {
+  const a = unreviewedMarkerLine("原因甲");
+  const b = unreviewedMarkerLine("原因乙");
+  const md = `## Open Questions\n${a}\n`;
+  return insertUnderHeading(md, "## Open Questions", b) === md;
+})());
+t("insertUnderHeading：unreviewed 跨日 → 追加新日一条", (() => {
+  const today = unreviewedMarkerLine();
+  const old = today.replace(/review_unreviewed_\d{4}-\d{2}-\d{2}/, "review_unreviewed_2020-01-01");
+  const md = `## Open Questions\n${old}\n`;
+  const next = insertUnderHeading(md, "## Open Questions", today);
+  return next !== md && next.includes(old) && next.includes(today);
+})());
+t("insertUnderHeading：unreviewed 正文提及日期不误判（行首锚定）", (() => {
+  const today = unreviewedMarkerLine();
+  const date = today.match(/review_unreviewed_(\d{4}-\d{2}-\d{2})/)[1];
+  const md = `## Open Questions\n- 备注：见 review_unreviewed_${date} 历史\n`;
+  const next = insertUnderHeading(md, "## Open Questions", today);
+  return next !== md;
 })());
 
 // ── ⑦ degradationSummary：降级/放行审计账本汇总（纯函数）──

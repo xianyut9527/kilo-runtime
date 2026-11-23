@@ -131,9 +131,27 @@ function Resolve-Bash {
 }
 
 function Resolve-Node {
+    # 2026-11-23：本机 PATH node=v14（缺 node: ESM 内置模块），storage-maintain.mjs 在
+    # storage 环节必挂 → 维护失败、state.json 不更新（清理停摆 13 天的根因之一）。
+    # 与 install.ps1 冒烟同口径：PATH node → hermes node22 兜底，取第一个 ≥18 的候选；
+    # 全部 <18 时保留旧行为并显式告警，不静默换失败。
     $cmd = Get-Command node.exe -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    throw 'FAIL: 找不到 node.exe（storage-maintain.mjs 数据目录回收需要 Node）'
+    $cands = @()
+    if ($cmd) { $cands += $cmd.Source }
+    $cands += (Join-Path $env:LOCALAPPDATA 'hermes\node\node.exe')
+    foreach ($p in $cands) {
+        if (-not $p -or -not (Test-Path -LiteralPath $p)) { continue }
+        try {
+            $ver = (& $p -v 2>$null) -replace '^v', ''
+            $major = [int]($ver.Split('.')[0])
+            if ($major -ge 18) { return $p }
+        } catch { }
+    }
+    if ($cmd) {
+        Write-Warning "[MAINT] node 版本 <18，storage-maintain.mjs 可能失败（ERR_UNKNOWN_BUILTIN_MODULE）：$($cmd.Source)"
+        return $cmd.Source
+    }
+    throw 'FAIL: 找不到 node.exe（storage-maintain.mjs 数据目录回收需要 Node ≥18）'
 }
 
 # 变更类入口跨进程单飞（2026-11-12 维护并发专项，error.log 05:35:06 实锤）：

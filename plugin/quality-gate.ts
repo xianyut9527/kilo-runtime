@@ -522,8 +522,8 @@ function memoryRootFor(root) {
 }
 
 // 生成沉淀行：- review_residual_2026-09-24_a1b2c3d4 :: <fixSection 单行化>（截 600 与 reviewPending 同口径）
-// key 带日期+素材指纹：同会话重复触发只追加一次（指纹相同→视为已沉淀，由调用方比对），
-// 不同轮次内容变化 → 指纹变 → 追加新行，历史不覆盖（审计线索保留）。
+// key 带日期+素材指纹（date 保留作 firstSeen 审计）：幂等由 insertUnderHeading 按 sha8 锚定——
+// 同内容跨日重触发不再追加，不同轮次内容变化 → 指纹变 → 追加新行，历史不覆盖（审计线索保留）。
 function residualFixupLine(fixSection, salt) {
   const raw = String(fixSection ?? "")
     // 每行剥列表符号：沉淀行自身是「- key :: text」形态，嵌套列表符号会污染记忆行
@@ -539,6 +539,36 @@ function residualFixupLine(fixSection, salt) {
   return `- review_residual_${date}_${h} :: 审查残余必须修复项（层 3 轮次上限放行/显式接受，待跟进）:: ${body}`;
 }
 
+// 残余行 key 解析：锚定行首 key 前缀（非正文子串），捕获 sha8；旧行无 date 也兼容。
+// 跨日同正文的 key date 不同，但 sha8 相同——幂等按 sha8 锚定，不靠全文相等。
+const RESIDUAL_KEY_RE = /^-\s*review_residual_(?:\d{4}-\d{2}-\d{2}_)?([0-9a-f]{8})\b/;
+const UNREVIEWED_KEY_RE = /^-\s*review_unreviewed_(\d{4}-\d{2}-\d{2})\b/;
+
+// 沉淀正文（最后一个 ` :: ` 之后）：sha8 相同但正文不同 = 碰撞（罕见），回退正文/全文比对
+function markerBody(line) {
+  const s = String(line ?? "").trim();
+  const i = s.lastIndexOf(" :: ");
+  return i >= 0 ? s.slice(i + 3) : s;
+}
+
+// 段内幂等判定：residual 按 sha8 锚定（跨日去重），unreviewed 按日期前缀（每日一条），
+// 其余行保持全文比对（兼容测试/人工插入的非标准行）
+function markerAlreadySettled(seg, line) {
+  const s = String(line ?? "");
+  const rm = s.trim().match(RESIDUAL_KEY_RE);
+  if (rm) {
+    for (const row of String(seg).split(/\r?\n/)) {
+      const r = row.trim().match(RESIDUAL_KEY_RE);
+      if (!r || r[1] !== rm[1]) continue;
+      if (markerBody(row) === markerBody(s) || row.trim() === s.trim()) return true;
+    }
+    return false;
+  }
+  const um = s.trim().match(UNREVIEWED_KEY_RE);
+  if (um) return new RegExp(`^-\\s*review_unreviewed_${um[1]}\\b`, "m").test(String(seg));
+  return String(seg).includes(s);
+}
+
 // 在 markdown 的 ## <heading> 段末尾追加一行（保持段落结构：插在下一个 ## 或文件尾之前）
 function insertUnderHeading(md, heading, line) {
   const text = String(md ?? "");
@@ -551,7 +581,7 @@ function insertUnderHeading(md, heading, line) {
   const after = i + h.length + (i === 0 ? 0 : 1);
   const end = text.indexOf("\n## ", after);
   const seg = end < 0 ? text.slice(after) : text.slice(after, end);
-  if (seg.includes(line)) return text; // 幂等：同 key 已存在不重复追加
+  if (markerAlreadySettled(seg, line)) return text; // 幂等：同 key（残余 sha8 / unreviewed 日期）已存在不重复追加
   const insertAt = end < 0 ? text.length : end;
   return `${text.slice(0, insertAt)}\n${line}${text.slice(insertAt)}`;
 }
@@ -932,7 +962,7 @@ function reviewPendingBlocks(s) {
 }
 
 // F 修复：连续失败达上限时的持久层留痕（写法与 residualFixupLine 同构，走同一沉淀通道）。
-// 幂等性由 insertUnderHeading 的 seg.includes(line) 提供——同会话重复触发只追加一次。
+// 幂等性由 insertUnderHeading 按 review_unreviewed_<date> 前缀提供——每日一条，reason 差异不重复追加。
 function unreviewedMarkerLine(reason = "审查连续失败") {
   const date = new Date().toISOString().slice(0, 10);
   return `- review_unreviewed_${date} :: 本会话复杂交付${reason}未复审（层 3 待显式接受/人工补审）:: 建议对当日 diff 跑一次 dual_review 确认，或 review-accepted 留痕后交付`;
@@ -1068,10 +1098,10 @@ function shouldRestartAfterConsume(s, inflightKey, subjectKey, r) {
 
 // 必修②（2026-10-16 二轮审查裁决）：在途审查硬死线看门狗——bgPromise 理论上可能永不结算
 // （上游挂死超出内部超时/settle 自身异常路径外的空隙），指针永久非空会让后续所有交付动作
-// 600s 等待超时后跳过 → 审查全量停摆且无自愈。超硬死线：强制清指针 + 递增 gen（晚到结算
+// 780s 等待超时后跳过 → 审查全量停摆且无自愈。超硬死线：强制清指针 + 递增 gen（晚到结算
 // 被世代校验作废）+ 账本留痕，恢复重启资格（代价是病理场景下有界双烧，优于永久停摆）。
 // 纯副作用函数（经 _export 暴露离线回归）：true = 本次收割了一个超期在途。
-const REVIEW_INFLIGHT_TTL_MS = 900000; // 15min：最坏审查 570s（480s 扇出+90s 聚合保底）+ 结算带宽之上的宽裕余量
+const REVIEW_INFLIGHT_TTL_MS = 900000; // 15min：最坏审查 750s（480s 扇出+180s 聚合预留+90s 保底）+ 结算带宽之上的宽裕余量
 function reapStaleInflight(s) {
   try {
     const ref = s?.reviewInFlight;
@@ -1680,7 +1710,8 @@ async function reviewSubject(root, s, editedList, userAsks = []) {
       return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
     } catch { return false; }
   };
-  const editedCodeFiles = [...s.edited].filter((f) => isCodeFile(f) && inRepo(f)).slice(0, 100);
+  const allCodeFiles = [...s.edited].filter((f) => isCodeFile(f) && inRepo(f));
+  const editedCodeFiles = allCodeFiles.slice(0, 100);
   // diff 段独立预算（层3 r2 必修②）：超大文件（如本插件自身）diff 会吃光素材总预算，
   // 排在其后的段落（测试用例/命令证据）整段不可见——审查者「素材不可审即验收不可判」。
   // 子预算 + 显式截断标注：截断处之后的改动不入素材，复审可本地 git diff 对照。
@@ -1699,18 +1730,45 @@ async function reviewSubject(root, s, editedList, userAsks = []) {
       diffText = String(out ?? "");
     } catch { /* 非 git 环境：走降级 */ }
   }
-  if (diffText.trim().length > 50) {
+  const diffIncluded = diffText.trim().length > 50;
+  const shownDiff = diffIncluded ? diffText.slice(0, MAX_REVIEW_DIFF) : "";
+  if (diffIncluded) {
     const clippedDiff = diffText.length > MAX_REVIEW_DIFF;
-    parts.push(`对应 git diff${clippedDiff ? `（超 ${MAX_REVIEW_DIFF} 字符已截断——截断处之后的改动未入本素材，复核请本地 git diff HEAD -- <文件> 对照）` : ""}：\n${diffText.slice(0, MAX_REVIEW_DIFF)}`);
+    parts.push(`对应 git diff${clippedDiff ? `（超 ${MAX_REVIEW_DIFF} 字符已截断——截断处之后的改动未入本素材，复核请本地 git diff HEAD -- <文件> 对照）` : ""}：\n${shownDiff}`);
   }
   const unseen = editedCodeFiles.filter((f) => !diffText.includes(path.basename(f))).slice(0, 8);
+  const unseenShown = new Set();
+  const unseenTruncated = [];
   for (const f of unseen) {
     try {
       const content = fs.readFileSync(f, "utf8");
-      if (content.trim()) parts.push(`### ${f}（完整内容——未出现在 diff 中，新文件）\n${content.slice(0, 4000)}`);
+      if (content.trim()) {
+        parts.push(`### ${f}（完整内容——未出现在 diff 中，新文件）\n${content.slice(0, 4000)}`);
+        unseenShown.add(f);
+        if (content.length > 4000) unseenTruncated.push(f);
+      }
     } catch { /* 文件已移走则跳过 */ }
   }
-  if (diffText.trim().length <= 50 && unseen.length === 0) {
+  // 盲区清单（dr-2026-11-23.1 多模型视角互补，图纸必修②配套）：改动未（完整）入素材的
+  // 文件显式列出——审查者对缺席文件的相关结论只能标「不可判定」，不得因素材缺席推定覆盖。
+  // 插在 parts[1]（文件清单之后、需求锚点/diff 之前）：24K 总截断砍尾部，清单在头部必存活。
+  // 无盲区时不插入任何内容（默认输出与旧版逐字节一致）。
+  const blind = [];
+  for (const f of editedCodeFiles) {
+    if (unseenShown.has(f)) {
+      if (unseenTruncated.includes(f)) blind.push(`${f}（新文件全文超 4000 字符已截断）`);
+      continue;
+    }
+    if (!shownDiff.includes(path.basename(f))) blind.push(`${f}（未入 diff 素材：截断处之后或非 git 环境）`);
+  }
+  for (const f of allCodeFiles.slice(100, 130)) blind.push(`${f}（超出 100 文件 diff 上限）`);
+  if (blind.length > 0) {
+    const clipLine = (x) => (Array.from(x).length > 160 ? Array.from(x).slice(0, 160).join("") + "…" : x);
+    const shown = blind.slice(0, 30).map((x) => `- ${clipLine(x)}`);
+    const more = blind.length > 30 ? `\n（另有 ${blind.length - 30} 个未入素材文件未列出）` : "";
+    parts.splice(1, 0, `以下代码文件的改动未（完整）进入审查素材（盲区清单——相关结论请标「不可判定」，不得因素材缺席推定覆盖）：\n${shown.join("\n")}${more}`);
+  }
+  if (!diffIncluded && unseen.length === 0) {
     parts.push(`会话内执行过的命令（已脱敏）：\n${s.commands.slice(-30).map(cmdText).join("\n") || "（无）"}`);
   }
   // 与 dual-review AGG_SUBJECT_LIMIT 保持一致（24K）：此处只做总预算兜底，不再二次砍到 8K。
@@ -2147,10 +2205,10 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
         const complexEarly = isComplexDelivery(s, codeEdits);
         // 层 3 异步化闭环（2026-10-16）：审查在后台跑时，任何交付动作先等在途裁决落地
         // ——「裁决必达」由此保证；settleReviewOutcome 已在其 .then 完成状态迁移，落地后走下方 reviewPending 校验。
-        // dual_review 建议项（2026-10-16）：加独立等待上限 600s（查漏补缺三轮 2026-10-27 校准：
-        // runDualReview 硬上界 = 扇出窗口 480s + 聚合保底 90s（aggDeadline=max(wall, now+90s)，
-        // 到点 askWithDeadline abort）= 570s，+ 结算带宽（fs 级沉淀）→ 600s 留 30s 余量；
-        // 旧 540s 会在裁决落地前 ~30s 提前放弃）
+        // dual_review 建议项（2026-10-16）：加独立等待上限 780s（2026-11-23 聚合硬预留后重校：
+        // runDualReview 硬上界 = 扇出窗口 480s + 聚合硬预留 180s（aggDeadline=max(wall,
+        // now+reserve)，到点 askWithDeadline abort）+ fallback 保底 90s = 750s，
+        // + 结算带宽（fs 级沉淀）→ 780s 留 30s 余量；旧 600s 会在裁决落地前提前放弃）
         // ——审查若内部挂死，before 钩子不被一个永不结算的 promise 永久拦住；超时 fail-open 放行 + 账本留痕。
         // 必修②接入：等待前先收割超硬死线的在途（挂死指针不托住后续所有交付动作）
         if (complexEarly && (reapStaleInflight(s), s.reviewInFlight)) {
@@ -2159,7 +2217,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
             await Promise.race([
               s.reviewInFlight.promise.then(() => { settled = true; }),
               new Promise((res) => {
-                const t = setTimeout(res, 600000);
+                const t = setTimeout(res, 780000);
                 if (typeof t?.unref === "function") t.unref();
               }),
             ]);
@@ -2171,7 +2229,7 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
           if (settled) {
             s.reviewInFlight = null;
           } else {
-            recordDegradation(s, "层 3 在途审查等待超时（before 600s），按未审查交付放行", "指针保留防双烧：下次交付动作继续等待在途裁决落地；建议人工核对 diff");
+            recordDegradation(s, "层 3 在途审查等待超时（before 780s），按未审查交付放行", "指针保留防双烧：下次交付动作继续等待在途裁决落地；建议人工核对 diff");
           }
         }
         if (complexEarly && s.reviewPending && !hasAcceptMarker(s) && reviewPendingBlocks(s)) {
@@ -2601,8 +2659,8 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
               );
             } else {
             // 单模型可路由或普通会话：照常消费/启动审查（下方保持原有缩进以减少 diff）。
-            // 在途审查消费（查漏补缺 2026-10-16）：等待上限 600s 与 before 钩子同口径——
-            // 覆盖 runDualReview 最坏墙钟（480s 扇出 + 90s 聚合保底 + 结算带宽）；
+            // 在途审查消费（查漏补缺 2026-10-16）：等待上限 780s 与 before 钩子同口径——
+            // 覆盖 runDualReview 最坏墙钟（480s 扇出 + 180s 聚合预留 + 90s 保底 + 结算带宽）；
             // 超时不清指针、不重启（防与未落地审查双烧）；下次交付动作继续等待/闭环。
             let inflightKey = null;
             let inflightSkip = false;
@@ -2615,14 +2673,14 @@ const QualityGateImpl = async ({ directory, client } = {}) => {
                 await Promise.race([
                   ref.promise.then(() => { settled = true; }),
               new Promise((res) => {
-                const t = setTimeout(res, 600000);
+                const t = setTimeout(res, 780000);
                 if (typeof t?.unref === "function") t.unref();
               }),
             ]);
               } catch { settled = true; }
               if (!settled) {
                 inflightSkip = true;
-                recordDegradation(s, "层 3 在途审查等待超时（交付节点 600s）", "本轮不重复启动防双烧；下次交付动作继续等待");
+                recordDegradation(s, "层 3 在途审查等待超时（交付节点 780s）", "本轮不重复启动防双烧；下次交付动作继续等待");
               } else {
                 s.reviewInFlight = null;
                 inflightKey = ref.key;
