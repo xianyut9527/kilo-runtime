@@ -71,3 +71,6 @@ render-check.*
 find-ctrl.*
 find-sub.*
 check.cjs
+
+# 视觉/端到端探针的一次性夹具目录（PNG 由 scripts/probe-models.mjs --vision 程序化生成，不入库二进制）
+/demo

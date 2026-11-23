@@ -68,16 +68,16 @@
   },
 
   // ── 智能体路由（前 6 个是内置 agent 的模型覆盖，verify 是自定义）──
-  // ── 生效模型口径（被引用模型 ≤5；2026-11-13 实际 5 = 2 性价比档 deepseek/minimax + 3 旗舰档 kimi规划裁决/glm复核红队/qwen审查正向moa参考）──
+  // ── 生效模型口径（被引用模型 ≤5；2026-11-14 实际 5 = 2 性价比档 deepseek/minimax + 3 旗舰档 kimi规划裁决/glm红队moa/qwen复核审查正向链末跳）──
   // 模型怎么选由用户自己的偏好决定：本文件给的是作者的一套默认绑定，用户可按喜好
   // 改任意 agent 的 model/variant，也可整链换掉。因此本文件是模型**绑定**的唯一真源：
   // 下方各 agent 字段、provider.options.failover / moa / dual_review 写具体模型；
   // 仓库文档只讲岗位与档位口径、不复制模型名（避免把作者默认当成唯一方案）。
   // 例外只有 INSTRUCTIONS.md「模型使用口径」策略快照（换模型时随本文件一并更新）
   // 与 docs/HISTORY.md 历史记录（保留旧模型名，不回写）。
-  // 两档分工（2026-11-13 多模型强化定稿）：性价比档（deepseek / minimax 两席）承担高频与
-  // 轻量岗位，要快与便宜；旗舰档三族交叉验证——kimi 规划+审查聚合、glm 复核+红队、
-  // qwen 审查正向+moa 参考（用户点名 kimi-k3.1/glm-5.3/qwen4 强化；kimi-k3.1 精确 ID 实测
+  // 两档分工（2026-11-13 多模型强化定稿；2026-11-14 视觉修复微调）：性价比档（deepseek / minimax 两席）
+  // 承担高频与轻量岗位，要快与便宜；旗舰档三族交叉验证——kimi 规划+审查聚合、glm 红队+moa 参考、
+  // qwen 复核+审查正向+链末跳（用户点名 kimi-k3.1/glm-5.3/qwen4 强化；kimi-k3.1 精确 ID 实测
   // 404 不存在，以 kimi-k3.1-pro 为其可路由代表）。glm-5.3-flash 同日退出路由，注册保留
   //（手动选择池）。降级期同模型可能兼任两席（≤5 引用约束的鸽笼必然，详见 dual_review 注释），
   // 正常路径三席三族完全独立。
@@ -107,7 +107,7 @@
   // orchestrator 多代理编排：拆解任务分派子代理，minimax-m3.1-flash@high（2026-10-25 由 low
   //              升档；2026-10-23 前为 preview 同名替换；轻决策岗位零分母可接受，
   //              见 agent.orchestrator 处注释；K3 只留给 plan）
-  // verify       自定义复核代理（subagent）：异源模型 glm 复核 deepseek 的产出
+  // verify       自定义复核代理（subagent）：异源模型 qwen4-max 复核 deepseek 的产出（具备视觉）
   //              —— 不同厂商交叉验证；edit 与常见 bash 写/破坏通道 deny，
   //              通用测试执行器保留，只读约束同时依赖提示词与 permission-guard；K3 只留 plan 位
   // variant 策略（2026-09-24 二轮修正，证伪了「low/medium 零失败」的旧论述）：
@@ -190,6 +190,10 @@
       // explore 对照仅作旁证，不作压缩位因果证明。保留 model+variant 现值（未来版本
       // 修好即自动受益）；日常避免 max 跑 code 主要为延迟/成本，low 样本少，不据此
       // 比较各档失败率。空摘要档位为库 5 直证 + 10-27 一例推断，详见 HISTORY。
+      // 2026-11-17 复核（近 30 天快照 2102 条）：max 1037 / high 991 / low 42 /
+      // null 27 / default 5，low 仅 2.0%——运行时 variant 仍失效。绕行：provider 侧
+      // options.compactionEffort 按「无 tools + 小 max_tokens」保守 clamp 压缩请求，
+      // scripts/audit-compaction.mjs 监控 low 占比（当前为保守兜底，非真实修复）。
       "model": "openllamas/deepseek-v4.1-flash-1017",
       "variant": "low",
     },
@@ -197,28 +201,39 @@
       // 2026-10-25 高效率+高质量分档：minimax-m3.1-flash@low → @high。
       // 编排负责任务拆解与分派，提高到 high；复杂规划仍由 plan@max 承担，避免重复拉满。
       // K3 仍只用于 plan；preview 生产下架后的正式版同名替换不变。
+      // 2026-11-14 备注（非目标改动，不改行为）：官方 using-agents 文档已将 orchestrator 标记
+      // deprecated（未来版本移除）；实际编排由 code/plan/debug + 原生 task 子代理承担
+      //（subagent_model=deepseek），本 entry 仅为兼容旧调用保留的模型覆盖。
       "model": "openllamas/minimax-m3.1-flash",
       "variant": "high",
     },
     "verify": {
       "mode": "subagent",
-      // verify 必须与主力 deepseek 族异源：2026-10-20 主力改 deepseek 后，复核钉 glm@high
-      //（被审=DeepSeek，复核=GLM；K3 只留 plan 位）。2026-10-17 曾把复核钉成 deepseek，
-      // 那会让复核与主执行同族，已作废。
-      // 2026-11-13 用户点名多模型强化：复核位 glm-5.3-flash → glm-5.3（旗舰档升格；同日实弹
-      // 探测 low/medium/high/max 四档全 ALIVE 1.8-8.8s；glm-flash 退出路由，注册保留）。
-      // 档位：复核位输入天然偏大（大 diff + 会话上下文），保留 high 的思考深度；不钉 max
-      //（max 档大输入 length 猝死有实证）。reasoningGate 扩预算重试 + 全局 failover 兜底在位。
-      // 退化路径：glm 失败时按全局 failover 链切换，可能落到 deepseek（与主执行同族）→
+      // verify 必须与主力 deepseek 族异源：2026-10-20 主力改 deepseek 后，复核钉异族旗舰。
+      // 2026-11-13 曾升格 glm-5.3；2026-11-14 视觉修复改钉 qwen4-max@high——实弹实证 glm-5.3
+      // 网关渠道纯文本（带图 400 code 1210），视觉复核结构性失明；qwen4-max 视觉实弹 VISION-OK
+      //（红图/大图/多图/@high 全 200）且与 deepseek 异族、旗舰档，引用集不变（≤5）。
+      // 档位：复核位输入天然偏大（大 diff + 会话上下文/截图），保留 high 的思考深度；不钉 max
+      //（max 档大输入 length 猝死有实证）。@high 带图已实弹 200（5.1s）；reasoningGate + failover 兜底在位。
+      // 退化路径：qwen 失败时按全局 failover 链切换，可能落到 deepseek（与主执行同族）→
       // 异源性静默丢失；配置层无 per-agent 链可钉，故复核结论必须声明实际执行模型，
       // 同族降级时标注「降级复核」，不计为独立异源票（2026-10-26 同步进 description）。
-      "model": "openllamas/glm-5.3",
+      // 反向守卫：若主执行实际模型就是 qwen（用户手选/single/末跳降级），verify 必须 per-call
+      // 切异源（文本任务 glm-5.3@high、视觉任务 kimi-k3.1-pro@high），否则标注「降级复核」。
+      "model": "openllamas/qwen4-max",
       // 高风险复核保留思考深度 → high（不钉 max：max 档大输入 length 猝死实证在位）。
       "variant": "high",
-      "description": "独立验证视角（异源模型复核高风险改动，只读不改动）。仅在认证/权限/支付/数据迁移/公共契约等高风险改动时按需调用。禁止用 task 的 model/provider/variant 覆盖成与主执行同族的模型；failover 造成同族降级时，结论必须标注「降级复核」，不计为独立异源票。",
+      "description": "独立验证视角（异源模型复核高风险改动，只读不改动，具备图像理解能力）。仅在认证/权限/支付/数据迁移/公共契约等高风险改动时按需调用。禁止用 task 的 model/provider/variant 覆盖成与主执行同族的模型；failover 造成同族降级时，结论必须标注「降级复核」，不计为独立异源票。若主执行实际模型为 qwen4-max，须 per-call 改钉异源（文本任务 glm-5.3@high、视觉任务 kimi-k3.1-pro@high），否则同样标注「降级复核」。",
       "permission": {
         "edit": "deny",
         "task": "deny",
+        // 写通道补全（2026-11-17 P2-6）：只读是提示词契约而非进程沙箱，记忆/待办写入
+        // 工具必须静态 deny；只读记忆入口（kilo_memory_recall/mem_search/mem_get）保留。
+        "kilo_memory_save": "deny",
+        "mem_add": "deny",
+        "mem_cite": "deny",
+        "mem_flag": "deny",
+        "todowrite": "deny",
         // 只读强制力补全：edit 全禁，bash 堵明确的仓库/文件/磁盘写通道。
         // node/python/npm test 等通用执行与测试通道保留给验证；这不是进程级沙箱，
         // 其只读用途由提示词约束，高危内容由 permission-guard 按命令内容二次拦截。
@@ -360,9 +375,13 @@
   // ── 工具输出截断（防单条输出撑爆上下文）─────────────────────────
   // 超 800 行或 8KB：全文落盘，只留预览在上下文里（可重读，无损）。
   // 2026-10-07 实测收口：原 20480B 的单条工具输出 ≈5k token，且**每一步都被完整
-  // 重传一遍**——本机上游 prompt 缓存实测不生效（kilo.db：cache.read 有值但
-  // cache.write 恒 0，每步全量 prefill），实测真实 prompt ≈ p50 100k / p90 146k
-  // token（input+cache.read+write，近 3 天 22.5k 步），p90 单步 32s、p99 184s。
+  // 上传一遍**——2026-11-17 口径更正：`cache.write` 恒 0 是 OpenAI 兼容协议常态，
+  // 不代表缓存未命中（scripts/probe-cache.mjs 同前缀双请求曾见 req2 cached_tokens=
+  // 3072/3121 或延迟 3.3s→1.7s；复跑亦有字段全 0 且延迟无显著下降的轮次——缓存会生效
+  // 但不保证每轮上报/命中，长期看 kilo-metrics）；命中部分由上游 KV cache 复用，
+  // 但每步仍上传完整上下文，历史工具输出的常驻体积仍是成本大头。
+  // 实测真实 prompt ≈ p50 100k / p90 146k token（input+cache.read+write，近 3 天
+  // 22.5k 步），p90 单步 32s、p99 184s。
   // 大头就是历史里堆积的大工具输出：read 一类就累计 406MB（kilo.db 按 tool 分桶），
   // 今日单条最大 read 输出 373KB。20KB→8KB 让常驻上下文的输出量降到 ≈2k token/条，
   // 落盘全文仍可重读——这是「每步重新付费」的唯一直接杠杆。
@@ -715,6 +734,12 @@
         // （零多余上游请求）；reject 终态经 SDK 包装为 isRetryable APICallError，
         // Kilo 会话级重试兜底。
         "reasoningGate": true,
+        // 压缩档位保守 clamp（2026-11-17 P1-1）：Kilo 7.8.18+ 运行时 variant 钉选失效，
+        // agent.compaction.variant=low 未生效（近 30 天 DB 快照 low 仅 2.0%）。开启后 provider
+        // 只对「无 tools + 非流式 + max_tokens<=8192」的压缩形态请求把 reasoning_effort 压到
+        // low，命中写 failover-events.jsonl（action=compaction_effort_clamped）；不命中零接触。
+        // 监控：node scripts/audit-compaction.mjs --days 30。缺省关闭。
+        "compactionEffort": "low",
         // 故障降级链：主模型失败→依次切换，每跳重试 2 次，
         // 失败模型冷却 60s（冷却对全链生效：主模型上一轮刚降级过，本轮直接从首个
         // 未冷却备用起跑，省去对已知故障模型的 3 连重试+退避；主模型与备用全冷却
@@ -727,15 +752,23 @@
         // failover.noticeCooldownMs 可单独调通知去重窗口（缺省 = cooldownMs）。
         // ※ 模型切换的唯一真源就是本配置文件——provider/moa/dual-review 代码均无内置默认链/兜底模型，
         //   换模型只改这里（agent 路由 / failover / moa / dual_review 都在本文件内）
-        // 链序口径（2026-10-20 按实测速度重排；2026-11-13 末跳升级）：1017 最快居首，minimax 次之，
-        // glm-5.3 居末仅作兜底（同日实弹探测三跳全活 1.2s/16.6s/3.6s，glm-5.3-flash 退出路由）。
-        // qwen4-max 虽恢复在册但不入链：链路是高频自动路径，审查面板是低频按需路径，
-        // 不入链降低两者同族并发争用概率（残余争用观察期监控 failover-events.jsonl：回滚阈值
-        // 为任一新席模型连续 2 日 404 或降级率 >30%，单变量回退该席）。
+        // 链序口径（2026-10-20 按实测速度重排；2026-11-14 视觉修复末跳换 qwen4-max）：1017 最快居首，
+        // minimax 次之，qwen4-max 居末。2026-11-14 实弹：三跳全部 VISION-OK（1017 3.1s / minimax 2.6s /
+        // qwen 4.4s 带图 200）；glm-5.3 带图 400（网关纯文本 code 1210）故退出链——视觉任务双跳降级
+        // 不再剥图/400。原「qwen 不入链」裁定被覆盖：末跳仅在两连败时触发（历史 failover-events
+        // 全量仅 9 条 fallback，且集中于 11-14 账号级 429 风暴——该场景换任何末跳都失败），
+        // 高频争用风险实测极低；qwen 另兼 verify/positive/moa 三个低频岗，四岗并发观察期监控
+        // failover-events.jsonl + dual_review/moa 调用日志。
+        // 回滚预案（单变量、三方同步、可审计）：触发条件=任一新席模型连续 2 日 404/400(code 1210)
+        // 或降级率 >30%，或账号级 429 风暴后复核确认链路引入新失败面。步骤=①先回滚 verify 模型
+        // （文本任务可回 glm-5.3@high，视觉任务保留 qwen 或改 kimi-k3.1-pro@high）；②再回滚链末跳
+        //（视觉安全优先，候选 glm-5.3-flash——视觉 OK 且注册在册，但兜底质量档下降需明示）；
+        // ③每次只改一处，kilo.json.tmpl + INSTRUCTIONS.md「模型使用口径」快照 + kilo_memory
+        // correct 同批回写，随后 install.ps1 部署 + -Check 漂移核对，禁止只改部署副本。
         // ⚠️ chainOf 会无条件把「当前模型」置于链首再去重，models 是当前模型之后的
-        // 后备后缀，不是完整链。实际跳数随 agent 变化：code=[1017,minimax,glm] 3 跳；
-        // plan=[kimi-k3.1-pro,1017,minimax,glm] 4 跳；verify=[glm,1017,minimax] 3 跳
-        //（glm 是 verify 首跳，不是末跳）；explore/orchestrator=[minimax,1017,glm]。
+        // 后备后缀，不是完整链。实际跳数随 agent 变化：code=[1017,minimax,qwen] 3 跳；
+        // plan=[kimi-k3.1-pro,1017,minimax,qwen] 4 跳；verify=[qwen,1017,minimax] 3 跳
+        //（qwen 是 verify 首跳，不是末跳）；explore/orchestrator=[minimax,1017,qwen]。
         // 首项 1017 与 code 主模型同源，chainOf 去重后不产生额外跳；保留它使链自描述完整。
         // 撤出路由的旧代（注册表保留、单变量可加回）：网关级过载时同网关多跳无意义——
         // lib/hx-client 实证单网关 CPU 过载即全模型 503，多跳只是叠加退避与等待。
@@ -744,7 +777,7 @@
             "models": [
               "deepseek-v4.1-flash-1017",
               "minimax-m3.1-flash",
-              "glm-5.3"
+              "qwen4-max"
             ],
           },
         },
@@ -752,9 +785,11 @@
         // 聚合席用第三族 kimi-k3.1-pro（不再与参考席自评）；额度/渠道不足时 1017 兜底。
         // 参考席（2026-11-13 用户点名多模型强化）：双旗舰 qwen4-max + glm-5.3，qwen/glm 双族
         // 独立视角、与被审主体（code=deepseek）异族；「一强一轻」升双旗舰是难决策质量优先
-        // 的取舍——moa 按需调用，成本可接受。
+        // 的取舍——moa 按需调用，成本可接受。注：glm-5.3 网关渠道纯文本，moa 协议只传文本
+        // subject，故其失明不影响文本场景；视觉任务见下方 dual_review 视觉残余条目。
         // fallback 1017 与主执行同族 → 该次结论须标注「降级复核」。
-        // 注：moa/dual_review 走 lib/hx-client 直连，不透传 reasoning_effort，聚合档位取网关默认。
+        // moa/dual_review 走 lib/hx-client 直连，可选 reasoningEffort 已透传；空串 = 网关默认档
+        // （A/B 基线，不改变旧行为），实测后可改为 high/low；per-call 参数可覆盖配置。
         // 渠道漂移口径：2026-10-27 qwen3.8-max 曾 404 NO_ROUTE_CANDIDATE；2026-11-13 复测
         // qwen4-max/glm-5.3/glm-5.3-flash/minimax-m3.1-flash 全部在册且实弹 ALIVE（2026-11-12
         // 的「死跳」为暂时性渠道故障，已恢复）；kimi-k3.1（非 pro 精确 ID）404 不存在，
@@ -763,6 +798,10 @@
           "references": ["qwen4-max", "glm-5.3"],
           "aggregator": "kimi-k3.1-pro",
           "aggregator_fallbacks": ["deepseek-v4.1-flash-1017"],
+          // per-seat effort（2026-11-17 P2-4）：空串 = 网关默认（A/B 基线）；per-call
+          // reference_effort/aggregator_effort 可覆盖。A/B 时只改一席，记录耗时/质量。
+          "reference_effort": "",
+          "aggregator_effort": "",
         },
         // dual_review 工具配置（plugin/dual-review.ts 读这里）：三层交付检查层 3，
         // quality-gate 在交付节点由插件直调，正常单次审查共 3 次上游调用：
@@ -784,6 +823,11 @@
         // 都标注「降级复核」，不计为完整三族独立交叉验证。
         // （三键均可被调用方 per-call 覆盖 positive_model/negative_model/aggregator；
         //   per-call 覆盖时不套配置 fallback；提示词真源 = plugin/dual-review.ts 的 POSITIVE_PROMPT/NEGATIVE_PROMPT）
+        // 视觉审查（2026-11-17 P2-5）：dual_review 支持 images（data URI 或本地文件，总大小 ≤8MB，
+        // 正/反/裁决三席同发）；moa 仍只传文本 task。带图时插件按 models[].modalities.input 过滤
+        // 盲席：纯文本模型（如 glm-5.3）不直接收图，改用该席视觉 fallback；无视觉 fallback 时
+        // 拒绝并在输出标注，避免「200 但自述看不到图」的假成功。无 images 时协议与旧版一致。
+        // 真实文本截图探针：node scripts/probe-vision-text.mjs qwen4-max@high。
         "dual_review": {
           "positive": "qwen4-max",
           "positive_fallbacks": ["kimi-k3.1-pro", "deepseek-v4.1-flash-1017"],
@@ -791,6 +835,11 @@
           "negative_fallbacks": ["minimax-m3.1-flash", "deepseek-v4.1-flash-1017"],
           "aggregator": "kimi-k3.1-pro",
           "aggregator_fallbacks": ["glm-5.3", "deepseek-v4.1-flash-1017"],
+          // per-seat effort（2026-11-17 P2-4）：空串 = 网关默认（A/B 基线）；per-call
+          // positive_effort/negative_effort/aggregator_effort 可覆盖。只改一席做 A/B。
+          "positive_effort": "",
+          "negative_effort": "",
+          "aggregator_effort": "",
         },
       },
       // 模型注册表（catalog：能力/上下文窗口/输出上限）
@@ -807,6 +856,9 @@
             "high": { "reasoningEffort": "high" },
             "max": { "reasoningEffort": "max" },
           },
+          // 2026-11-14 视觉修复：attachment:true 与 image modalities 同设（官方 custom-models
+          // 文档要求；启用 UI 附件按钮）。图像能力经实弹探测确认（红色 PNG data URI 正确应答）。
+          "attachment": true,
           "modalities": {
             "input": ["text", "image"],
             "output": ["text"],
@@ -818,15 +870,25 @@
         },        
         "glm-5.3": {
           "reasoning": true,
-          // 2026-11-13 启用路由（用户点名 glm-5.3 强化）：verify 复核位 + dual_review 反席 +
-          // moa 参考席 + failover 链末跳 + dual_review 聚合降级首选；同日实弹探测 low/medium/
-          // high/max 全 ALIVE。modalities 未声明（text-only 口径）；需图像输入先实测再补
-          //（勿照抄 flash 的 text+image）。
+          // 2026-11-13 启用路由（用户点名 glm-5.3 强化）；2026-11-14 视觉修复后路由收敛：
+          // 仅保留 dual_review 反席 + moa 参考席 + dual_review 聚合降级首选（均为文本协议岗位）。
+          // verify 复核位与 failover 链末跳已移交 qwen4-max——实弹实证 glm-5.3 网关渠道纯文本：
+          // 首探带图 HTTP 400 {"code":"1210","message":"messages.content.type 参数非法，取值范围 ['text']"}；
+          // 同日复探（scripts/probe-models.mjs --vision）网关改为 HTTP 200 + 自述「无法看到图片…
+          // 当前模型不支持图片识别」——渠道行为漂移但纯文本结论不变，且实证「200 ≠ 能看图」，
+          // 视觉判定必须核应答内容而非状态码。视觉复核/视觉降级结构性失明，故退出一切可能收图的岗位。
+          // low/medium/high/max 文本档全 ALIVE。
+          // 显式声明 text-only modalities + attachment:false（与 UI 附件按钮一致，防 catalog 漂移误挂图）。
           "variants": {
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
             "high": { "reasoningEffort": "high" },
             "max": { "reasoningEffort": "max" },
+          },
+          "attachment": false,
+          "modalities": {
+            "input": ["text"],
+            "output": ["text"],
           },
           "limit": {
             "context": 200000,
@@ -844,6 +906,9 @@
             "high": { "reasoningEffort": "high" },
             "max": { "reasoningEffort": "max" },
           },
+          // 2026-11-14 视觉修复：attachment:true 与 image modalities 同设（官方 custom-models
+          // 文档要求；启用 UI 附件按钮）。图像能力经实弹探测确认（红色 PNG data URI 正确应答）。
+          "attachment": true,
           "modalities": {
             "input": ["text", "image"],
             "output": ["text"],
@@ -863,6 +928,9 @@
             "high": { "reasoningEffort": "high" },
             "max": { "reasoningEffort": "max" },
           },
+          // 2026-11-14 视觉修复：attachment:true 与 image modalities 同设（官方 custom-models
+          // 文档要求；启用 UI 附件按钮）。图像能力经实弹探测确认（红色 PNG data URI 正确应答）。
+          "attachment": true,
           "modalities": {
             "input": ["text", "image"],
             "output": ["text"],
@@ -884,6 +952,9 @@
             "high": { "reasoningEffort": "high" },
             "max": { "reasoningEffort": "max" },
           },
+          // 2026-11-14 视觉修复：attachment:true 与 image modalities 同设（官方 custom-models
+          // 文档要求；启用 UI 附件按钮）。图像能力经实弹探测确认（红色 PNG data URI 正确应答）。
+          "attachment": true,
           "modalities": {
             "input": ["text", "image"],
             "output": ["text"],
@@ -912,6 +983,9 @@
             "high": { "reasoningEffort": "high" },
             "max": { "reasoningEffort": "max" },
           },
+          // 2026-11-14 视觉修复：attachment:true 与 image modalities 同设（官方 custom-models
+          // 文档要求；启用 UI 附件按钮）。图像能力经实弹探测确认（红色 PNG data URI 正确应答）。
+          "attachment": true,
           "modalities": {
             "input": ["text", "image"],
             "output": ["text"],
@@ -940,6 +1014,9 @@
             "high": { "reasoningEffort": "high" },
             "max": { "reasoningEffort": "max" },
           },
+          // 2026-11-14 视觉修复：attachment:true 与 image modalities 同设（官方 custom-models
+          // 文档要求；启用 UI 附件按钮）。图像能力经实弹探测确认（红色 PNG data URI 正确应答）。
+          "attachment": true,
           "modalities": {
             "input": ["text", "image"],
             "output": ["text"],
@@ -952,18 +1029,30 @@
         "qwen4-max": {
           "reasoning": true,
           // 2026-11-13 用户点名 qwen4 强化启用：dual_review 正席 + moa 参考首席（qwen/glm/kimi
-          // 三族审查面板）；不在 agent 路由与 failover 链（链路高频自动路径与低频按需审查并存，
-          // 不入链降低同族并发争用）。上游 /v1/models 在册，同日实弹探测裸 ID 与 low/medium/high/max
+          // 三族审查面板）；2026-11-14 视觉修复后新增 verify 复核位 + failover 链末跳（原「不入链」
+          // 裁定被覆盖：glm-5.3 网关纯文本致视觉任务双跳降级剥图/400，末跳须视觉可用；qwen 四岗
+          // 均为低频路径——verify 高风险按需、审查按需、末跳仅两连败触发，争用有限，监控见 failover 注释）。
+          // 上游 /v1/models 在册，同日实弹探测裸 ID 与 low/medium/high/max
           // 四档全 ALIVE（1.7-3.4s；medium 为第四轮查漏补探）。reasoningGate 的 GATE_EFFORT_DOWN
           // 硬编码降档链对缺档模型实测安全——网关接受未声明档位仍正常应答（qwen4-max / kimi-k3.1-pro
           // / kimi-k3 三模型 @medium 探针实证，2026-11-13），重试仍死则原样透传不劣化。
-          // modalities 未声明（text-only，图像能力先实测再补）；limit 200k/32k 系保守登记——registry
-          // 的 context 参与上下文占用计算，未验证的大窗数字会失真「何时该压缩」判断，实测后回填。
+          // limit 200k/32k 系保守登记——registry 的 context 参与上下文占用计算，未验证的大窗数字
+          // 会失真「何时该压缩」判断，实测后回填。modalities/attachment 已于 2026-11-14 实弹回填（见下）。
           "variants": {
             "low": { "reasoningEffort": "low" },
             "medium": { "reasoningEffort": "medium" },
             "high": { "reasoningEffort": "high" },
             "max": { "reasoningEffort": "max" },
+          },
+          // 2026-11-14 视觉修复（实弹回填，满足上方「先实测再补」条件）：qwen4-max 图像能力
+          // 实证 VISION-OK——16x16/256x256 红色 PNG 均正确答「红色」、双图答「红色、蓝色」、
+          // @high 档带图 200（5.1s）；JPEG 格式被接受（网关读取宽高做尺寸校验，最小边须 >10px）。
+          // 此前未声明 modalities → Kilo 按 text-only 处理并经 unsupportedParts() 剥图（kilocode#10102），
+          // 现补 image modalities + attachment:true 修复。
+          "attachment": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"],
           },
           "limit": {
             "context": 200000,

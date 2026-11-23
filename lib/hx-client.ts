@@ -56,6 +56,12 @@ const MAX_ATTEMPTS = 3; // 1 次 + 2 次重试
 const BACKOFF_MS = [400, 1200];
 // 503 过载专用退避：对 99% CPU 的网关 400ms 重试=火上浇油；2s/6s 给上游喘息窗口
 const OVERLOAD_BACKOFF_MS = [2000, 6000];
+// 429 共享冷却（2026-11-17 P2-7）：网关限流按 key/账号生效，moa/dual_review 的并行路
+// 各自 400ms 重试只会同步撞墙、放大限流窗口。模块级窗口让所有调用方统一等到同一时刻再发；
+// Retry-After 缺省 5s，叠加 ±20% jitter 防并发路同一毫秒齐发再次触发限流。
+const RATE_LIMIT_DEFAULT_MS = 5_000;
+const RATE_LIMIT_JITTER = 0.2;
+let rateLimitUntil = 0;
 // 确定性 HTTP 失败：重试无意义（key 错、模型名错、请求体非法），直接抛
 // 410 Gone（2026-09-27 补）：资源已永久移除——重试同一 URL 必然再 410；此前不在集合里，
 // 对已下线端点会白跑 2 次重试（400ms+1200ms）。语义上与 404 同类，归入确定性失败。
@@ -327,7 +333,7 @@ const ASK_LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 
 let logDirReady = null;
 
-const ASK_LOG_ACTIONS = new Set(["ask_fail", "body_shrink_retry"]);
+const ASK_LOG_ACTIONS = new Set(["ask_fail", "body_shrink_retry", "rate_limit_cooldown"]);
 const ASK_LOG_FIELDS = new Set(["action", "model", "status", "error", "elapsedMs", "beforeChars", "afterChars", "bytesBefore", "bytesAfter"]);
 const ASK_LOG_ERRORS = new Set([
   "circuit_open", "request_body_too_large", "model_unavailable",
@@ -483,7 +489,9 @@ export async function loadCfg() {
   if (!opts.baseURL) throw new Error("hx-client: provider.openllamas.options.baseURL 未配置");
   if (!key) throw new Error("hx-client: auth.json 缺少 openllamas.key（请先登录/配置 openllamas provider）");
   singleModelCache = singleModelOf(opts);
-  cfgCache = { baseURL: String(opts.baseURL).replace(/\/+$/, ""), key, options: opts, singleModel: singleModelCache };
+  // models 随配置返回：审查/多模态路由需要 modalities/attachment 判定（只读消费，不改变旧字段）。
+  const models = kilo?.provider?.openllamas?.models ?? kilo?.provider?.hx?.models ?? {};
+  cfgCache = { baseURL: String(opts.baseURL).replace(/\/+$/, ""), key, options: opts, singleModel: singleModelCache, models };
   cfgCacheAt = Date.now();
   return cfgCache;
 }
@@ -541,10 +549,43 @@ function utf8Bytes(text) {
   return Buffer.byteLength(String(text ?? ""), "utf8");
 }
 
+// 图像 part（2026-11-17 P2-5）：只接受 data:image/...;base64 URI——本地文件路径的读取
+// 与 8MB 限额由调用方（dual-review execute）负责，传输层不碰文件系统、不扩大攻击面。
+// 非法项过滤而非抛错：图像是增强输入，单张坏图不应让整次审查/聚合失败；过滤后无有效图
+// 则回退原字符串形态，保证纯文本请求形状与旧版逐字节一致。
+function normalizeImageUrl(item) {
+  const raw = typeof item === "string" ? item : item && typeof item === "object" ? item.dataUrl : "";
+  if (typeof raw !== "string") return "";
+  const url = raw.trim();
+  return /^data:image\/[a-z0-9.+-]+;base64,/i.test(url) ? url : "";
+}
+
+export function buildUserContent(prompt, images) {
+  if (!Array.isArray(images) || images.length === 0) return prompt;
+  const urls = images.map(normalizeImageUrl).filter(Boolean);
+  if (urls.length === 0) return prompt;
+  return [
+    { type: "text", text: prompt },
+    ...urls.map((url) => ({ type: "image_url", image_url: { url } })),
+  ];
+}
+
+// Retry-After 解析：秒数或 HTTP-date（RFC 7231），非法/缺失返回 undefined 交缺省值兜底。
+function parseRetryAfterMs(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return undefined;
+  const sec = Number(raw);
+  if (Number.isFinite(sec) && sec >= 0) return Math.round(sec * 1000);
+  const at = Date.parse(raw);
+  if (Number.isFinite(at)) return Math.max(0, at - Date.now());
+  return undefined;
+}
+
 // 单次尝试：SSE 流式拉取，直到 done。返回完整文本。
 // 超时三层：首字节（headers 后到第一个 data:）、chunk 间空闲、总时长。
 // signal：可选外部取消信号（预留通道，当前调用方暂无来源）；触发即中止底层连接。
-async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, signal }) {
+// images/reasoningEffort：可选多模态与推理档位；缺省时请求体形状与旧版完全一致。
+async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, signal, images, reasoningEffort }) {
   const totalMs = timeoutMs ?? FALLBACK_TIMEOUT_MS;
   const idleTimeoutMs = idleMs ?? FALLBACK_CHUNK_TIMEOUT_MS;
   const controller = new AbortController();
@@ -571,14 +612,18 @@ async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, sig
 
   let res;
   try {
+    // 空串/空白视同未配置：网关默认档与显式传参必须可区分（effort A/B 对照）。
+    const effort = typeof reasoningEffort === "string" ? reasoningEffort.trim() : "";
+    const body = {
+      model,
+      messages: [{ role: "user", content: buildUserContent(prompt, images) }],
+      stream: true,
+      ...(effort ? { reasoning_effort: effort } : {}),
+    };
     res = await fetch(`${baseURL}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        stream: true,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
   } catch (e) {
@@ -590,6 +635,11 @@ async function attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, sig
     cleanup();
     const body = await res.text().catch(() => "");
     const err = Object.assign(new Error(`${model} HTTP ${res.status}: ${body.slice(0, 300)}`), { statusCode: res.status });
+    // 429 限流窗口透传给 ask()：Retry-After 原文解析后随错误对象上浮（不消费响应体）。
+    if (res.status === 429) {
+      const retryAfterMs = parseRetryAfterMs(res.headers?.get?.("retry-after"));
+      if (retryAfterMs !== undefined) err.retryAfterMs = retryAfterMs;
+    }
     // 401 属凭证失效（key 轮换/过期）：立即失效缓存，下次 loadCfg 重读 auth.json（2026-09-22 审查必须项）
     if (res.status === 401) cfgCache = null;
     throw err;
@@ -709,12 +759,28 @@ function sleepWithSignal(ms, signal) {
   });
 }
 
+// 429 共享冷却门：每次 attemptOnce 前等待模块级窗口（所有调用方共享）。
+// 冷却超过本次 ask 剩余预算时快速失败——继续等只会吃光墙钟且没有时间再发请求；
+// 错误带 rateLimitWait 标记，由 ask() 按「网关可达、本次预算不够」中性处理（不重开熔断）。
+async function waitRateLimit(signal, budgetRemainingMs, model) {
+  const waitMs = rateLimitUntil - Date.now();
+  if (waitMs <= 0) return;
+  if (waitMs > budgetRemainingMs) {
+    const e = Object.assign(
+      new Error(`${model}: 429 冷却剩余 ${Math.ceil(waitMs / 1000)}s，超出本次请求剩余预算 ${Math.max(0, Math.floor(budgetRemainingMs / 1000))}s——不再等待`),
+      { rateLimitWait: true, statusCode: 429 },
+    );
+    throw e;
+  }
+  await sleepWithSignal(waitMs, signal);
+}
+
 // 对外接口（兼容旧签名：直接 await 返回字符串）。signal 可选取消透传。
 // 重试墙钟预算（2026-09-22 审查必须项）：
 //   - 「总时长超时」类失败不重试——剩余预算已装不下一次完整尝试，重试只是再烧 timeoutMs；
 //   - 已耗时 ≥ timeoutMs 不再发起新尝试。
 //   单次 ask 最坏墙钟从 ~3×timeout 收敛到 ~2×timeout（快速失败类仍有重试保护）。
-export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, attempts, signal, singleModel }) {
+export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, attempts, signal, singleModel, images, reasoningEffort }) {
   if (signal?.aborted) throw cancellationReason(signal);
   const explicitPin = typeof singleModel === "string" ? singleModel.trim() : "";
   const pin = explicitPin || singleModelCache;
@@ -741,7 +807,9 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
       }
       if (gate === "probe") { holdProbe = true; probeGeneration = cbProbeGeneration; }
       try {
-        const text = await attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, signal });
+        // 共享 429 冷却：并发 fanout 统一退到同一时刻；超出本次预算则在上游请求前失败。
+        await waitRateLimit(signal, budgetMs - (Date.now() - t0), model);
+        const text = await attemptOnce({ baseURL, key, model, prompt, timeoutMs, idleMs, signal, images, reasoningEffort });
         // 截止/取消与成功同刻到达：不返回迟到结果（调用方已按取消收口）。
         if (signal?.aborted) {
           cbOnProbeNeutral(holdProbe, probeGeneration);
@@ -754,6 +822,13 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
         lastErr = e;
         // 外部取消不是网关故障：立即退出重试循环（原路径会继续 backoff/重试，截止后仍空转）。
         if (signal?.aborted) {
+          cbOnProbeNeutral(holdProbe, probeGeneration);
+          holdProbe = false;
+          await logAskFailure(e, model, Date.now() - t0);
+          throw e;
+        }
+        // 冷却等待因预算不足失败：网关可达但本次时间窗不够，中性释放 probe，不重开熔断。
+        if (e?.rateLimitWait) {
           cbOnProbeNeutral(holdProbe, probeGeneration);
           holdProbe = false;
           await logAskFailure(e, model, Date.now() - t0);
@@ -806,6 +881,21 @@ export async function ask({ baseURL, key, model, prompt, timeoutMs, idleMs, atte
         if (status === 503 && !isOverloadErr(e)) {
           cbOnProbeNeutral(holdProbe, probeGeneration);
           holdProbe = false;
+          await logAskFailure(e, model, Date.now() - t0);
+          throw e;
+        }
+        // 429 限流（2026-11-17 P2-7）：不是网关过载——不计 503 断路器、不进退避链；
+        // 按 Retry-After（缺省 5s，±20% jitter）设置共享冷却。仍有重试预算则冷却后
+        // 同模型续试（下一轮 waitRateLimit 统一等待），否则抛 429 原文交上层换模型。
+        if (status === 429) {
+          cbOnProbeNeutral(holdProbe, probeGeneration);
+          holdProbe = false;
+          const base = Number.isFinite(e?.retryAfterMs) && e.retryAfterMs >= 0 ? e.retryAfterMs : RATE_LIMIT_DEFAULT_MS;
+          const cooldownMs = Math.round(base * (1 - RATE_LIMIT_JITTER + Math.random() * RATE_LIMIT_JITTER * 2));
+          rateLimitUntil = Date.now() + cooldownMs;
+          await logAskEvent({ action: "rate_limit_cooldown", model, status: 429, elapsedMs: cooldownMs });
+          const budgetLeft = budgetMs - (Date.now() - t0);
+          if (i < maxAttempts - 1 && cooldownMs < budgetLeft) continue;
           await logAskFailure(e, model, Date.now() - t0);
           throw e;
         }
@@ -903,4 +993,9 @@ export const _test = {
   releaseProbeIfStuck(gen) {
     cbReleaseProbeIfStuck(gen);
   },
+  // 多模态内容组装 / 429 共享窗口的离线断言入口（scripts/test-hx-client-multimodal.mjs、
+  // scripts/test-rate-limit.mjs 消费；生产代码不得调用）。
+  buildUserContent,
+  rateLimitUntil() { return rateLimitUntil; },
+  resetRateLimit() { rateLimitUntil = 0; },
 };

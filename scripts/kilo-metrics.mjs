@@ -12,6 +12,9 @@ const TAG = "kilo-metrics";
 
 // 口径说明与缓存写入：cache.write=0 是 OpenAI 兼容协议常态（部分上游只在响应里回
 // cache.read），不代表未命中；命中率统一按 cache.read/(input+cache.read) 计。
+// 2026-11-17 scripts/probe-cache.mjs 同前缀双请求曾见 req2 cached_tokens=3072/3121
+//（≈98%）或延迟 3.3s→1.7s；复跑亦有字段全 0 且延迟无显著下降的轮次——缓存会生效，
+// 但不保证每轮上报/命中；单轮探针只作裁决，长期命中率仍看本脚本的 cache.read 口径。
 const NOTE =
   "cache.write=0 是 OpenAI 兼容协议常态，不代表缓存未命中；命中率按 cache.read/(input+cache.read) 口径看。";
 
@@ -21,6 +24,9 @@ function usage() {
     "  --days N   统计最近 N 天（默认 3）",
     "  --db PATH  会话库路径（默认 <XDG_DATA_HOME|~/.local/share>/kilo/kilo.db）",
     "  --top N    分模型表行数上限（默认 12）",
+    "  --sessions N  默认路径最多覆盖最近 N 个活跃会话（默认 500）",
+    "  --all      走旧全量 part 查询（对照用；14GB 库可能 >120s）",
+    "  --explain  打印 query plan（验证默认路径不含 SCAN p）",
     "  --json     输出单个 JSON 对象供自动化（不打印表格）",
     "  --help     显示本帮助",
   ].join("\n");
@@ -38,13 +44,16 @@ function defaultDbPath() {
 // ── 参数解析（简单 while，不引依赖）────────────────────────────
 let days = 3;
 let topN = 12;
+let sessionsLimit = 500;
+let allMode = false;
+let explain = false;
 let jsonOut = false;
 let dbPath = null;
 const argv = process.argv.slice(2);
 let i = 0;
 while (i < argv.length) {
   const arg = argv[i++];
-  if (arg === "--days" || arg === "--db" || arg === "--top") {
+  if (arg === "--days" || arg === "--db" || arg === "--top" || arg === "--sessions") {
     const val = argv[i++];
     if (val === undefined || val.startsWith("--")) fail(`${arg} 缺少参数值（--help 看用法）`);
     if (arg === "--days") {
@@ -53,9 +62,16 @@ while (i < argv.length) {
     } else if (arg === "--top") {
       topN = Number(val);
       if (!Number.isInteger(topN) || topN <= 0) fail(`--top 需为正整数：${val}`);
+    } else if (arg === "--sessions") {
+      sessionsLimit = Number(val);
+      if (!Number.isInteger(sessionsLimit) || sessionsLimit <= 0) fail(`--sessions 需为正整数：${val}`);
     } else {
       dbPath = val;
     }
+  } else if (arg === "--all") {
+    allMode = true;
+  } else if (arg === "--explain") {
+    explain = true;
   } else if (arg === "--json") {
     jsonOut = true;
   } else if (arg === "--help" || arg === "-h") {
@@ -87,9 +103,12 @@ try {
 
 if (!fs.existsSync(dbPath)) fail(`数据库不存在：${dbPath}`);
 
-// 查询文本与 v3.md 评审结论一致：时间过滤放在 json_valid 之后，可吃
-// part_session_step_finish_idx 部分索引，不额外建索引。
-const SQL = `
+// 默认路径（2026-11-17 P1-2）：先用 session.time_updated 取时间窗内最近 N 个活跃
+// 会话，再按 session_id 查 part——吃 part_session_step_finish_idx 部分索引，避免在
+// 14.3GB 库上对 part 做单条全表 SCAN（旧查询实测 120s 未返回，EXPLAIN 为 `SCAN p`）。
+// time_created 仍是最终过滤条件：会话前置筛选只收窄扫描面，不改变统计口径。
+// 时间过滤放在 json_valid 之后，与旧查询一致，可继续利用部分索引。
+const SELECT_COLS = `
 SELECT p.time_created AS ts,
        json_extract(p.data,'$.tokens.input') AS input,
        json_extract(p.data,'$.tokens.cache.read') AS cacheRead,
@@ -100,20 +119,59 @@ SELECT p.time_created AS ts,
        json_extract(p.data,'$.reason') AS reason,
        json_extract(m.data,'$.modelID') AS model,
        json_extract(m.data,'$.agent') AS agent
-FROM part p LEFT JOIN message m ON m.id = p.message_id
+FROM part p LEFT JOIN message m ON m.id = p.message_id`;
+const SQL_ALL = `${SELECT_COLS}
 WHERE json_valid(p.data) AND json_extract(p.data,'$.type')='step-finish'
   AND p.time_created >= ?`;
 
 let db;
 let rows;
+let sessionIds = null;
+let sessionsInWindow = null;
 try {
   db = new DatabaseSync(dbPath, { readOnly: true });
-  rows = db.prepare(SQL).all(sinceMs);
+  let sql = null;
+  let params = [];
+  if (allMode) {
+    sql = SQL_ALL;
+    params = [sinceMs];
+  } else {
+    sessionsInWindow = db.prepare("SELECT count(*) AS n FROM session WHERE time_updated >= ?").get(sinceMs).n;
+    sessionIds = db
+      .prepare("SELECT id FROM session WHERE time_updated >= ? ORDER BY time_updated DESC LIMIT ?")
+      .all(sinceMs, sessionsLimit)
+      .map((r) => r.id);
+    if (sessionIds.length > 0) {
+      const placeholders = sessionIds.map(() => "?").join(",");
+      sql = `${SELECT_COLS}
+WHERE p.session_id IN (${placeholders})
+  AND json_valid(p.data) AND json_extract(p.data,'$.type')='step-finish'
+  AND p.time_created >= ?`;
+      params = [...sessionIds, sinceMs];
+    }
+  }
+  if (explain && sql) {
+    // --json 时 plan 走 stderr，保持 stdout 是单一 JSON 对象
+    const logPlan = jsonOut ? console.error : console.log;
+    logPlan("[query plan]");
+    for (const p of db.prepare("EXPLAIN QUERY PLAN " + sql).all(...params)) logPlan("  " + p.detail);
+  }
+  rows = sql ? db.prepare(sql).all(...params) : [];
 } catch (e) {
   fail(`查询失败：${e?.message ?? e}`);
 } finally {
   try { db?.close(); } catch { /* 关闭失败不影响输出 */ }
 }
+
+const coverage = allMode
+  ? { mode: "all", sessions: null, sessionsInWindow: null, sessionLimit: null, truncated: false }
+  : {
+      mode: "sessions",
+      sessions: sessionIds?.length ?? 0,
+      sessionsInWindow,
+      sessionLimit: sessionsLimit,
+      truncated: (sessionsInWindow ?? 0) > (sessionIds?.length ?? 0),
+    };
 
 // ── 聚合 ─────────────────────────────────────────────────────
 // Number() 归一是唯一入口：json_extract 缺字段为 null（Number(null)=0）；非数字垃圾
@@ -225,6 +283,7 @@ if (jsonOut) {
         db: dbPath,
         days,
         window: { since: sinceIso, now: new Date(nowMs).toISOString() },
+        coverage,
         rows: acc.steps,
         totals: {
           steps: acc.steps,
@@ -266,6 +325,11 @@ const out = [];
 out.push("Kilo 会话画像（只读）");
 out.push(`  db     : ${dbPath}`);
 out.push(`  window : 最近 ${days} 天（${sinceIso} ~ ${new Date(nowMs).toISOString()}）`);
+out.push(
+  `  coverage: ${allMode
+    ? "全量 part 查询（--all，对照用）"
+    : `最近活跃会话 ${fmtInt(sessionIds.length)} / 窗口内 ${fmtInt(sessionsInWindow)}（上限 ${fmtInt(sessionsLimit)}，${coverage.truncated ? "已截断" : "未截断"}）`}`,
+);
 out.push(`  rows   : ${fmtInt(acc.steps)} 条 step-finish`);
 out.push("");
 out.push("[总览]");

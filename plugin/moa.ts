@@ -48,6 +48,10 @@ const MoaImpl = async (_ctx = {}) => {
 
           // 模型唯一真源 = kilo.json provider.openllamas.options.moa（改模型只改配置文件，代码不留兜底默认值）
           const cfgMoa = cfg.options?.moa ?? {};
+          // 推理档位（2026-11-17 P2-4）：参考席与聚合席各自可配；空值不发送（网关默认）。
+          const effortOf = (v) => (typeof v === "string" ? v.trim() : "");
+          const refEffort = effortOf(cfgMoa.reference_effort);
+          const aggEffort = effortOf(cfgMoa.aggregator_effort);
           // 去重后再截断：["m","m","m"] 这类重复配置/参数不得绕过 MAX_REFS 成本红线（审查必须项）
           const pin = cfg.singleModel || "";
           const refs = pin ? [pin] : [...new Set(
@@ -110,7 +114,7 @@ const MoaImpl = async (_ctx = {}) => {
               if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
               try {
                 const text = await askWithDeadline(
-                  { baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs: totalMs, idleMs, attempts: undefined },
+                  { baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs: totalMs, idleMs, attempts: undefined, reasoningEffort: aggEffort || undefined },
                   effDeadline,
                   `moa 聚合(${model})`,
                 );
@@ -141,7 +145,7 @@ const MoaImpl = async (_ctx = {}) => {
             const p = askWithDeadline(
               {
                 baseURL: cfg.baseURL, key: cfg.key, model: m, prompt: task,
-                timeoutMs: totalMs, idleMs, attempts: undefined,
+                timeoutMs: totalMs, idleMs, attempts: undefined, reasoningEffort: refEffort || undefined,
               },
               wallDeadline,
               `moa 扇出(${m})`,

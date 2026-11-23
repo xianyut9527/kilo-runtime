@@ -1,4 +1,4 @@
-// kilo-build: src-sha256=e395b997453facbf3920cbd5610488a988d1fe8e7f0018e503ccafdac6b9e5e4
+// kilo-build: src-sha256=0e3a85270daa932d4a9550fd55e3af900b86248c91850b93ba62cf32579d5d7c
 var __defProp = Object.defineProperty;
 var __export = (target, all) => {
   for (var name15 in all)
@@ -28432,6 +28432,8 @@ var DEFAULT_COOLDOWN_MS = 6e4;
 var MAX_RETRIES_PER_HOP = 2;
 var BACKOFF_MS = [500, 1500];
 var OVERLOAD_BACKOFF_MS = [2e3, 6e3];
+var DEFAULT_TIMEOUT_COOLDOWN_MS = 3e5;
+var DEFAULT_NOTICE_COOLDOWN_MS = 3e5;
 var LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 function failoverLogPath() {
   const dataHome = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
@@ -28540,6 +28542,68 @@ function withReasoningEcho(baseFetch) {
       if (init && typeof init.body === "string" && init.body.length > 0) {
         const patched = patchReasoningContent(init.body);
         if (patched !== init.body) init = { ...init, body: patched };
+      }
+    } catch {
+    }
+    return call(input2, init);
+  };
+}
+var COMPACTION_TEXT_RE = /compact|summari[sz]e|summary/i;
+var COMPACTION_MAX_TOKENS = 8192;
+var COMPACTION_FALLBACK_TEXT_CHARS = 4e3;
+function messageTextOf(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => part && typeof part.text === "string" ? part.text : "").join("\n");
+}
+function isCompactionRequest(bodyText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.messages)) return null;
+  if (parsed.stream === true) return null;
+  const tools = parsed.tools;
+  if (Array.isArray(tools) ? tools.length > 0 : tools != null) return null;
+  const maxTokens = Number(parsed.max_tokens ?? parsed.max_completion_tokens ?? Number.NaN);
+  if (!Number.isFinite(maxTokens) || maxTokens <= 0 || maxTokens > COMPACTION_MAX_TOKENS) return null;
+  const text = parsed.messages.map((m) => messageTextOf(m?.content)).join("\n");
+  if (COMPACTION_TEXT_RE.test(text)) return parsed;
+  return text.length >= COMPACTION_FALLBACK_TEXT_CHARS ? parsed : null;
+}
+function clampCompactionEffort(parsed, effort) {
+  const nested = parsed.reasoning && typeof parsed.reasoning === "object" ? parsed.reasoning : null;
+  const nestedFrom = nested ? nested.effort ?? nested.reasoning_effort : null;
+  const from = parsed.reasoning_effort ?? nestedFrom ?? null;
+  const nestedChanged = nested ? "effort" in nested && nested.effort !== effort || "reasoning_effort" in nested && nested.reasoning_effort !== effort : false;
+  if (from === effort && !nestedChanged) return { changed: false, from };
+  parsed.reasoning_effort = effort;
+  if (nested) {
+    if ("effort" in nested) nested.effort = effort;
+    if ("reasoning_effort" in nested) nested.reasoning_effort = effort;
+  }
+  return { changed: true, from };
+}
+function withCompactionEffort(baseFetch, effort) {
+  const call = baseFetch ?? globalThis.fetch;
+  return async function compactionEffortFetch(input2, init) {
+    try {
+      if (init && typeof init.body === "string" && init.body.length > 0) {
+        const parsed = isCompactionRequest(init.body);
+        if (parsed) {
+          const { changed, from } = clampCompactionEffort(parsed, effort);
+          if (changed) {
+            init = { ...init, body: JSON.stringify(parsed) };
+            await logFailover({
+              action: "compaction_effort_clamped",
+              from,
+              to: effort,
+              model: typeof parsed.model === "string" ? parsed.model : null
+            });
+          }
+        }
       }
     } catch {
     }
@@ -29162,6 +29226,10 @@ function isOverloadErr(err) {
   if (ra !== void 0 && ra !== null) return true;
   return /cpu overloaded|system overloaded/i.test(String(err?.message ?? ""));
 }
+function isTimeoutErr(err) {
+  const status = err?.statusCode ?? err?.status ?? err?.response?.status;
+  return status === 408 || status === 504 || status === 524;
+}
 var MODEL_POLICY_UNAVAILABLE_RE = /requires global regions/i;
 var MODEL_QUOTA_UNAVAILABLE_RE = /insufficient personal balance/i;
 function isChannelUnavailable(err) {
@@ -29399,12 +29467,14 @@ function createHxFailover(options) {
   if (failoverOpts?.nested === true || Array.isArray(failoverOpts?.nested)) {
     throw new Error("\u7981\u6B62\u5D4C\u5957 failover \u914D\u7F6E\uFF08legacy \u8BED\u4E49\uFF0C\u9632\u5FAA\u73AF\u4F9D\u8D56\uFF09");
   }
-  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "reasoningGate", "timeout", "dual_review", "singleModel"];
+  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "reasoningGate", "compactionEffort", "timeout", "dual_review", "singleModel"];
   const reasoningEcho = options?.reasoningEcho === true;
+  const compactionEffort = typeof options?.compactionEffort === "string" && options.compactionEffort.trim() ? options.compactionEffort.trim() : null;
   const gateCfg = options?.reasoningGate === true ? {} : options?.reasoningGate && typeof options.reasoningGate === "object" ? options.reasoningGate : null;
   let fetchFn = withQueuedAckGuard(customFetch);
   if (reasoningEcho) fetchFn = withReasoningEcho(fetchFn);
   if (gateCfg !== null) fetchFn = withReasoningGate(fetchFn, gateCfg);
+  if (compactionEffort) fetchFn = withCompactionEffort(fetchFn, compactionEffort);
   const sdkOptions = {
     ...rest,
     name: name15,
@@ -29415,11 +29485,12 @@ function createHxFailover(options) {
   };
   for (const k of EXTENSION_KEYS) delete sdkOptions[k];
   const cooldownMs = Number(failoverOpts?.cooldownMs) > 0 ? Number(failoverOpts.cooldownMs) : DEFAULT_COOLDOWN_MS;
+  const timeoutCooldownMs = Number(failoverOpts?.timeoutCooldownMs) > 0 ? Number(failoverOpts.timeoutCooldownMs) : DEFAULT_TIMEOUT_COOLDOWN_MS;
   const cooldown = /* @__PURE__ */ new Map();
   const lastFailure = /* @__PURE__ */ new Map();
   const isCooling = isCoolingFactory(cooldown);
   const markFailed = markFailedFactory(cooldown, lastFailure);
-  const noticeCooldownMs = Number(failoverOpts?.noticeCooldownMs) > 0 ? Number(failoverOpts.noticeCooldownMs) : cooldownMs;
+  const noticeCooldownMs = Number(failoverOpts?.noticeCooldownMs) > 0 ? Number(failoverOpts.noticeCooldownMs) : Math.max(cooldownMs, DEFAULT_NOTICE_COOLDOWN_MS);
   const noticeDedup = /* @__PURE__ */ new Map();
   const overloadBackoffMs = Array.isArray(failoverOpts?.overloadBackoffMs) && failoverOpts.overloadBackoffMs.every((n) => Number.isFinite(n) && n >= 0) ? failoverOpts.overloadBackoffMs : OVERLOAD_BACKOFF_MS;
   const chunkTimeoutMs = Number(options?.chunkTimeout) > 0 ? Number(options.chunkTimeout) : 0;
@@ -29509,13 +29580,15 @@ function createHxFailover(options) {
             }
             continue;
           }
-          markFailed(id, cooldownMs, err);
+          const effCooldownMs = isTimeoutErr(err) ? timeoutCooldownMs : cooldownMs;
+          markFailed(id, effCooldownMs, err);
           await logFailover({
             from: modelId,
             at: id,
             action: hop + 1 < chain.length ? "fallback" : "exhausted",
             to: chain[hop + 1],
             status: err?.statusCode ?? err?.status,
+            cooldownMs: effCooldownMs,
             error: String(err?.message ?? err).slice(0, 200)
           });
           break;

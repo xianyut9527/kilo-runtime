@@ -1617,3 +1617,142 @@ const p12b = createHxFailover({
 });
 const out12b = await gen9(p12b, "glm-5.3-flash");
 console.log("PASS single-model-object-form :", JSON.stringify(calls12b) === JSON.stringify(["kimi-k2.6"]) && out12b.includes("[ok kimi-k2.6]"));
+
+// ── 回归 13：视觉任务双跳降级后图像 part 必须保留（2026-11-14 视觉修复必修②）──
+// 背景：failover 链末跳若为纯文本模型，带图任务双跳降级后图像 part 触发网关 400
+//（glm-5.3 实弹 code 1210 content.type 非法）或被 Kilo 剥离；修复=链全视觉可用
+//（kilo.json.tmpl 由 test-vision-routing.mjs 断言）。provider 层不变式=跨 hop 透传
+// 请求体、绝不剥离图像。本用例用假 fetch 强制前两跳渠道不可用（零重试快切），
+// 断言第三跳请求体仍含 image_url 与原始 base64 标记。型号用夹具，不锁真实链。
+const IMG_MARKER = Buffer.from("RED-IMAGE-FIXTURE-13").toString("base64");
+const calls13 = [];
+const bodies13 = [];
+const fakeFetch13 = async (url, init) => {
+  let model = "?";
+  try { model = JSON.parse(init.body).model; } catch {}
+  calls13.push(model);
+  bodies13.push(String(init.body ?? ""));
+  if (model === "vision-hop-a" || model === "vision-hop-b") {
+    return new Response(JSON.stringify({ error: { code: "model_not_found", message: `No available channel for model ${model}` } }), {
+      status: 503, headers: { "content-type": "application/json" },
+    });
+  }
+  return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const p13 = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub", fetch: fakeFetch13,
+  failover: { chain: { models: ["vision-hop-b", "vision-hop-c"] }, cooldownMs: 30000 },
+});
+let out13 = "", err13 = null;
+try {
+  const { stream } = await p13.languageModel("vision-hop-a").doStream({
+    prompt: [{ role: "user", content: [
+      { type: "text", text: "这张图片是什么颜色？" },
+      // AI SDK v5/LanguageModelV3 的图像 content 是 file part（mediaType=image/*），
+      // 由 openai-compatible 转换层映射为 image_url；v4 的 image part 在 v5 会序列化为 null。
+      { type: "file", mediaType: "image/png", data: IMG_MARKER },
+    ] }],
+    includeRawChunks: false,
+  });
+  for await (const part of stream) {
+    if (part.type === "text-delta") out13 += part.delta ?? part.textDelta ?? "";
+  }
+} catch (e) { err13 = e; }
+const lastBody13 = bodies13.at(-1) ?? "";
+console.log("");
+console.log("13 attempts:", calls13.join(", "), "| served:", JSON.stringify(out13.slice(0, 40)));
+console.log("PASS vision-double-hop-switch :",
+  err13 === null && calls13[0] === "vision-hop-a" && calls13.includes("vision-hop-b") &&
+  calls13.at(-1) === "vision-hop-c" && out13.includes("[ok vision-hop-c]"));
+console.log("PASS vision-image-preserved   :",
+  lastBody13.includes("image_url") && lastBody13.includes(IMG_MARKER));
+
+// ── 回归 14：超时类（504）耗尽拉长冷却 + 横幅去重窗口下限（2026-11-18 频繁降级专项）──
+// 背景：主模型持续 504 时基础 60s 冷却在下一条消息前就到期，每条消息重撞 3 连 ~100s
+// 再降级（用户体感「频繁降级」）。修复＝超时类（408/504/524）耗尽按 timeoutCooldownMs
+//（缺省 5min）冷却，窗口内后续消息零等待直走备用；横幅去重窗口未配置时取 5min 下限。
+// 本用例注入短基础冷却 + 长超时冷却证明两档区分；夹具型号，不锁真实链。504 带 retry-after
+// 复现生产过载形态（isOverloadErr），注入 overloadBackoffMs=[0,0] 免真等。
+const readEvents14 = async () => {
+  try {
+    const log = await readFile(join(process.env.XDG_DATA_HOME, "kilo", "failover-events.jsonl"), "utf8");
+    return log.trim().split("\n").map((l) => JSON.parse(l));
+  } catch { return []; }
+};
+const timeoutResp = () => new Response(JSON.stringify({ error: { message: "Gateway Timeout" } }), {
+  status: 504, headers: { "content-type": "application/json", "retry-after": "2" },
+});
+
+// 14a：504 主模型 → fallback 遥测 cooldownMs=timeoutCooldownMs（非基础）；窗口内第 2 轮零等待跳过
+let calls14a = [];
+const p14a = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub",
+  fetch: async (url, init) => {
+    let model = "?"; try { model = JSON.parse(init.body).model; } catch {}
+    calls14a.push(model);
+    if (model === "tmo14-primary") return timeoutResp();
+    return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+  },
+  failover: { chain: { models: ["tmo14-backup"] }, cooldownMs: 1500, timeoutCooldownMs: 60000, overloadBackoffMs: [0, 0] },
+});
+const out14a1 = await gen9(p14a, "tmo14-primary"); // 3 连 504 → 降级
+const c14a1 = calls14a.length; // 预期 4（primary×3 + backup×1）
+const out14a2 = await gen9(p14a, "tmo14-primary"); // 冷却窗口内：primary 被跳过，只多 backup×1
+const c14a2 = calls14a.length;
+const fb14a = (await readEvents14()).filter((e) => e.action === "fallback" && e.at === "tmo14-primary");
+console.log("");
+console.log("14a round1:", c14a1, "calls | round2:", c14a2, "calls | fallback cooldownMs:", fb14a.map((e) => e.cooldownMs).join(","));
+console.log("PASS timeout-cooldown-telemetry :", fb14a.length >= 1 && fb14a.every((e) => e.cooldownMs === 60000 && e.status === 504));
+console.log("PASS timeout-skip-within-window :", c14a1 === 4 && c14a2 === 5 && out14a2.includes("[ok tmo14-backup]") && !out14a2.includes("[failover]"));
+
+// 14b：非超时 500（带 retry-after 过载形态）→ fallback 遥测 cooldownMs=基础 cooldownMs（区分两档）
+let calls14b = [];
+const p14b = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub",
+  fetch: async (url, init) => {
+    let model = "?"; try { model = JSON.parse(init.body).model; } catch {}
+    calls14b.push(model);
+    if (model === "base14-primary") {
+      return new Response(JSON.stringify({ error: { message: "simulated upstream 500" } }), {
+        status: 500, headers: { "content-type": "application/json", "retry-after": "2" },
+      });
+    }
+    return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+  },
+  failover: { chain: { models: ["base14-backup"] }, cooldownMs: 1500, timeoutCooldownMs: 60000, overloadBackoffMs: [0, 0] },
+});
+await gen9(p14b, "base14-primary"); // 3 连 500 → 降级
+const fb14b = (await readEvents14()).filter((e) => e.action === "fallback" && e.at === "base14-primary");
+console.log("14b fallback cooldownMs:", fb14b.map((e) => e.cooldownMs).join(","));
+console.log("PASS nontimeout-base-cooldown   :", fb14b.length >= 1 && fb14b.every((e) => e.cooldownMs === 1500 && e.status === 500));
+
+// 14c：基础冷却到期但超时冷却未到期 → 504 主模型仍被跳过，500 主模型已恢复探测（时域区分）
+await new Promise((r) => setTimeout(r, 1700)); // > 基础 1500，< 超时 60000
+calls14a.length = 0;
+const out14a3 = await gen9(p14a, "tmo14-primary");
+const primary14a3 = calls14a.filter((m) => m === "tmo14-primary").length;
+calls14b.length = 0;
+await gen9(p14b, "base14-primary");
+const primary14b3 = calls14b.filter((m) => m === "base14-primary").length;
+console.log("14c after base expiry: 504 primary attempts =", primary14a3, "| 500 primary attempts =", primary14b3);
+console.log("PASS timeout-still-cooling      :", primary14a3 === 0 && out14a3.includes("[ok tmo14-backup]"));
+console.log("PASS nontimeout-expiry-retry    :", primary14b3 === 3);
+
+// 14d：横幅去重窗口下限——未配置 noticeCooldownMs，基础冷却到期后再次降级仍静默（旧缺省=cooldownMs 会重复横幅）
+let calls14d = [];
+const p14d = createHxFailover({
+  name: "hx", baseURL: "https://stub.local/v1", apiKey: "stub",
+  fetch: async (url, init) => {
+    let model = "?"; try { model = JSON.parse(init.body).model; } catch {}
+    calls14d.push(model);
+    if (model === "ntc14-primary") return timeoutResp();
+    return new Response(sseOk(model), { status: 200, headers: { "content-type": "text/event-stream" } });
+  },
+  failover: { chain: { models: ["ntc14-backup"] }, cooldownMs: 1500, timeoutCooldownMs: 1500, overloadBackoffMs: [0, 0] },
+});
+const out14d1 = await gen9(p14d, "ntc14-primary"); // 第 1 次降级：横幅
+await new Promise((r) => setTimeout(r, 1700)); // 冷却到期（1500），但横幅窗口下限 5min 仍生效
+const out14d2 = await gen9(p14d, "ntc14-primary"); // 第 2 次降级：应静默
+const dedup14d = (await readEvents14()).filter((e) => e.action === "notice_dedup" && e.from === "ntc14-primary" && e.to === "ntc14-backup");
+console.log("14d banner1:", out14d1.includes("[failover]"), "| banner2:", out14d2.includes("[failover]"), "| dedup:", dedup14d.length);
+console.log("PASS notice-floor-first-only    :", out14d1.includes("[failover]") && !out14d2.includes("[failover]") && dedup14d.length >= 1);

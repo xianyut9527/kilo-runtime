@@ -42,6 +42,18 @@ const BACKOFF_MS = [500, 1500];
 // （17:01:43-50 实测：3 并发会话 × 4 模型链 × 每 hop 2 重试，每 ~2.3s 一轮全链冲击）。
 // 口径对齐 lib/hx-client.ts OVERLOAD_BACKOFF_MS（2s/6s 给上游喘息窗口）。
 const OVERLOAD_BACKOFF_MS = [2000, 6000];
+// 超时类失败专用冷却（2026-11-18 频繁降级专项）：504/524/408 = 网关等上游等到放弃，
+// 3 连失败（每轮 ~100s）已证明持续不可用；基础 60s 冷却在下一条消息到达前就到期，
+// 每条消息都重撞同一堵墙 ~4-5min 再降级（2026-11-18 02:16-02:38 三轮实证，用户体感
+// 「频繁降级」）。超时类耗尽冷却缺省 5min：窗口内后续消息经 skip_cooldown 零等待直走
+// 健康备用，到期自动恢复探测主模型。其余失败类（429/502/过载）可能瞬时，保持基础冷却。
+// 可配 failover.timeoutCooldownMs（正数毫秒；非法/缺省回落本默认）。
+const DEFAULT_TIMEOUT_COOLDOWN_MS = 300_000;
+// 切换通知去重窗口下限（同专项）：旧缺省 = cooldownMs（60s），主模型持续故障期每条
+// 间隔 >60s 的消息都重复注入同一条 ⚠️ 横幅——连零等待的冷却跳过也注入，横幅刷屏即
+// 用户看到的「频繁降级」。未显式配置时取 max(cooldownMs, 5min)；显式 noticeCooldownMs
+// 仍优先（测试可注入短窗口）。
+const DEFAULT_NOTICE_COOLDOWN_MS = 300_000;
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 
 // 降级链唯一真源 = kilo.json 的 provider.openllamas.options.failover.chain.models（改模型只改配置文件）。
@@ -194,6 +206,89 @@ function withReasoningEcho(baseFetch) {
         if (patched !== init.body) init = { ...init, body: patched };
       }
     } catch { /* 兜底永不阻断请求 */ }
+    return call(input, init);
+  };
+}
+
+// ── 压缩请求 effort 保守 clamp（2026-11-17 P1-1：运行时 compaction variant 失效）──
+// 背景：Kilo 7.8.18 起 agent.compaction.variant 钉选不生效（kilo.db 滚动快照：
+// agent="compaction" 消息实际 variant 为 max/high 绝大多数，配置 low 仅约 2%），
+// 压缩位持续以高推理档跑摘要。运行时暂无 per-agent variant 修复入口，本层在
+// fetch 出口做保守绕行：只改写「压缩形态」请求，其他请求零接触。
+//
+// isCompactionRequest 判定（全部为必要条件）：
+//   1) body 是可解析 JSON 且 messages 为数组；
+//   2) 无 tools（缺省或空数组；带任何工具面一律放行）；
+//   3) stream 不为 true（非流式压缩调用）；
+//   4) max_tokens/max_completion_tokens 存在且 0 < 值 <= 8192（压缩位上限）；
+//   5) 消息文本命中 /compact|summari[sz]e|summary/i。
+// 兜底（刻意写清）：运行时 variant 失效属未知版本行为，真实压缩提示词可能不含
+// 上述关键词；此时若结构条件全中且消息文本 >= 4000 字符（压缩负载天然是大段
+// 会话正文），仍按压缩请求处理。4000 字符门槛用于避免误伤标题/探针等短小的
+// 无工具请求——本绕行宁可漏改，不可把普通小请求的推理档一并压低。
+const COMPACTION_TEXT_RE = /compact|summari[sz]e|summary/i;
+const COMPACTION_MAX_TOKENS = 8192;
+const COMPACTION_FALLBACK_TEXT_CHARS = 4000;
+
+function messageTextOf(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => (part && typeof part.text === "string" ? part.text : "")).join("\n");
+}
+
+function isCompactionRequest(bodyText) {
+  let parsed;
+  try { parsed = JSON.parse(bodyText); } catch { return null; }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.messages)) return null;
+  if (parsed.stream === true) return null;
+  const tools = parsed.tools;
+  if (Array.isArray(tools) ? tools.length > 0 : tools != null) return null;
+  const maxTokens = Number(parsed.max_tokens ?? parsed.max_completion_tokens ?? Number.NaN);
+  if (!Number.isFinite(maxTokens) || maxTokens <= 0 || maxTokens > COMPACTION_MAX_TOKENS) return null;
+  const text = parsed.messages.map((m) => messageTextOf(m?.content)).join("\n");
+  if (COMPACTION_TEXT_RE.test(text)) return parsed;
+  return text.length >= COMPACTION_FALLBACK_TEXT_CHARS ? parsed : null;
+}
+
+// 返回 { changed, from }：from 记录改写前的生效档位（顶层优先，其次 reasoning 对象）。
+// reasoning 对象已存在时只改它已有的键（不新增未知子字段），顶层 reasoning_effort 始终补齐。
+function clampCompactionEffort(parsed, effort) {
+  const nested = parsed.reasoning && typeof parsed.reasoning === "object" ? parsed.reasoning : null;
+  const nestedFrom = nested ? (nested.effort ?? nested.reasoning_effort) : null;
+  const from = parsed.reasoning_effort ?? nestedFrom ?? null;
+  const nestedChanged = nested
+    ? (("effort" in nested && nested.effort !== effort)
+      || ("reasoning_effort" in nested && nested.reasoning_effort !== effort))
+    : false;
+  if (from === effort && !nestedChanged) return { changed: false, from };
+  parsed.reasoning_effort = effort;
+  if (nested) {
+    if ("effort" in nested) nested.effort = effort;
+    if ("reasoning_effort" in nested) nested.reasoning_effort = effort;
+  }
+  return { changed: true, from };
+}
+
+function withCompactionEffort(baseFetch, effort) {
+  const call = baseFetch ?? globalThis.fetch;
+  return async function compactionEffortFetch(input, init) {
+    try {
+      if (init && typeof init.body === "string" && init.body.length > 0) {
+        const parsed = isCompactionRequest(init.body);
+        if (parsed) {
+          const { changed, from } = clampCompactionEffort(parsed, effort);
+          if (changed) {
+            init = { ...init, body: JSON.stringify(parsed) };
+            await logFailover({
+              action: "compaction_effort_clamped",
+              from,
+              to: effort,
+              model: typeof parsed.model === "string" ? parsed.model : null,
+            });
+          }
+        }
+      }
+    } catch { /* clamp 永不阻断请求 */ }
     return call(input, init);
   };
 }
@@ -1018,6 +1113,15 @@ function isOverloadErr(err) {
   return /cpu overloaded|system overloaded/i.test(String(err?.message ?? ""));
 }
 
+// 超时类失败判定（冷却档位选择用，与 isRetryable/isOverloadErr 正交）：408 请求超时 /
+// 504 网关超时 / 524 Cloudflare 超时。这些状态本就 retryable（408 显式、5xx 家族），
+// hop 内重试语义不变——只在重试耗尽后把冷却拉长（见 DEFAULT_TIMEOUT_COOLDOWN_MS），
+// 避免持续超时的模型在每条消息上重撞 3 连 ~100s。状态访问器与 isRetryable 同源。
+function isTimeoutErr(err) {
+  const status = err?.statusCode ?? err?.status ?? err?.response?.status;
+  return status === 408 || status === 504 || status === 524;
+}
+
 // 渠道/模型不可用判定（2026-09-27 查漏补缺）：new-api 网关对未配渠道/渠道下线的统一
 // 报文（生产实证 2026-09-27：glm-5.2 渠道下线期持续 "No available channel for model
 // glm-5.2 under group svip"；2026-09-28 07:29：404 NO_ROUTE_CANDIDATE；2026-10-01
@@ -1367,16 +1471,23 @@ export function createHxFailover(options) {
 
   // Kilo/自研扩展键不可透传给 @ai-sdk/openai-compatible（SDK 只读已知键，未知键静默丢弃——
   // 但留在 settings 里易被误当 SDK 能力排查，统一剥除；timeout/dual_review 由 plugin 侧直读 kilo.json）
-  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "reasoningGate", "timeout", "dual_review", "singleModel"];
+  const EXTENSION_KEYS = ["failover", "moa", "chunkTimeout", "reasoningEcho", "reasoningGate", "compactionEffort", "timeout", "dual_review", "singleModel"];
   // thinking 模式 reasoning_content 回传兜底（kilo.json options.reasoningEcho；缺省 = 关闭）
   const reasoningEcho = options?.reasoningEcho === true;
+  // 压缩请求 effort clamp（kilo.json options.compactionEffort；缺省 = 关闭）。
+  // 运行时 agent.compaction.variant 钉选失效（7.8.18+）的保守绕行，判定见 isCompactionRequest。
+  const compactionEffort = typeof options?.compactionEffort === "string" && options.compactionEffort.trim()
+    ? options.compactionEffort.trim()
+    : null;
   // 推理门控（kilo.json options.reasoningGate = true | {holdMs,retries,minTokens,maxTokens,toolHoldMs,bufferLimitBytes}；缺省 = 关闭）。
-  // 组装顺序（内→外）：queuedAckGuard 恒开 → echo → gate——gate 的重发体先经 echo 补丁
-  // （幂等，已带 reasoning_content 则无变化），排队回执先在源头被拦。
+  // 组装顺序（内→外）：queuedAckGuard 恒开 → echo → gate → compactionEffort——压缩 clamp
+  // 必须在最外层先改写请求体，再进入 gate 的重发体构造与 echo 补丁（否则 gate 重发可能
+  // 从旧 body 重建并丢掉 clamp）；排队回执仍先在源头被拦。
   const gateCfg = options?.reasoningGate === true ? {} : (options?.reasoningGate && typeof options.reasoningGate === "object" ? options.reasoningGate : null);
   let fetchFn = withQueuedAckGuard(customFetch);
   if (reasoningEcho) fetchFn = withReasoningEcho(fetchFn);
   if (gateCfg !== null) fetchFn = withReasoningGate(fetchFn, gateCfg);
+  if (compactionEffort) fetchFn = withCompactionEffort(fetchFn, compactionEffort);
   const sdkOptions = {
     ...rest,
     name,
@@ -1388,6 +1499,9 @@ export function createHxFailover(options) {
   for (const k of EXTENSION_KEYS) delete sdkOptions[k];
 
   const cooldownMs = Number(failoverOpts?.cooldownMs) > 0 ? Number(failoverOpts.cooldownMs) : DEFAULT_COOLDOWN_MS;
+  // 超时类（408/504/524）耗尽专用冷却（见 DEFAULT_TIMEOUT_COOLDOWN_MS）：独立于基础
+  // cooldownMs，非法/缺省回落默认 5min。仅作用于重试耗尽的 markFailed，不影响渠道不可用快切。
+  const timeoutCooldownMs = Number(failoverOpts?.timeoutCooldownMs) > 0 ? Number(failoverOpts.timeoutCooldownMs) : DEFAULT_TIMEOUT_COOLDOWN_MS;
   // 冷却状态（modelId -> 失效截止时间戳）：工厂级实例（生产 Kilo 单进程单工厂无差异，
   // 测试多实例天然隔离互不污染——模块级 Map 曾让同进程多实例共享冷却状态）
   const cooldown = new Map();
@@ -1396,10 +1510,12 @@ export function createHxFailover(options) {
   const lastFailure = new Map();
   const isCooling = isCoolingFactory(cooldown);
   const markFailed = markFailedFactory(cooldown, lastFailure);
-  // 切换通知去重窗口（failover.noticeCooldownMs，正数；缺省 = cooldownMs）：同一
+  // 切换通知去重窗口（failover.noticeCooldownMs，正数；缺省 = max(cooldownMs, 5min)）：同一
   // 「主模型→备用」的切换提示在该窗口内只注入一次——主模型持续故障期每次调用都
   // 会切换到同一备用，不去重则每条回复流首重复同一条提示（2026-09-26 用户实证刷屏）。
-  const noticeCooldownMs = Number(failoverOpts?.noticeCooldownMs) > 0 ? Number(failoverOpts.noticeCooldownMs) : cooldownMs;
+  // 未显式配置时取 max(cooldownMs, 5min) 下限（见 DEFAULT_NOTICE_COOLDOWN_MS）：旧缺省
+  // = cooldownMs（60s）导致持续故障期每条消息重复横幅。显式 noticeCooldownMs 仍优先。
+  const noticeCooldownMs = Number(failoverOpts?.noticeCooldownMs) > 0 ? Number(failoverOpts.noticeCooldownMs) : Math.max(cooldownMs, DEFAULT_NOTICE_COOLDOWN_MS);
   // 工厂级（非模块级）：Kilo 单进程单工厂实例；测试多实例天然隔离互不污染
   const noticeDedup = new Map(); // "from->to" -> 提示过期时间戳
   // 过载退避可注入（failover.overloadBackoffMs，正数组）：生产用默认 2s/6s，测试注入小值
@@ -1530,13 +1646,17 @@ export function createHxFailover(options) {
             }
             continue;
           }
-          markFailed(id, cooldownMs, err);
+          // 超时类（408/504/524）耗尽 → 拉长冷却（timeoutCooldownMs，缺省 5min），
+          // 避免持续超时模型在每条消息上重撞 3 连重试；其余失败类保持基础 cooldownMs。
+          const effCooldownMs = isTimeoutErr(err) ? timeoutCooldownMs : cooldownMs;
+          markFailed(id, effCooldownMs, err);
           await logFailover({
             from: modelId,
             at: id,
             action: hop + 1 < chain.length ? "fallback" : "exhausted",
             to: chain[hop + 1],
             status: err?.statusCode ?? err?.status,
+            cooldownMs: effCooldownMs,
             error: String(err?.message ?? err).slice(0, 200),
           });
           break; // 换链上下一模型

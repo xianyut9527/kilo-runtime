@@ -19,6 +19,8 @@
 import { loadCfg, askWithDeadline, cbShouldFailFast, timeoutsOf, clipText, modelRoutes, AGG_MIN_BUDGET_MS } from "../lib/hx-client";
 import { normalizeModelPin, singleSessionInfoOf } from "../lib/session-model";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { extname } from "node:path";
 
 // 超时统一走配置：kilo.json provider.openllamas.options.timeout / chunkTimeout（timeoutsOf 单点解析，
 // 与 moa 同口径；空闲看门狗与主链路 chunkTimeout 同源，流式中无 chunk 判死快速失败进重试）。
@@ -46,11 +48,106 @@ const AGG_REVIEW_LIMIT = 10_000;   // 聚合 prompt 中单路结论截断
 // 不计为三族独立交叉验证；输出协议变更 → 旧裁决缓存全部失效（指纹含版本）。
 // dr-2026-11-11.1：单模型质量闭环——runDualReview 支持 overrides.single_model 全席钉扎；
 // 手动工具在 agent=single 会话自动解析选定模型并拒绝混用其他模型。审查器指纹新增 sm= 段。
-const REVIEWER_VERSION = "dr-2026-11-11.1";
+// dr-2026-11-17.1：per-seat effort（positive/negative/aggregator_effort）进入请求体与缓存指纹；
+// 可选 images（data URI 或本地文件→base64，总大小 ≤8MB）随三路 prompt 同发，视觉审查不再
+// 只靠 subject 文字描述。effort/images 缺省时请求形状与旧版一致（向后兼容）。
+// dr-2026-11-17.2：带图审查按 models[].modalities.input 过滤盲席（glm-5.3 等 text-only 模型
+// 不直接收图，改用该席视觉 fallback），避免 400 code 1210 或「200 但自述看不到图」假成功。
+const REVIEWER_VERSION = "dr-2026-11-17.2";
+
+// effort 归一：非字符串/空串视同未配置（请求体不得出现 reasoning_effort，保持网关默认）。
+const effortOf = (v) => (typeof v === "string" ? v.trim() : "");
+
+// 带图路由的视觉能力判定：只信注册表 modalities + attachment（与 audit-config R8 同口径）。
+// 注册表缺失或模型未登记时返回 true（旧配置/离线 mock 不据此拦截，真实网关仍会判 400）。
+function modelSupportsImages(cfg, model) {
+  const models = cfg?.models;
+  if (!models || typeof models !== "object") return true;
+  const id = normalizeModelPin(model);
+  const m = models[id] ?? models[model];
+  if (!m) return true;
+  return m.attachment === true
+    && Array.isArray(m.modalities?.input)
+    && m.modalities.input.includes("image");
+}
 
 // 审查素材的最终截断单点（离线测试经 _export 验证：20K 尾部不被二次砍掉）。
 function reviewSubjectForPrompt(subject) {
   return clipText(subject, AGG_SUBJECT_LIMIT);
+}
+
+// ── 图像输入（2026-11-17 P2-5）────────────────────────────────
+// 工具层接受 data URI 或本地文件路径；本地文件按扩展名取 MIME 读成 base64 data URI。
+// 总字节 ≤8MB（base64 膨胀后请求体仍可控）；不可读/未知类型/超限返回明确文本错误——
+// execute 契约必须返回 string，不能把异常抛给工具管线。
+const MAX_IMAGES_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGES_COUNT = 8;
+const IMAGE_MIME_BY_EXT = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
+
+// 本地文件只按图片魔数放行：扩展名可伪造，纯文本/密钥文件改名 .png 也不能被读成图片发往网关。
+function imageMagicOk(buf, ext) {
+  if (!buf || !buf.length) return false;
+  if (ext === ".png") {
+    return buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
+      && buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a;
+  }
+  if (ext === ".jpg" || ext === ".jpeg") {
+    return buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+  }
+  if (ext === ".webp") {
+    return buf.length >= 12
+      && buf.subarray(0, 4).toString("ascii") === "RIFF"
+      && buf.subarray(8, 12).toString("ascii") === "WEBP";
+  }
+  return false;
+}
+
+function dataUriBytes(url) {
+  const comma = url.indexOf(",");
+  return comma < 0 ? 0 : Math.floor((url.length - comma - 1) * 3 / 4);
+}
+
+async function resolveImageArgs(images) {
+  if (images === undefined || images === null) return { images: [] };
+  if (!Array.isArray(images)) return { error: "dual_review: images 必须是字符串数组（data URI 或本地文件路径）" };
+  if (images.length > MAX_IMAGES_COUNT) {
+    return { error: `dual_review: images 最多 ${MAX_IMAGES_COUNT} 张，当前 ${images.length} 张` };
+  }
+  const out = [];
+  let total = 0;
+  for (const item of images) {
+    if (typeof item !== "string" || !item.trim()) {
+      return { error: "dual_review: images 含空项或非字符串项" };
+    }
+    const raw = item.trim();
+    if (/^data:/i.test(raw)) {
+      if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(raw)) {
+        return { error: "dual_review: images 的 data URI 必须为 data:image/...;base64, 形式" };
+      }
+      total += dataUriBytes(raw);
+      if (total > MAX_IMAGES_BYTES) return { error: `dual_review: images 总大小超过 ${MAX_IMAGES_BYTES / (1024 * 1024)}MB 上限` };
+      out.push(raw);
+      continue;
+    }
+    const ext = extname(raw).toLowerCase();
+    const mime = IMAGE_MIME_BY_EXT[ext];
+    if (!mime) {
+      return { error: `dual_review: 不支持的图片类型 ${ext || "(无扩展名)"}——支持 png/jpg/jpeg/webp 或 data:image/...;base64 URI` };
+    }
+    let buf;
+    try {
+      buf = await readFile(raw);
+    } catch (e) {
+      return { error: `dual_review: 读取图片失败 ${raw}: ${e?.message ?? e}` };
+    }
+    total += buf.length;
+    if (total > MAX_IMAGES_BYTES) return { error: `dual_review: images 总大小超过 ${MAX_IMAGES_BYTES / (1024 * 1024)}MB 上限` };
+    if (!imageMagicOk(buf, ext)) {
+      return { error: `dual_review: 文件魔数与扩展名 ${ext} 不符，已拒绝读取（仅接受 png/jpg/jpeg/webp 图片）` };
+    }
+    out.push(`data:${mime};base64,${buf.toString("base64")}`);
+  }
+  return { images: out };
 }
 
 // 记录哪些席位实际用了 fallback（首选失败后换型）。任一席位降级都意味着本次
@@ -100,7 +197,11 @@ async function reviewerFingerprint(cfg, singleModel) {
   const one = (v) => (typeof v === "string" ? v.trim() : "");
   const fb = (v) => (Array.isArray(v) ? v.map(one).filter(Boolean).join(",") : "");
   const pin = normalizeModelPin(singleModel) || normalizeModelPin(c.singleModel);
-  const base = `v=${REVIEWER_VERSION}|p=${one(dr.positive)}|pf=${fb(dr.positive_fallbacks)}|n=${one(dr.negative)}|nf=${fb(dr.negative_fallbacks)}|a=${one(dr.aggregator)}|af=${fb(dr.aggregator_fallbacks)}`;
+  // effort 也进入指纹：只改档位不改模型时，旧裁决不得被复用（审查强度变了≠同一审查）。
+  // 空值不追加段：保持既有指纹格式不变（存量缓存与既有断言兼容），仅配置档位时才改变缓存键。
+  const pe = one(dr.positive_effort), ne = one(dr.negative_effort), ae = one(dr.aggregator_effort);
+  const effortSeg = `${pe ? `|pe=${pe}` : ""}${ne ? `|ne=${ne}` : ""}${ae ? `|ae=${ae}` : ""}`;
+  const base = `v=${REVIEWER_VERSION}|p=${one(dr.positive)}|pf=${fb(dr.positive_fallbacks)}|n=${one(dr.negative)}|nf=${fb(dr.negative_fallbacks)}|a=${one(dr.aggregator)}|af=${fb(dr.aggregator_fallbacks)}${effortSeg}`;
   return pin ? `${base}|sm=${pin}` : base;
 }
 
@@ -175,6 +276,16 @@ async function runDualReview(subject, overrides = null) {
 
   // 模型唯一真源 = kilo.json provider.openllamas.options.dual_review（改模型只改配置文件，代码不留兜底默认值）
   const dr = cfg.options?.dual_review ?? {};
+  // per-seat effort：per-call 覆盖优先，缺省取配置；空值不发送（保持网关默认，便于 A/B）。
+  // single 钉扎只约束模型，不影响各席 effort（三席同模型仍可各自档位）。
+  const posEffort = effortOf(overrides?.positive_effort) || effortOf(dr.positive_effort);
+  const negEffort = effortOf(overrides?.negative_effort) || effortOf(dr.negative_effort);
+  const aggEffort = effortOf(overrides?.aggregator_effort) || effortOf(dr.aggregator_effort);
+  // 图像由 execute 归一为 data URI 后随 overrides 传入；quality-gate 自动审查不传 → 纯文本协议不变。
+  const images = Array.isArray(overrides?.images) ? overrides.images : [];
+  const needsVision = images.length > 0;
+  // 带图审查的盲席记录：主模型/兜底模型若注册为 text-only，跳过并继续下一个视觉候选。
+  const visionSkips = [];
   // 全席钉扎优先级：会话选定模型（overrides.single_model）> 配置严格锁（scripts/single-model.mjs
   // enter）。会话选择器是用户当前意图，配置 pin 只作兜底；否则旧 strict 配置会压过 UI 选择，
   // 造成审查模型≠执行模型。钉扎时 per-call 的 positive_model/negative_model/aggregator 一律不生效。
@@ -219,7 +330,7 @@ async function runDualReview(subject, overrides = null) {
   // → quality-gate 按 inconclusive 走失败阶梯收口，不静默）。正/反席不启用（保持原取舍）：
   // flash 级首选超时属异常路径，由失败阶梯（inconclusive 记账 → 连续两败阻断）收口，
   // 不扩有界成本。作用域：armFloor 每次审查（每次 askRoute 调用）独立一次，跨审查不复用。
-  const askRoute = async (label, models, prompt, deadlineMs, armFloor = false) => {
+  const askRoute = async (label, models, prompt, deadlineMs, effort, armFloor = false) => {
     const failed = [];
     let lastErr = null;
     let effDeadline = deadlineMs;
@@ -229,11 +340,19 @@ async function runDualReview(subject, overrides = null) {
         effDeadline = Date.now() + AGG_MIN_BUDGET_MS;
         floorArmed = true;
       }
+      // 带图审查只发视觉模型：glm-5.3 等 text-only 会 400 code 1210，或 200 但自述看不到图。
+      // 跳过时记录到 visionSkips，输出显式标注；若整条路由全盲，最终错误会以该记录为主体。
+      if (needsVision && !modelSupportsImages(cfg, model)) {
+        const skip = `${label} ${model}: 注册表为纯文本，带图审查跳过`;
+        visionSkips.push(skip);
+        failed.push(skip);
+        continue;
+      }
       const remaining = effDeadline - Date.now();
       if (remaining <= 0) { failed.push(`${model}: 墙钟预算耗尽`); break; }
       try {
         const text = await askWithDeadline(
-          { baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs, idleMs, attempts: undefined, singleModel: pin || undefined },
+          { baseURL: cfg.baseURL, key: cfg.key, model, prompt, timeoutMs, idleMs, attempts: undefined, singleModel: pin || undefined, reasoningEffort: effort || undefined, images },
           effDeadline,
           `${label}(${model})`,
         );
@@ -271,8 +390,8 @@ async function runDualReview(subject, overrides = null) {
 
   // 正反两路并行，共享扇出窗口（墙钟）；单路失败/超时按普通失败处理，由 fallback 续试
   const [posRes, negRes] = await Promise.allSettled([
-    askRoute("正向", posModels, POSITIVE_PROMPT(subjectIn, tag.s), wallDeadline),
-    askRoute("反向", negModels, NEGATIVE_PROMPT(subjectIn, tag.s), wallDeadline),
+    askRoute("正向", posModels, POSITIVE_PROMPT(subjectIn, tag.s), wallDeadline, posEffort),
+    askRoute("反向", negModels, NEGATIVE_PROMPT(subjectIn, tag.s), wallDeadline, negEffort),
   ]);
 
   const pos = posRes.status === "fulfilled" ? posRes.value : null;
@@ -298,6 +417,7 @@ async function runDualReview(subject, overrides = null) {
       degradedReviewLine(posNegSeats),
       sameSourceLine(pos?.model ?? posModel, neg?.model ?? negModel, aggModel, pin),
       fallbackNotes.length ? `> 路由兜底：${fallbackNotes.join("；")}` : "",
+      visionSkips.length ? `> 视觉路由：${visionSkips.join("；")}` : "",
       "",
       pos ? `### 正向审查（${pos.model}）\n${pos.text}` : "",
       neg ? `### 反向审查（${neg.model}）\n${neg.text}` : "",
@@ -313,7 +433,7 @@ async function runDualReview(subject, overrides = null) {
     // 裁决阶段拿剩余墙钟（保底 AGG_MIN_BUDGET_MS，可能略超 timeoutMs）；fallback 共享该预算，
     // 首选裁决耗尽预算时 armFloor 补一次保底窗口（见 askRoute 注释），兜底不再被饿死
     const aggDeadline = Math.max(wallDeadline, Date.now() + AGG_MIN_BUDGET_MS);
-    agg = await askRoute("裁决", aggModels, AGGREGATE_PROMPT(subjectIn, posC, negC, tag), aggDeadline, true);
+    agg = await askRoute("裁决", aggModels, AGGREGATE_PROMPT(subjectIn, posC, negC, tag), aggDeadline, aggEffort, true);
   } catch (e) {
     return [
       `dual_review: ${e.message}`,
@@ -333,6 +453,7 @@ async function runDualReview(subject, overrides = null) {
     degradedReviewLine(allSeats),
     sameSourceLine(pos.model, neg.model, agg.model, pin),
     fallbackNotes.length ? `> 路由兜底：${fallbackNotes.join("；")}` : "",
+    visionSkips.length ? `> 视觉路由：${visionSkips.join("；")}` : "",
     agg.text,
     "",
     `<details><summary>原始结论</summary>`,
@@ -397,17 +518,26 @@ const DualReviewImpl = async (ctx = {}) => {
           positive_model: { type: "string", description: "正向审查模型（可选，默认取配置；single 会话会被当前选定模型覆盖）" },
           negative_model: { type: "string", description: "反向审查模型（可选，默认取配置；single 会话会被当前选定模型覆盖）" },
           aggregator: { type: "string", description: "裁决模型（可选，默认取配置；single 会话会被当前选定模型覆盖）" },
+          images: {
+            type: "array",
+            description: "审查用图片（可选）：data:image/...;base64 URI 或本地文件路径（png/jpg/jpeg/webp，最多 8 张、总大小 ≤8MB，本地文件须通过魔数校验）；带图时自动跳过 text-only 审查席",
+            items: { type: "string" },
+          },
         },
         // ⚠️ execute 契约（2026-09-22 两次工具路径崩溃实证钉死，详见 lib/hx-client.ts
         // 契约注释）：必须返回 Promise<string>——async 函数原生满足。runDualReview 的
         // 快速失败路径（缺 subject/断路器 open）返回的也是 string，同样合规。
         async execute(args, context) {
+          // 图片归一在工具层完成（本地文件读取/8MB 限额）；runDualReview 只消费 data URI。
+          const resolved = await resolveImageArgs(args?.images);
+          if (resolved.error) return resolved.error;
+          const withImages = { ...args, images: resolved.images };
           const pin = await resolveSingleContextPin(ctx, context);
-          if (pin === null) return await runDualReview(args?.subject, args);
+          if (pin === null) return await runDualReview(args?.subject, withImages);
           if (!pin) {
             return "dual_review: 单模型会话的选定模型无法解析或不在 openllamas 网关，已拒绝本次审查（避免混用其他模型）。交付节点由 quality-gate 自动审查；如需手动审查，请切换到网关内模型。";
           }
-          return await runDualReview(args?.subject, { ...args, single_model: pin });
+          return await runDualReview(args?.subject, { ...withImages, single_model: pin });
         },
       },
     },

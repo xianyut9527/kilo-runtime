@@ -47,9 +47,18 @@
 - **kimi-k3.1-pro 只用于 plan 与审查聚合席**（规划/方案 + moa/dual_review 裁决，2026-11-13 强化定稿）。
   近 3 天 plan 0 次、kimi code 1993 次＝只付了它的慢、没用上它的规划价值；需要规划时切 plan 模式，
   而不是给 code 换模型。
-- **复核必须异源**：verify 用配置的 glm-5.3@high（2026-11-13 由 glm-5.3-flash 升格旗舰档），不要用 task 的
-  model/provider/variant 覆盖成与主执行同族；failover 导致同族降级时，复核结论必须标注「降级复核」，
-  不计为独立异源票。审查面板三族为 qwen4-max（正向）/glm-5.3（红队）/kimi-k3.1-pro（裁决）；
+- **复核必须异源**：verify 用配置的 qwen4-max@high（2026-11-14 视觉修复：原 glm-5.3 网关渠道
+  经实弹探测为纯文本——首探带图 400 code 1210，复探 200 但自述「无法看到图片」，视觉复核结构性
+  失明；qwen4-max 带图实弹 200 且与 deepseek 异族）。**200 ≠ 能看图**——视觉判定须核应答内容，
+  颜色探针用 `node scripts/probe-models.mjs --vision`，真实文本 OCR 用
+  `node scripts/probe-vision-text.mjs qwen4-max@high`（PARTIAL=看见但错 ≤1 位，不等于失明）。不要用 task 的 model/provider/variant 覆盖成
+  与主执行同族；若主执行实际模型
+  为 qwen（手选/single/末跳降级），须 per-call 改钉异源（文本 glm-5.3@high / 视觉 kimi-k3.1-pro@high）。
+  failover 导致同族降级时，复核结论必须标注「降级复核」，不计为独立异源票。
+  审查面板三族为 qwen4-max（正向）/glm-5.3（红队，网关纯文本）/kimi-k3.1-pro（裁决）；
+  **审查协议自 2026-11-17 起支持 images**（data URI 或本地路径，最多 8 张、总量 ≤8MB，本地文件须过图片魔数校验）：带图时插件按
+  models[].modalities.input 过滤盲席，glm-5.3 红队自动改走视觉 fallback 并在输出标「视觉路由」；
+  无 images 时仍只传文本。视觉交付优先传 images，并在 subject 写清截图结论/像素指标；
   single 模式例外——三席钉选定模型做同源对抗（见下方 single 节），不套用此三族。
 - **注册表中仍在网关 `/v1/models` 的候选模型是手动选择池**：零路由引用 ≠ 冗余，不要以
   「清理/优化」为名删除（glm-5.3、kimi-k3 等保留）；已从网关下线的模型可移除。优化只动实际执行路径与使用方式。
